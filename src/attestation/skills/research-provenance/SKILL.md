@@ -1,0 +1,321 @@
+---
+name: research-provenance
+description: "Research provenance tools over a local SQLite ledger: verify claims written in Markdown against recorded experiment runs, compare the arms of a sweep, query a knowledge graph of your reading, run symbolic derivations, and rank a personalized science/arXiv feed."
+version: 1.0.0
+author: attestation project
+license: MIT
+platforms: [linux, macos]
+metadata:
+  hermes:
+    tags: [rss, recommendations, arxiv, research, feed, ranking, science, local-api]
+    related_skills: []
+---
+
+# Science Recommendations
+
+Use this skill when the user asks about their science/research feed, wants
+today's recommended papers, or wants to give feedback on an item ("mark that
+useful", "not interested in that one", "why did this rank first?").
+
+This skill talks to **attestation**, a local personalized RSS/arXiv ranking
+engine running at `http://127.0.0.1:8899`. The engine is deterministic
+(profile-embedding + click-trained classifier) with an LLM-generated
+explanation layer that fills in lazily and never blocks the feed.
+
+## When NOT to use this
+
+- The user wants general web search or news outside the configured feeds —
+  this skill only knows about items already ingested into `hermes.db`.
+- The user wants to change what feeds are tracked, manage a persona, or
+  search the archive — use the MCP tools instead (no checkout needed; call
+  them directly from the agent). This skill's HTTP endpoints below only
+  cover the list/click/explain path; everything else is MCP-only. See
+  **MCP tools** below for the full set.
+
+## Setup
+
+Before the first call in a session, run the idempotent installer/doctor
+(via this skill's wrapper script, which resolves the checkout for you):
+
+```bash
+bash ${HERMES_SKILL_DIR}/scripts/setup.sh
+```
+
+`setup.sh` is a thin delegator: it resolves a local checkout (or falls back
+to `uvx --from git+<repo_url> hermes install --yes` — see below) and execs
+`uv run attest install --yes`. You can also run the installer directly from
+the project dir:
+
+```bash
+uv run attest install --check   # diagnose only, exit 1 on gaps, changes nothing
+uv run attest install --yes     # non-interactive repair of any gaps found
+```
+
+`--check` prints one line per step (`ok` / `BROKEN` / `skipped`) and never
+mutates anything — use it to see what's missing before repairing. `--yes`
+fixes gaps without prompting (pulls missing Ollama models, creates `.env`
+from `.env.sample`, runs initial ingest, wires the MCP server + skill copy +
+reasoning override + refresh cron job). If `setup.sh` exits non-zero, read
+its one-line reason and fix that before proceeding — do not retry blindly.
+
+If the engine server needs to be started manually:
+
+```bash
+cd /home/matt/attestation && uv run attest serve &
+```
+
+This uses the default DB resolution (see below), which finds the
+co-located database automatically — no `--db` flag needed.
+
+### Data directory
+
+The live database lives at
+`~/.hermes/skills/research-provenance/data/hermes.db`, co-located with
+other hermes-agent skill state rather than inside the project checkout. DB
+path resolution order (see `resolve_db_path` in `src/hermes/db.py`):
+
+1. explicit `--db <path>` flag
+2. `RSS_DB` env var
+3. `~/.hermes/skills/research-provenance/data/hermes.db`, if that file
+   already exists
+4. `./hermes.db` (cwd-relative fallback for ad hoc/dev use)
+
+### Running without a local checkout (uvx)
+
+If `src/hermes/skills/research-provenance/scripts/setup.sh` doesn't find a local
+project checkout at `HERMES_RSS_PROJECT_DIR` (default
+`/home/matt/attestation`), it looks for a `science_recommendations.repo_url`
+key in `~/.hermes/config.yaml`:
+
+```yaml
+science_recommendations:
+  repo_url: https://github.com/<owner>/attestation
+```
+
+When that's set, setup.sh runs the installer straight from git with no
+clone step, e.g.:
+
+```bash
+uvx --from git+https://github.com/<owner>/attestation hermes install --yes
+```
+
+Note the package name (`attestation`) and its console-script name (`hermes`)
+differ — `uvx --from <package>` takes the *package*, and the trailing word is
+the *executable*, so the invocation is `uvx --from git+<repo_url> hermes
+...`, not `... attestation ...`. `uvx --from . attestation` (wrong) fails with
+"An executable named `attestation` is not provided by package `attestation`".
+
+### Configuration contract
+
+Where each piece of attestation config lives, and who writes it:
+
+| Setting | Store | Written by |
+|---|---|---|
+| `LLM_BASE_URL`, `LLM_API_KEY`, `CHAT_MODEL`, `EMBED_MODEL`, `EMBED_DIMS`, `RSS_DB` | `<checkout>/.env` (real env wins) | `hermes install` step 3 / user edit |
+| `mcp_servers.attestation` | `~/.hermes/config.yaml` | `hermes mcp add` (install step 6) |
+| `agent.reasoning_overrides.<model>` | `~/.hermes/config.yaml` | `hermes config set` (install step 8) |
+| live DB | `~/.hermes/skills/research-provenance/data/hermes.db` | engine (resolve_db_path default) |
+| refresh schedule | `~/.hermes` cron store + `~/.hermes/scripts/attestation-refresh.sh` | install step 9 |
+
+## Setup notes
+
+**Only applies to hermes3 models.** The default `gemma4:e2b` accepts
+`think: true` and returns a `thinking` field, so nothing below is needed for
+it; `attest install` applies the override only when `CHAT_MODEL` matches
+`hermes3*`.
+
+On hermes-agent v0.20.0 with `hermes3:8b` served via an Ollama custom
+endpoint, **reasoning/thinking must be disabled for this model** or every
+tool-calling turn fails outright with `HTTP 400: "hermes3:8b" does not
+support thinking`. This is a real, reproduced failure, not a hypothetical:
+hermes-agent's default `agent.reasoning_effort: medium` sends a
+thinking/reasoning request parameter that Ollama's OpenAI-compatible
+endpoint rejects for this model.
+
+This is persisted in `~/.hermes/config.yaml` (not something you need to
+pass at call time) via a per-model override that does not touch other
+models/providers:
+
+```yaml
+agent:
+  reasoning_overrides:
+    hermes3:8b: none
+```
+
+If invoking `hermes` ad hoc against a config that hasn't been updated yet,
+pass `--reasoning none` explicitly instead.
+
+## Quick Reference
+
+| Action | Call |
+|---|---|
+| List ranked feed for a user | `GET http://127.0.0.1:8899/list?user=<name>` → returns an HTML `<ol>` fragment; extract titles, URLs, source, and `data-item-id` per `<li>`. |
+| Mark an item useful | `POST http://127.0.0.1:8899/clicks` with form fields `user=<name>`, `item_id=<id>`, `useful=1` |
+| Mark an item not useful | `POST http://127.0.0.1:8899/clicks` with form fields `user=<name>`, `item_id=<id>`, `useful=0` |
+| Get why an item ranked where it did | `GET http://127.0.0.1:8899/explanation?user=<name>&item_id=<id>` → plain text, one sentence. Can take several seconds (LLM call); it's fine to wait. |
+
+**`useful` is an integer, not a boolean word.** Send `useful=1` or `useful=0`
+as form data — sending `useful=true` or `useful=false` returns HTTP 422.
+
+Known users in the demo database: `matt`, `bench-chemist`, `ml-engineer`. If
+the user doesn't say which profile, default to `matt` and ask if unsure.
+
+## MCP tools
+
+When running alongside hermes-agent, the rest of the toolset is exposed as
+native MCP tools (`src/hermes/mcp_server.py`), not HTTP — call these
+directly rather than reaching for `curl`.
+
+**Personas** — `create_persona(name, interests)` makes a new reader profile
+from a freeform interests string; `update_persona(name, interests)` replaces
+that text and re-steers ranking immediately; `propose_interests(limit)`
+returns the most common tags currently in the feed, useful for drafting an
+interests string before creating or updating a persona; `profile_status(user)`
+reports click count, how much of the ranking is behavior-driven vs.
+text-driven, and top liked/disliked tags — good for "how well-trained is
+this persona?" questions.
+
+**Search** — `search_feed(user, query, tag, content_type, limit)` searches
+the *whole* archive (not just unread items) for a keyword, optionally
+filtered by tag or content type, and flags items already rated. Use this
+instead of the `/list` HTTP endpoint when the user wants to find something
+specific rather than browse what's new.
+
+**Digest** — `digest(user, days, per_topic, limit)` is the weekly-review tool:
+it returns the ranked unread feed already grouped by topic, so "what's worth
+reading this week, and why?" is one call rather than manual assembly from
+`list_feed` + `kg_communities` + `explain_item`. Each item joins the cluster
+its tags overlap most (ties break on label, so repeated calls agree); items
+matching no cluster come back in `unclustered` rather than being dropped, and
+that bucket being large is a real signal, not a bug. `per_topic` caps the items
+shown per group while `n_total` reports how many the group actually had —
+truncation is visible. It returns structure and never prose: no LLM runs
+inside it, and a per-item `explanation` appears only when `explain_item`
+already cached one, so ask for explanations separately if they're missing.
+**Read `ranking_quality` before trusting the order** — it reports whether the
+click classifier is actually active, and with a single-class click history it
+never fires, leaving the order as embedding similarity alone. `days` bounds
+how far back the feed reaches (default 7, echoed back as `window_days`), so
+widen it when a quiet week returns little.
+
+**Feed management** — `list_feeds()` shows subscribed feeds with item counts
+and last-fetch times; `preview_feed(url, limit)` shows a candidate feed's
+recent entries without subscribing (use before `add_feed`); `suggest_feeds(user, limit)`
+recommends feeds from a curated candidate list, scored against tags the user
+has marked useful.
+
+**Destructive actions require `confirm=true`**: `delete_persona(name, confirm)`
+(irreversibly removes a persona and its feedback), `reset_feedback(name, confirm)`
+(clears a persona's clicks but keeps the persona), and `remove_feed(feed_id, confirm)`
+(unsubscribes but keeps existing items and feedback on them). Calling any of
+these without `confirm=true` is safe — it returns a refusal message instead
+of mutating anything, so use that as a dry-run to see what would happen.
+
+`add_feed(url, title)` is **register-only**: it validates the URL parses as
+a feed and subscribes, but does not fetch anything. New items only appear
+after the next ingest (hourly cron, or `hermes ingest`) — don't expect
+`list_feed` to show items from a feed added moments ago.
+
+**Knowledge graph** — derived from the tagging pass (concepts are tags used
+at least twice, linked when they co-occur on at least two items):
+`kg_neighbors(node, limit)` finds the concepts directly adjacent to one you
+give it ("what else should I read about this"), strongest co-occurrence
+first. It returns direct neighbours only — for anything spanning more than
+one hop, use `kg_path(source, target)`, which finds the shortest chain of
+concepts linking two topics, returning `ok=false` with `path=null` when they
+never co-occur — a real answer, not an error;
+`kg_central(metric, limit)` surfaces the most-connected (`metric="degree"`)
+or most-bridging (`metric="betweenness"`) concepts; `kg_communities(min_size)`
+clusters the graph into topic groups by modularity, each labelled by its hub
+member (a dense hub cannot swallow the graph — concepts join a group only
+when their links there beat chance, so even a tightly interconnected corpus
+splits into real topics). Groups overlap in subject matter and each concept
+belongs to exactly one, so a bridging concept lands where its links are
+strongest.
+`kg_rebuild(confirm)` regenerates the stored `kg_nodes`/`kg_edges` tables
+from current tags and needs `confirm=true`; it's normally unnecessary since
+`attest tag` rebuilds automatically. Every `kg_*` read tool derives the graph
+fresh from `item_tags` on each call, so the stored tables (and the
+`stale: true` flag other `kg_*` tools report when they no longer match
+`item_tags`) are advisory only -- `stale: true` never changes what a read
+tool answers.
+
+**Symbolic math** — `sym_simplify(expr, timeout)` simplifies an expression
+to canonical form; `sym_solve(expr, symbol, timeout)` solves expr = 0 for a
+given symbol (or auto-detects if the expression has exactly one); `sym_differentiate(expr, symbol, order, timeout)` and `sym_integrate(expr, symbol, bounds, timeout)` compute derivatives and integrals; `sym_derivation(expr, operation, symbol, timeout)` returns a step-by-step trace (genuine rule-by-rule tracing exists only for integrals; the differentiate branch returns the result with a note saying so); `sym_verify(lhs, rhs, timeout)` tests symbolic equality and returns `equal`, `unequal`, or `unproven` — **"unproven" is NOT a disproof**, since `simplify` is incomplete and can only mean "could not decide"; and `sym_evaluate(expr, subs, units, timeout)` computes a numeric value, optionally with variable substitutions and unit conversion (e.g. `units="meter/second -> kilometer/hour"`).
+
+**Experiment ledger** — records of the user's *own* runs, read from artifacts
+already on disk (`results/`, `logs/`, `configs/`, `outputs/`, `benchmarks/`
+holding JSON, JSONL, CSV, YAML or TOML). Nothing is instrumented and no project
+is registered in advance: `runs_scan(root, project, confirm)` walks a workspace
+(defaulting to `$RESEARCH_ROOT`), treats each subdirectory as a project, and
+needs `confirm=true` since it replaces each scanned project's rows.
+Directories with nothing recognisable are reported in `empty` rather than
+omitted — "found nothing" must never look like "nothing was there".
+
+`runs_list(project, family, limit)` shows what exists plus the *families* runs
+group into; a family is the arms of a sweep or one run's checkpoints over
+training. `runs_compare(family, metric)` ranks those arms — the question a
+sweep exists to answer, which usually lives only in filenames. It **refuses to
+rank a metric whose direction is undeclared** rather than guessing: ranking WER
+as if higher were better would name the worst arm the winner. It also returns
+`caveats` — small samples, arms evaluated on different sample sizes, a top two
+within 5%, arms at different training steps — and every row carries its
+`source_path` and `n`. A comparison with no caveats has earned that silence;
+do not omit them when reporting. `runs_detail(project, name)` gives one run in
+full, including any prose header comment from its config, which is often where
+the hypothesis and the single changed variable are written down.
+
+**Claim checking** — `claims_check(path, verdict)` verifies numeric claims
+written in Markdown against those runs. A claim is an HTML comment beside the
+prose it describes, so it renders as nothing:
+
+    <!-- claim: project/run metric=wer value=0.053 tol=0.001 as_of=2026-05-28 -->
+
+Five verdicts, and the distinctions are the point. `supported`: a run agrees
+within tolerance. `contradicted`: a run disagrees — the document or the run is
+wrong. `unsupported`: no run matches, so the claim may still be true but
+nothing backs it. `ambiguous`: a wildcard matched several runs, so which is
+meant is undecidable. `stale`: the value matches but the artifact changed after
+`as_of`. Never report `unsupported` as if it meant false — one needs a run, the
+other needs a correction.
+
+`claims_coverage(path)` is the inverse: numbers asserted in prose that **no**
+claim covers. A document with zero contradicted claims can still assert a dozen
+unverifiable numbers, and this is what surfaces the difference. Only decimals
+count as measurements; versions, dates, URLs, package pins and anything inside
+an HTML comment are excluded.
+
+Both are read-only. They report; they never edit a document.
+
+## Procedure
+
+1. **Fetch the feed**: `curl -s --max-time 10 "http://127.0.0.1:8899/list?user=<name>"`.
+   The response is an HTML fragment, not JSON — parse out each `<li>`'s title
+   (inside the `<a>` tag), URL (`href`), source, and `data-item-id`. Present
+   the user a clean summarized list (title + source), not raw HTML. Items are
+   already ranked best-first; the top ~10-15 are usually what's worth
+   surfacing conversationally.
+
+2. **Act on feedback**: when the user says an item is useful/interesting or
+   not, find its `item_id` from the most recently fetched list (match by
+   title if the user refers to it by name, or by position — "the second one"
+   — against the order you just presented) and `POST /clicks` with
+   `useful=1` (useful) or `useful=0` (not useful). The response is the
+   re-ranked feed fragment; the engine retrains on every click, so re-fetch
+   or re-parse it if you want to show the new order.
+
+3. **Explain a ranking** (optional, only if asked "why is this here" / "why
+   did this rank first"): `GET /explanation?user=<name>&item_id=<id>`. This
+   is an LLM call through a local Ollama model and can take a few seconds
+   to tens of seconds depending on which chat model is loaded — don't treat
+   a multi-second wait as a failure.
+
+## Notes
+
+- All calls are local HTTP — no auth, no API key.
+- The feed and click endpoints are fast (SQLite-backed); only `/explanation`
+  invokes an LLM and can be slow. Never let a slow `/explanation` call block
+  presenting the feed or confirming a click — those two are independent of it.
+- If any call fails to connect, the engine server is probably not running:
+  rerun `scripts/setup.sh` or `cd /home/matt/attestation && uv run attest serve &`.

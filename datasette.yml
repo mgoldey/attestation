@@ -1,0 +1,148 @@
+# Datasette configuration for browsing the ledger and reading graph.
+#
+# Datasette is a *viewer*, never a writer: launch it with --immutable so the
+# database cannot be modified by anything that happens in a browser tab.
+# Nothing in the package imports it, so a broken version cannot break the tools.
+#
+#   hermes browse            # or: datasette --immutable <db> --metadata datasette.yml
+#
+# The value here is the canned queries below. Each one is a named, saved SQL
+# view with a shareable URL, which is the audit property a screenshot lacks:
+# a reviewer can open the exact query that produced a number, change one
+# parameter, and see how the answer moves.
+
+title: Research ledger
+description_html: |-
+  <p>Experiment runs read from artifacts on disk, plus the reading graph.
+  <strong>Every number traces to a <code>source_path</code></strong> — if a row
+  cannot be traced back to a file, treat it as unverified.</p>
+  <p>Read-only. Metrics are stored long-format: one row per
+  (run, metric, step, split).</p>
+
+databases:
+  hermes:
+    tables:
+      runs:
+        description: >-
+          One row per experiment run discovered on disk. `status` is `spec` for
+          a config with no result attached, `recorded` for one carrying metrics.
+          `family` groups sibling runs — the arms of a sweep, or one run's
+          checkpoints over training.
+        sort_desc: id
+      run_metrics:
+        description: >-
+          Long format: one row per (run, metric, step, split). Long rather than
+          wide because projects report entirely different metrics, and a wide
+          table would need a migration per project.
+      kg_nodes:
+        description: Concepts from the reading graph, with their degree.
+      # vec0 internals: implementation detail of the embedding index, not
+      # anything a human reviews.
+      item_vectors_chunks:
+        hidden: true
+      item_vectors_info:
+        hidden: true
+      item_vectors_rowids:
+        hidden: true
+      item_vectors_vector_chunks00:
+        hidden: true
+      sqlite_sequence:
+        hidden: true
+
+    queries:
+      metric_over_time:
+        title: A metric over training steps
+        description: >-
+          The time series view. Pick a metric and optionally a project; every
+          point carries the file it came from, so any surprising value can be
+          opened and checked.
+        sql: |-
+          SELECT
+            r.project,
+            r.name AS run,
+            m.step,
+            m.split,
+            ROUND(m.value, 6) AS value,
+            r.source_path
+          FROM run_metrics m
+          JOIN runs r ON r.id = m.run_id
+          WHERE m.metric = :metric
+            AND m.step IS NOT NULL
+            AND (:project = '' OR r.project = :project)
+          ORDER BY r.project, r.name, m.step
+
+      compare_family:
+        title: Compare the arms of one experiment family
+        description: >-
+          Which arm won, with the sample size beside it. A difference between
+          arms evaluated on few samples is usually noise — `n` is shown so that
+          is visible rather than implied.
+        sql: |-
+          SELECT
+            r.name AS arm,
+            ROUND(MIN(m.value), 6) AS best_value,
+            COUNT(*) AS points,
+            (SELECT CAST(MAX(value) AS INT) FROM run_metrics n
+               WHERE n.run_id = r.id AND n.metric = 'n_records') AS n,
+            r.status,
+            r.source_path
+          FROM runs r
+          JOIN run_metrics m ON m.run_id = r.id
+          WHERE r.family = :family AND m.metric = :metric
+          GROUP BY r.id
+          ORDER BY best_value
+
+      families:
+        title: What is comparable
+        description: Families with more than one member, i.e. every sweep or series.
+        sql: |-
+          SELECT
+            project,
+            family,
+            COUNT(*) AS runs,
+            SUM(status = 'spec') AS specs_without_results
+          FROM runs
+          WHERE family IS NOT NULL
+          GROUP BY project, family
+          HAVING COUNT(*) > 1
+          ORDER BY runs DESC
+
+      unevaluated_configs:
+        title: Configs with no result attached
+        description: >-
+          An arm that was specified but never evaluated. This is a finding, not
+          an empty row — it is how a sweep silently ends up incomplete.
+        sql: |-
+          SELECT project, name, family, source_path
+          FROM runs
+          WHERE status = 'spec'
+            AND id NOT IN (SELECT DISTINCT run_id FROM run_metrics)
+          ORDER BY project, family, name
+
+      metrics_available:
+        title: Which metrics exist, and where
+        description: >-
+          Start here. Shows every metric name with how many runs report it, so
+          a comparison can be aimed at something that actually has coverage.
+        sql: |-
+          SELECT
+            m.metric,
+            COUNT(DISTINCT m.run_id) AS runs,
+            COUNT(*) AS rows,
+            ROUND(MIN(m.value), 6) AS min,
+            ROUND(MAX(m.value), 6) AS max
+          FROM run_metrics m
+          GROUP BY m.metric
+          ORDER BY runs DESC, m.metric
+
+      run_provenance:
+        title: Trace one run to its artifact
+        description: Every metric of one run, with the file it was read from.
+        sql: |-
+          SELECT
+            r.project, r.name, r.status, r.source_path, r.notes,
+            m.metric, m.value, m.step, m.split
+          FROM runs r
+          LEFT JOIN run_metrics m ON m.run_id = r.id
+          WHERE r.name LIKE :name
+          ORDER BY m.metric, m.step

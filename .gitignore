@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.db
+*.db-wal
+*.db-shm
+.ruff_cache/
+.pytest_cache/
+.env
+
+# Local demo recordings: a 5.5MB .webm plus stills, never committed. Kept out
+# of the repo so a clone stays small -- a binary that large is permanent
+# history once added. Host it externally and link from DEMO.md if it needs to
+# be shared.
+demo/

@@ -1,0 +1,23 @@
+# Spelling and abbreviation variants only -- NEVER conceptual hierarchies.
+# Merging genuinely distinct-if-related concepts (deep-learning into
+# machine-learning, neural-networks into deep-neural-networks) would destroy
+# the structure the graph exists to reveal.
+#
+# Use counts below are from the live database at authoring time and are
+# documentation, not assertions.
+
+[aliases]
+"machinelearning" = "machine-learning"          # 141 -> 532
+"llm" = "large-language-models"                 # 6
+"llms" = "large-language-models"                # 4
+"language-models" = "large-language-models"     # 103
+"nlp" = "natural-language-processing"           # 68 -> 101
+"transformer" = "transformers"                  # 2 -> 109
+"deeplearning" = "deep-learning"                # 4 -> 103
+"deepneuralnetworks" = "deep-neural-networks"   # 3 -> 104
+"generativeai" = "generative-ai"                # 4 -> 36
+"huggingface" = "hugging-face"                  # 12 -> 173
+"languagemodels" = "large-language-models"      # 2 -> 124
+"opensource" = "open-source"                    # 5 -> 257
+"transferlearning" = "transfer-learning"        # 5 -> 40
+"multi-lingual" = "multilingual"                # 3 -> 8

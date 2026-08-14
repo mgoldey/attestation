@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <title>Example ML Blog</title>
+  <item>
+    <title>Serving LLMs on old GPUs</title>
+    <link>https://blog.example.com/old-gpus</link>
+    <pubDate>Sun, 02 Aug 2026 12:00:00 GMT</pubDate>
+    <description>&lt;p&gt;How to squeeze an 8B model onto a GTX 1080.&lt;/p&gt;</description>
+  </item>
+</channel></rss>

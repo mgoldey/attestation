@@ -1,0 +1,42 @@
+# Curated feed suggestions for suggest_feeds. Scored against a persona's
+# liked tags -- never web-searched, never model-invented.
+
+[[candidates]]
+url = "https://rss.arxiv.org/rss/cs.CL"
+title = "arXiv cs.CL (computation and language)"
+tags = ["nlp", "language-models", "machine-learning"]
+
+[[candidates]]
+url = "https://rss.arxiv.org/rss/cs.CV"
+title = "arXiv cs.CV (computer vision)"
+tags = ["computer-vision", "machine-learning", "deep-learning"]
+
+[[candidates]]
+url = "https://rss.arxiv.org/rss/q-bio.BM"
+title = "arXiv q-bio.BM (biomolecules)"
+tags = ["structural-biology", "proteins", "biochemistry"]
+
+[[candidates]]
+url = "https://rss.arxiv.org/rss/cond-mat.mtrl-sci"
+title = "arXiv cond-mat.mtrl-sci (materials science)"
+tags = ["materials", "crystallography", "condensed-matter"]
+
+[[candidates]]
+url = "https://www.nature.com/nature.rss"
+title = "Nature"
+tags = ["science", "research", "general-science"]
+
+[[candidates]]
+url = "https://phys.org/rss-feed/"
+title = "Phys.org"
+tags = ["physics", "science", "general-science"]
+
+[[candidates]]
+url = "https://openai.com/blog/rss.xml"
+title = "OpenAI blog"
+tags = ["machine-learning", "language-models", "industry"]
+
+[[candidates]]
+url = "https://www.deepmind.com/blog/rss.xml"
+title = "Google DeepMind blog"
+tags = ["machine-learning", "reinforcement-learning", "industry"]

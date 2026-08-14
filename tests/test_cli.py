@@ -1,0 +1,218 @@
+from attestation.cli import build_parser, main
+from attestation.db import get_db
+
+
+def test_parser_subcommands():
+    parser = build_parser()
+    for argv in (
+        ["ingest"],
+        ["serve", "--port", "9000"],
+        ["eval", "--user", "matt"],
+        ["warmup"],
+        ["bootstrap-persona", "bench-chemist", "-k", "10"],
+        ["kg-report"],
+    ):
+        assert parser.parse_args(argv).command == argv[0]
+
+
+def test_eval_insufficient_data_message(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    get_db(db).close()
+    rc = main(["eval", "--db", str(db), "--user", "matt"])
+    assert rc == 0
+    assert "insufficient" in capsys.readouterr().out.lower()
+
+
+def test_parser_tag_subcommand():
+    args = build_parser().parse_args(["tag", "--limit", "5"])
+    assert args.command == "tag"
+    assert args.limit == 5
+
+
+def test_parser_install_subcommand_flags():
+    args = build_parser().parse_args(["install", "--check", "--yes", "--now"])
+    assert args.command == "install"
+    assert args.check is True
+    assert args.yes is True
+    assert args.now is True
+
+
+def test_parser_install_subcommand_defaults():
+    args = build_parser().parse_args(["install"])
+    assert args.command == "install"
+    assert args.check is False
+    assert args.yes is False
+    assert args.now is False
+
+
+def test_install_command_dispatches_to_run_install(monkeypatch):
+    import attestation.install
+
+    captured = {}
+
+    def fake_run_install(check=False, yes=False, now=False):
+        captured["check"] = check
+        captured["yes"] = yes
+        captured["now"] = now
+        return 0
+
+    monkeypatch.setattr(attestation.install, "run_install", fake_run_install)
+
+    rc = main(["install", "--check", "--yes"])
+
+    assert rc == 0
+    assert captured == {"check": True, "yes": True, "now": False}
+
+
+def test_install_command_returns_nonzero_exit_from_run_install(monkeypatch):
+    import attestation.install
+
+    monkeypatch.setattr(
+        attestation.install, "run_install", lambda check=False, yes=False, now=False: 1
+    )
+
+    assert main(["install"]) == 1
+
+
+def test_tag_command_prints_stats(tmp_path, capsys, monkeypatch):
+    import attestation.features
+
+    db = tmp_path / "t.db"
+    get_db(db).close()
+    monkeypatch.setattr(
+        attestation.features, "run_tagging", lambda conn, limit=None: {"tagged": 0, "failed": 0}
+    )
+    rc = main(["tag", "--db", str(db)])
+    assert rc == 0
+    assert "tagged" in capsys.readouterr().out
+
+
+def test_tag_command_exit_1_on_total_failure(tmp_path, monkeypatch):
+    import attestation.features
+
+    db = tmp_path / "t.db"
+    get_db(db).close()
+    monkeypatch.setattr(
+        attestation.features, "run_tagging", lambda conn, limit=None: {"tagged": 0, "failed": 3}
+    )
+    assert main(["tag", "--db", str(db)]) == 1
+
+
+def test_warmup_skips_gracefully_on_non_ollama_backend(capsys, monkeypatch):
+    import httpx as _httpx
+
+    import attestation.cli
+
+    def boom(*args, **kwargs):
+        raise _httpx.ConnectError("no ollama here")
+
+    monkeypatch.setattr(attestation.cli.httpx, "post", boom)
+    rc = main(["warmup"])
+    assert rc == 0
+    assert "skipping" in capsys.readouterr().out.lower()
+
+
+def test_main_loads_dotenv(tmp_path, monkeypatch, capsys):
+    """main() must call llm.load_env() before dispatch: a .env in cwd is visible."""
+    import attestation.llm
+
+    (tmp_path / ".env").write_text("CHAT_MODEL=dotenv-model\n")
+    monkeypatch.setattr(attestation.llm, "_REPO_ROOT", tmp_path)  # hermetic vs real checkout .env
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CHAT_MODEL", raising=False)
+    captured = {}
+
+    import attestation.cli
+
+    def fake_warmup():
+        from attestation.llm import chat_model
+
+        captured["model"] = chat_model()
+
+    monkeypatch.setattr(attestation.cli, "warmup", fake_warmup)
+    assert main(["warmup"]) == 0
+    assert captured["model"] == "dotenv-model"
+
+
+def test_kg_report_runs_on_an_empty_database(tmp_path, capsys):
+    """The report must work on a fresh database -- no tags, no graph, no
+    division by zero -- since that is when someone first runs it."""
+    db = tmp_path / "t.db"
+    get_db(db).close()
+
+    rc = main(["kg-report", "--db", str(db)])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "nodes" in out and "singleton_rate" in out
+
+
+def test_parser_runs_subcommands():
+    parser = build_parser()
+    for argv, expected in (
+        (["runs", "scan"], "scan"),
+        (["runs", "list", "--project", "p"], "list"),
+        (["runs", "compare", "fam", "--metric", "wer"], "compare"),
+        (["runs", "show", "p", "n"], "show"),
+    ):
+        args = parser.parse_args(argv)
+        assert args.command == "runs"
+        assert args.runs_command == expected
+
+
+def test_runs_scan_without_a_root_explains_rather_than_crashing(tmp_path, monkeypatch, capsys):
+    """No default workspace is guessed: scanning a directory the user did not
+    mean is worse than saying which variable to set."""
+    monkeypatch.delenv("RESEARCH_ROOT", raising=False)
+    db = tmp_path / "t.db"
+    get_db(db).close()
+
+    rc = main(["runs", "--db", str(db), "scan"])
+
+    assert rc == 1
+    assert "RESEARCH_ROOT" in capsys.readouterr().out
+
+
+def test_runs_list_before_scan_directs_the_user(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    get_db(db).close()
+
+    rc = main(["runs", "--db", str(db), "list"])
+
+    assert rc == 1
+    assert "scan" in capsys.readouterr().out
+
+
+def test_parser_claims_subcommand():
+    args = build_parser().parse_args(["claims", "docs/", "--verdict", "unsupported"])
+    assert args.command == "claims"
+    assert args.verdict == "unsupported"
+
+
+def test_claims_with_no_annotations_shows_the_format(tmp_path, capsys):
+    """A checker that just says "0 claims" teaches nothing; the first run is
+    exactly when the format needs explaining."""
+    db = tmp_path / "t.db"
+    get_db(db).close()
+    (tmp_path / "doc.md").write_text("# no claims here\n")
+
+    rc = main(["claims", "--db", str(db), str(tmp_path)])
+
+    assert rc == 0
+    assert "<!-- claim:" in capsys.readouterr().out
+
+
+def test_claims_exits_nonzero_on_a_contradiction(tmp_path, capsys):
+    """A document asserting something false should be able to fail a commit."""
+    db = tmp_path / "t.db"
+    conn = get_db(db)
+    conn.execute("INSERT INTO runs(project, name, source_path) VALUES ('p', 'r', '/tmp/x')")
+    conn.execute("INSERT INTO run_metrics(run_id, metric, value) VALUES (1, 'wer', 0.9)")
+    conn.commit()
+    conn.close()
+    (tmp_path / "doc.md").write_text("<!-- claim: p/r metric=wer value=0.1 -->\n")
+
+    rc = main(["claims", "--db", str(db), str(tmp_path)])
+
+    assert rc == 1
+    assert "contradicted" in capsys.readouterr().out

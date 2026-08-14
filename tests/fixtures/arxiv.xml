@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <title>cs.LG updates on arXiv.org</title>
+  <item>
+    <title>Paper One: Preference Learning at Scale</title>
+    <link>https://arxiv.org/abs/2608.00001</link>
+    <guid isPermaLink="false">oai:arXiv.org:2608.00001v1</guid>
+    <pubDate>Mon, 03 Aug 2026 00:00:00 GMT</pubDate>
+    <description>arXiv:2608.00001v1 Announce Type: new
+Abstract: We study preference learning for ranking tasks.</description>
+  </item>
+  <item>
+    <title>Paper Two: Vector Search Tricks</title>
+    <link>https://arxiv.org/abs/2608.00002</link>
+    <guid isPermaLink="false">oai:arXiv.org:2608.00002v1</guid>
+    <pubDate>Mon, 03 Aug 2026 00:00:00 GMT</pubDate>
+    <description>arXiv:2608.00002v1 Announce Type: new
+Abstract: Approximate nearest neighbor methods reviewed.</description>
+  </item>
+</channel></rss>
