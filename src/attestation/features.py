@@ -5,6 +5,7 @@ validated, and skips (never blocks) on failure. Nothing in this module runs
 on the rank path except pure-SQL/numpy preference scoring.
 """
 
+import itertools
 import logging
 import sqlite3
 from typing import Literal
@@ -16,6 +17,12 @@ log = logging.getLogger(__name__)
 
 CONTENT_TYPES = ("paper", "survey", "announcement", "release", "blog", "other")
 TAG_PATTERN = r"^[a-z0-9][a-z0-9-]{0,31}$"
+
+# SQLite's SQLITE_LIMIT_VARIABLE_NUMBER default: the max bind parameters in one
+# statement. item_ids here can be every item in the archive (via rank_items'
+# unconditional call chain when exclude_clicked=False), so IN (...) queries
+# must chunk below this limit rather than build one query per item.
+_SQL_VAR_CHUNK = 900
 
 # Tags that describe an item's provenance or its post type rather than its
 # subject. Both axes are already recorded structurally -- the publication in
@@ -239,24 +246,27 @@ def _score(stats: dict[str, list[int]], key: str) -> float:
 
 def _item_keys(conn, item_ids: list[int]) -> dict[int, list[str]]:
     keys: dict[int, list[str]] = {i: [] for i in item_ids}
-    qmarks = ",".join("?" * len(item_ids))
-    for r in conn.execute(
-        f"SELECT item_id, 'tag:' || tag AS key FROM item_tags WHERE item_id IN ({qmarks})",
-        item_ids,
-    ):
-        keys[r["item_id"]].append(r["key"])
-    for r in conn.execute(
-        f"SELECT item_id, 'type:' || content_type AS key FROM item_features"
-        f" WHERE item_id IN ({qmarks})",
-        item_ids,
-    ):
-        keys[r["item_id"]].append(r["key"])
-    for r in conn.execute(
-        f"SELECT id, 'source:' || feed_id AS key FROM items"
-        f" WHERE id IN ({qmarks}) AND feed_id IS NOT NULL",
-        item_ids,
-    ):
-        keys[r["id"]].append(r["key"])
+    # Chunk below SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (32766): item_ids can be
+    # every item in the archive (via pref_scores_for_items <- rank_items).
+    for chunk in itertools.batched(item_ids, _SQL_VAR_CHUNK):
+        qmarks = ",".join("?" * len(chunk))
+        for r in conn.execute(
+            f"SELECT item_id, 'tag:' || tag AS key FROM item_tags WHERE item_id IN ({qmarks})",
+            chunk,
+        ):
+            keys[r["item_id"]].append(r["key"])
+        for r in conn.execute(
+            f"SELECT item_id, 'type:' || content_type AS key FROM item_features"
+            f" WHERE item_id IN ({qmarks})",
+            chunk,
+        ):
+            keys[r["item_id"]].append(r["key"])
+        for r in conn.execute(
+            f"SELECT id, 'source:' || feed_id AS key FROM items"
+            f" WHERE id IN ({qmarks}) AND feed_id IS NOT NULL",
+            chunk,
+        ):
+            keys[r["id"]].append(r["key"])
     return keys
 
 

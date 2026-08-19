@@ -1,3 +1,5 @@
+import hashlib
+
 import numpy as np
 import pytest
 
@@ -12,6 +14,7 @@ from attestation.rank import (
     get_user,
     rank_items,
     ranks,
+    record_click,
 )
 
 
@@ -129,6 +132,38 @@ def test_evaluate_user_insufficient_data(tmp_path, fake_embedder):
     conn = get_db(tmp_path / "t.db")
     seed_corpus(conn, fake_embedder, n=5)
     assert evaluate_user(conn, get_user_id(conn, "matt")) is None
+
+
+def test_evaluate_user_excludes_bootstrap_leakage(tmp_path, fake_embedder):
+    """bootstrap_persona labels are a deterministic linear function of the same
+    embedding the classifier trains on (argsort(X @ profile_vec)), so scoring
+    over them is a tautological AUC of 1.0, not a measurement. evaluate_user
+    must exclude source='bootstrap' clicks rather than report that leaked 1.0."""
+    conn = get_db(tmp_path / "t.db")
+    seed_corpus(conn, fake_embedder, n=60)
+    user_id = get_user_id(conn, "bench-chemist")
+    bootstrap_persona(conn, fake_embedder, "bench-chemist", k=30)
+    # Only bootstrap clicks exist -- after filtering there is nothing left to
+    # evaluate on, so this must be an honest None, never the leaked 1.0.
+    assert evaluate_user(conn, user_id) is None
+
+
+def test_evaluate_user_mixed_real_clicks_returns_float(tmp_path, fake_embedder):
+    """A persona with genuinely mixed non-bootstrap clicks (interleaved labels,
+    not a label-sorted run) yields a real AUC instead of tripping the
+    single-class-tail guard that leave-last-N-out was vulnerable to."""
+    conn = get_db(tmp_path / "t.db")
+    item_ids = seed_corpus(conn, fake_embedder, n=40)
+    user_id = get_user_id(conn, "matt")
+    # Alternate useful/not-useful so the tail is never single-class regardless
+    # of insertion order -- this is the "naturally label-sorted rating
+    # session" failure mode the leave-last-N-out split fell into.
+    for i, item_id in enumerate(item_ids):
+        record_click(conn, user_id, item_id, useful=bool(i % 2), source="ui")
+    result = evaluate_user(conn, user_id)
+    assert result is not None
+    assert isinstance(result, float)
+    assert 0.0 <= result <= 1.0
 
 
 class SpyEmbedder:
@@ -362,4 +397,59 @@ def test_record_click_defaults_to_ui(tmp_path):
     record_click(conn, uid, 1, True)
 
     assert conn.execute("SELECT source FROM clicks").fetchone()["source"] == "ui"
+    conn.close()
+
+
+class _SmallDimsFakeEmbedder:
+    """Like conftest's FakeEmbedder but at a small, configurable dimensionality
+    -- keeps a >32766-item ranking test fast without needing EMBED_DIMS=256."""
+
+    def __init__(self, dims=16):
+        self.dims = dims
+
+    def _vec(self, text: str) -> np.ndarray:
+        seed = int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "big")
+        rng = np.random.default_rng(seed)
+        v = rng.standard_normal(self.dims).astype(np.float32)
+        return v / np.linalg.norm(v)
+
+    def embed_document(self, title, text):
+        return self._vec(f"doc:{title}:{text}")
+
+    def embed_query(self, text):
+        return self._vec(f"query:{text}")
+
+
+def test_rank_items_beyond_sqlite_variable_limit(tmp_path, monkeypatch):
+    """search_feed calls rank_items(since_days=None, exclude_clicked=False), which
+    by design ranks every item in the archive. Past SQLite's default
+    SQLITE_LIMIT_VARIABLE_NUMBER (32766), a naive `IN (?,?,...)` built with one
+    placeholder per candidate raises OperationalError. A small EMBED_DIMS keeps
+    this fast: the vector math is the same regardless of dimensionality."""
+    monkeypatch.setenv("EMBED_DIMS", "16")
+    embedder = _SmallDimsFakeEmbedder(dims=16)
+    conn = get_db(tmp_path / "t.db")
+    n = 32766 + 500
+    rng = np.random.default_rng(0)
+    rows = []
+    for i in range(n):
+        vec = rng.standard_normal(16).astype(np.float32)
+        vec /= np.linalg.norm(vec)
+        rows.append((i + 1, f"item {i}", "http://x", f"summary {i}", f"hash-{i}", vec.tobytes()))
+    conn.executemany(
+        "INSERT INTO items(id, feed_id, title, url, summary, content_hash) "
+        "VALUES (?, NULL, ?, ?, ?, ?)",
+        [(r[0], r[1], r[2], r[3], r[4]) for r in rows],
+    )
+    conn.executemany(
+        "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+        [(r[0], r[5]) for r in rows],
+    )
+    conn.commit()
+
+    result = rank_items(
+        conn, embedder, get_user_id(conn, "matt"), since_days=None, exclude_clicked=False
+    )
+
+    assert len(result) == n
     conn.close()

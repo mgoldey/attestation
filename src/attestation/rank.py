@@ -2,6 +2,7 @@
 term, blended by rank."""
 
 import hashlib
+import itertools
 import logging
 import sqlite3
 
@@ -9,8 +10,15 @@ import numpy as np
 from pydantic import BaseModel
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import StratifiedKFold
 
 from attestation.features import pref_scores_for_items
+
+# SQLite's SQLITE_LIMIT_VARIABLE_NUMBER default: the max bind parameters in one
+# statement. rank_items and search_feed can pass every item in the archive as
+# `ids`, so IN (...) queries built from `ids` must chunk below this limit
+# rather than build one query with len(ids) placeholders.
+_SQL_VAR_CHUNK = 900
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +47,7 @@ class RankedItem(BaseModel):
     explanation: str | None = None
     tags: list[str] = []
     content_type: str | None = None
+    summary: str | None = None
 
 
 def get_user(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
@@ -128,7 +137,7 @@ def _candidate_items(conn, user_id: int, since_days: int | None, *, exclude_clic
     an older or already-rated item is a legitimate search result.
     """
     sql = (
-        "SELECT i.id, i.title, i.url, f.title AS source, v.embedding"
+        "SELECT i.id, i.title, i.url, i.summary, f.title AS source, v.embedding"
         " FROM items i JOIN item_vectors v ON v.rowid = i.id"
         " LEFT JOIN feeds f ON f.id = i.feed_id"
         " WHERE 1=1"
@@ -207,18 +216,20 @@ def rank_items(
         final = w * np.mean(click_ranks, axis=0) + (1 - w) * profile_rank
 
     ids = [r["id"] for r in rows]
-    qmarks = ",".join("?" * len(ids))
-    ctype = {
-        r["item_id"]: r["content_type"]
-        for r in conn.execute(
-            f"SELECT item_id, content_type FROM item_features WHERE item_id IN ({qmarks})", ids
-        )
-    }
+    ctype: dict[int, str] = {}
     tags_by: dict[int, list[str]] = {}
-    for r in conn.execute(
-        f"SELECT item_id, tag FROM item_tags WHERE item_id IN ({qmarks}) ORDER BY tag", ids
-    ):
-        tags_by.setdefault(r["item_id"], []).append(r["tag"])
+    for chunk in itertools.batched(ids, _SQL_VAR_CHUNK):
+        qmarks = ",".join("?" * len(chunk))
+        for r in conn.execute(
+            f"SELECT item_id, content_type FROM item_features WHERE item_id IN ({qmarks})",
+            chunk,
+        ):
+            ctype[r["item_id"]] = r["content_type"]
+        for r in conn.execute(
+            f"SELECT item_id, tag FROM item_tags WHERE item_id IN ({qmarks}) ORDER BY tag",
+            chunk,
+        ):
+            tags_by.setdefault(r["item_id"], []).append(r["tag"])
 
     order = np.argsort(final)
     return [
@@ -230,6 +241,7 @@ def rank_items(
             score=float(final[i]),
             tags=tags_by.get(rows[i]["id"], []),
             content_type=ctype.get(rows[i]["id"]),
+            summary=rows[i]["summary"],
         )
         for i in order
     ]
@@ -237,7 +249,17 @@ def rank_items(
 
 def bootstrap_persona(conn, embedder, user_name: str, k: int = 30) -> int:
     """Pseudo-clicks for a synthetic persona: top-k/2 by profile similarity -> useful,
-    bottom-k/2 -> not useful. Optional demo garnish; persona switch works without it."""
+    bottom-k/2 -> not useful. Optional demo garnish; persona switch works without it.
+
+    DEMO FIXTURE ONLY -- NOT GROUND TRUTH. The useful/not-useful label is a
+    deterministic linear threshold on the exact same embedding X that
+    classifier_probs() trains on (`argsort(X @ embed_query(interests))`,
+    top half vs. bottom half). A linear classifier fit on X to predict a
+    linear threshold of X recovers it essentially perfectly, so any AUC
+    computed over these rows is a tautology, not a measurement of ranking
+    quality. evaluate_user() excludes source='bootstrap' clicks for exactly
+    this reason -- never remove that filter to "get more eval data".
+    """
     user = get_user(conn, user_name)
     if user is None:
         raise ValueError(f"unknown user: {user_name!r}")
@@ -265,21 +287,49 @@ def bootstrap_persona(conn, embedder, user_name: str, k: int = 30) -> int:
 
 
 def evaluate_user(conn, user_id: int, n_holdout: int = 5) -> float | None:
-    """Leave-last-N-out AUC. Honest noise at small n -- never present as evidence."""
+    """Stratified-holdout AUC over real (non-bootstrap) clicks only.
+
+    Honest noise at small n -- never present as evidence.
+
+    source='bootstrap' clicks are excluded: their useful/not-useful label is a
+    deterministic linear threshold on the same embedding the classifier
+    trains on (see bootstrap_persona docstring), so any AUC computed over
+    them is a tautology rather than a measurement.
+
+    The holdout fold is drawn with a fixed-seed stratified split rather than
+    "last n_holdout rows in clicked_at order": clicked_at defaults to
+    second-resolution datetime('now'), so rows inserted in one batch (as
+    bootstrap_persona and any naturally label-sorted rating session do) tie
+    and fall back to insertion order, making a trailing slice single-class by
+    construction -- always returning None instead of an honest score.
+    """
     rows = conn.execute(
         "SELECT c.useful, v.embedding FROM clicks c"
         " JOIN item_vectors v ON v.rowid = c.item_id"
-        " WHERE c.user_id = ? ORDER BY c.clicked_at, c.id",
+        " WHERE c.user_id = ? AND c.source != 'bootstrap'"
+        " ORDER BY c.clicked_at, c.id",
         (user_id,),
     ).fetchall()
     if len(rows) < n_holdout + 5:
         return None
     y = np.array([r["useful"] for r in rows])
     X = np.stack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])
-    X_train, y_train = X[:-n_holdout], y[:-n_holdout]
-    X_test, y_test = X[-n_holdout:], y[-n_holdout:]
-    if len(set(y_train.tolist())) < 2 or len(set(y_test.tolist())) < 2:
+    if len(set(y.tolist())) < 2:
+        return None  # single-class overall: no split can produce a mixed test fold
+
+    n_splits = max(2, len(rows) // n_holdout)
+    n_splits = min(n_splits, np.bincount(y).min())  # each class needs >= n_splits members
+    if n_splits < 2:
         return None
-    clf = LogisticRegression(class_weight="balanced", C=0.1, max_iter=1000)
-    clf.fit(X_train, y_train)
-    return float(roc_auc_score(y_test, clf.predict_proba(X_test)[:, 1]))
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=0)
+    aucs = []
+    for train_idx, test_idx in skf.split(X, y):
+        y_train, y_test = y[train_idx], y[test_idx]
+        if len(set(y_train.tolist())) < 2 or len(set(y_test.tolist())) < 2:
+            continue
+        clf = LogisticRegression(class_weight="balanced", C=0.1, max_iter=1000)
+        clf.fit(X[train_idx], y_train)
+        aucs.append(roc_auc_score(y_test, clf.predict_proba(X[test_idx])[:, 1]))
+    if not aucs:
+        return None
+    return float(np.mean(aucs))
