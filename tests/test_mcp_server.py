@@ -62,9 +62,9 @@ class TestListFeed:
 
     def test_unknown_user_gives_clear_error_not_exception(self, seeded_conn):
         result = mcp_server._list_feed_impl("nobody", limit=5)
-        assert "error" in result
-        assert "nobody" in result["error"]
-        assert "matt" in result["error"]  # names a valid user
+        assert result["ok"] is False
+        assert "nobody" in result["message"]
+        assert "matt" in result["message"]  # names a valid user
 
     def test_no_items_no_crash(self, _patch_env_db, fake_embedder, monkeypatch):
         # DB with a user but zero items
@@ -140,12 +140,14 @@ class TestExplainItem:
     def test_unknown_user_gives_clear_error(self, seeded_conn):
         result = mcp_server._explain_item_impl("nobody", 1)
         assert result["explanation"] is None
-        assert "nobody" in result["error"]
+        assert result["ok"] is False
+        assert "nobody" in result["message"]
 
     def test_unknown_item_id(self, seeded_conn):
         result = mcp_server._explain_item_impl("matt", 999999)
         assert result["explanation"] is None
-        assert "error" in result
+        assert result["ok"] is False
+        assert "999999" in result["message"]
 
 
 class TestListUsers:
@@ -240,6 +242,32 @@ def test_search_feed_finds_already_rated_items(seeded_conn):
     assert any(i["already_rated"] for i in out["items"])
 
 
+def test_search_feed_matches_summary_only(seeded_conn, fake_embedder):
+    """The needle appears only in the summary, never in any seeded title --
+    proves search_feed matches against summary text, not title alone."""
+    conn = get_db(seeded_conn)
+    cur = conn.execute(
+        "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+        " VALUES (NULL, 'unrelated headline', 'http://x', ?, 'hash-summary-only')",
+        ("a survey of quixotic transformers in the wild",),
+    )
+    vec = fake_embedder.embed_document("unrelated headline", "a survey of quixotic transformers")
+    conn.execute(
+        "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)", (cur.lastrowid, vec.tobytes())
+    )
+    conn.commit()
+    conn.close()
+
+    mcp_server._create_persona_impl("summary-searcher", "transformers")
+
+    out = mcp_server._search_feed_impl("summary-searcher", "quixotic")
+
+    assert out["ok"] is True
+    assert any(i["item_id"] == cur.lastrowid for i in out["items"]), (
+        "search_feed must match against summary text, not title alone"
+    )
+
+
 def test_search_feed_nonpositive_limit_is_clamped(seeded_conn):
     mcp_server._create_persona_impl("searcher2", "items")
 
@@ -248,3 +276,58 @@ def test_search_feed_nonpositive_limit_is_clamped(seeded_conn):
 
     assert len(zero["items"]) <= 1
     assert len(negative["items"]) <= 1
+
+
+def test_delete_persona_does_not_leak_explanations_to_a_recreated_id(seeded_conn):
+    """users.id is a reused rowid: deleting alice and recreating a persona at
+    the same id must not hand the new persona alice's cached explanation."""
+    from attestation.db import get_db, resolve_db_path
+
+    mcp_server._create_persona_impl("alice", "quantum chemistry")
+    conn = get_db(resolve_db_path(None))
+    alice_id = conn.execute("SELECT id FROM users WHERE name = 'alice'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO explanations(user_id, item_id, text) VALUES (?, 1, 'alice-only text')",
+        (alice_id,),
+    )
+    conn.commit()
+    conn.close()
+
+    out = mcp_server._delete_persona_impl("alice", confirm=True)
+    assert out["ok"] is True
+
+    conn = get_db(resolve_db_path(None))
+    remaining = conn.execute(
+        "SELECT COUNT(*) n FROM explanations WHERE user_id = ?", (alice_id,)
+    ).fetchone()["n"]
+    assert remaining == 0
+    conn.close()
+
+    # a new persona landing on the same reused id must see no explanations
+    mcp_server._create_persona_impl("bob", "unrelated interests")
+    conn = get_db(resolve_db_path(None))
+    bob_id = conn.execute("SELECT id FROM users WHERE name = 'bob'").fetchone()["id"]
+    assert bob_id == alice_id, "test assumes SQLite reused the freed rowid"
+    bob_explanations = conn.execute(
+        "SELECT COUNT(*) n FROM explanations WHERE user_id = ?", (bob_id,)
+    ).fetchone()["n"]
+    conn.close()
+    assert bob_explanations == 0
+
+
+def test_delete_highest_rowid_item_leaves_no_stale_item_vectors_row(seeded_conn):
+    """items.id is a reused rowid: deleting the highest-id item must also drop
+    its item_vectors row so a future item can't inherit a stale vector."""
+    from attestation.db import get_db, resolve_db_path
+
+    conn = get_db(resolve_db_path(None))
+    highest_id = conn.execute("SELECT MAX(id) m FROM items").fetchone()["m"]
+
+    conn.execute("DELETE FROM items WHERE id = ?", (highest_id,))
+    conn.commit()
+
+    remaining = conn.execute(
+        "SELECT COUNT(*) n FROM item_vectors WHERE rowid = ?", (highest_id,)
+    ).fetchone()["n"]
+    conn.close()
+    assert remaining == 0

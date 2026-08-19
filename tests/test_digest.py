@@ -4,6 +4,7 @@ import pytest
 
 from attestation import mcp_server
 from attestation.db import get_db
+from attestation.rank import RankedItem
 
 
 def seed(db_path, clicks=((1, 1),), n_items=6):
@@ -38,33 +39,38 @@ def db(tmp_path, monkeypatch):
     return path
 
 
+def _item(item_id, tags, score=1.0, title=None):
+    return RankedItem(
+        item_id=item_id,
+        title=title or f"t{item_id}",
+        url="u",
+        source="s",
+        score=score,
+        tags=tags,
+        content_type="paper",
+    )
+
+
+def _fake_ranked_items(items):
+    """Build a stand-in for _ranked_items(conn, user_row, limit, since_days)."""
+
+    def fake(conn, user_row, limit, since_days):
+        return items
+
+    return fake
+
+
 def test_items_group_under_the_cluster_their_tags_match(db, monkeypatch):
     seed(db)
     monkeypatch.setattr(
         mcp_server,
-        "_list_feed_impl",
-        lambda user, limit=20, since_days=None: {
-            "items": [
-                {
-                    "item_id": 1,
-                    "title": "a",
-                    "url": "u",
-                    "source": "s",
-                    "score": 1.0,
-                    "tags": ["alpha", "beta"],
-                    "content_type": "paper",
-                },
-                {
-                    "item_id": 2,
-                    "title": "b",
-                    "url": "u",
-                    "source": "s",
-                    "score": 0.9,
-                    "tags": ["delta", "epsilon"],
-                    "content_type": "paper",
-                },
+        "_ranked_items",
+        _fake_ranked_items(
+            [
+                _item(1, ["alpha", "beta"]),
+                _item(2, ["delta", "epsilon"], score=0.9),
             ]
-        },
+        ),
     )
 
     out = mcp_server._digest_impl("matt")
@@ -80,20 +86,8 @@ def test_an_item_matching_no_cluster_is_reported_not_dropped(db, monkeypatch):
     seed(db)
     monkeypatch.setattr(
         mcp_server,
-        "_list_feed_impl",
-        lambda user, limit=20, since_days=None: {
-            "items": [
-                {
-                    "item_id": 9,
-                    "title": "orphan",
-                    "url": "u",
-                    "source": "s",
-                    "score": 1.0,
-                    "tags": ["nothing-matches-this"],
-                    "content_type": "paper",
-                }
-            ]
-        },
+        "_ranked_items",
+        _fake_ranked_items([_item(9, ["nothing-matches-this"], title="orphan")]),
     )
 
     out = mcp_server._digest_impl("matt")
@@ -105,21 +99,8 @@ def test_an_item_matching_no_cluster_is_reported_not_dropped(db, monkeypatch):
 def test_per_topic_truncates_but_n_total_stays_true(db, monkeypatch):
     """Silent truncation reads as 'that was everything'."""
     seed(db)
-    items = [
-        {
-            "item_id": i,
-            "title": f"t{i}",
-            "url": "u",
-            "source": "s",
-            "score": 1.0,
-            "tags": ["alpha", "beta"],
-            "content_type": "paper",
-        }
-        for i in range(1, 6)
-    ]
-    monkeypatch.setattr(
-        mcp_server, "_list_feed_impl", lambda user, limit=20, since_days=None: {"items": items}
-    )
+    items = [_item(i, ["alpha", "beta"]) for i in range(1, 6)]
+    monkeypatch.setattr(mcp_server, "_ranked_items", _fake_ranked_items(items))
 
     out = mcp_server._digest_impl("matt", per_topic=2)
 
@@ -129,26 +110,11 @@ def test_per_topic_truncates_but_n_total_stays_true(db, monkeypatch):
 
 def test_single_class_clicks_report_the_classifier_as_inactive(db, monkeypatch):
     """rank.py's single-class guard means the click classifier never fires, so
-    the order is embedding similarity alone. A digest that hides this looks
-    identical to one from a well-trained ranker."""
+    the order blends embedding similarity with a feature-preference term
+    learned from the clicks. A digest that hides this looks identical to one
+    from a well-trained ranker."""
     seed(db, clicks=((1, 1), (2, 1), (3, 1)))
-    monkeypatch.setattr(
-        mcp_server,
-        "_list_feed_impl",
-        lambda user, limit=20, since_days=None: {
-            "items": [
-                {
-                    "item_id": 1,
-                    "title": "a",
-                    "url": "u",
-                    "source": "s",
-                    "score": 1.0,
-                    "tags": ["alpha"],
-                    "content_type": "paper",
-                }
-            ]
-        },
-    )
+    monkeypatch.setattr(mcp_server, "_ranked_items", _fake_ranked_items([_item(1, ["alpha"])]))
 
     quality = mcp_server._digest_impl("matt")["ranking_quality"]
 
@@ -159,23 +125,7 @@ def test_single_class_clicks_report_the_classifier_as_inactive(db, monkeypatch):
 
 def test_both_classes_activate_the_classifier(db, monkeypatch):
     seed(db, clicks=((1, 1), (2, 0)))
-    monkeypatch.setattr(
-        mcp_server,
-        "_list_feed_impl",
-        lambda user, limit=20, since_days=None: {
-            "items": [
-                {
-                    "item_id": 1,
-                    "title": "a",
-                    "url": "u",
-                    "source": "s",
-                    "score": 1.0,
-                    "tags": ["alpha"],
-                    "content_type": "paper",
-                }
-            ]
-        },
-    )
+    monkeypatch.setattr(mcp_server, "_ranked_items", _fake_ranked_items([_item(1, ["alpha"])]))
 
     quality = mcp_server._digest_impl("matt")["ranking_quality"]
 
@@ -185,9 +135,7 @@ def test_both_classes_activate_the_classifier(db, monkeypatch):
 
 def test_empty_feed_preserves_success_path_keys(db, monkeypatch):
     seed(db)
-    monkeypatch.setattr(
-        mcp_server, "_list_feed_impl", lambda user, limit=20, since_days=None: {"items": []}
-    )
+    monkeypatch.setattr(mcp_server, "_ranked_items", _fake_ranked_items([]))
 
     out = mcp_server._digest_impl("matt")
 
@@ -206,21 +154,8 @@ def test_unknown_user_is_reported(db):
 
 def test_digest_is_deterministic(db, monkeypatch):
     seed(db)
-    items = [
-        {
-            "item_id": i,
-            "title": f"t{i}",
-            "url": "u",
-            "source": "s",
-            "score": 1.0,
-            "tags": ["alpha", "beta"],
-            "content_type": "paper",
-        }
-        for i in range(1, 4)
-    ]
-    monkeypatch.setattr(
-        mcp_server, "_list_feed_impl", lambda user, limit=20, since_days=None: {"items": items}
-    )
+    items = [_item(i, ["alpha", "beta"]) for i in range(1, 4)]
+    monkeypatch.setattr(mcp_server, "_ranked_items", _fake_ranked_items(items))
 
     first = mcp_server._digest_impl("matt")
     second = mcp_server._digest_impl("matt")
@@ -240,7 +175,8 @@ def test_days_reaches_the_ranker(db, monkeypatch):
 
     The bug this pins: _list_feed_impl took only (user, limit), so days never
     reached rank_items' since_days and digest(days=7) returned exactly what
-    digest(days=90) did.
+    digest(days=90) did. _ranked_items is now the shared chokepoint both
+    list_feed and digest funnel through, so this pins since_days at that layer.
     """
     seed(db)
     seen = {}

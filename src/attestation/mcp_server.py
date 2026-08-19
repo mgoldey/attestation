@@ -6,6 +6,7 @@ process stays stateless between calls and honors RSS_DB like the CLI/server do.
 The embedder is constructed lazily and shared across calls (it's just an httpx client).
 """
 
+import contextlib
 import logging
 
 from mcp.server.fastmcp import FastMCP
@@ -13,7 +14,7 @@ from mcp.server.fastmcp import FastMCP
 from attestation.db import get_db, resolve_db_path
 from attestation.explain import explain as explain_item_fn
 from attestation.llm import default_chat_fn
-from attestation.rank import get_user, rank_items, record_click
+from attestation.rank import _PROFILE_VEC_CACHE, _db_identity, get_user, rank_items, record_click
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +34,23 @@ def _get_embedder():
     return _embedder
 
 
+@contextlib.contextmanager
+def open_db(path=None):
+    """One connection per tool call: open, yield, always close.
+
+    sqlite3.Connection is not itself a closing context manager -- its
+    __enter__/__exit__ manage transactions, not the handle -- so this wraps
+    get_db(resolve_db_path(path)) in a real close-on-exit contract and
+    replaces the 26 repeated open/try/finally blocks that used to do this by
+    hand.
+    """
+    conn = get_db(resolve_db_path(path))
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 def _valid_users(conn) -> list[str]:
     return [r["name"] for r in conn.execute("SELECT name FROM users ORDER BY name")]
 
@@ -42,6 +60,13 @@ def _unknown_user_message(conn, user: str) -> str:
     return f"unknown user: {user!r}. Valid users: {', '.join(valid) if valid else '(none seeded)'}"
 
 
+def _ranked_items(conn, user_row, limit: int, since_days: int | None) -> list:
+    """Rank items for an already-resolved user row against a connection the
+    caller owns. Shared by _list_feed_impl and _digest_impl so digest does not
+    open a second connection to rank the same feed (see module docstring)."""
+    return rank_items(conn, _get_embedder(), user_row["id"], since_days)[:limit]
+
+
 def _list_feed_impl(user: str, limit: int = 10, since_days: int | None = 14) -> dict:
     """Shared implementation for the list_feed tool; kept import-testable without FastMCP.
 
@@ -49,119 +74,125 @@ def _list_feed_impl(user: str, limit: int = 10, since_days: int | None = 14) -> 
     behavior is unchanged; digest passes its `days` through here.
     """
     limit = min(max(int(limit), 1), MAX_LIST_LIMIT)
-    conn = get_db(resolve_db_path(None))
-    try:
-        row = get_user(conn, user)
-        if row is None:
-            return {"error": _unknown_user_message(conn, user)}
-        items = rank_items(conn, _get_embedder(), row["id"], since_days)[:limit]
-        return {
-            "items": [
-                {
-                    "item_id": it.item_id,
-                    "title": it.title,
-                    "url": it.url,
-                    "source": it.source,
-                    "score": it.score,
-                    "tags": it.tags,
-                    "content_type": it.content_type,
-                }
-                for it in items
-            ]
-        }
-    except Exception:
-        log.exception("list_feed failed for user=%s", user)
-        return {"error": "internal error ranking feed; see server logs"}
-    finally:
-        conn.close()
+    empty = {"items": [], "ranking_quality": {}}
+    with open_db() as conn:
+        try:
+            row = get_user(conn, user)
+            if row is None:
+                return {"ok": False, "message": _unknown_user_message(conn, user), **empty}
+            items = _ranked_items(conn, row, limit, since_days)
+            return {
+                "ok": True,
+                "message": f"{len(items)} item(s), best first",
+                "items": [
+                    {
+                        "item_id": it.item_id,
+                        "title": it.title,
+                        "url": it.url,
+                        "source": it.source,
+                        "score": it.score,
+                        "tags": it.tags,
+                        "content_type": it.content_type,
+                    }
+                    for it in items
+                ],
+                "ranking_quality": _ranking_quality(conn, row["id"]),
+            }
+        except Exception:
+            log.exception("list_feed failed for user=%s", user)
+            return {"ok": False, "message": "internal error ranking feed; see server logs", **empty}
 
 
 def _record_feedback_impl(user: str, item_id: int, useful: bool) -> dict:
     """Shared implementation for the record_feedback tool."""
-    conn = get_db(resolve_db_path(None))
-    try:
-        row = get_user(conn, user)
-        if row is None:
-            return {"ok": False, "message": _unknown_user_message(conn, user)}
-        item = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
-        if item is None:
-            return {"ok": False, "message": f"unknown item_id: {item_id}"}
-        record_click(conn, row["id"], item_id, useful, source="agent")
-        return {
-            "ok": True,
-            "message": f"recorded useful={useful} for item {item_id} (user {user}); "
-            "ranking will reflect this on the next list_feed call",
-        }
-    except Exception:
-        log.exception("record_feedback failed for user=%s item_id=%s", user, item_id)
-        return {"ok": False, "message": "internal error recording feedback; see server logs"}
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            row = get_user(conn, user)
+            if row is None:
+                return {"ok": False, "message": _unknown_user_message(conn, user)}
+            item = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
+            if item is None:
+                return {"ok": False, "message": f"unknown item_id: {item_id}"}
+            record_click(conn, row["id"], item_id, useful, source="agent")
+            return {
+                "ok": True,
+                "message": f"recorded useful={useful} for item {item_id} (user {user}); "
+                "ranking will reflect this on the next list_feed call",
+            }
+        except Exception:
+            log.exception("record_feedback failed for user=%s item_id=%s", user, item_id)
+            return {"ok": False, "message": "internal error recording feedback; see server logs"}
 
 
 def _explain_item_impl(user: str, item_id: int) -> dict:
     """Shared implementation for the explain_item tool."""
-    conn = get_db(resolve_db_path(None))
-    try:
-        row = get_user(conn, user)
-        if row is None:
-            return {"explanation": None, "error": _unknown_user_message(conn, user)}
-        item = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
-        if item is None:
-            return {"explanation": None, "error": f"unknown item_id: {item_id}"}
-        text = explain_item_fn(conn, row["id"], item_id, chat_fn=default_chat_fn)
-        return {"explanation": text}
-    except Exception:
-        log.exception("explain_item failed for user=%s item_id=%s", user, item_id)
-        return {
-            "explanation": None,
-            "error": "internal error generating explanation; see server logs",
-        }
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            row = get_user(conn, user)
+            if row is None:
+                return {
+                    "ok": False,
+                    "message": _unknown_user_message(conn, user),
+                    "explanation": None,
+                }
+            item = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
+            if item is None:
+                return {"ok": False, "message": f"unknown item_id: {item_id}", "explanation": None}
+            text = explain_item_fn(conn, row["id"], item_id, chat_fn=default_chat_fn)
+            return {"ok": True, "message": "", "explanation": text}
+        except Exception:
+            log.exception("explain_item failed for user=%s item_id=%s", user, item_id)
+            return {
+                "ok": False,
+                "message": "internal error generating explanation; see server logs",
+                "explanation": None,
+            }
 
 
 def _list_users_impl() -> dict:
     """Shared implementation for the list_users tool."""
-    conn = get_db(resolve_db_path(None))
-    try:
-        rows = conn.execute("SELECT name, interests FROM users ORDER BY name").fetchall()
-        return {"users": [{"name": r["name"], "interests": r["interests"]} for r in rows]}
-    except Exception:
-        log.exception("list_users failed")
-        return {"users": [], "error": "internal error listing users; see server logs"}
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            rows = conn.execute("SELECT name, interests FROM users ORDER BY name").fetchall()
+            return {
+                "ok": True,
+                "message": f"{len(rows)} user(s)",
+                "users": [{"name": r["name"], "interests": r["interests"]} for r in rows],
+            }
+        except Exception:
+            log.exception("list_users failed")
+            return {
+                "ok": False,
+                "message": "internal error listing users; see server logs",
+                "users": [],
+            }
 
 
 def _add_feed_impl(url: str, title: str | None = None) -> dict:
     from attestation import feeds as feeds_mod
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        return feeds_mod.add_feed(conn, url, title)
-    except Exception:
-        log.exception("add_feed failed for url=%s", url)
-        return {"ok": False, "feed_id": None, "message": "internal error adding feed"}
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            return feeds_mod.add_feed(conn, url, title)
+        except Exception:
+            log.exception("add_feed failed for url=%s", url)
+            return {"ok": False, "feed_id": None, "message": "internal error adding feed"}
 
 
 def _list_feeds_impl() -> dict:
     from attestation import feeds as feeds_mod
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        return {"feeds": feeds_mod.list_feeds(conn)}
-    except Exception:
-        log.exception("list_feeds failed")
-        return {
-            "feeds": [],
-            "ok": False,
-            "message": "internal error listing feeds; see server logs",
-        }
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            feeds = feeds_mod.list_feeds(conn)
+            return {"ok": True, "message": f"{len(feeds)} feed(s)", "feeds": feeds}
+        except Exception:
+            log.exception("list_feeds failed")
+            return {
+                "ok": False,
+                "message": "internal error listing feeds; see server logs",
+                "feeds": [],
+            }
 
 
 def _remove_feed_impl(feed_id: int, confirm: bool = False) -> dict:
@@ -177,18 +208,16 @@ def _remove_feed_impl(feed_id: int, confirm: bool = False) -> dict:
             ),
             "orphaned_items": 0,
         }
-    conn = get_db(resolve_db_path(None))
-    try:
-        return feeds_mod.remove_feed(conn, feed_id)
-    except Exception:
-        log.exception("remove_feed failed for feed_id=%s", feed_id)
-        return {
-            "ok": False,
-            "message": "internal error removing feed; see server logs",
-            "orphaned_items": 0,
-        }
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            return feeds_mod.remove_feed(conn, feed_id)
+        except Exception:
+            log.exception("remove_feed failed for feed_id=%s", feed_id)
+            return {
+                "ok": False,
+                "message": "internal error removing feed; see server logs",
+                "orphaned_items": 0,
+            }
 
 
 def _preview_feed_impl(url: str, limit: int = 5) -> dict:
@@ -209,29 +238,31 @@ def _preview_feed_impl(url: str, limit: int = 5) -> dict:
 def _suggest_feeds_impl(user: str, limit: int = 5) -> dict:
     from attestation import feeds as feeds_mod
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        row = get_user(conn, user)
-        if row is None:
-            return {"ok": False, "message": _unknown_user_message(conn, user), "suggestions": []}
-        return {
-            "ok": True,
-            "message": "scored against tags you marked useful",
-            "suggestions": feeds_mod.suggest_feeds(conn, row["id"], limit=limit),
-        }
-    except Exception:
-        log.exception("suggest_feeds failed for user=%s", user)
-        return {
-            "ok": False,
-            "message": "internal error suggesting feeds; see server logs",
-            "suggestions": [],
-        }
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            row = get_user(conn, user)
+            if row is None:
+                return {
+                    "ok": False,
+                    "message": _unknown_user_message(conn, user),
+                    "suggestions": [],
+                }
+            return {
+                "ok": True,
+                "message": "scored against tags you marked useful",
+                "suggestions": feeds_mod.suggest_feeds(conn, row["id"], limit=limit),
+            }
+        except Exception:
+            log.exception("suggest_feeds failed for user=%s", user)
+            return {
+                "ok": False,
+                "message": "internal error suggesting feeds; see server logs",
+                "suggestions": [],
+            }
 
 
 @mcp.tool()
-def list_feed(user: str, limit: int = 10) -> dict:
+def list_feed(user: str, limit: int = 10, since_days: int | None = 14) -> dict:
     """List this user's currently ranked, unread feed items (best first).
 
     Returns each item's id, title, url, source feed name, and its blended rank
@@ -242,8 +273,19 @@ def list_feed(user: str, limit: int = 10) -> dict:
     Each item also carries its LLM-extracted topic "tags" and "content_type"
     (paper/survey/announcement/release/blog/other) when the tagging pass has
     processed it; both are empty/null for not-yet-tagged items.
+
+    `since_days` bounds how far back the feed reaches -- defaults to 14, so an
+    empty result may mean "nothing published in the window" rather than
+    "nothing relevant"; pass a larger value or `None` (unbounded) to tell them
+    apart. Use `search_feed` instead for the whole archive including already-
+    rated items.
+
+    **Read `ranking_quality` before trusting the order.** With a single-class
+    click history the click classifier never fires, and depending on click
+    count the order may fall back partly or fully to embedding similarity --
+    see the `caveat` field for which terms are actually contributing.
     """
-    return _list_feed_impl(user, limit)
+    return _list_feed_impl(user, limit, since_days)
 
 
 @mcp.tool()
@@ -323,128 +365,122 @@ def suggest_feeds(user: str, limit: int = 5) -> dict:
 def _create_persona_impl(name: str, interests: str) -> dict:
     from attestation.rank import create_user
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        uid = create_user(conn, name, interests)
-        return {
-            "ok": True,
-            "user_id": uid,
-            "message": (
-                f"created persona {name!r}. Ranking starts from its interests text; "
-                "record_feedback calls will personalize it from the first click."
-            ),
-        }
-    except ValueError as exc:
-        return {"ok": False, "user_id": None, "message": str(exc)}
-    except Exception:
-        log.exception("create_persona failed for name=%s", name)
-        return {
-            "ok": False,
-            "user_id": None,
-            "message": "internal error creating persona; see server logs",
-        }
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            uid = create_user(conn, name, interests)
+            return {
+                "ok": True,
+                "user_id": uid,
+                "message": (
+                    f"created persona {name!r}. Ranking starts from its interests text; "
+                    "record_feedback calls will personalize it from the first click."
+                ),
+            }
+        except ValueError as exc:
+            return {"ok": False, "user_id": None, "message": str(exc)}
+        except Exception:
+            log.exception("create_persona failed for name=%s", name)
+            return {
+                "ok": False,
+                "user_id": None,
+                "message": "internal error creating persona; see server logs",
+            }
 
 
 def _update_persona_impl(name: str, interests: str) -> dict:
-    conn = get_db(resolve_db_path(None))
-    try:
-        row = get_user(conn, name)
-        if row is None:
-            return {"ok": False, "message": _unknown_user_message(conn, name)}
-        conn.execute("UPDATE users SET interests = ? WHERE id = ?", (interests, row["id"]))
-        conn.commit()
-        return {
-            "ok": True,
-            "message": f"updated interests for {name!r}; ranking re-embeds on next use",
-        }
-    except Exception:
-        log.exception("update_persona failed for name=%s", name)
-        return {"ok": False, "message": "internal error updating persona; see server logs"}
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            row = get_user(conn, name)
+            if row is None:
+                return {"ok": False, "message": _unknown_user_message(conn, name)}
+            conn.execute("UPDATE users SET interests = ? WHERE id = ?", (interests, row["id"]))
+            conn.commit()
+            return {
+                "ok": True,
+                "message": f"updated interests for {name!r}; ranking re-embeds on next use",
+            }
+        except Exception:
+            log.exception("update_persona failed for name=%s", name)
+            return {"ok": False, "message": "internal error updating persona; see server logs"}
 
 
 def _propose_interests_impl(limit: int = 12) -> dict:
-    conn = get_db(resolve_db_path(None))
-    try:
-        tags = [
-            r["tag"]
-            for r in conn.execute(
-                "SELECT tag FROM item_tags GROUP BY tag ORDER BY COUNT(*) DESC, tag LIMIT ?",
-                (limit,),
-            )
-        ]
-        return {
-            "ok": True,
-            "prevalent_tags": tags,
-            "message": (
-                "most common tags in the current feed; combine the relevant ones into "
-                "an interests string and pass it to create_persona"
-            ),
-        }
-    except Exception:
-        log.exception("propose_interests failed for limit=%s", limit)
-        return {
-            "ok": False,
-            "prevalent_tags": [],
-            "message": "internal error proposing interests; see server logs",
-        }
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            tags = [
+                r["tag"]
+                for r in conn.execute(
+                    "SELECT tag FROM item_tags GROUP BY tag ORDER BY COUNT(*) DESC, tag LIMIT ?",
+                    (limit,),
+                )
+            ]
+            return {
+                "ok": True,
+                "prevalent_tags": tags,
+                "message": (
+                    "most common tags in the current feed; combine the relevant ones into "
+                    "an interests string and pass it to create_persona"
+                ),
+            }
+        except Exception:
+            log.exception("propose_interests failed for limit=%s", limit)
+            return {
+                "ok": False,
+                "prevalent_tags": [],
+                "message": "internal error proposing interests; see server logs",
+            }
 
 
 def _profile_status_impl(user: str) -> dict:
     from attestation.features import _key_stats, _score
     from attestation.rank import blend_weight
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        row = get_user(conn, user)
-        if row is None:
-            return {"ok": False, "message": _unknown_user_message(conn, user)}
-        n_clicks = conn.execute(
-            "SELECT COUNT(*) c FROM clicks WHERE user_id = ?", (row["id"],)
-        ).fetchone()["c"]
-        stats = _key_stats(conn, row["id"])
-        scored = sorted(((k, _score(stats, k)) for k in stats), key=lambda kv: kv[1], reverse=True)
-        by_source = {
-            r["source"]: r["n"]
-            for r in conn.execute(
-                "SELECT source, COUNT(*) AS n FROM clicks WHERE user_id = ? GROUP BY source",
-                (row["id"],),
+    with open_db() as conn:
+        try:
+            row = get_user(conn, user)
+            if row is None:
+                return {"ok": False, "message": _unknown_user_message(conn, user)}
+            n_clicks = conn.execute(
+                "SELECT COUNT(*) c FROM clicks WHERE user_id = ?", (row["id"],)
+            ).fetchone()["c"]
+            stats = _key_stats(conn, row["id"])
+            scored = sorted(
+                ((k, _score(stats, k)) for k in stats), key=lambda kv: kv[1], reverse=True
             )
-        }
-        return {
-            "ok": True,
-            "user": user,
-            "interests": row["interests"],
-            "clicks": n_clicks,
-            "clicks_by_source": by_source,
-            "blend_weight": round(blend_weight(n_clicks), 3),
-            "top_liked": [k for k, v in scored[:5] if v > 0.5],
-            "top_disliked": [k for k, v in reversed(scored[-5:]) if v < 0.5],
-            "message": (
-                f"{n_clicks} click(s); ranking is {round(blend_weight(n_clicks) * 100)}% "
-                "driven by observed behavior and the rest by the interests text"
-            ),
-        }
-    except Exception:
-        log.exception("profile_status failed for user=%s", user)
-        return {
-            "ok": False,
-            "user": user,
-            "interests": None,
-            "clicks": 0,
-            "clicks_by_source": {},
-            "blend_weight": 0.0,
-            "top_liked": [],
-            "top_disliked": [],
-            "message": "internal error computing profile status; see server logs",
-        }
-    finally:
-        conn.close()
+            by_source = {
+                r["source"]: r["n"]
+                for r in conn.execute(
+                    "SELECT source, COUNT(*) AS n FROM clicks WHERE user_id = ? GROUP BY source",
+                    (row["id"],),
+                )
+            }
+            return {
+                "ok": True,
+                "user": user,
+                "interests": row["interests"],
+                "clicks": n_clicks,
+                "clicks_by_source": by_source,
+                "blend_weight": round(blend_weight(n_clicks), 3),
+                "top_liked": [k for k, v in scored[:5] if v > 0.5],
+                "top_disliked": [k for k, v in reversed(scored[-5:]) if v < 0.5],
+                "message": (
+                    f"{n_clicks} click(s); ranking is {round(blend_weight(n_clicks) * 100)}% "
+                    "driven by observed behavior and the rest by the interests text"
+                ),
+            }
+        except Exception:
+            log.exception("profile_status failed for user=%s", user)
+            return {
+                "ok": False,
+                "user": user,
+                "interests": None,
+                "clicks": 0,
+                "clicks_by_source": {},
+                "blend_weight": 0.0,
+                "top_liked": [],
+                "top_disliked": [],
+                "message": "internal error computing profile status; see server logs",
+            }
 
 
 def _search_feed_impl(
@@ -457,106 +493,115 @@ def _search_feed_impl(
     from attestation.rank import rank_items
 
     limit = min(max(int(limit), 1), MAX_LIST_LIMIT)
-    conn = get_db(resolve_db_path(None))
-    try:
-        row = get_user(conn, user)
-        if row is None:
-            return {"ok": False, "message": _unknown_user_message(conn, user), "items": []}
+    empty = {"items": [], "ranking_quality": {}}
+    with open_db() as conn:
+        try:
+            row = get_user(conn, user)
+            if row is None:
+                return {"ok": False, "message": _unknown_user_message(conn, user), **empty}
 
-        ranked = rank_items(
-            conn, _get_embedder(), row["id"], since_days=None, exclude_clicked=False
-        )
-        clicked = {
-            r["item_id"]
-            for r in conn.execute("SELECT item_id FROM clicks WHERE user_id = ?", (row["id"],))
-        }
-        needle = query.lower()
-        matches = []
-        for item in ranked:
-            if needle and needle not in (item.title or "").lower():
-                continue
-            if tag and tag not in (item.tags or []):
-                continue
-            if content_type and item.content_type != content_type:
-                continue
-            matches.append(
-                {
-                    "item_id": item.item_id,
-                    "title": item.title,
-                    "url": item.url,
-                    "source": item.source,
-                    "tags": item.tags,
-                    "content_type": item.content_type,
-                    "already_rated": item.item_id in clicked,
-                }
+            ranked = rank_items(
+                conn, _get_embedder(), row["id"], since_days=None, exclude_clicked=False
             )
-            if len(matches) >= limit:
-                break
-        return {"ok": True, "message": f"{len(matches)} match(es), best first", "items": matches}
-    except Exception:
-        log.exception("search_feed failed for user=%s query=%s", user, query)
-        return {
-            "ok": False,
-            "message": "internal error searching feed; see server logs",
-            "items": [],
-        }
-    finally:
-        conn.close()
+            clicked = {
+                r["item_id"]
+                for r in conn.execute("SELECT item_id FROM clicks WHERE user_id = ?", (row["id"],))
+            }
+            needle = query.lower()
+            matches = []
+            for item in ranked:
+                if (
+                    needle
+                    and needle not in (item.title or "").lower()
+                    and needle not in (item.summary or "").lower()
+                ):
+                    continue
+                if tag and tag not in (item.tags or []):
+                    continue
+                if content_type and item.content_type != content_type:
+                    continue
+                matches.append(
+                    {
+                        "item_id": item.item_id,
+                        "title": item.title,
+                        "url": item.url,
+                        "source": item.source,
+                        "tags": item.tags,
+                        "content_type": item.content_type,
+                        "already_rated": item.item_id in clicked,
+                    }
+                )
+                if len(matches) >= limit:
+                    break
+            return {
+                "ok": True,
+                "message": f"{len(matches)} match(es), best first",
+                "items": matches,
+                "ranking_quality": _ranking_quality(conn, row["id"]),
+            }
+        except Exception:
+            log.exception("search_feed failed for user=%s query=%s", user, query)
+            return {
+                "ok": False,
+                "message": "internal error searching feed; see server logs",
+                **empty,
+            }
 
 
 def _delete_persona_impl(name: str, confirm: bool = False) -> dict:
-    conn = get_db(resolve_db_path(None))
-    try:
-        row = get_user(conn, name)
-        if row is None:
-            return {"ok": False, "message": _unknown_user_message(conn, name)}
-        n = conn.execute(
-            "SELECT COUNT(*) c FROM clicks WHERE user_id = ?", (row["id"],)
-        ).fetchone()["c"]
-        if not confirm:
-            return {
-                "ok": False,
-                "message": (
-                    f"refusing to delete {name!r} without confirm=true. This would "
-                    f"permanently remove the persona and its {n} click(s) of training data."
-                ),
-            }
-        conn.execute("DELETE FROM clicks WHERE user_id = ?", (row["id"],))
-        conn.execute("DELETE FROM users WHERE id = ?", (row["id"],))
-        conn.commit()
-        return {"ok": True, "message": f"deleted persona {name!r} and its {n} click(s)"}
-    except Exception:
-        log.exception("delete_persona failed for name=%s", name)
-        return {"ok": False, "message": "internal error deleting persona; see server logs"}
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            row = get_user(conn, name)
+            if row is None:
+                return {"ok": False, "message": _unknown_user_message(conn, name)}
+            n = conn.execute(
+                "SELECT COUNT(*) c FROM clicks WHERE user_id = ?", (row["id"],)
+            ).fetchone()["c"]
+            if not confirm:
+                return {
+                    "ok": False,
+                    "message": (
+                        f"refusing to delete {name!r} without confirm=true. This would "
+                        f"permanently remove the persona and its {n} click(s) of training data."
+                    ),
+                }
+            conn.execute("DELETE FROM clicks WHERE user_id = ?", (row["id"],))
+            # users.id is a rowid alias SQLite reuses after the highest-id row is
+            # deleted -- without this, a future persona created at the same id
+            # would inherit this persona's cached explanations verbatim.
+            conn.execute("DELETE FROM explanations WHERE user_id = ?", (row["id"],))
+            conn.execute("DELETE FROM users WHERE id = ?", (row["id"],))
+            conn.commit()
+            _PROFILE_VEC_CACHE.pop((_db_identity(conn), row["id"]), None)
+            return {"ok": True, "message": f"deleted persona {name!r} and its {n} click(s)"}
+        except Exception:
+            log.exception("delete_persona failed for name=%s", name)
+            return {"ok": False, "message": "internal error deleting persona; see server logs"}
 
 
 def _reset_feedback_impl(name: str, confirm: bool = False) -> dict:
-    conn = get_db(resolve_db_path(None))
-    try:
-        row = get_user(conn, name)
-        if row is None:
-            return {"ok": False, "message": _unknown_user_message(conn, name)}
-        n = conn.execute(
-            "SELECT COUNT(*) c FROM clicks WHERE user_id = ?", (row["id"],)
-        ).fetchone()["c"]
-        if not confirm:
-            return {
-                "ok": False,
-                "message": (
-                    f"refusing to reset {name!r} without confirm=true. This would erase "
-                    f"{n} click(s); the persona and its interests text would be kept."
-                ),
-            }
-        conn.execute("DELETE FROM clicks WHERE user_id = ?", (row["id"],))
-        conn.commit()
-        return {"ok": True, "message": f"cleared {n} click(s) for {name!r}"}
-    except Exception:
-        log.exception("reset_feedback failed for name=%s", name)
-        return {"ok": False, "message": "internal error resetting feedback; see server logs"}
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            row = get_user(conn, name)
+            if row is None:
+                return {"ok": False, "message": _unknown_user_message(conn, name)}
+            n = conn.execute(
+                "SELECT COUNT(*) c FROM clicks WHERE user_id = ?", (row["id"],)
+            ).fetchone()["c"]
+            if not confirm:
+                return {
+                    "ok": False,
+                    "message": (
+                        f"refusing to reset {name!r} without confirm=true. This would erase "
+                        f"{n} click(s); the persona and its interests text would be kept."
+                    ),
+                }
+            conn.execute("DELETE FROM clicks WHERE user_id = ?", (row["id"],))
+            conn.commit()
+            return {"ok": True, "message": f"cleared {n} click(s) for {name!r}"}
+        except Exception:
+            log.exception("reset_feedback failed for name=%s", name)
+            return {"ok": False, "message": "internal error resetting feedback; see server logs"}
 
 
 @mcp.tool()
@@ -601,6 +646,12 @@ def search_feed(
 
     Unlike list_feed this searches the whole archive and includes items already
     rated, flagging each with already_rated.
+
+    **Read `ranking_quality` before trusting the order.** It reports whether the
+    click classifier is actually active -- with a single-class click history it
+    never fires, and depending on click count the order may fall back partly or
+    fully to embedding similarity; see the `caveat` field for which terms are
+    actually contributing.
     """
     return _search_feed_impl(user, query, tag, content_type, limit)
 
@@ -756,93 +807,85 @@ def sym_evaluate(
 def _kg_neighbors_impl(node: str, limit: int = 20) -> dict:
     from attestation import kg
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        found = kg.neighbors(conn, node, limit=min(limit, MAX_LIST_LIMIT))
-        if not found:
+    with open_db() as conn:
+        try:
+            found = kg.neighbors(conn, node, limit=min(limit, MAX_LIST_LIMIT))
+            if not found:
+                return {
+                    "ok": False,
+                    "message": f"{node!r} is not a concept in the graph",
+                    "neighbors": [],
+                    "stale": kg.is_stale(conn),
+                }
             return {
-                "ok": False,
-                "message": f"{node!r} is not a concept in the graph",
-                "neighbors": [],
+                "ok": True,
+                "message": f"{len(found)} neighbour(s)",
+                "neighbors": found,
                 "stale": kg.is_stale(conn),
             }
-        return {
-            "ok": True,
-            "message": f"{len(found)} neighbour(s)",
-            "neighbors": found,
-            "stale": kg.is_stale(conn),
-        }
-    except Exception:
-        log.exception("kg_neighbors failed for node=%s", node)
-        return {"ok": False, "message": "internal error", "neighbors": [], "stale": True}
-    finally:
-        conn.close()
+        except Exception:
+            log.exception("kg_neighbors failed for node=%s", node)
+            return {"ok": False, "message": "internal error", "neighbors": [], "stale": True}
 
 
 def _kg_path_impl(source: str, target: str) -> dict:
     from attestation import kg
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        found = kg.shortest_path(conn, source, target)
-        if found is None:
+    with open_db() as conn:
+        try:
+            found = kg.shortest_path(conn, source, target)
+            if found is None:
+                return {
+                    "ok": False,
+                    "message": f"no path between {source!r} and {target!r}",
+                    "path": None,
+                    "stale": kg.is_stale(conn),
+                }
             return {
-                "ok": False,
-                "message": f"no path between {source!r} and {target!r}",
-                "path": None,
+                "ok": True,
+                "message": f"{len(found) - 1} hop(s)",
+                "path": found,
                 "stale": kg.is_stale(conn),
             }
-        return {
-            "ok": True,
-            "message": f"{len(found) - 1} hop(s)",
-            "path": found,
-            "stale": kg.is_stale(conn),
-        }
-    except Exception:
-        log.exception("kg_path failed for %s -> %s", source, target)
-        return {"ok": False, "message": "internal error", "path": None, "stale": True}
-    finally:
-        conn.close()
+        except Exception:
+            log.exception("kg_path failed for %s -> %s", source, target)
+            return {"ok": False, "message": "internal error", "path": None, "stale": True}
 
 
 def _kg_central_impl(metric: str = "degree", limit: int = 10) -> dict:
     from attestation import kg
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        ranked = kg.central(conn, metric=metric, limit=min(limit, MAX_LIST_LIMIT))
-        return {
-            "ok": True,
-            "message": f"top {len(ranked)} by {metric}",
-            "nodes": ranked,
-            "stale": kg.is_stale(conn),
-        }
-    except ValueError as exc:
-        return {"ok": False, "message": str(exc), "nodes": [], "stale": kg.is_stale(conn)}
-    except Exception:
-        log.exception("kg_central failed for metric=%s", metric)
-        return {"ok": False, "message": "internal error", "nodes": [], "stale": True}
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            ranked = kg.central(conn, metric=metric, limit=min(limit, MAX_LIST_LIMIT))
+            return {
+                "ok": True,
+                "message": f"top {len(ranked)} by {metric}",
+                "nodes": ranked,
+                "stale": kg.is_stale(conn),
+            }
+        except ValueError as exc:
+            return {"ok": False, "message": str(exc), "nodes": [], "stale": kg.is_stale(conn)}
+        except Exception:
+            log.exception("kg_central failed for metric=%s", metric)
+            return {"ok": False, "message": "internal error", "nodes": [], "stale": True}
 
 
 def _kg_communities_impl(min_size: int = 3) -> dict:
     from attestation import kg
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        found = kg.communities(conn, min_size=min_size)
-        return {
-            "ok": True,
-            "message": f"{len(found)} cluster(s)",
-            "communities": found,
-            "stale": kg.is_stale(conn),
-        }
-    except Exception:
-        log.exception("kg_communities failed")
-        return {"ok": False, "message": "internal error", "communities": [], "stale": True}
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            found = kg.communities(conn, min_size=min_size)
+            return {
+                "ok": True,
+                "message": f"{len(found)} cluster(s)",
+                "communities": found,
+                "stale": kg.is_stale(conn),
+            }
+        except Exception:
+            log.exception("kg_communities failed")
+            return {"ok": False, "message": "internal error", "communities": [], "stale": True}
 
 
 def _kg_rebuild_impl(confirm: bool = False) -> dict:
@@ -859,15 +902,13 @@ def _kg_rebuild_impl(confirm: bool = False) -> dict:
             "nodes": 0,
             "edges": 0,
         }
-    conn = get_db(resolve_db_path(None))
-    try:
-        counts = kg.rebuild(conn)
-        return {"ok": True, "message": "graph rebuilt", **counts}
-    except Exception:
-        log.exception("kg_rebuild failed")
-        return {"ok": False, "message": "internal error", "nodes": 0, "edges": 0}
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            counts = kg.rebuild(conn)
+            return {"ok": True, "message": "graph rebuilt", **counts}
+        except Exception:
+            log.exception("kg_rebuild failed")
+            return {"ok": False, "message": "internal error", "nodes": 0, "edges": 0}
 
 
 @mcp.tool()
@@ -964,110 +1005,102 @@ def _runs_scan_impl(
     if target is None:
         return {"ok": False, "message": _NO_ROOT, "scanned": {}, "empty": []}
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        out = ledger.scan(conn, target, project=project)
-        total = sum(out["scanned"].values())
-        return {
-            "ok": True,
-            "message": f"{total} run(s) across {len(out['scanned'])} project(s)",
-            "scanned": out["scanned"],
-            "empty": out.get("empty", []),
-        }
-    except Exception:
-        log.exception("runs_scan failed for root=%s", target)
-        return {"ok": False, "message": "internal error", "scanned": {}, "empty": []}
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            out = ledger.scan(conn, target, project=project)
+            total = sum(out["scanned"].values())
+            return {
+                "ok": True,
+                "message": f"{total} run(s) across {len(out['scanned'])} project(s)",
+                "scanned": out["scanned"],
+                "empty": out.get("empty", []),
+            }
+        except Exception:
+            log.exception("runs_scan failed for root=%s", target)
+            return {"ok": False, "message": "internal error", "scanned": {}, "empty": []}
 
 
 def _runs_list_impl(project: str | None = None, family: str | None = None, limit: int = 20) -> dict:
     from attestation import ledger
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        found = ledger.list_runs(
-            conn, project=project, family=family, limit=min(limit, MAX_LIST_LIMIT)
-        )
-        if not found:
+    with open_db() as conn:
+        try:
+            found = ledger.list_runs(
+                conn, project=project, family=family, limit=min(limit, MAX_LIST_LIMIT)
+            )
+            if not found:
+                return {
+                    "ok": False,
+                    "message": "no runs recorded -- call runs_scan(confirm=true) first",
+                    "runs": [],
+                    "families": [],
+                }
             return {
-                "ok": False,
-                "message": "no runs recorded -- call runs_scan(confirm=true) first",
-                "runs": [],
-                "families": [],
+                "ok": True,
+                "message": f"{len(found)} run(s)",
+                "runs": found,
+                "families": ledger.families(conn, project=project),
             }
-        return {
-            "ok": True,
-            "message": f"{len(found)} run(s)",
-            "runs": found,
-            "families": ledger.families(conn, project=project),
-        }
-    except Exception:
-        log.exception("runs_list failed")
-        return {"ok": False, "message": "internal error", "runs": [], "families": []}
-    finally:
-        conn.close()
+        except Exception:
+            log.exception("runs_list failed")
+            return {"ok": False, "message": "internal error", "runs": [], "families": []}
 
 
 def _runs_compare_impl(family: str, metric: str | None = None) -> dict:
     from attestation import ledger
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        result = ledger.compare(conn, family, metric=metric)
-        if not result["arms"]:
+    with open_db() as conn:
+        try:
+            result = ledger.compare(conn, family, metric=metric)
+            if not result["arms"]:
+                return {
+                    "ok": False,
+                    "message": f"no runs in family {family!r}",
+                    "family": family,
+                    "metric": metric,
+                    "arms": [],
+                    "winner": None,
+                }
+            return {"ok": True, "message": f"{len(result['arms'])} arm(s)", **result}
+        except ValueError as exc:
+            # an undeclared metric direction is a caller-fixable problem, so the
+            # reason is surfaced rather than flattened to "internal error"
             return {
                 "ok": False,
-                "message": f"no runs in family {family!r}",
+                "message": str(exc),
                 "family": family,
                 "metric": metric,
                 "arms": [],
                 "winner": None,
             }
-        return {"ok": True, "message": f"{len(result['arms'])} arm(s)", **result}
-    except ValueError as exc:
-        # an undeclared metric direction is a caller-fixable problem, so the
-        # reason is surfaced rather than flattened to "internal error"
-        return {
-            "ok": False,
-            "message": str(exc),
-            "family": family,
-            "metric": metric,
-            "arms": [],
-            "winner": None,
-        }
-    except Exception:
-        log.exception("runs_compare failed for family=%s", family)
-        return {
-            "ok": False,
-            "message": "internal error",
-            "family": family,
-            "metric": metric,
-            "arms": [],
-            "winner": None,
-        }
-    finally:
-        conn.close()
+        except Exception:
+            log.exception("runs_compare failed for family=%s", family)
+            return {
+                "ok": False,
+                "message": "internal error",
+                "family": family,
+                "metric": metric,
+                "arms": [],
+                "winner": None,
+            }
 
 
 def _runs_detail_impl(project: str, name: str) -> dict:
     from attestation import ledger
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        found = ledger.detail(conn, project, name)
-        if found is None:
-            return {
-                "ok": False,
-                "message": f"no run {name!r} in project {project!r}",
-                "run": None,
-            }
-        return {"ok": True, "message": f"{len(found['metrics'])} metric row(s)", "run": found}
-    except Exception:
-        log.exception("runs_detail failed for %s/%s", project, name)
-        return {"ok": False, "message": "internal error", "run": None}
-    finally:
-        conn.close()
+    with open_db() as conn:
+        try:
+            found = ledger.detail(conn, project, name)
+            if found is None:
+                return {
+                    "ok": False,
+                    "message": f"no run {name!r} in project {project!r}",
+                    "run": None,
+                }
+            return {"ok": True, "message": f"{len(found['metrics'])} metric row(s)", "run": found}
+        except Exception:
+            log.exception("runs_detail failed for %s/%s", project, name)
+            return {"ok": False, "message": "internal error", "run": None}
 
 
 @mcp.tool()
@@ -1147,45 +1180,43 @@ def _claims_check_impl(path: str | None = None, verdict: str | None = None) -> d
             "malformed": [],
         }
 
-    conn = get_db(resolve_db_path(None))
-    try:
-        out = claims.check(conn, target)
-        rows = [
-            {
-                "verdict": v.verdict,
-                "file": v.claim.path,
-                "line": v.claim.line,
-                "run": f"{v.claim.project}/{v.claim.run}",
-                "metric": v.claim.metric,
-                "claimed": v.claim.value,
-                "actual": v.actual,
-                "message": v.message,
-                "source_path": v.source_path,
+    with open_db() as conn:
+        try:
+            out = claims.check(conn, target)
+            rows = [
+                {
+                    "verdict": v.verdict,
+                    "file": v.claim.path,
+                    "line": v.claim.line,
+                    "run": f"{v.claim.project}/{v.claim.run}",
+                    "metric": v.claim.metric,
+                    "claimed": v.claim.value,
+                    "actual": v.actual,
+                    "message": v.message,
+                    "source_path": v.source_path,
+                }
+                for v in out["verdicts"]
+                if verdict is None or v.verdict == verdict
+            ]
+            summary = ", ".join(f"{n} {k}" for k, n in sorted(out["counts"].items()))
+            return {
+                "ok": True,
+                "message": (
+                    f"{out['claims']} claim(s): {summary}" if out["claims"] else "no claims found"
+                ),
+                "claims": rows,
+                "counts": out["counts"],
+                "malformed": out["malformed"],
             }
-            for v in out["verdicts"]
-            if verdict is None or v.verdict == verdict
-        ]
-        summary = ", ".join(f"{n} {k}" for k, n in sorted(out["counts"].items()))
-        return {
-            "ok": True,
-            "message": (
-                f"{out['claims']} claim(s): {summary}" if out["claims"] else "no claims found"
-            ),
-            "claims": rows,
-            "counts": out["counts"],
-            "malformed": out["malformed"],
-        }
-    except Exception:
-        log.exception("claims_check failed for path=%s", target)
-        return {
-            "ok": False,
-            "message": "internal error",
-            "claims": [],
-            "counts": {},
-            "malformed": [],
-        }
-    finally:
-        conn.close()
+        except Exception:
+            log.exception("claims_check failed for path=%s", target)
+            return {
+                "ok": False,
+                "message": "internal error",
+                "claims": [],
+                "counts": {},
+                "malformed": [],
+            }
 
 
 def _claims_coverage_impl(path: str | None = None) -> dict:
@@ -1261,9 +1292,14 @@ def _ranking_quality(conn, user_id: int) -> dict:
 
     A digest built from an untrained ranker looks exactly like one built from a
     good one. rank.classifier_probs returns None when a user's clicks are all
-    one class (rank.py's single-class guard), so the click-trained term never
-    fires and the order is pure embedding similarity -- worth saying rather
-    than letting a reader assume the ranking learned something.
+    one class (rank.py's single-class guard), so the click-CLASSIFIER term
+    never fires -- but rank_items blends in a second, independent term
+    (avg_ranks over pref_scores_for_items) whenever n_clicks > 0, regardless of
+    the guard. So a single-class history with at least one click is NOT pure
+    embedding similarity: the feature-preference term still contributes, only
+    the classifier is silent. Naming which terms are actually contributing
+    matters more than a blanket "profile-embedding only" claim, which is wrong
+    in exactly the case this caveat exists to describe.
     """
     rows = conn.execute(
         "SELECT useful, COUNT(*) n FROM clicks WHERE user_id = ? GROUP BY useful",
@@ -1279,11 +1315,22 @@ def _ranking_quality(conn, user_id: int) -> dict:
         "classifier_active": active,
     }
     if not active:
-        out["caveat"] = (
-            f"ranking is running WITHOUT its click classifier: {total} click(s), "
-            f"all {'useful' if counts.get(1) else 'not-useful'}. Order is profile-embedding "
-            "similarity only. Mark some items the other way to train it."
-        )
+        if total > 0:
+            out["caveat"] = (
+                f"ranking is running WITHOUT its click classifier: {total} click(s), "
+                f"all {'useful' if counts.get(1) else 'not-useful'}. Order blends "
+                "profile-embedding similarity with a feature-preference term learned "
+                "from those clicks -- the classifier term is silent (needs both "
+                "useful and not-useful clicks to fire), but the preference term is "
+                "still contributing. Mark some items the other way to train the "
+                "classifier too."
+            )
+        else:
+            out["caveat"] = (
+                "ranking is running WITHOUT its click classifier or any "
+                "feature-preference signal: 0 clicks recorded. Order is "
+                "profile-embedding similarity only."
+            )
     elif total < 20:
         out["caveat"] = f"only {total} clicks: the classifier is active but weakly trained"
     return out
@@ -1293,68 +1340,77 @@ def _digest_impl(user: str, days: int = 7, per_topic: int = 3, limit: int = 30) 
     from attestation import kg
 
     empty = {"topics": [], "unclustered": [], "ranking_quality": {}, "window_days": days}
-    conn = get_db(resolve_db_path(None))
-    try:
-        row = get_user(conn, user)
-        if row is None:
-            return {"ok": False, "message": f"unknown user {user!r}", **empty}
+    with open_db() as conn:
+        try:
+            row = get_user(conn, user)
+            if row is None:
+                return {"ok": False, "message": f"unknown user {user!r}", **empty}
 
-        ranked = _list_feed_impl(user, limit=min(limit, MAX_LIST_LIMIT), since_days=days)
-        items = ranked.get("items") or []
-        if not items:
-            return {"ok": False, "message": "no unread items to digest", **empty}
+            items_ranked = _ranked_items(conn, row, min(limit, MAX_LIST_LIMIT), days)
+            items = [
+                {
+                    "item_id": it.item_id,
+                    "title": it.title,
+                    "url": it.url,
+                    "source": it.source,
+                    "score": it.score,
+                    "tags": it.tags,
+                    "content_type": it.content_type,
+                }
+                for it in items_ranked
+            ]
+            if not items:
+                return {"ok": False, "message": "no unread items to digest", **empty}
 
-        communities = kg.communities(conn, min_size=3)
-        members = [(c["label"], set(c["members"])) for c in communities]
-        cached = {
-            r["item_id"]: r["text"]
-            for r in conn.execute(
-                "SELECT item_id, text FROM explanations WHERE user_id = ?", (row["id"],)
-            )
-        }
-
-        grouped: dict[str, list] = {}
-        unclustered: list = []
-        for item in items:
-            tags = set(item.get("tags") or [])
-            # strongest tag overlap; ties break on label so repeated calls agree
-            best_label, best_n = None, 0
-            for label, concepts in members:
-                overlap = len(tags & concepts)
-                if overlap > best_n or (
-                    overlap == best_n and overlap and label < (best_label or "~")
-                ):
-                    best_label, best_n = label, overlap
-            enriched = dict(item)
-            if item["item_id"] in cached:
-                enriched["explanation"] = cached[item["item_id"]]
-            if best_n and best_label is not None:
-                grouped.setdefault(best_label, []).append(enriched)
-            else:
-                unclustered.append(enriched)
-
-        topics = [
-            {
-                "label": label,
-                # n_total vs the shown slice: truncation must be visible
-                "n_total": len(group),
-                "items": group[: max(1, int(per_topic))],
+            communities = kg.communities(conn, min_size=3)
+            members = [(c["label"], set(c["members"])) for c in communities]
+            cached = {
+                r["item_id"]: r["text"]
+                for r in conn.execute(
+                    "SELECT item_id, text FROM explanations WHERE user_id = ?", (row["id"],)
+                )
             }
-            for label, group in sorted(grouped.items(), key=lambda kv: (-len(kv[1]), kv[0]))
-        ]
-        return {
-            "ok": True,
-            "message": f"{len(items)} item(s) in {len(topics)} topic(s)",
-            "topics": topics,
-            "unclustered": unclustered,
-            "ranking_quality": _ranking_quality(conn, row["id"]),
-            "window_days": days,
-        }
-    except Exception:
-        log.exception("digest failed for user=%s", user)
-        return {"ok": False, "message": "internal error", **empty}
-    finally:
-        conn.close()
+
+            grouped: dict[str, list] = {}
+            unclustered: list = []
+            for item in items:
+                tags = set(item.get("tags") or [])
+                # strongest tag overlap; ties break on label so repeated calls agree
+                best_label, best_n = None, 0
+                for label, concepts in members:
+                    overlap = len(tags & concepts)
+                    if overlap > best_n or (
+                        overlap == best_n and overlap and label < (best_label or "~")
+                    ):
+                        best_label, best_n = label, overlap
+                enriched = dict(item)
+                if item["item_id"] in cached:
+                    enriched["explanation"] = cached[item["item_id"]]
+                if best_n and best_label is not None:
+                    grouped.setdefault(best_label, []).append(enriched)
+                else:
+                    unclustered.append(enriched)
+
+            topics = [
+                {
+                    "label": label,
+                    # n_total vs the shown slice: truncation must be visible
+                    "n_total": len(group),
+                    "items": group[: max(1, int(per_topic))],
+                }
+                for label, group in sorted(grouped.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+            ]
+            return {
+                "ok": True,
+                "message": f"{len(items)} item(s) in {len(topics)} topic(s)",
+                "topics": topics,
+                "unclustered": unclustered,
+                "ranking_quality": _ranking_quality(conn, row["id"]),
+                "window_days": days,
+            }
+        except Exception:
+            log.exception("digest failed for user=%s", user)
+            return {"ok": False, "message": "internal error", **empty}
 
 
 @mcp.tool()
@@ -1376,8 +1432,10 @@ def digest(user: str, days: int = 7, per_topic: int = 3, limit: int = 30) -> dic
     `explanation` is surfaced only when `explain_item` already cached one.
 
     **Read `ranking_quality` before trusting the order.** It reports whether the
-    click classifier is actually active — with a single-class click history it
-    never fires, and the ranking is embedding similarity alone.
+    click classifier is actually active -- with a single-class click history it
+    never fires, and depending on click count the order may fall back partly or
+    fully to embedding similarity; see the `caveat` field for which terms are
+    actually contributing.
     """
     return _digest_impl(user, days, per_topic, limit)
 

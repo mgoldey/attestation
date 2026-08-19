@@ -33,7 +33,12 @@ def sync_feeds(conn: sqlite3.Connection, feeds_path: str | Path) -> None:
     database -- not the TOML file -- is the source of truth once seeded.
     Use attestation.feeds.add_feed / remove_feed to change the feed set.
     """
-    cfg = tomllib.loads(Path(feeds_path).read_text())
+    path = Path(feeds_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"no feeds file at {path} -- pass --feeds to point at one, or run from a checkout"
+        )
+    cfg = tomllib.loads(path.read_text())
     for feed in cfg.get("feeds", []):
         conn.execute(
             "INSERT OR IGNORE INTO feeds(url, title) VALUES (?, ?)",

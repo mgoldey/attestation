@@ -1,9 +1,10 @@
 from pathlib import Path
 
 import feedparser
+import pytest
 
 from attestation.db import get_db
-from attestation.ingest import content_hash, run_ingest, strip_boilerplate
+from attestation.ingest import content_hash, run_ingest, strip_boilerplate, sync_feeds
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -108,3 +109,35 @@ def test_embed_calls_do_not_hold_write_lock(tmp_path, fake_embedder):
         "SELECT COUNT(*) c FROM feeds WHERE url LIKE 'https://probe.example/%'"
     ).fetchone()["c"]
     assert probe_count == 2
+
+
+def test_sync_feeds_missing_path_raises_clear_message(tmp_path):
+    conn = get_db(tmp_path / "t.db")
+    missing = tmp_path / "does-not-exist.toml"
+    with pytest.raises(FileNotFoundError, match=r"does-not-exist\.toml"):
+        sync_feeds(conn, missing)
+
+
+def test_cli_default_feeds_resolves_packaged_copy_with_no_local_checkout(tmp_path, monkeypatch):
+    """From an empty directory (no local feeds.toml -- e.g. after a wheel
+    install with no checkout), the CLI's --feeds default must resolve to the
+    packaged copy shipped inside src/attestation, not a bare relative string
+    that dies with FileNotFoundError."""
+    from attestation.cli import _default_feeds_path
+
+    monkeypatch.chdir(tmp_path)
+    resolved = Path(_default_feeds_path())
+    assert resolved.exists()
+    assert resolved.name == "feeds.toml"
+    assert resolved.parent.name == "attestation"
+
+
+def test_cli_default_feeds_prefers_local_checkout_copy(tmp_path, monkeypatch):
+    """When a feeds.toml exists in cwd (dev checkout), it takes priority over
+    the packaged copy -- preserves current dev workflow."""
+    from attestation.cli import _default_feeds_path
+
+    monkeypatch.chdir(tmp_path)
+    local = tmp_path / "feeds.toml"
+    local.write_text('[[feeds]]\nurl = "https://example.com/rss"\n')
+    assert Path(_default_feeds_path()).resolve() == local.resolve()
