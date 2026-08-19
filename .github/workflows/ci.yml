@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gates:
+    name: gates (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Sync dependencies
+        run: uv sync --all-extras --dev
+
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ty check
+        run: uv run ty check src/
+
+      - name: uv.lock is in sync with pyproject.toml
+        run: uv lock --check
+
+      - name: pytest
+        run: uv run pytest -q
+
+  wheel-smoke:
+    name: wheel smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: uv build
+
+      - name: Install wheel into a clean venv
+        run: |
+          python3 -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/pip install --quiet dist/*.whl
+
+      - name: attest --help exits 0
+        run: /tmp/wheel-venv/bin/attest --help
+
+      - name: attestation.server imports cleanly
+        run: /tmp/wheel-venv/bin/python -c "import attestation.server"
+
+      - name: feeds.toml is packaged
+        # Regression insurance: the advertised `uvx --from git+... attest ingest`
+        # on-ramp reads attestation/feeds.toml out of the installed package, so
+        # a repackaging that drops it breaks first-run ingest silently.
+        run: |
+          /tmp/wheel-venv/bin/python -c "
+          import importlib.resources as r
+          p = r.files('attestation').joinpath('feeds.toml')
+          assert p.is_file(), 'attestation/feeds.toml missing from installed wheel'
+          print('feeds.toml present in wheel:', p)
+          "

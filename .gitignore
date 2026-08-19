@@ -12,3 +12,7 @@ __pycache__/
 # history once added. Host it externally and link from DEMO.md if it needs to
 # be shared.
 demo/
+
+# Build artifacts: `uv build` / CI wheel smoke test write here.
+dist/
+build/

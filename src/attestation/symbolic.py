@@ -204,7 +204,7 @@ def parse_safe(text: str) -> sp.Expr:
             transformations=_TRANSFORMATIONS,
             evaluate=True,
         )
-    except Exception as exc:  # noqa: BLE001 - any parse failure is a bad expression
+    except Exception as exc:
         raise ValueError(f"could not parse {text!r}: {type(exc).__name__}") from exc
     # sp.Basic is the common ancestor for Expr, Eq/Relational, and booleans,
     # but SymPy's Matrix containers (unlike their individual elements) are
