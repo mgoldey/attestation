@@ -61,13 +61,16 @@ found — wires up the MCP server, the skill copy, the reasoning override,
 and the refresh cron job. Re-running it repairs whatever's missing; nothing
 it does is destructive.
 
-No checkout, straight from git:
+No checkout, straight from git — replace `REPO_URL` below with your actual
+remote (see "Once the repo has a reachable remote" further down for how the
+URL gets set for hermes-agent too):
 
 ```bash
-uvx --from git+<REPO_URL> attest install
+REPO_URL=https://github.com/you/attestation
+uvx --from "git+$REPO_URL" attest install
 ```
 
-From a local clone:
+From a local clone (replace `<your-attestation-remote-url>` with your remote):
 
 ```bash
 git clone <your-attestation-remote-url> ~/attestation
@@ -357,7 +360,7 @@ agent:
 ### 4. Install the skill (optional but recommended)
 
 ```bash
-cp -r skills/research-provenance ~/.hermes/skills/
+cp -r src/attestation/skills/research-provenance ~/.hermes/skills/
 ```
 
 Re-run that copy whenever the skill changes in this repo — the installed copy
@@ -379,13 +382,16 @@ science_recommendations:
 ### 5. Shared database
 
 When running alongside hermes-agent, the live database is co-located with
-other skill state at `~/.hermes/skills/research-provenance/data/hermes.db`
-— **not** inside the checkout. Every entry point (CLI, web server, MCP server)
+other skill state at `~/.hermes/skills/science-recommendations/data/hermes.db`
+— **not** inside the checkout. Note the directory name: the *skill* was
+renamed to `research-provenance`, but the *database* path deliberately kept
+the old `science-recommendations` name, so as not to orphan every database
+created before the rename. Every entry point (CLI, web server, MCP server)
 resolves the DB the same way (`resolve_db_path()` in `src/attestation/db.py`):
 
 1. explicit `--db <path>` flag
 2. `RSS_DB` env var
-3. `~/.hermes/skills/research-provenance/data/hermes.db`, if it exists
+3. `~/.hermes/skills/science-recommendations/data/hermes.db`, if it exists
 4. `./hermes.db` (cwd-relative fallback for ad hoc/dev use)
 
 So once the co-located DB exists, the web UI, the MCP tools, and cron ingest

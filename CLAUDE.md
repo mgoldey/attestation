@@ -10,8 +10,8 @@ IMPORTANT: Prefer retrieval-led reasoning over pre-training-led reasoning for an
 
 ```
 [Project Docs Index]|root: .
-|.:{README.md,DEMO.md,CLAUDE.md,pyproject.toml,feeds.toml,datasette.yml,.pre-commit-config.yaml,.env.sample,LICENSE}
-|src/attestation:{__init__.py,cli.py,mcp_server.py,server.py,db.py,rank.py,embed.py,llm.py,ingest.py,feeds.py,features.py,explain.py,kg.py,ledger.py,claims.py,symbolic.py,symbolic_ops.py,install.py,feed_candidates.toml,kg_aliases.toml}
+|.:{README.md,DEMO.md,CLAUDE.md,pyproject.toml,datasette.yml,.pre-commit-config.yaml,.env.sample,LICENSE}
+|src/attestation:{__init__.py,cli.py,mcp_server.py,server.py,db.py,rank.py,embed.py,llm.py,ingest.py,feeds.py,features.py,explain.py,kg.py,ledger.py,claims.py,symbolic.py,symbolic_ops.py,install.py,feeds.toml,feed_candidates.toml,kg_aliases.toml}
 |src/attestation/ledger_adapters:{__init__.py,generic.py}
 |src/attestation/skills/research-provenance:{SKILL.md,scripts/setup.sh}
 |tests:{conftest.py,test_cli.py,test_db.py,test_rank.py,test_embed.py,test_llm.py,test_ingest.py,test_feeds.py,test_features.py,test_explain.py,test_server.py,test_mcp_server.py,test_digest.py,test_kg.py,test_kg_algorithms.py,test_kg_mcp.py,test_ledger.py,test_ledger_mcp.py,test_claims.py,test_symbolic.py,test_symbolic_ops.py,test_symbolic_mcp.py,test_install.py,test_install_e2e.py}
