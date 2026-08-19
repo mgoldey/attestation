@@ -97,16 +97,16 @@ class _OkGetHandler(http.server.BaseHTTPRequestHandler):
     path a non-Ollama backend takes in production.
     """
 
-    def do_GET(self):  # noqa: N802 - http.server's naming
+    def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"{}")
 
-    def do_POST(self):  # noqa: N802
+    def do_POST(self):
         self.send_response(404)
         self.end_headers()
 
-    def log_message(self, format, *args):  # noqa: A002 - silence per-request stderr noise
+    def log_message(self, format, *args):
         pass
 
 

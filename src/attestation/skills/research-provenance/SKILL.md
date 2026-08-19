@@ -42,7 +42,7 @@ bash ${HERMES_SKILL_DIR}/scripts/setup.sh
 ```
 
 `setup.sh` is a thin delegator: it resolves a local checkout (or falls back
-to `uvx --from git+<repo_url> hermes install --yes` — see below) and execs
+to `uvx --from git+<repo_url> attest install --yes` — see below) and execs
 `uv run attest install --yes`. You can also run the installer directly from
 the project dir:
 
@@ -96,12 +96,12 @@ When that's set, setup.sh runs the installer straight from git with no
 clone step, e.g.:
 
 ```bash
-uvx --from git+https://github.com/<owner>/attestation hermes install --yes
+uvx --from git+https://github.com/<owner>/attestation attest install --yes
 ```
 
-Note the package name (`attestation`) and its console-script name (`hermes`)
+The package name (`attestation`) and its console-script name (`attest`)
 differ — `uvx --from <package>` takes the *package*, and the trailing word is
-the *executable*, so the invocation is `uvx --from git+<repo_url> hermes
+the *executable*, so the invocation is `uvx --from git+<repo_url> attest
 ...`, not `... attestation ...`. `uvx --from . attestation` (wrong) fails with
 "An executable named `attestation` is not provided by package `attestation`".
 
@@ -111,7 +111,7 @@ Where each piece of attestation config lives, and who writes it:
 
 | Setting | Store | Written by |
 |---|---|---|
-| `LLM_BASE_URL`, `LLM_API_KEY`, `CHAT_MODEL`, `EMBED_MODEL`, `EMBED_DIMS`, `RSS_DB` | `<checkout>/.env` (real env wins) | `hermes install` step 3 / user edit |
+| `LLM_BASE_URL`, `LLM_API_KEY`, `CHAT_MODEL`, `EMBED_MODEL`, `EMBED_DIMS`, `RSS_DB` | `<checkout>/.env` (real env wins) | `attest install` step 3 / user edit |
 | `mcp_servers.attestation` | `~/.hermes/config.yaml` | `hermes mcp add` (install step 6) |
 | `agent.reasoning_overrides.<model>` | `~/.hermes/config.yaml` | `hermes config set` (install step 8) |
 | live DB | `~/.hermes/skills/research-provenance/data/hermes.db` | engine (resolve_db_path default) |

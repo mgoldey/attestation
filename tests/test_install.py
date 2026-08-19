@@ -442,7 +442,7 @@ def test_step_first_data_no_items_runs_ingest(monkeypatch, tmp_path):
 
     result = install.step_first_data(check=False, yes=True, now=False)
 
-    assert any("ingest" in c for c in fake.calls)
+    assert ["uv", "run", "attest", "ingest"] in [list(c) for c in fake.calls]
     assert result.status == "FIXED"
 
 
@@ -456,7 +456,7 @@ def test_step_first_data_check_mode_no_ingest_call(monkeypatch, tmp_path):
 
     result = install.step_first_data(check=True, yes=False, now=False)
 
-    assert not any("ingest" in c for c in fake.calls)
+    assert ["uv", "run", "attest", "ingest"] not in [list(c) for c in fake.calls]
     assert result.status == "BROKEN"
 
 
@@ -470,7 +470,7 @@ def test_step_first_data_now_flag_also_runs_tag(monkeypatch, tmp_path):
 
     install.step_first_data(check=False, yes=True, now=True)
 
-    assert any("tag" in c for c in fake.calls)
+    assert ["uv", "run", "attest", "tag"] in [list(c) for c in fake.calls]
 
 
 def test_step_first_data_has_items_ok(monkeypatch, tmp_path):

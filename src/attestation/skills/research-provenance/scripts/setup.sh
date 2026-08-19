@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Thin delegator: resolves a local checkout (or the uvx-from-git fallback)
-# and hands off to `hermes install --yes`, the idempotent installer/doctor.
+# and hands off to `attest install --yes`, the idempotent installer/doctor.
 # Model checks, .env creation, first-data ingest, warmup, MCP/skill/cron
 # wiring — all of that is now the installer's job (src/hermes/install.py),
 # not this script's. See SKILL.md's "Configuration contract" table.
@@ -47,7 +47,7 @@ command -v uv >/dev/null 2>&1 || fail "uv is not on PATH — install uv (https:/
 # Project dir exists locally; if not, fall back to uvx-from-git when a repo_url
 # is configured, otherwise fail with instructions to clone.
 if [ -n "${PROJECT_DIR}" ] && [ -d "${PROJECT_DIR}" ]; then
-  exec uv run --project "${PROJECT_DIR}" hermes install --yes
+  exec uv run --project "${PROJECT_DIR}" attest install --yes
 fi
 
 # PROJECT_DIR is empty when no checkout was found above (running from a
@@ -57,11 +57,11 @@ _where="${PROJECT_DIR:-no local checkout found}"
 REPO_URL="$(read_repo_url)"
 if [ -n "${REPO_URL}" ]; then
   echo "${_where} — using uvx --from git+${REPO_URL} instead." >&2
-  # NOTE: the pyproject package name is `attestation` but its console script is
-  # `hermes` ([project.scripts] hermes = "hermes.cli:main") — uvx takes the
-  # package via --from and the executable name as the command, so this is
-  # `uvx --from git+<repo_url> hermes ...`, not `... attestation ...`.
-  exec uvx --from "git+${REPO_URL}" hermes install --yes
+  # NOTE: the pyproject package name is `attestation` and its console script is
+  # `attest` ([project.scripts] attest = "attestation.cli:main") — uvx takes
+  # the package via --from and the executable name as the command, so this is
+  # `uvx --from git+<repo_url> attest ...`.
+  exec uvx --from "git+${REPO_URL}" attest install --yes
 fi
 
 fail "${_where} and no science_recommendations.repo_url configured in ${HERMES_CONFIG} — clone it: git clone <attestation-repo-url> ~/attestation && cd ~/attestation && uv sync, or set science_recommendations.repo_url to a attestation git URL"
