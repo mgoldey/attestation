@@ -1,4 +1,6 @@
-from attestation.cli import build_parser, main
+from argparse import Namespace
+
+from attestation.cli import build_parser, cmd_bootstrap_persona, cmd_eval, main
 from attestation.db import get_db
 
 
@@ -200,6 +202,30 @@ def test_claims_with_no_annotations_shows_the_format(tmp_path, capsys):
 
     assert rc == 0
     assert "<!-- claim:" in capsys.readouterr().out
+
+
+def test_cmd_eval_directly_with_plain_namespace(tmp_path, capsys):
+    """cmd_* handlers are unit-testable on their own -- no parser needed."""
+    db = tmp_path / "t.db"
+    get_db(db).close()
+
+    rc = cmd_eval(Namespace(db=str(db), user="matt"))
+
+    assert rc == 0
+    assert "insufficient" in capsys.readouterr().out.lower()
+
+
+def test_cmd_bootstrap_persona_directly_with_plain_namespace(tmp_path, capsys, monkeypatch):
+    import attestation.rank
+
+    db = tmp_path / "t.db"
+    get_db(db).close()
+    monkeypatch.setattr(attestation.rank, "bootstrap_persona", lambda conn, embedder, name, k: 7)
+
+    rc = cmd_bootstrap_persona(Namespace(db=str(db), name="bench-chemist", k=10))
+
+    assert rc == 0
+    assert "wrote 7 pseudo-clicks for bench-chemist" in capsys.readouterr().out
 
 
 def test_claims_exits_nonzero_on_a_contradiction(tmp_path, capsys):
