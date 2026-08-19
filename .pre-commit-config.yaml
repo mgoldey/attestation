@@ -3,16 +3,17 @@
 # isolated envs) would install a *second* copy of ruff at a version nothing
 # else uses, and drift silently.
 #
-# Entries call `uv run --frozen ...`: this used to call `.venv/bin/...`
-# directly because, at the time, pre-commit's scrubbed environment made
-# `uv run pytest` resolve an interpreter that could not import the project at
-# all ("No module named 'attestation'", 22 collection errors) even though the
-# same command passed in a normal shell. That no longer reproduces (verified
-# with `env -i PATH=/usr/bin:/bin uv run --frozen python -c "import
-# attestation"`, which now succeeds), and `.venv/bin/...` has a real cost:
-# `.venv/` is gitignored, so those paths don't exist on a fresh clone until
-# `uv sync`, and a CI runner using astral-sh/setup-uv may not put its venv at
-# `.venv` at all. `--frozen` keeps these hooks from ever mutating uv.lock.
+# Entries call `uv run --frozen ...` rather than `.venv/bin/...`: `.venv/` is
+# gitignored, so those paths do not exist on a fresh clone until `uv sync`, and
+# a CI runner using astral-sh/setup-uv need not put its venv at `.venv` at all
+# -- which is the environment .github/workflows/ci.yml runs in. `--frozen`
+# keeps these hooks from ever mutating uv.lock as a side effect.
+#
+# These hooks once called `.venv/bin/...` to route around what looked like a uv
+# bug under pre-commit's scrubbed environment. It was not: the venv had been
+# built at the project's old path and 26 of its console scripts still pointed
+# their shebang at an interpreter that no longer existed. `uv sync` fixed it.
+# See CLAUDE.md "Working here".
 #
 #   uv run pre-commit install        # activate
 #   uv run pre-commit run --all-files
@@ -51,7 +52,7 @@ repos:
 
       - id: pytest
         name: pytest
-        entry: uv run --frozen python -m pytest -q
+        entry: uv run --frozen pytest -q
         language: system
         types: [python]
         pass_filenames: false

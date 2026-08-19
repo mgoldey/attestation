@@ -46,21 +46,25 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 <!-- end docs index -->
 ## Working here
 
-- **Run pytest as `python -m pytest`, never as bare `pytest`.** Under a
-  scrubbed environment (pre-commit, CI, some sandboxes) `uv run pytest` fails
-  with "Failed to spawn: `pytest`" — the console script is not on the path uv
-  resolves, though `uv run --frozen python -m pytest` works there. `ruff` and
-  `ty` do resolve as bare commands; only pytest needs the `python -m` form.
-  Both `uv run --frozen python -m pytest` and `.venv/bin/python -m pytest`
-  work; the first also works on a fresh clone, where `.venv/` does not exist
-  until `uv sync`.
+- **`uv run pytest` works. If it ever stops, suspect the venv, not uv.** This
+  repo spent months believing `uv run` was broken under a scrubbed environment
+  ("No module named 'attestation'", later "Failed to spawn: `pytest`") and
+  worked around it by calling `.venv/bin/...` everywhere. The real cause was a
+  stale `.venv/`: it was built when the project lived at `~/hermes-rss`, and
+  26 of its console scripts still carried `#!/home/matt/hermes-rss/.venv/bin/
+  python`. That interpreter no longer existed, so exec failed with ENOENT and
+  uv reported it as a spawn failure. `attest`, `ruff` and `ty` were regenerated
+  after the rename and kept working, which is what made the failure look
+  specific to pytest. `uv sync` rebuilt the venv and fixed all 26.
+  The lesson generalizes: a tool that works one way and not another usually
+  means broken local state, not a tool that needs routing around.
 - Gates: `uv run --frozen pre-commit run --all-files` (ruff format, ruff check,
   ty, uv.lock sync, full pytest). Hooks call `uv run --frozen ...` rather than
   `.venv/bin/...`: `.venv/` is gitignored, so those paths are missing on a
   fresh clone and on a CI runner using astral-sh/setup-uv, which is the
   environment `.github/workflows/ci.yml` runs in. `--frozen` keeps a hook from
   mutating `uv.lock` as a side effect.
-- The pytest hook is ~65s and worth it: this repo's recurring failure mode has
+- The pytest hook is ~70s and worth it: this repo's recurring failure mode has
   been tests that pass against the bug they were written to catch. CI runs the
   same five gates on Linux and macOS across Python 3.12 and 3.13, plus a wheel
   smoke test, so a bypassed hook is caught on push rather than never.
