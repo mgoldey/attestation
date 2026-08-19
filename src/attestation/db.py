@@ -3,6 +3,7 @@
 import os
 import re
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import sqlite_vec
@@ -104,21 +105,64 @@ CREATE TABLE IF NOT EXISTS run_metrics(
   PRIMARY KEY (run_id, metric, step, split)
 );
 CREATE INDEX IF NOT EXISTS idx_runs_family ON runs(project, family);
+-- item_vectors (a vec0 virtual table, created separately below since its
+-- dimensionality is only known at runtime) links to items by bare rowid
+-- equality with no FK possible on a virtual table. items.id is a rowid alias
+-- SQLite reuses after the highest-id row is deleted, so without this trigger
+-- a later item can silently inherit an earlier, unrelated item's vector.
+CREATE TRIGGER IF NOT EXISTS trg_items_delete_vector AFTER DELETE ON items BEGIN
+  DELETE FROM item_vectors WHERE rowid = old.id;
+END;
 """
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
-    """Idempotent schema migrations for databases created before a column existed.
-
-    SCHEMA is CREATE TABLE IF NOT EXISTS only, so it never alters a table that
-    already exists -- live databases need this path. Pre-existing clicks
-    backfill to 'ui': they came from the web UI and bootstrap_persona, which
-    are not retroactively distinguishable, and 'ui' is right for the majority.
+def _migration_001_add_clicks_source(conn: sqlite3.Connection) -> None:
+    """Pre-existing clicks backfill to 'ui': they came from the web UI and
+    bootstrap_persona, which are not retroactively distinguishable, and 'ui'
+    is right for the majority. Idempotent: only runs if the column is absent,
+    so it is safe to re-apply to a database that already has it (e.g. one
+    created fresh by SCHEMA, which already includes the column).
     """
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(clicks)")}
     if "source" not in cols:
         conn.execute("ALTER TABLE clicks ADD COLUMN source TEXT NOT NULL DEFAULT 'ui'")
-        conn.commit()
+
+
+# Ordered ladder of (version, migration_fn). Each entry is applied, in order,
+# exactly once per database: on open, every entry whose version is greater
+# than the file's current `PRAGMA user_version` runs inside one transaction,
+# then user_version is advanced to SCHEMA_VERSION. Fresh databases (created by
+# SCHEMA above, which already reflects the latest shape) still run the ladder
+# harmlessly -- every migration function must be a no-op against the current
+# SCHEMA, same discipline as the old _migrate().
+_MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
+    (1, _migration_001_add_clicks_source),
+]
+
+SCHEMA_VERSION = _MIGRATIONS[-1][0]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Apply pending migrations and advance PRAGMA user_version.
+
+    Refuses to open a database whose user_version is NEWER than the code
+    knows about -- that is the genuine silent-corruption case (older code
+    against a newer schema), versus an old database opened by new code, which
+    this ladder is designed to upgrade safely.
+    """
+    current = conn.execute("PRAGMA user_version").fetchone()[0]
+    if current > SCHEMA_VERSION:
+        raise RuntimeError(
+            f"database schema version {current} is newer than this code supports"
+            f" (max {SCHEMA_VERSION}) — upgrade attestation before opening this database"
+        )
+    if current == SCHEMA_VERSION:
+        return
+    with conn:
+        for version, fn in _MIGRATIONS:
+            if version > current:
+                fn(conn)
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
 def embed_dims() -> int:
@@ -172,7 +216,34 @@ def resolve_db_path(explicit: str | None) -> Path:
     return Path("hermes.db")
 
 
+def seed_demo_users(conn: sqlite3.Connection) -> None:
+    """Insert the three hardcoded demo personas (matt, bench-chemist, ml-engineer).
+
+    INSERT OR IGNORE, so calling this against a database that already has
+    these rows (or rows a researcher has since deleted and doesn't want back)
+    is safe -- but it is still a write, and callers should call it only when
+    they actually want demo data seeded, not on every connection open. A
+    persona deleted via delete_persona must stay deleted; re-running this
+    would silently resurrect it.
+    """
+    for name, interests in SEED_USERS.items():
+        conn.execute(
+            "INSERT OR IGNORE INTO users(name, interests) VALUES (?, ?)", (name, interests)
+        )
+    conn.commit()
+
+
 def get_db(path: str | Path) -> sqlite3.Connection:
+    """Open (creating if absent) the SQLite store at `path`.
+
+    Demo personas (SEED_USERS) are seeded only the first time this database
+    file is created, never on subsequent opens -- otherwise a persona removed
+    via delete_persona would be resurrected by the very next tool call, since
+    every MCP tool opens its own connection. Callers that want to guarantee
+    seed data exists (installer, demo setup) should call seed_demo_users()
+    explicitly.
+    """
+    is_new = not Path(path).exists()
     conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.enable_load_extension(True)
@@ -195,9 +266,7 @@ def get_db(path: str | Path) -> sqlite3.Connection:
             )
     else:
         conn.execute(_vec_schema(dims))
-    for name, interests in SEED_USERS.items():
-        conn.execute(
-            "INSERT OR IGNORE INTO users(name, interests) VALUES (?, ?)", (name, interests)
-        )
     conn.commit()
+    if is_new:
+        seed_demo_users(conn)
     return conn

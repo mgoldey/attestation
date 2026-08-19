@@ -204,3 +204,129 @@ def test_migration_is_idempotent(tmp_path):
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(clicks)")]
     assert cols.count("source") == 1
     conn.close()
+
+
+def test_deleted_persona_stays_deleted_across_reopen(tmp_path):
+    """A demo persona removed from the DB must not be resurrected by the next get_db().
+
+    Regression test: get_db used to run INSERT OR IGNORE for SEED_USERS on
+    every open, so a deleted seed persona (e.g. 'bench-chemist') came back on
+    the very next connection -- which every MCP tool opens fresh.
+    """
+    path = tmp_path / "personas.db"
+    conn = get_db(path)
+    names_before = {r["name"] for r in conn.execute("SELECT name FROM users")}
+    assert "bench-chemist" in names_before
+
+    conn.execute("DELETE FROM users WHERE name = ?", ("bench-chemist",))
+    conn.commit()
+    conn.close()
+
+    reopened = get_db(path)
+    names_after = {r["name"] for r in reopened.execute("SELECT name FROM users")}
+    assert "bench-chemist" not in names_after
+    assert names_after == {"matt", "ml-engineer"}
+    reopened.close()
+
+
+def test_seed_demo_users_is_explicit_and_idempotent(tmp_path):
+    """seed_demo_users() inserts SEED_USERS and is safe to call repeatedly."""
+    from attestation.db import seed_demo_users
+
+    conn = get_db(tmp_path / "explicit.db")
+    conn.execute("DELETE FROM users WHERE name = ?", ("ml-engineer",))
+    conn.commit()
+
+    seed_demo_users(conn)
+    names = {r["name"] for r in conn.execute("SELECT name FROM users")}
+    assert names == {"matt", "bench-chemist", "ml-engineer"}
+
+    # calling again must not duplicate or raise
+    seed_demo_users(conn)
+    rows = conn.execute("SELECT name, COUNT(*) AS n FROM users GROUP BY name").fetchall()
+    assert all(r["n"] == 1 for r in rows)
+    conn.close()
+
+
+def test_schema_version_set_on_fresh_db(tmp_path):
+    """A freshly created database records a nonzero PRAGMA user_version."""
+    from attestation.db import SCHEMA_VERSION
+
+    conn = get_db(tmp_path / "versioned.db")
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    assert version == SCHEMA_VERSION
+    assert version > 0
+    conn.close()
+
+
+def test_schema_version_persists_across_reopen(tmp_path):
+    path = tmp_path / "versioned.db"
+    get_db(path).close()
+    conn = get_db(path)
+    from attestation.db import SCHEMA_VERSION
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    conn.close()
+
+
+def test_old_db_without_user_version_migrates_and_stamps_version(tmp_path):
+    """A pre-existing DB (created before versioning existed, user_version=0)
+    still gets the clicks.source migration applied and ends up stamped at
+    SCHEMA_VERSION -- the ladder must not require a special-cased first run.
+    """
+    from attestation.db import SCHEMA_VERSION
+
+    path = tmp_path / "unversioned.db"
+    old = sqlite3.connect(str(path))
+    old.executescript(
+        """
+        CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT, interests TEXT);
+        CREATE TABLE items(
+          id INTEGER PRIMARY KEY,
+          feed_id INTEGER,
+          guid TEXT,
+          title TEXT,
+          url TEXT,
+          summary TEXT,
+          published TEXT,
+          content_hash TEXT NOT NULL
+        );
+        CREATE TABLE clicks(
+          id INTEGER PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          item_id INTEGER NOT NULL,
+          useful INTEGER NOT NULL,
+          clicked_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(user_id, item_id)
+        );
+        """
+    )
+    old.commit()
+    old.close()
+
+    conn = get_db(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(clicks)")}
+    assert "source" in cols
+    conn.close()
+
+
+def test_refuses_to_open_newer_schema_version(tmp_path, monkeypatch):
+    """A database stamped with a user_version newer than this code supports
+    must refuse to open rather than silently proceeding against an unknown
+    schema shape.
+    """
+    import pytest
+
+    import attestation.db as db_module
+
+    path = tmp_path / "future.db"
+    get_db(path).close()
+
+    conn = sqlite3.connect(str(path))
+    conn.execute(f"PRAGMA user_version = {db_module.SCHEMA_VERSION + 1}")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(RuntimeError, match="newer than this code supports"):
+        get_db(path)
