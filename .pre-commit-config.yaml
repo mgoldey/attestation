@@ -3,11 +3,16 @@
 # isolated envs) would install a *second* copy of ruff at a version nothing
 # else uses, and drift silently.
 #
-# Entries call `.venv/bin/...` directly rather than `uv run ...`: pre-commit
-# scrubs the environment, and under it `uv run pytest` resolved an interpreter
-# that could not import the project at all ("No module named 'attestation'",
-# 22 collection errors) while the same command passed in a normal shell.
-# The venv binaries do not depend on environment resolution.
+# Entries call `uv run --frozen ...`: this used to call `.venv/bin/...`
+# directly because, at the time, pre-commit's scrubbed environment made
+# `uv run pytest` resolve an interpreter that could not import the project at
+# all ("No module named 'attestation'", 22 collection errors) even though the
+# same command passed in a normal shell. That no longer reproduces (verified
+# with `env -i PATH=/usr/bin:/bin uv run --frozen python -c "import
+# attestation"`, which now succeeds), and `.venv/bin/...` has a real cost:
+# `.venv/` is gitignored, so those paths don't exist on a fresh clone until
+# `uv sync`, and a CI runner using astral-sh/setup-uv may not put its venv at
+# `.venv` at all. `--frozen` keeps these hooks from ever mutating uv.lock.
 #
 #   uv run pre-commit install        # activate
 #   uv run pre-commit run --all-files
@@ -17,19 +22,19 @@ repos:
     hooks:
       - id: ruff-format
         name: ruff format
-        entry: .venv/bin/ruff format
+        entry: uv run --frozen ruff format
         language: system
         types_or: [python, pyi]
 
       - id: ruff-check
         name: ruff check
-        entry: .venv/bin/ruff check --fix
+        entry: uv run --frozen ruff check --fix
         language: system
         types_or: [python, pyi]
 
       - id: ty
         name: ty (type check)
-        entry: .venv/bin/ty check src/
+        entry: uv run --frozen ty check src/
         language: system
         types_or: [python, pyi]
         # src/ only, and always the whole tree: ty resolves imports across
@@ -46,7 +51,7 @@ repos:
 
       - id: pytest
         name: pytest
-        entry: .venv/bin/python -m pytest -q
+        entry: uv run --frozen python -m pytest -q
         language: system
         types: [python]
         pass_filenames: false
