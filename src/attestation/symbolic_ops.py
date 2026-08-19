@@ -22,7 +22,13 @@ def resolve_symbol(expr: sp.Expr, name: str | None) -> sp.Symbol:
     expression must have exactly one free symbol -- guessing between several
     silently answers a different question than the caller asked."""
     if name:
-        return sp.Symbol(name)
+        sym = sp.Symbol(name)
+        if expr.free_symbols and sym not in expr.free_symbols:
+            raise ValueError(
+                f"{name!r} does not appear in {expr}; free symbols are "
+                f"{sorted(map(str, expr.free_symbols))}"
+            )
+        return sym
     free = sorted(expr.free_symbols, key=str)
     if not free:
         return sp.Symbol("x")

@@ -37,6 +37,27 @@ def test_ambiguous_symbol_raises_naming_candidates():
     assert "x" in str(exc.value) and "y" in str(exc.value)
 
 
+def test_differentiate_rejects_symbol_absent_from_expression():
+    """A typo'd symbol must error, not silently return 0."""
+    with pytest.raises(ValueError) as exc:
+        ops.op_differentiate({"expr": "x**2", "symbol": "y", "order": 1})
+    assert "y" in str(exc.value) and "x" in str(exc.value)
+
+
+def test_solve_rejects_symbol_absent_from_expression():
+    """A typo'd symbol must error, not silently return []."""
+    with pytest.raises(ValueError) as exc:
+        ops.op_solve({"expr": "x**2 - 4", "symbol": "z"})
+    assert "z" in str(exc.value) and "x" in str(exc.value)
+
+
+def test_integrate_explicit_symbol_on_constant_expression_still_works():
+    """A constant expression has no free symbols, so any explicit symbol is
+    permissive -- there is nothing to be absent from."""
+    out = ops.op_integrate({"expr": "1", "symbol": "x", "bounds": None})
+    assert out["result"] == "x"
+
+
 def test_integrate_indefinite_and_definite():
     indef = ops.op_integrate({"expr": "x**2", "symbol": None, "bounds": None})
     assert indef["result"] == "x**3/3"
