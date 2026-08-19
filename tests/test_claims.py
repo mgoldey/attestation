@@ -257,11 +257,111 @@ def test_coverage_respects_claim_tolerance(tmp_path):
     assert [u["value"] for u in claims.coverage(tight)["uncovered"]] == [0.41]
 
 
+def test_coverage_handles_grouped_thousands(tmp_path):
+    """1,234.5 must read as 1234.5, not truncate to 234.5 at the comma."""
+    doc = write(tmp_path / "R.md", "Dataset totals 1,234.5 GB.\n")
+
+    out = claims.coverage(doc)
+
+    assert [u["value"] for u in out["uncovered"]] == [1234.5]
+
+
+def test_coverage_handles_scientific_notation(tmp_path):
+    """3.2e-4 must read as 0.00032, not truncate to 3.2 at the exponent."""
+    doc = write(tmp_path / "R.md", "Learning rate was 3.2e-4 and 1.5e3 warmup steps.\n")
+
+    out = claims.coverage(doc)
+
+    values = sorted(u["value"] for u in out["uncovered"])
+    assert values == pytest.approx([0.00032, 1500.0])
+
+
 def test_coverage_reports_true_line_numbers(tmp_path):
     """Masking blanks with spaces rather than deleting, so offsets survive."""
     doc = write(tmp_path / "R.md", "\n".join(["intro", "<!-- x -->", "value is 0.99"]) + "\n")
 
     assert claims.coverage(doc)["uncovered"][0]["line"] == 3
+
+
+@pytest.fixture
+def multi_split(tmp_path):
+    """One artifact, one run, three splits of the same metric -- the shape
+    that let a claim select its own evidence before the fix."""
+    ws = tmp_path / "ws"
+    write(
+        ws / "proj" / "results" / "bench.json",
+        json.dumps(
+            {
+                "summary": {
+                    "variants": {
+                        "raw": {"mae": 0.353},
+                        "corrected": {"mae": 0.212},
+                        "baseline": {"mae": 0.900},
+                    }
+                }
+            }
+        ),
+    )
+    conn = get_db(tmp_path / "c.db")
+    ledger.scan(conn, ws)
+    yield conn, ws
+    conn.close()
+
+
+def test_multiple_splits_without_disambiguator_is_ambiguous(multi_split):
+    """A claim must not be able to select its own evidence: two different
+    claimed values against the same run cannot both come back 'supported'."""
+    conn, ws = multi_split
+    doc_raw = write(ws / "raw.md", "<!-- claim: proj/bench metric=mae value=0.353 -->\n")
+    doc_baseline = write(ws / "baseline.md", "<!-- claim: proj/bench metric=mae value=0.900 -->\n")
+
+    v_raw = claims.check(conn, doc_raw)["verdicts"][0]
+    v_baseline = claims.check(conn, doc_baseline)["verdicts"][0]
+
+    assert v_raw.verdict == "ambiguous"
+    assert v_baseline.verdict == "ambiguous"
+    assert not (v_raw.verdict == "supported" and v_baseline.verdict == "supported")
+
+
+def test_split_disambiguator_resolves_the_row(multi_split):
+    conn, ws = multi_split
+    doc = write(
+        ws / "R.md",
+        "<!-- claim: proj/bench metric=mae value=0.353 split=summary.variants.raw -->\n",
+    )
+
+    verdict = claims.check(conn, doc)["verdicts"][0]
+
+    assert verdict.verdict == "supported"
+    assert verdict.split == "summary.variants.raw"
+
+
+def test_split_disambiguator_can_contradict(multi_split):
+    """The baseline split really is 0.900 -- claiming it is 0.353 must not
+    quietly verify against a different split."""
+    conn, ws = multi_split
+    doc = write(
+        ws / "R.md",
+        "<!-- claim: proj/bench metric=mae value=0.353 split=summary.variants.baseline -->\n",
+    )
+
+    verdict = claims.check(conn, doc)["verdicts"][0]
+
+    assert verdict.verdict == "contradicted"
+    assert verdict.actual == pytest.approx(0.900)
+
+
+def test_missing_evidence_file_is_not_supported(ledgered):
+    """Deleting the evidence must not leave the claim reading as verified."""
+    conn, ws = ledgered
+    artifact = ws / "proj" / "results" / "eval_a.json"
+    doc = write(ws / "R.md", "<!-- claim: proj/eval_a metric=wer value=0.053 -->\n")
+    artifact.unlink()
+
+    verdict = claims.check(conn, doc)["verdicts"][0]
+
+    assert verdict.verdict != "supported"
+    assert verdict.verdict == "stale"
 
 
 @pytest.mark.parametrize("minus", ["-", "−"])

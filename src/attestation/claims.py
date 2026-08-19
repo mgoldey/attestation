@@ -32,7 +32,9 @@ a checker reports a confident wrong answer.
 import datetime as _dt
 import re
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 # <!-- claim: project/run metric=wer value=0.053 tol=0.001 as_of=2026-05-28 -->
@@ -56,17 +58,37 @@ class Claim:
     value: float
     tol: float = DEFAULT_TOL
     as_of: str | None = None
+    split: str | None = None
+    step: int | None = None
     raw: str = ""
+
+
+class VerdictKind(StrEnum):
+    """The closed set of claim-check outcomes.
+
+    A StrEnum member IS a str -- every existing `verdict.verdict == "supported"`
+    comparison, `Counter` tally, and `dict(...) == {"supported": 1}` assertion
+    keeps working untouched -- but a misspelled verdict at a construction site
+    is now a `ty` error instead of a silently-tallied new category in `counts`.
+    """
+
+    SUPPORTED = "supported"
+    CONTRADICTED = "contradicted"
+    UNSUPPORTED = "unsupported"
+    AMBIGUOUS = "ambiguous"
+    STALE = "stale"
 
 
 @dataclass
 class Verdict:
     claim: Claim
-    verdict: str
+    verdict: VerdictKind
     message: str
     actual: float | None = None
     matched: list[str] | None = None
     source_path: str | None = None
+    split: str | None = None
+    step: int | None = None
 
 
 def parse_file(path: Path) -> tuple[list[Claim], list[str]]:
@@ -98,8 +120,9 @@ def parse_file(path: Path) -> tuple[list[Claim], list[str]]:
         try:
             value = float(fields["value"])
             tol = float(fields.get("tol", DEFAULT_TOL))
+            step = int(fields["step"]) if "step" in fields else None
         except ValueError:
-            problems.append(f"{where}: value/tol must be numbers, got {body[:60]!r}")
+            problems.append(f"{where}: value/tol/step must be numbers, got {body[:60]!r}")
             continue
 
         claims.append(
@@ -112,6 +135,8 @@ def parse_file(path: Path) -> tuple[list[Claim], list[str]]:
                 value=value,
                 tol=tol,
                 as_of=fields.get("as_of"),
+                split=fields.get("split"),
+                step=step,
                 raw=body,
             )
         )
@@ -173,7 +198,7 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
     if not runs:
         return Verdict(
             claim,
-            "unsupported",
+            VerdictKind.UNSUPPORTED,
             f"no run {claim.project}/{claim.run} in the ledger"
             " -- the claim may be true, but nothing here backs it",
         )
@@ -181,52 +206,96 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
         names = [r["name"] for r in runs]
         return Verdict(
             claim,
-            "ambiguous",
+            VerdictKind.AMBIGUOUS,
             f"{len(runs)} runs match {claim.run!r}; which one is meant is undecidable",
             matched=names,
         )
 
     run = runs[0]
-    rows = conn.execute(
-        "SELECT value FROM run_metrics WHERE run_id = ? AND metric = ?",
-        (run["id"], claim.metric),
-    ).fetchall()
+    sql = "SELECT value, step, split FROM run_metrics WHERE run_id = ? AND metric = ?"
+    params: list = [run["id"], claim.metric]
+    if claim.split is not None:
+        sql += " AND split = ?"
+        params.append(claim.split)
+    if claim.step is not None:
+        sql += " AND step = ?"
+        params.append(claim.step)
+    rows = conn.execute(sql, params).fetchall()
     if not rows:
         return Verdict(
             claim,
-            "unsupported",
+            VerdictKind.UNSUPPORTED,
             f"run {run['name']} records no metric {claim.metric!r}",
             source_path=run["source_path"],
         )
 
-    # closest recorded value: a run may hold the metric at several steps, and
-    # the claim is about the number the author saw, not a particular checkpoint
-    actual = min((r["value"] for r in rows), key=lambda v: abs(v - claim.value))
+    # A run may hold the same metric at several steps or splits -- a train
+    # split, a baseline arm, a mid-training checkpoint. Picking the row
+    # closest to the claimed value would make the check self-fulfilling: the
+    # claim would select its own evidence. Without a disambiguator, more than
+    # one row is undecidable -- exactly what `ambiguous` means -- not a cue to
+    # guess. Distance-to-claim is legitimate only once exactly one row remains.
+    if len(rows) > 1:
+        available = sorted(
+            {f"split={r['split']}" if r["split"] else f"step={r['step']}" for r in rows}
+        )
+        return Verdict(
+            claim,
+            VerdictKind.AMBIGUOUS,
+            f"{len(rows)} rows for {claim.metric!r} in {run['name']}; "
+            f"add split=/step= to disambiguate ({', '.join(available)})",
+            matched=available,
+            source_path=run["source_path"],
+        )
+
+    row = rows[0]
+    actual = row["value"]
+    where = f" [split={row['split']}]" if row["split"] else ""
+    where += f" [step={row['step']}]" if row["step"] is not None else ""
+
     if abs(actual - claim.value) > claim.tol:
         return Verdict(
             claim,
-            "contradicted",
-            f"document says {claim.value:g}, run records {actual:g} (tolerance {claim.tol:g})",
+            VerdictKind.CONTRADICTED,
+            f"document says {claim.value:g}, run records {actual:g}{where} "
+            f"(tolerance {claim.tol:g})",
             actual=actual,
             source_path=run["source_path"],
+            split=row["split"],
+            step=row["step"],
+        )
+
+    if not Path(run["source_path"]).exists():
+        return Verdict(
+            claim,
+            VerdictKind.STALE,
+            f"value matches, but evidence file {run['source_path']} no longer exists -- re-verify",
+            actual=actual,
+            source_path=run["source_path"],
+            split=row["split"],
+            step=row["step"],
         )
 
     if _is_stale(claim, run["source_path"]):
         return Verdict(
             claim,
-            "stale",
+            VerdictKind.STALE,
             f"value still matches, but {Path(run['source_path']).name} changed"
             f" after as_of={claim.as_of} -- re-verify",
             actual=actual,
             source_path=run["source_path"],
+            split=row["split"],
+            step=row["step"],
         )
 
     return Verdict(
         claim,
-        "supported",
-        f"{claim.metric}={actual:g} in {run['name']}",
+        VerdictKind.SUPPORTED,
+        f"{claim.metric}={actual:g} in {run['name']}{where}",
         actual=actual,
         source_path=run["source_path"],
+        split=row["split"],
+        step=row["step"],
     )
 
 
@@ -238,7 +307,18 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
 # rejected a following period, which silently dropped every number that ended a
 # sentence -- in prose, most of them. Version strings are excluded by
 # _NOT_A_MEASUREMENT instead, where the intent is explicit.
-_NUMBER_RE = re.compile(r"(?<![\w.])([-−]?\d+\.\d+)(?!\d)")
+#
+# Two branches, and the ORDER is load-bearing: grouped-thousands must be tried
+# first, or "1,234.5" matches the second branch as bare "234.5" -- a corrupted
+# value, not a missed one. The second branch also accepts a scientific
+# exponent, since the claim parser reads `value=3.2e-4` with bare float() and
+# a prose scan that reads the same number as 3.2 can never agree with it.
+_NUMBER_RE = re.compile(
+    r"(?<![\w.])("
+    r"[-−]?\d{1,3}(?:,\d{3})+(?:\.\d+)?"
+    r"|[-−]?\d+\.\d+(?:[eE][+-]?\d+)?"
+    r")(?!\d)"
+)
 
 # Contexts where a decimal is structural rather than a result.
 _NOT_A_MEASUREMENT = (
@@ -300,7 +380,7 @@ def coverage(root: Path) -> dict:
         prose = _masked_prose(text)
 
         for match in _NUMBER_RE.finditer(prose):
-            value = float(match.group(1).replace("−", "-"))
+            value = float(match.group(1).replace("−", "-").replace(",", ""))
             total_numbers += 1
             if any(abs(value - cv) <= max(ctol, 1e-9) for cv, ctol in covered):
                 continue
@@ -327,9 +407,7 @@ def check(conn: sqlite3.Connection, root: Path) -> dict:
     """Verify every claim under `root`. Read-only; never edits a document."""
     claims, problems = find_claims(root)
     verdicts = [check_claim(conn, c) for c in claims]
-    counts: dict[str, int] = {}
-    for v in verdicts:
-        counts[v.verdict] = counts.get(v.verdict, 0) + 1
+    counts = Counter(v.verdict for v in verdicts)
     return {
         "claims": len(claims),
         "counts": counts,
