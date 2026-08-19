@@ -3,10 +3,10 @@
 import sqlite3
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, Query
+import jinja2
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from jinja2 import Template
 
 from attestation.db import get_db
 from attestation.explain import explain
@@ -18,7 +18,23 @@ STATIC_DIR = Path(__file__).parent / "static"
 EXPLAIN_LIMIT = 20
 LIST_LIMIT = 50
 
-PAGE = Template("""<!doctype html>
+# autoescape=True: item titles/sources/tags come from arbitrary third-party RSS
+# feeds (ingest.py stores title unsanitized) and render into the same origin
+# that owns the /clicks training endpoint — a malicious feed title must not be
+# able to inject live HTML/JS here.
+env = jinja2.Environment(autoescape=True)
+
+
+def safe_href(url: str | None) -> str:
+    """Only emit http(s) URLs into href — autoescape does not neutralize javascript: URLs."""
+    if url and (url.startswith("http://") or url.startswith("https://")):
+        return url
+    return "#"
+
+
+env.filters["safe_href"] = safe_href
+
+PAGE = env.from_string("""<!doctype html>
 <html><head><title>attestation</title>
 <script src="/static/htmx.min.js"></script>
 <style>
@@ -39,14 +55,14 @@ PAGE = Template("""<!doctype html>
 {% endfor %}
 </nav>
 <div id="feed-wrap">
-{{ feed_content }}
+{{ feed_content | safe }}
 </div>
 </body></html>""")
 
-FRAGMENT = Template("""<ol id="feed">
+FRAGMENT = env.from_string("""<ol id="feed">
 {% for it in items %}
  <li data-item-id="{{ it.item_id }}">
-  <a href="{{ it.url or '#' }}">{{ it.title }}</a>
+  <a href="{{ it.url | safe_href }}">{{ it.title }}</a>
   <span class="src">{{ it.source or '' }} · rank {{ '%.1f' % it.score }}</span>
   {% if it.content_type %}<span class="tag type">{{ it.content_type }}</span>{% endif %}
   {% for t in it.tags %}<span class="tag">{{ t }}</span>{% endfor %}
@@ -63,6 +79,40 @@ FRAGMENT = Template("""<ol id="feed">
  </li>
 {% endfor %}
 </ol>""")
+
+
+def _is_loopback_origin(value: str) -> bool:
+    """True if value is an http(s) origin/referer whose host is 127.0.0.1 or localhost.
+
+    Port is deliberately not checked — the server's port is user-configurable
+    (cli.py --port), so any loopback port is accepted.
+    """
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(value)
+    return parts.scheme in ("http", "https") and parts.hostname in ("127.0.0.1", "localhost")
+
+
+def require_same_origin(request: Request) -> None:
+    """Reject-only-when-present CSRF guard for mutating routes.
+
+    Binding to 127.0.0.1 does not stop cross-origin browser requests: the
+    victim's browser, not an attacker's server, is the request origin. A
+    plain cross-origin <form method=post> sends no Origin/Referer control
+    a strict allowlist could rely on being absent, but browsers DO attach
+    Origin (or at least Referer) to real cross-origin requests, while
+    curl/CLI/TestClient callers send neither. So: reject only when a
+    present Origin/Referer proves the request came from a foreign page;
+    allow when both are absent.
+    """
+    origin = request.headers.get("origin")
+    if origin is not None:
+        if not _is_loopback_origin(origin):
+            raise HTTPException(status_code=403, detail="cross-origin request rejected")
+        return
+    referer = request.headers.get("referer")
+    if referer is not None and not _is_loopback_origin(referer):
+        raise HTTPException(status_code=403, detail="cross-origin request rejected")
 
 
 def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
@@ -96,7 +146,7 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
     def list_view(user: str = Query("matt")):
         return render_list(user)
 
-    @app.post("/clicks", response_class=HTMLResponse)
+    @app.post("/clicks", response_class=HTMLResponse, dependencies=[Depends(require_same_origin)])
     def click(user: str = Form(...), item_id: int = Form(...), useful: int = Form(...)):
         u = require_user(user)
         record_click(conn, u["id"], item_id, bool(useful), source="ui")
