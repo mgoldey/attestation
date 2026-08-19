@@ -95,6 +95,22 @@ def _descend(node: dict, step: int | None, prefix: str, depth: int = 0) -> list[
     return out
 
 
+def _seed_config(payload) -> dict | None:
+    """A top-level `seed` on a dict payload, kept as provenance -- not a metric.
+
+    `seed` determines reproducibility, not performance: it belongs in `config`
+    (what produced the run), never in `run_metrics` (what the run measured),
+    or `compare` would have a rankable-looking column with no declared
+    direction.
+    """
+    if not isinstance(payload, dict):
+        return None
+    seed = payload.get("seed")
+    if seed is None or isinstance(seed, bool) or not isinstance(seed, (int, float, str)):
+        return None
+    return {"seed": str(seed)}
+
+
 def metrics_from_payload(payload, step: int | None, split: str | None) -> list[Metric]:
     """Extract metrics from the three JSON shapes that actually recur.
 
@@ -133,10 +149,13 @@ def metrics_from_payload(payload, step: int | None, split: str | None) -> list[M
             for row in rows:
                 for k, v in _numeric_items(row):
                     fields.setdefault(k, []).append(v)
-            out.extend(
-                Metric(k, float(statistics.fmean(vs)), step=step, split=split)
-                for k, vs in sorted(fields.items())
-            )
+            for k, vs in sorted(fields.items()):
+                out.append(Metric(k, float(statistics.fmean(vs)), step=step, split=split))
+                # pstdev of a single value is 0.0 (stdlib-guaranteed), not an
+                # error -- a bimodal [0.01, 0.01, 0.99] and a tight
+                # [0.34, 0.34, 0.33] both mean ~0.337; without this the spread
+                # that distinguishes them is unrecoverable once aggregated.
+                out.append(Metric(f"{k}_std", float(statistics.pstdev(vs)), step=step, split=split))
             if fields:
                 out.append(Metric("n_records", float(len(rows)), step=step, split=split))
 
@@ -337,7 +356,7 @@ def discover(root: Path) -> list[RunRecord]:
                         source_path=str(table),
                         family=table.stem,
                         status="recorded",
-                        config={k: v for k, v in row.items() if isinstance(v, str)},
+                        config={k: v for k, v in row.items() if isinstance(v, (str, int, float))},
                         metrics=metrics,
                     )
                 )
@@ -364,6 +383,7 @@ def discover(root: Path) -> list[RunRecord]:
                     source_path=str(result),
                     family=result.parent.name if result.parent != base else family_of(stem),
                     status="recorded",
+                    config=_seed_config(payload),
                     metrics=metrics,
                 )
             )

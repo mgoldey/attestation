@@ -26,6 +26,7 @@ will confidently order an ablation backwards, which is worse than refusing.
 import json
 import os
 import sqlite3
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -44,8 +45,10 @@ def workspace_root(explicit: str | None = None) -> Path | None:
 # Which direction is "better" for a metric. Ranking without this is worse than
 # useless: WER 0.0433 -> 0.0527 is a regression, accuracy 0.90 -> 0.94 is an
 # improvement, and a comparison tool that guesses will confidently rank
-# ablation arms backwards. Adapters extend this; `compare` refuses to rank on a
-# metric absent from it rather than assuming.
+# ablation arms backwards. `compare` refuses to rank on a metric absent from
+# it rather than assuming. Extend it without editing this file by writing a
+# `[metric_direction]` table to the TOML at METRIC_DIRECTION_PATH (see below)
+# -- entries there are merged over these defaults.
 METRIC_DIRECTION: dict[str, str] = {
     "wer": "lower_is_better",
     "cer": "lower_is_better",
@@ -58,6 +61,61 @@ METRIC_DIRECTION: dict[str, str] = {
     "r_squared": "higher_is_better",
     "f1": "higher_is_better",
 }
+
+# Optional user-supplied TOML holding a `[metric_direction]` table, merged over
+# METRIC_DIRECTION above. Explicit env var, then a per-user config file --
+# never edit installed package source to teach the ledger a new metric.
+METRIC_DIRECTION_PATH_ENV = "LEDGER_METRIC_DIRECTION_FILE"
+_DEFAULT_METRIC_DIRECTION_PATH = Path.home() / ".hermes" / "metric_direction.toml"
+
+# Split/phase affixes stripped from a metric name before the METRIC_DIRECTION
+# lookup. The generic adapter extracts metric names verbatim from artifacts,
+# where they are overwhelmingly prefixed or suffixed (`test_accuracy`,
+# `top1_accuracy`, `f1_macro`) rather than bare. Stripping a *known* affix and
+# looking up the *declared* direction for the stem is still a declaration, not
+# a guess -- an undeclared stem still refuses.
+_METRIC_PREFIXES = ("train_", "val_", "test_", "eval_", "top1_")
+_METRIC_SUFFIXES = ("_macro", "_micro")
+
+
+def _metric_stem(metric: str) -> str:
+    stem = metric
+    for prefix in _METRIC_PREFIXES:
+        if stem.startswith(prefix):
+            stem = stem[len(prefix) :]
+            break
+    for suffix in _METRIC_SUFFIXES:
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    return stem
+
+
+def _metric_direction_path() -> Path:
+    value = os.environ.get(METRIC_DIRECTION_PATH_ENV)
+    return Path(value).expanduser() if value else _DEFAULT_METRIC_DIRECTION_PATH
+
+
+def metric_directions() -> dict[str, str]:
+    """Built-in METRIC_DIRECTION, overlaid with a user's TOML file if present.
+
+    Read fresh on every call (not cached at import time) so tests and a user
+    editing the file are both respected, matching db.embed_dims()'s pattern.
+    """
+    path = _metric_direction_path()
+    if not path.is_file():
+        return dict(METRIC_DIRECTION)
+    overrides = tomllib.loads(path.read_text()).get("metric_direction", {})
+    return {**METRIC_DIRECTION, **overrides}
+
+
+def _metric_direction(metric: str, directions: dict[str, str]) -> str | None:
+    """Declared direction for `metric`, matching the stem when the exact name
+    is absent. Still a declaration -- an unrecognised stem returns None."""
+    direct = directions.get(metric)
+    if direct is not None:
+        return direct
+    return directions.get(_metric_stem(metric))
 
 
 @dataclass
@@ -229,15 +287,20 @@ def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) ->
     if not runs:
         return {"family": family, "metric": metric, "arms": [], "winner": None}
 
+    directions = metric_directions()
+    run_ids_all = [r["id"] for r in runs]
+    all_placeholders = ",".join("?" * len(run_ids_all))
+
     if metric is None:
         counts: dict[str, int] = {}
-        for r in runs:
-            for m in conn.execute(
-                "SELECT DISTINCT metric FROM run_metrics WHERE run_id = ?", (r["id"],)
-            ):
-                counts[m["metric"]] = counts.get(m["metric"], 0) + 1
+        for m in conn.execute(
+            f"SELECT run_id, metric FROM run_metrics WHERE run_id IN ({all_placeholders})"
+            " GROUP BY run_id, metric",
+            run_ids_all,
+        ):
+            counts[m["metric"]] = counts.get(m["metric"], 0) + 1
         # the metric the most arms share, so the comparison covers the family
-        known = {k: v for k, v in counts.items() if k in METRIC_DIRECTION}
+        known = {k: v for k, v in counts.items() if _metric_direction(k, directions)}
         if not known:
             raise ValueError(
                 f"no metric with a known direction in family {family!r};"
@@ -245,29 +308,36 @@ def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) ->
             )
         metric = sorted(known.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
 
-    direction = METRIC_DIRECTION.get(metric)
+    direction = _metric_direction(metric, directions)
     if direction is None:
         raise ValueError(
             f"unknown direction for metric {metric!r} -- refusing to rank."
-            " Declare it in ledger.METRIC_DIRECTION; guessing would rank"
-            " ablation arms backwards."
+            f" Declare it under [metric_direction] in {_metric_direction_path()};"
+            " guessing would rank ablation arms backwards."
         )
+
+    # Two grouped queries instead of two-per-arm: run_id IN (...) covers every
+    # arm at once, so an N-arm family costs a constant number of round trips
+    # rather than 2N.
+    values_by_run: dict[int, list[dict]] = {rid: [] for rid in run_ids_all}
+    for v in conn.execute(
+        f"SELECT run_id, value, step, split FROM run_metrics"
+        f" WHERE run_id IN ({all_placeholders}) AND metric = ?",
+        (*run_ids_all, metric),
+    ):
+        values_by_run[v["run_id"]].append(dict(v))
+    n_by_run: dict[int, float] = {}
+    for row in conn.execute(
+        f"SELECT run_id, MAX(value) AS value FROM run_metrics"
+        f" WHERE run_id IN ({all_placeholders}) AND metric = 'n_records' GROUP BY run_id",
+        run_ids_all,
+    ):
+        n_by_run[row["run_id"]] = row["value"]
 
     arms = []
     for r in runs:
-        values = [
-            dict(v)
-            for v in conn.execute(
-                "SELECT value, step, split FROM run_metrics WHERE run_id = ? AND metric = ?",
-                (r["id"], metric),
-            )
-        ]
-        best = _best_step(values, direction)
-        n_row = conn.execute(
-            "SELECT value FROM run_metrics WHERE run_id = ? AND metric = 'n_records'"
-            " ORDER BY value DESC LIMIT 1",
-            (r["id"],),
-        ).fetchone()
+        best = _best_step(values_by_run[r["id"]], direction)
+        n_value = n_by_run.get(r["id"])
         arms.append(
             {
                 "name": r["name"],
@@ -277,7 +347,7 @@ def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) ->
                 # provenance: every number must be traceable to the file it came
                 # from, or the comparison cannot be audited
                 "source_path": r["source_path"],
-                "n": int(n_row["value"]) if n_row else None,
+                "n": int(n_value) if n_value is not None else None,
             }
         )
 
@@ -323,6 +393,11 @@ def _caveats(scored: list[dict], metric: str) -> list[str]:
         return out
 
     sizes = [a["n"] for a in scored if a["n"] is not None]
+    if scored[0]["n"] is not None and scored[0]["n"] < SMALL_SAMPLE:
+        out.append(
+            f"the winning arm's value rests on n={scored[0]['n']} samples"
+            f" (< {SMALL_SAMPLE}); treat it as provisional"
+        )
     if sizes and max(sizes) < SMALL_SAMPLE:
         out.append(
             f"every arm has n < {SMALL_SAMPLE} (largest {max(sizes)});"
@@ -348,6 +423,15 @@ def _caveats(scored: list[dict], metric: str) -> list[str]:
             "arms are at different training steps, so this compares checkpoints,"
             " not just configurations"
         )
+    # Each arm here is exactly one run -- the schema records no seed
+    # replication (seed lives in `config`, never as a distinct run of the same
+    # configuration). A ranking over single runs cannot separate the effect of
+    # the configuration from ordinary run-to-run variance, regardless of how
+    # large n_records is for any individual arm.
+    out.append(
+        "each arm is a single run; no seed replication, so this ranking cannot"
+        " separate configuration from run-to-run variance"
+    )
     return out
 
 

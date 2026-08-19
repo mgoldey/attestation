@@ -251,9 +251,13 @@ def test_compare_warns_when_the_top_two_are_nearly_tied(conn, tmp_path):
     c.close()
 
 
-def test_a_healthy_comparison_has_no_caveats(conn, tmp_path):
+def test_a_healthy_comparison_still_flags_no_seed_replication(conn, tmp_path):
     """The warnings must be earned, not boilerplate -- a tool that always warns
-    trains the reader to ignore it."""
+    trains the reader to ignore it. But arm_a/arm_b here really are one run
+    each: the schema records no seed replication (seed lives in `config`, not
+    as a second run of the same configuration), so even a well-powered,
+    clearly-separated comparison cannot rule out run-to-run variance and must
+    say so -- that is the one caveat that is earned here, not boilerplate."""
     project = tmp_path / "p"
     write(project / "results" / "arm_a.json", json.dumps([{"wer": 0.20} for _ in range(50)]))
     write(project / "results" / "arm_b.json", json.dumps([{"wer": 0.80} for _ in range(50)]))
@@ -263,7 +267,10 @@ def test_a_healthy_comparison_has_no_caveats(conn, tmp_path):
     result = ledger.compare(c, "arm", metric="wer")
 
     assert result["winner"] == "arm_a"
-    assert result["caveats"] == []
+    assert result["caveats"] == [
+        "each arm is a single run; no seed replication, so this ranking cannot"
+        " separate configuration from run-to-run variance"
+    ]
     c.close()
 
 
@@ -355,3 +362,96 @@ def test_nesting_is_bounded(conn, tmp_path):
 
     run = ledger.detail(conn, "p", "deep")
     assert run is None or len(run["metrics"]) == 0
+
+
+def test_compare_resolves_a_prefixed_metric_via_its_stem(conn, tmp_path):
+    """The generic adapter extracts metric names verbatim from artifacts,
+    where they are overwhelmingly prefixed (`test_accuracy`, `train_loss`)
+    rather than bare. Stripping a known affix and looking up the declared
+    direction for the stem is still a declaration -- not a guess."""
+    project = tmp_path / "p"
+    write(project / "results" / "arm_a.json", json.dumps({"test_accuracy": 0.90}))
+    write(project / "results" / "arm_b.json", json.dumps({"test_accuracy": 0.94}))
+    ledger.scan(conn, tmp_path)
+
+    result = ledger.compare(conn, "arm", metric="test_accuracy")
+
+    assert result["direction"] == "higher_is_better"
+    assert result["winner"] == "arm_b"
+
+
+def test_compare_val_loss_still_resolves_identically(conn, tmp_path):
+    """val_loss was already an explicit entry in METRIC_DIRECTION; stem
+    matching must not change its behaviour."""
+    project = tmp_path / "p"
+    write(project / "results" / "arm_a.json", json.dumps({"val_loss": 0.5}))
+    write(project / "results" / "arm_b.json", json.dumps({"val_loss": 0.2}))
+    ledger.scan(conn, tmp_path)
+
+    result = ledger.compare(conn, "arm", metric="val_loss")
+
+    assert result["direction"] == "lower_is_better"
+    assert result["winner"] == "arm_b"
+
+
+def test_compare_still_refuses_a_genuinely_undirectional_stem(conn, workspace):
+    """`rhf` carries no split/phase affix and is not declared anywhere --
+    stem-matching must not invent a direction for it."""
+    ledger.scan(conn, workspace)
+
+    with pytest.raises(ValueError, match="unknown direction"):
+        ledger.compare(conn, "benchmark", metric="rhf")
+
+
+def test_metric_direction_error_names_the_override_file_not_a_python_dict(conn, workspace):
+    ledger.scan(conn, workspace)
+
+    with pytest.raises(ValueError, match="metric_direction.toml"):
+        ledger.compare(conn, "benchmark", metric="rhf")
+
+
+def test_compare_honors_a_toml_supplied_metric_direction(conn, tmp_path, monkeypatch):
+    """The escape hatch for a metric name with no known affix: a user-owned
+    TOML file, not editing installed package source."""
+    override = tmp_path / "metric_direction.toml"
+    override.write_text('[metric_direction]\nrho_pooled = "higher_is_better"\n')
+    monkeypatch.setenv("LEDGER_METRIC_DIRECTION_FILE", str(override))
+
+    project = tmp_path / "p"
+    write(project / "results" / "arm_a.json", json.dumps({"rho_pooled": 0.5}))
+    write(project / "results" / "arm_b.json", json.dumps({"rho_pooled": 0.9}))
+    ledger.scan(conn, tmp_path)
+
+    result = ledger.compare(conn, "arm", metric="rho_pooled")
+
+    assert result["direction"] == "higher_is_better"
+    assert result["winner"] == "arm_b"
+
+
+def test_caveats_flag_the_winner_specifically_when_it_is_the_small_arm(conn, tmp_path):
+    """The maximum across arms gating this caveat let a winner measured on
+    n=3 rank ahead of a runner-up measured on n=10000 without a word about the
+    winner's own sample size -- only a range, unattributed."""
+    project = tmp_path / "p"
+    write(project / "results" / "arm_a.json", json.dumps([{"wer": 0.05} for _ in range(3)]))
+    write(project / "results" / "arm_b.json", json.dumps([{"wer": 0.20} for _ in range(10000)]))
+    ledger.scan(conn, tmp_path)
+
+    result = ledger.compare(conn, "arm", metric="wer")
+
+    assert result["winner"] == "arm_a"
+    assert any("winning arm's value rests on n=3" in c for c in result["caveats"]), result[
+        "caveats"
+    ]
+
+
+def test_caveats_flag_no_seed_replication_for_single_run_arms(conn, tmp_path):
+    project = tmp_path / "p"
+    write(project / "results" / "arm_a.json", json.dumps([{"wer": 0.0500} for _ in range(5000)]))
+    write(project / "results" / "arm_b.json", json.dumps([{"wer": 0.0530} for _ in range(5000)]))
+    ledger.scan(conn, tmp_path)
+
+    result = ledger.compare(conn, "arm", metric="wer")
+
+    assert result["winner"] == "arm_a"
+    assert any("no seed replication" in c for c in result["caveats"])
