@@ -46,15 +46,26 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 <!-- end docs index -->
 ## Working here
 
-- **Run tests with `.venv/bin/python -m pytest`, not `uv run pytest`.** Under a
-  scrubbed environment (pre-commit, some sandboxes) `uv run` resolves an
-  interpreter that cannot import the project — "No module named 'attestation'",
-  every test file failing to collect. The venv binaries do not depend on
-  environment resolution. `.pre-commit-config.yaml` calls `.venv/bin/...`
-  directly for this reason.
-- Gates: `.venv/bin/python -m pre_commit run --all-files` (ruff format, ruff
-  check, ty, uv.lock sync, full pytest). The pytest hook is ~50s and worth it:
-  this repo's recurring failure mode has been tests that pass against the bug
-  they were written to catch.
-- Line length 100; ruff lint selects `E,F,W,I,BLE`.
+- **Run pytest as `python -m pytest`, never as bare `pytest`.** Under a
+  scrubbed environment (pre-commit, CI, some sandboxes) `uv run pytest` fails
+  with "Failed to spawn: `pytest`" — the console script is not on the path uv
+  resolves, though `uv run --frozen python -m pytest` works there. `ruff` and
+  `ty` do resolve as bare commands; only pytest needs the `python -m` form.
+  Both `uv run --frozen python -m pytest` and `.venv/bin/python -m pytest`
+  work; the first also works on a fresh clone, where `.venv/` does not exist
+  until `uv sync`.
+- Gates: `uv run --frozen pre-commit run --all-files` (ruff format, ruff check,
+  ty, uv.lock sync, full pytest). Hooks call `uv run --frozen ...` rather than
+  `.venv/bin/...`: `.venv/` is gitignored, so those paths are missing on a
+  fresh clone and on a CI runner using astral-sh/setup-uv, which is the
+  environment `.github/workflows/ci.yml` runs in. `--frozen` keeps a hook from
+  mutating `uv.lock` as a side effect.
+- The pytest hook is ~65s and worth it: this repo's recurring failure mode has
+  been tests that pass against the bug they were written to catch. CI runs the
+  same five gates on Linux and macOS across Python 3.12 and 3.13, plus a wheel
+  smoke test, so a bypassed hook is caught on push rather than never.
+- Line length 100; ruff lint selects `E,F,W,I,BLE,RUF100`. `RUF100` reports a
+  `noqa` that no longer suppresses anything — the per-file-ignores in
+  `pyproject.toml` spent this repo's first release pointing at `src/hermes/`,
+  a path that had not existed since the rename, silently enforcing nothing.
 - Requires Python ≥3.12. Local models via Ollama; nothing leaves the machine.
