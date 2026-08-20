@@ -763,3 +763,76 @@ def test_corpus_detection_survives_unparseable_source(tmp_path):
     src = tmp_path / "broken.py"
     src.write_text("def f(:\n  pass\n")
     assert corpus.detect_in_source(src) is None
+
+
+def test_a_lookup_table_of_entities_yields_no_run(conn, tmp_path):
+    """A name->value table is data, not a metrics record.
+
+    ferric/benchmarks/gmtkn30/aconf_pyscf_energies.json maps 18 molecular
+    conformers to computed energies. The ledger read each conformer name as a
+    metric, so `H_ttt` and `P_gg` became rankable quantities and the family
+    was polluted with 18 nonsense columns. MAX_METRIC_KEYS did not catch it:
+    18 keys is well under the vocabulary threshold.
+
+    The signature is that the keys name *entities* rather than *quantities* --
+    no key contains a word any metric vocabulary would use.
+    """
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    (results / "aconf_energies.json").write_text(
+        json.dumps(
+            {
+                "B_G": -157.907,
+                "B_T": -157.908,
+                "H_g+t+g-": -236.272,
+                "H_ggg": -236.272,
+                "H_gtg": -236.272,
+                "H_gtt": -236.273,
+                "H_tgg": -236.273,
+                "H_ttt": -236.274,
+                "P_gg": -197.089,
+            }
+        )
+    )
+    ledger.scan(conn, tmp_path)
+
+    metrics = {r["metric"] for r in conn.execute("SELECT metric FROM run_metrics")}
+    assert not metrics & {"h_ttt", "p_gg", "b_g"}, f"conformers read as metrics: {metrics}"
+
+
+def test_a_real_metrics_record_is_still_read(conn, tmp_path):
+    """The guard must not cost genuine records. This is the shape it has to
+    keep working on -- heterogeneous named quantities, which is what
+    distinguishes it from a table of one quantity across many entities."""
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    (results / "run_a.json").write_text(
+        json.dumps(
+            {
+                "seed": 42,
+                "n_params": 88815104,
+                "n_layers": 6,
+                "d_model": 512,
+                "epochs": 10,
+                "final_val_loss": 5.0968,
+                "best_val_loss": 5.0946,
+            }
+        )
+    )
+    ledger.scan(conn, tmp_path)
+
+    metrics = {r["metric"] for r in conn.execute("SELECT metric FROM run_metrics")}
+    assert "best_val_loss" in metrics, metrics
+    assert "n_params" in metrics, metrics
+
+
+def test_a_short_entity_table_is_not_refused(conn, tmp_path):
+    """Three keys is too few to infer anything. The guard applies only where
+    there is enough evidence, so a small record with unusual names survives."""
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    (results / "small.json").write_text(json.dumps({"alpha": 0.1, "beta": 0.2}))
+    ledger.scan(conn, tmp_path)
+
+    metrics = {r["metric"] for r in conn.execute("SELECT metric FROM run_metrics")}
+    assert metrics == {"alpha", "beta"}, metrics

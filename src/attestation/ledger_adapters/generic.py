@@ -50,6 +50,56 @@ _SKIP_KEYS = {"step", "epoch", "iteration", "iter", "global_step", "seed", "inde
 # the whole discipline here.
 MAX_METRIC_KEYS = 60
 
+# Words that appear in the name of a *quantity*. A metrics record names what it
+# measured (`best_val_loss`, `n_params`, `wer`); a lookup table names the
+# entities it measured them for (`H_ttt`, `P_gg` -- molecular conformers).
+# Real example: benchmarks/gmtkn30/aconf_pyscf_energies.json maps 18 conformers
+# to energies, and the ledger read all 18 names as rankable metrics. Only 18
+# keys, so MAX_METRIC_KEYS never fired.
+_METRIC_WORDS = frozenset(
+    """acc accuracy auc best cer coef correlation count dim epochs err error eval f1
+    final iters latency loss mae max mean median min mse n nll num params perplexity
+    ppl prec precision r2 rate recall rmse score sd seed size std steps test throughput
+    time train val valid validation var wer""".split()
+)
+
+# Below this, a record is too small to infer anything from its key vocabulary:
+# two oddly-named fields are as likely a terse result as a table.
+MIN_KEYS_FOR_ENTITY_CHECK = 6
+
+
+def _is_lookup_table(node: dict) -> bool:
+    """True when a mapping is data rather than a metrics record.
+
+    Two shapes qualify. A *vocabulary* is huge and all-numeric (one real
+    vocab.json produced 50,258 "metrics", including a key named `wer` that
+    ranked as a WER of 1554). An *entity table* is small but keyed by the
+    things measured rather than the measurements (`H_ttt`, `P_gg`).
+    """
+    if not node:
+        return False
+    numeric = [k for k, v in node.items() if isinstance(v, (int, float))]
+    if len(node) > MAX_METRIC_KEYS and len(numeric) == len(node):
+        return True
+    return _is_entity_table(numeric)
+
+
+def _is_entity_table(keys: list[str]) -> bool:
+    """True when keys name entities rather than quantities.
+
+    A metrics record's keys share a vocabulary with every other metrics record
+    ever written; a table of per-entity values shares none of it. Requiring
+    *zero* metric words keeps this conservative -- one `loss` or `_mean`
+    anywhere and the record is read normally, so the cost of a false positive
+    is bounded to files that look nothing like results.
+    """
+    if len(keys) < MIN_KEYS_FOR_ENTITY_CHECK:
+        return False
+    words: set[str] = set()
+    for key in keys:
+        words |= set(re.split(r"[^a-z0-9]+", key.lower()))
+    return not (words & _METRIC_WORDS)
+
 
 def _step_from(stem: str) -> int | None:
     m = _STEP.search(stem)
@@ -103,9 +153,7 @@ def _descend(node: dict, step: int | None, prefix: str, depth: int = 0) -> list[
     for key, value in node.items():
         path = f"{prefix}.{key}" if prefix else str(key)
         if isinstance(value, dict):
-            if len(value) > MAX_METRIC_KEYS and all(
-                isinstance(v, (int, float)) for v in value.values()
-            ):
+            if _is_lookup_table(value):
                 continue  # a lookup table, not results
             out.extend(_descend(value, step, path, depth + 1))
     if depth > 0:  # top-level scalars are handled by the caller
@@ -148,9 +196,7 @@ def metrics_from_payload(payload, step: int | None, split: str | None) -> list[M
     out: list[Metric] = []
 
     if isinstance(payload, dict):
-        if len(payload) > MAX_METRIC_KEYS and all(
-            isinstance(v, (int, float)) for v in payload.values()
-        ):
+        if _is_lookup_table(payload):
             return []  # a lookup table, not a metrics record
         flat = _numeric_items(payload)
         if flat:
