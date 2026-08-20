@@ -161,6 +161,11 @@ class RunRecord:
     config: dict | None = None
     notes: str | None = None
     metrics: list[Metric] = field(default_factory=list)
+    # What the artifact said about the data, if anything. None means "did not
+    # say" -- never "no corpus" and never "the default corpus".
+    corpus: dict | None = None
+    # Resolved at scan time by _link_corpora; NULL until then.
+    corpus_id: int | None = None
 
 
 def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> dict:
@@ -174,6 +179,7 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
     Replaces a project's rows wholesale rather than merging: the artifacts on
     disk are the source of truth, so a run that vanished there vanishes here.
     """
+    from attestation import corpus
     from attestation.ledger_adapters import adapter_for
 
     root = Path(root).expanduser()
@@ -198,6 +204,10 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
         # a peer: it is only reported when it yields runs, since a workspace of
         # projects would otherwise always list its own parent as empty.
         fallback_roots = [root]
+
+    # Manifest is the highest-precedence source: it is the only one that can
+    # state intent ("these arms were meant to share a corpus").
+    manifest, assignments = corpus.load_manifest(root)
 
     scanned: dict[str, int] = {}
     empty: list[str] = []
@@ -236,11 +246,36 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
                     continue
                 if len(rel.parts) > 1:
                     consumed.add(rel.parts[0])
+        _link_corpora(conn, records, manifest, assignments)
         _replace_project(conn, project_root.name, records)
         scanned[project_root.name] = len(records)
 
     conn.commit()
     return {"scanned": scanned, "empty": empty, "diagnostics": diagnostics}
+
+
+def _link_corpora(
+    conn: sqlite3.Connection, records: list, manifest: dict, assignments: dict
+) -> None:
+    """Attach a corpus to each record, manifest first, then artifact fields.
+
+    Precedence is declared rather than incidental: a human declaration is the
+    only source that can say "these arms were meant to share a corpus", so it
+    outranks whatever a result file happened to record.
+    """
+    from attestation import corpus
+
+    by_family = assignments.get("family") or {}
+    by_run = assignments.get("run") or {}
+    for record in records:
+        entry = None
+        declared = by_run.get(record.name) or by_family.get(record.family or "")
+        if declared and declared in manifest:
+            entry = manifest[declared]
+        elif record.corpus:
+            entry = record.corpus
+        if entry:
+            record.corpus_id = corpus.upsert(conn, entry)
 
 
 def _replace_project(conn: sqlite3.Connection, project: str, records: list[RunRecord]) -> None:
@@ -252,7 +287,7 @@ def _replace_project(conn: sqlite3.Connection, project: str, records: list[RunRe
     for r in records:
         cur = conn.execute(
             "INSERT INTO runs(project, name, family, status, started, source_path,"
-            " config_json, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " config_json, notes, corpus_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 r.project,
                 r.name,
@@ -262,6 +297,7 @@ def _replace_project(conn: sqlite3.Connection, project: str, records: list[RunRe
                 r.source_path,
                 json.dumps(r.config) if r.config is not None else None,
                 r.notes,
+                r.corpus_id,
             ),
         )
         run_id = cur.lastrowid
@@ -342,8 +378,9 @@ def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) ->
     runs = [
         dict(r)
         for r in conn.execute(
-            "SELECT id, project, name, status, source_path FROM runs WHERE family = ?"
-            " ORDER BY name",
+            "SELECT r.id, r.project, r.name, r.status, r.source_path, c.name AS corpus"
+            " FROM runs r LEFT JOIN corpora c ON c.id = r.corpus_id"
+            " WHERE r.family = ? ORDER BY r.name",
             (family,),
         )
     ]
@@ -465,6 +502,7 @@ def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) ->
     scored.sort(key=rank_key)
     missing = sorted((a for a in arms if a["value"] is None), key=lambda a: a["name"])
 
+    shared, corpus_caveats = _corpus_agreement(runs, metric)
     return {
         "family": family,
         "metric": metric,
@@ -472,7 +510,8 @@ def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) ->
         "arms": scored + missing,
         "winner": scored[0]["name"] if scored else None,
         "without_metric": [a["name"] for a in missing],
-        "caveats": _caveats(scored, metric),
+        "corpus": shared,
+        "caveats": _caveats(scored, metric) + corpus_caveats,
     }
 
 
@@ -480,6 +519,50 @@ def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) ->
 # result. Not a significance test -- it is a prompt to go look, which is what an
 # auditor needs when the tool cannot know the variance.
 SMALL_SAMPLE = 30
+
+
+# Metrics whose value has no meaning across different data. Ranking a loss or
+# a perplexity computed on two corpora compares nothing; an accuracy at least
+# shares a scale, so the caveat is worded less absolutely for the rest.
+_CORPUS_SENSITIVE = frozenset({"loss", "ppl", "perplexity", "nll"})
+
+
+def _corpus_agreement(runs: list[dict], metric: str) -> tuple[str | None, list[str]]:
+    """`(shared_corpus_name, caveats)` for the arms being compared.
+
+    Three cases, and telling them apart is the point. All arms agree: name it,
+    so the reader learns the comparison was *checked* rather than assumed.
+    Arms differ: say which saw what. Any arm unknown: say the comparison is
+    unverified -- unknown is never silently treated as agreement, which is
+    exactly the assumption every comparison made before this existed.
+    """
+    named = {r["name"]: r.get("corpus") for r in runs}
+    known = {c for c in named.values() if c}
+    unknown = sorted(n for n, c in named.items() if not c)
+
+    if len(known) > 1:
+        sensitive = _metric_stem(metric) in _CORPUS_SENSITIVE
+        detail = ", ".join(f"{n} saw {c}" for n, c in sorted(named.items()) if c)
+        note = (
+            f"arms did not share a corpus ({detail});"
+            f" {metric} is not comparable across different data"
+            if sensitive
+            else f"arms did not share a corpus ({detail}); check that {metric} is comparable"
+        )
+        return None, [note]
+
+    if unknown and known:
+        # Only a *partial* record is a finding. When no arm names a corpus
+        # there is no inconsistency to report -- it is a ledger without corpus
+        # data, and warning on every comparison would make the caveats
+        # boilerplate, which is precisely what trains a reader to ignore them.
+        return None, [
+            f"corpus only partly recorded: {', '.join(unknown)}"
+            f" omit{'s' if len(unknown) == 1 else ''} the data they used,"
+            f" so agreement with {sorted(known)[0]} is unverified"
+        ]
+
+    return (next(iter(known)) if known else None), []
 
 
 def _caveats(scored: list[dict], metric: str) -> list[str]:

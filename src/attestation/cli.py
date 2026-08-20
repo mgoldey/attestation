@@ -314,7 +314,12 @@ def cmd_runs_compare(args: argparse.Namespace) -> int:
             # <project>` is the intuitive first guess and is not a family
             print(result.get("message") or f"no runs in family {args.family!r}")
             return 1
-        print(f"{result['family']} — ranked by {result['metric']} ({result['direction']})\n")
+        header = f"{result['family']} — ranked by {result['metric']} ({result['direction']})"
+        # Naming the shared corpus says the comparison was *checked*, not
+        # assumed -- the reader cannot tell those apart otherwise.
+        if result.get("corpus"):
+            header += f", all arms on {result['corpus']}"
+        print(header + "\n")
         print(f"  {'arm':44s} {result['metric']:>10s} {'n':>6s}  {'step':>8s}  source")
         print(f"  {'-' * 44} {'-' * 10} {'-' * 6}  {'-' * 8}  {'-' * 6}")
         for arm in result["arms"]:

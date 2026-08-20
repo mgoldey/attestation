@@ -242,3 +242,26 @@ def test_claims_exits_nonzero_on_a_contradiction(tmp_path, capsys):
 
     assert rc == 1
     assert "contradicted" in capsys.readouterr().out
+
+
+def test_compare_header_names_the_shared_corpus(tmp_path, capsys, monkeypatch):
+    """Naming the corpus says the comparison was checked, not assumed. A
+    reader cannot tell those apart from the numbers alone."""
+    import json as _json
+
+    from attestation import cli
+
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    for tag, loss in (("a", 5.0), ("b", 5.2)):
+        (results / f"lm_{tag}.json").write_text(
+            _json.dumps({"dataset": "wikitext-2", "best_val_loss": loss})
+        )
+    db = tmp_path / "t.db"
+    monkeypatch.setenv("RSS_DB", str(db))
+    cli.main(["runs", "scan", "--root", str(tmp_path)])
+    capsys.readouterr()
+    cli.main(["runs", "compare", "lm"])
+
+    out = capsys.readouterr().out
+    assert "all arms on wikitext-2" in out, out

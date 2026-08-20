@@ -26,6 +26,7 @@ import re
 import statistics
 from pathlib import Path
 
+from attestation import corpus
 from attestation.ledger import Metric, RunRecord
 
 # Where ML/science projects conventionally put results and configuration.
@@ -41,6 +42,10 @@ _STEP = re.compile(
 _SPLIT = re.compile(r"(?:^|[-_])(cfg|seed|fold|split|lr|temp|scale)[-_=]?([\w.]+)", re.I)
 
 _SKIP_KEYS = {"step", "epoch", "iteration", "iter", "global_step", "seed", "index", "id"}
+# Corpus fields name what a run *read*, never what it measured. Ranking
+# `seq_len` or `vocab_size` as a metric is the same over-extraction bug as
+# reading conformer names as measurements.
+_SKIP_KEYS |= {k.lower() for k in corpus.CORPUS_KEYS}
 
 # A metrics record has a handful of named quantities. A mapping with hundreds
 # of numeric keys is a lookup table -- a tokenizer vocabulary, a char-to-index
@@ -540,6 +545,9 @@ def discover(root: Path) -> list[RunRecord]:
                     status="recorded",
                     config=_seed_config(payload),
                     metrics=metrics,
+                    corpus=corpus.from_payload(
+                        payload[0] if isinstance(payload, list) and payload else payload
+                    ),
                 )
             )
 

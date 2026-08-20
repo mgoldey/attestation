@@ -836,3 +836,115 @@ def test_a_short_entity_table_is_not_refused(conn, tmp_path):
 
     metrics = {r["metric"] for r in conn.execute("SELECT metric FROM run_metrics")}
     assert metrics == {"alpha", "beta"}, metrics
+
+
+def test_corpus_read_from_artifact_fields(conn, tmp_path):
+    """Corpus fields already present in a result file become a corpus row."""
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    (results / "run_a.json").write_text(
+        json.dumps({"dataset": "wikitext-2", "tokenizer": "gpt2", "acc": 0.9})
+    )
+    ledger.scan(conn, tmp_path)
+
+    row = conn.execute(
+        "SELECT c.name, c.tokenizer FROM runs r JOIN corpora c ON c.id = r.corpus_id"
+    ).fetchone()
+    assert row is not None, "no corpus linked to the run"
+    assert row["name"] == "wikitext-2"
+    assert row["tokenizer"] == "gpt2"
+    # `dataset` names the corpus; it must not also be ranked as a measurement.
+    metrics = {r["metric"] for r in conn.execute("SELECT metric FROM run_metrics")}
+    assert "dataset" not in metrics and "tokenizer" not in metrics, metrics
+
+
+def test_manifest_assigns_a_corpus_to_a_family(conn, tmp_path, monkeypatch):
+    """A declaration is the only source that can state intent: "these arms
+    were meant to share a corpus". It outranks what the artifacts happened
+    to record."""
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    for tag in ("a", "b"):
+        (results / f"lm_{tag}.json").write_text(json.dumps({"best_val_loss": 5.0}))
+    manifest = tmp_path / "corpora.toml"
+    manifest.write_text(
+        "[corpus.wikitext2]\n"
+        'source = "Salesforce/wikitext"\n'
+        'tokenizer = "gpt2"\n'
+        "seq_len = 256\n"
+        "\n[assign]\n"
+        'family.lm = "wikitext2"\n'
+    )
+    monkeypatch.setenv("LEDGER_CORPUS_FILE", str(manifest))
+    ledger.scan(conn, tmp_path)
+
+    rows = conn.execute(
+        "SELECT c.name, c.source, c.seq_len FROM runs r JOIN corpora c ON c.id = r.corpus_id"
+    ).fetchall()
+    assert len(rows) == 2, rows
+    assert {r["name"] for r in rows} == {"wikitext2"}
+    assert rows[0]["source"] == "Salesforce/wikitext"
+    assert rows[0]["seq_len"] == 256
+
+
+def test_compare_reports_the_shared_corpus(conn, tmp_path, monkeypatch):
+    """When arms agree, say so: the reader learns the comparison was checked
+    rather than assumed."""
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    for tag, loss in (("a", 5.0), ("b", 5.2)):
+        (results / f"lm_{tag}.json").write_text(
+            json.dumps({"dataset": "wikitext-2", "best_val_loss": loss})
+        )
+    ledger.scan(conn, tmp_path)
+    out = ledger.compare(conn, "lm")
+
+    assert out.get("corpus") == "wikitext-2", out
+    assert not any("corpus" in c and "differ" in c for c in out["caveats"]), out["caveats"]
+
+
+def test_compare_caveats_when_arms_used_different_corpora(conn, tmp_path):
+    """Loss is only comparable across runs that saw the same data. Ranking
+    arms trained on different corpora is the error this feature exists for."""
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    (results / "lm_a.json").write_text(json.dumps({"dataset": "wikitext-2", "best_val_loss": 5.0}))
+    (results / "lm_b.json").write_text(
+        json.dumps({"dataset": "wikitext-103", "best_val_loss": 4.1})
+    )
+    ledger.scan(conn, tmp_path)
+    out = ledger.compare(conn, "lm")
+
+    joined = " ".join(out["caveats"])
+    assert "corpus" in joined.lower(), out["caveats"]
+    assert "wikitext-103" in joined, out["caveats"]
+
+
+def test_no_corpus_caveat_when_no_arm_records_one(conn, tmp_path):
+    """A caveat must be earned. When no arm names a corpus there is no
+    inconsistency -- it is simply a ledger without corpus data, and warning on
+    every comparison would make the caveats boilerplate, which is what trains
+    a reader to ignore them."""
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    for tag, loss in (("a", 5.0), ("b", 5.2)):
+        (results / f"lm_{tag}.json").write_text(json.dumps({"best_val_loss": loss}))
+    ledger.scan(conn, tmp_path)
+    out = ledger.compare(conn, "lm")
+
+    assert not any("corpus" in c.lower() for c in out["caveats"]), out["caveats"]
+
+
+def test_compare_caveats_when_only_some_arms_record_a_corpus(conn, tmp_path):
+    """A *partial* record is the finding: one arm's data is known and the
+    other's is not, so the ledger cannot confirm they match."""
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    (results / "lm_a.json").write_text(json.dumps({"dataset": "wikitext-2", "best_val_loss": 5.0}))
+    (results / "lm_b.json").write_text(json.dumps({"best_val_loss": 5.2}))
+    ledger.scan(conn, tmp_path)
+    out = ledger.compare(conn, "lm")
+
+    joined = " ".join(out["caveats"]).lower()
+    assert "corpus" in joined and "unverified" in joined, out["caveats"]
+    assert "lm_b" in joined, out["caveats"]

@@ -27,6 +27,8 @@ from pathlib import Path
 # Loader calls whose literal arguments name a dataset. Value is the meaning of
 # each positional argument, so `load_dataset("a/b", "c")` yields source="a/b",
 # config="c" without guessing at argument order.
+CORPUS_FILE_ENV = "LEDGER_CORPUS_FILE"
+
 _DATASET_CALLS: dict[str, tuple[str, ...]] = {
     "load_dataset": ("source", "config"),
 }
@@ -103,3 +105,138 @@ def detect_in_source(path: Path) -> DetectedCorpus | None:
         seq_len=seq_len if isinstance(seq_len, int) else None,
         source_path=str(path),
     )
+
+
+# Field names under which artifacts already record corpus identity. Extracted
+# rather than ranked: `dataset` names what a run read, and reading it as a
+# measurement is the over-extraction bug one level up.
+_ARTIFACT_FIELDS: dict[str, tuple[str, ...]] = {
+    "name": ("dataset", "corpus", "dataset_name", "data", "corpus_name"),
+    "source": ("dataset_source", "hf_dataset", "data_source"),
+    "config": ("dataset_config", "subset"),
+    "tokenizer": ("tokenizer", "tokenizer_name", "encoding"),
+    "vocab_size": ("vocab_size", "n_vocab"),
+    "seq_len": ("seq_len", "max_seq_len", "block_size", "context_length"),
+}
+# Every artifact key that names a corpus rather than measuring something.
+CORPUS_KEYS = frozenset(k for names in _ARTIFACT_FIELDS.values() for k in names)
+
+
+def from_payload(payload) -> dict | None:
+    """Corpus fields stated by a result payload, or None if it states none."""
+    if not isinstance(payload, dict):
+        return None
+    lowered = {str(k).lower(): v for k, v in payload.items()}
+    found: dict = {}
+    for field, names in _ARTIFACT_FIELDS.items():
+        for key in names:
+            if key not in lowered:
+                continue
+            value = lowered[key]
+            if field in ("vocab_size", "seq_len"):
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    continue
+                found[field] = int(value)
+            elif isinstance(value, str) and value.strip():
+                found[field] = value.strip()
+            break
+    if not found:
+        return None
+    # A corpus needs a name to be a join key. Fall back to source, then config.
+    if "name" not in found:
+        name = found.get("source") or found.get("config")
+        if not name:
+            return None
+        found["name"] = name
+    return found
+
+
+def manifest_path(workspace: Path | None = None) -> Path | None:
+    """Where the corpus manifest lives: LEDGER_CORPUS_FILE, then the
+    workspace, then the per-user file. Same ladder as metric_direction.toml --
+    the repo should not grow a second convention for the same idea."""
+    import os
+
+    value = os.environ.get(CORPUS_FILE_ENV)
+    if value:
+        path = Path(value).expanduser()
+        return path if path.is_file() else None
+    if workspace:
+        candidate = Path(workspace) / "corpora.toml"
+        if candidate.is_file():
+            return candidate
+    default = Path.home() / ".hermes" / "corpora.toml"
+    return default if default.is_file() else None
+
+
+def load_manifest(workspace: Path | None = None) -> tuple[dict, dict]:
+    """`(corpora, assignments)` from the manifest, or two empty dicts.
+
+    Never raises on a malformed file: a broken manifest must not abort a scan
+    that would otherwise succeed from artifacts alone.
+    """
+    import tomllib
+
+    path = manifest_path(workspace)
+    if path is None:
+        return {}, {}
+    try:
+        doc = tomllib.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}, {}
+    corpora = {}
+    for name, body in (doc.get("corpus") or {}).items():
+        if not isinstance(body, dict):
+            continue
+        entry = {k: v for k, v in body.items() if k != "splits"}
+        entry["name"] = name
+        entry["source_path"] = str(path)
+        splits = body.get("splits")
+        entry["splits"] = splits if isinstance(splits, dict) else {}
+        corpora[name] = entry
+    assign = doc.get("assign") or {}
+    return corpora, {
+        "family": dict(assign.get("family") or {}),
+        "run": dict(assign.get("run") or {}),
+    }
+
+
+def upsert(conn, entry: dict) -> int | None:
+    """Store a corpus by name and return its id, filling gaps without
+    overwriting. A declaration must never be silently replaced by a weaker
+    value read from an artifact, so an existing non-NULL column stands."""
+    name = entry.get("name")
+    if not name:
+        return None
+    columns = ("source", "config", "tokenizer", "vocab_size", "seq_len", "source_path")
+    row = conn.execute("SELECT * FROM corpora WHERE name = ?", (str(name),)).fetchone()
+    if row is None:
+        conn.execute(
+            f"INSERT INTO corpora(name, {', '.join(columns)})"
+            f" VALUES (?, {', '.join('?' * len(columns))})",
+            (str(name), *(entry.get(c) for c in columns)),
+        )
+    else:
+        missing = {c: entry.get(c) for c in columns if row[c] is None and entry.get(c) is not None}
+        if missing:
+            sets = ", ".join(f"{c} = ?" for c in missing)
+            conn.execute(
+                f"UPDATE corpora SET {sets} WHERE name = ?", (*missing.values(), str(name))
+            )
+    got = conn.execute("SELECT id FROM corpora WHERE name = ?", (str(name),)).fetchone()
+    corpus_id = got["id"]
+    for split, body in (entry.get("splits") or {}).items():
+        if not isinstance(body, dict):
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO corpus_splits(corpus_id, split, n_tokens, n_records, n_bytes)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (
+                corpus_id,
+                str(split),
+                body.get("n_tokens"),
+                body.get("n_records"),
+                body.get("n_bytes"),
+            ),
+        )
+    return corpus_id
