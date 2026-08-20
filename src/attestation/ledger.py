@@ -163,10 +163,19 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
             "message": f"no such directory: {root}",
         }
 
+    fallback_roots: list[Path] = []
     if project:
         candidates = [root / project]
     else:
         candidates = sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
+        # `root` may be a single repo rather than a directory of them. Its own
+        # `results/` is then a project root of its own, and the adapter looks
+        # for `results/results/` -- so pointing --root at a repo, which is the
+        # obvious thing to do, reported "0 runs" and blamed the user's
+        # directory names. Read the root itself too, as a fallback rather than
+        # a peer: it is only reported when it yields runs, since a workspace of
+        # projects would otherwise always list its own parent as empty.
+        fallback_roots = [root]
 
     scanned: dict[str, int] = {}
     empty: list[str] = []
@@ -174,7 +183,12 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
     # failure this tool cannot afford -- an unrecognised-but-ordinary layout
     # looks identical to an empty workspace, and the user has no next step.
     diagnostics: dict[str, str] = {}
-    for project_root in candidates:
+    # Directories whose files the root-level scan already claimed. Reporting
+    # one of these as an empty project too would tell the reader to go fix a
+    # layout that just worked.
+    consumed: set[str] = set()
+    # Fallback first, so `consumed` is known before the per-project pass.
+    for project_root in [*fallback_roots, *candidates]:
         if not project_root.is_dir():
             empty.append(project_root.name)
             diagnostics[project_root.name] = "no such directory"
@@ -182,12 +196,24 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
         adapter = adapter_for(project_root.name)
         records = adapter.discover(project_root)
         if not records:
+            if project_root in fallback_roots:
+                continue  # a fallback that found nothing is not a project
+            if project_root.name in consumed:
+                continue
             empty.append(project_root.name)
             explain = getattr(adapter, "diagnose_empty", None)
             diagnostics[project_root.name] = (
                 explain(project_root) if explain else "no recognisable runs"
             )
             continue
+        if project_root in fallback_roots:
+            for record in records:
+                try:
+                    rel = Path(record.source_path).resolve().relative_to(project_root.resolve())
+                except ValueError:
+                    continue
+                if len(rel.parts) > 1:
+                    consumed.add(rel.parts[0])
         _replace_project(conn, project_root.name, records)
         scanned[project_root.name] = len(records)
 
