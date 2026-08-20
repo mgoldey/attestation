@@ -330,3 +330,54 @@ def test_refuses_to_open_newer_schema_version(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="newer than this code supports"):
         get_db(path)
+
+
+def test_corpora_tables_exist(tmp_path):
+    """A corpus is its own row, not a column on runs.
+
+    Twelve runs sharing WikiText-2 should point at one inspectable row that
+    carries the corpus's own attributes -- source, tokenizer, fingerprint --
+    rather than duplicating them per run or losing them.
+    """
+    conn = get_db(str(tmp_path / "h.db"))
+    tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"corpora", "corpus_splits"} <= tables, sorted(tables)
+
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(corpora)")}
+    assert {"name", "source", "tokenizer", "vocab_size", "seq_len"} <= cols, sorted(cols)
+    # fingerprint_kind must exist alongside fingerprint: hashing a directory of
+    # shards and hashing one .txt are different claims, and a size+mtime check
+    # must never be reportable as a content hash.
+    assert {"fingerprint", "fingerprint_kind"} <= cols, sorted(cols)
+
+
+def test_runs_carry_a_nullable_corpus_id(tmp_path):
+    """NULL means "the artifact did not say" -- never "no corpus", never
+    "the default corpus". Most existing artifacts record nothing about data,
+    so unknown is the common case and must be representable."""
+    conn = get_db(str(tmp_path / "h.db"))
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
+    assert "corpus_id" in cols, sorted(cols)
+
+    conn.execute("INSERT INTO runs(project, name, source_path) VALUES ('p', 'r', '/tmp/r.json')")
+    row = conn.execute("SELECT corpus_id FROM runs WHERE name = 'r'").fetchone()
+    assert row["corpus_id"] is None
+
+
+def test_existing_db_migrates_to_corpora(tmp_path):
+    """An old database gains the corpus tables without losing its runs."""
+    path = tmp_path / "h.db"
+    conn = get_db(str(path))
+    conn.execute("INSERT INTO runs(project, name, source_path) VALUES ('p', 'old', '/tmp/o.json')")
+    conn.commit()
+    # Rewind to before the corpus migration and drop what it adds.
+    conn.execute("DROP TABLE IF EXISTS corpus_splits")
+    conn.execute("DROP TABLE IF EXISTS corpora")
+    conn.execute("PRAGMA user_version = 1")
+    conn.commit()
+    conn.close()
+
+    conn = get_db(str(path))
+    tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"corpora", "corpus_splits"} <= tables
+    assert conn.execute("SELECT COUNT(*) c FROM runs").fetchone()["c"] == 1

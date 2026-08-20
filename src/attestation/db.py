@@ -92,6 +92,10 @@ CREATE TABLE IF NOT EXISTS runs(
   source_path TEXT NOT NULL,
   config_json TEXT,
   notes TEXT,
+  -- NULL means "the artifact did not say" -- never "no corpus" and never "the
+  -- default corpus". Most artifacts record nothing about data, so unknown is
+  -- the common case, and treating it as agreement is the bug this guards.
+  corpus_id INTEGER REFERENCES corpora(id) ON DELETE SET NULL,
   UNIQUE (project, name)
 );
 -- long format, not wide: projects report entirely different metrics, and a
@@ -105,15 +109,63 @@ CREATE TABLE IF NOT EXISTS run_metrics(
   PRIMARY KEY (run_id, metric, step, split)
 );
 CREATE INDEX IF NOT EXISTS idx_runs_family ON runs(project, family);
+{corpus_schema}
+CREATE TRIGGER IF NOT EXISTS trg_items_delete_vector AFTER DELETE ON items BEGIN
+  DELETE FROM item_vectors WHERE rowid = old.id;
+END;
+"""
+
+
+# The corpus tables, kept as their own string so migration 002 can create
+# them in an existing database with exactly the DDL SCHEMA uses for a fresh
+# one -- two divergent copies of a table definition is how schemas drift.
+_CORPUS_SCHEMA = """
+-- A corpus is its own entity, not a column on runs: it has attributes runs do
+-- not (tokenizer, split sizes, fingerprint) and its own lifetime -- it can
+-- change on disk while the runs citing it do not. Twelve runs sharing
+-- WikiText-2 point at one inspectable row.
+-- Every field but `name` is nullable: a partially-known corpus ("WikiText-2,
+-- tokenizer unknown") is the normal case and is strictly more honest than
+-- recording nothing, provided unknowns render as unknown.
+CREATE TABLE IF NOT EXISTS corpora(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  source TEXT,
+  config TEXT,
+  tokenizer TEXT,
+  vocab_size INTEGER,
+  seq_len INTEGER,
+  -- `fingerprint_kind` names what was hashed (file_sha256, dir_sha256,
+  -- size_mtime, declared). Hashing a directory of shards and hashing one .txt
+  -- are different claims; without this a cheap size+mtime check could be
+  -- reported as a content hash, which is worse than no check at all.
+  fingerprint TEXT,
+  fingerprint_kind TEXT,
+  measured_at TEXT,
+  source_path TEXT,
+  notes TEXT
+);
+-- Long format, as run_metrics is: projects name splits differently
+-- (val/valid/validation/dev) and carry different counts.
+CREATE TABLE IF NOT EXISTS corpus_splits(
+  corpus_id INTEGER NOT NULL REFERENCES corpora(id) ON DELETE CASCADE,
+  split TEXT NOT NULL,
+  n_tokens INTEGER,
+  n_records INTEGER,
+  n_bytes INTEGER,
+  fingerprint TEXT,
+  PRIMARY KEY (corpus_id, split)
+);
 -- item_vectors (a vec0 virtual table, created separately below since its
 -- dimensionality is only known at runtime) links to items by bare rowid
 -- equality with no FK possible on a virtual table. items.id is a rowid alias
 -- SQLite reuses after the highest-id row is deleted, so without this trigger
 -- a later item can silently inherit an earlier, unrelated item's vector.
-CREATE TRIGGER IF NOT EXISTS trg_items_delete_vector AFTER DELETE ON items BEGIN
-  DELETE FROM item_vectors WHERE rowid = old.id;
-END;
 """
+
+# Single-sourced: SCHEMA embeds the same DDL migration 002 applies, so a fresh
+# database and a migrated one cannot drift apart.
+SCHEMA = SCHEMA.format(corpus_schema=_CORPUS_SCHEMA.strip())
 
 
 def _migration_001_add_clicks_source(conn: sqlite3.Connection) -> None:
@@ -128,6 +180,22 @@ def _migration_001_add_clicks_source(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE clicks ADD COLUMN source TEXT NOT NULL DEFAULT 'ui'")
 
 
+def _migration_002_add_corpora(conn: sqlite3.Connection) -> None:
+    """Add the corpus tables and runs.corpus_id.
+
+    Purely additive and idempotent: existing runs get corpus_id NULL, which is
+    the correct value for "the artifact did not say what data this saw".
+    """
+    conn.executescript(_CORPUS_SCHEMA)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
+    if "corpus_id" not in cols:
+        # No inline REFERENCES: SQLite's ALTER TABLE ADD COLUMN rejects a
+        # column with a non-NULL default or a foreign key clause on some
+        # versions. The FK is declared in SCHEMA for fresh databases; migrated
+        # ones carry the column without it, which affects enforcement only.
+        conn.execute("ALTER TABLE runs ADD COLUMN corpus_id INTEGER")
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -137,6 +205,7 @@ def _migration_001_add_clicks_source(conn: sqlite3.Connection) -> None:
 # SCHEMA, same discipline as the old _migrate().
 _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (1, _migration_001_add_clicks_source),
+    (2, _migration_002_add_corpora),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]
