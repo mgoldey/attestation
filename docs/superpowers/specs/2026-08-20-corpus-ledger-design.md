@@ -159,6 +159,51 @@ Provenance is recorded per corpus (`source_path`), so a reader can always see
 which of the three produced a given row. A merge never silently overwrites a
 declared value with a measured one; it fills gaps and reports conflicts.
 
+### Detection reads syntax, not a model — measured, not assumed
+
+The corpus is usually absent from the results and present in the source, so
+"ask the local LLM to read the driver" is the obvious fourth source. It was
+measured against `gemma4:e2b-it-q4_K_M` before being rejected.
+
+Asked three times for the corpus in the *same* file, it returned three
+identities:
+
+| | run 0 | run 1 | run 2 | `ast` |
+|---|---|---|---|---|
+| source | "WikiText-2 data loading and tokenization" | "WikiText-2" | "WikiText-2" | `Salesforce/wikitext` |
+| config | `wikitext-2-raw-v1` | *the module docstring* | "WikiText-2" | `wikitext-2-raw-v1` |
+| tokenizer | `tiktoken.get_encoding("gpt2")` | "tiktoken (using gpt2 encoding)" | "tiktoken (gpt2 encoding)" | `gpt2` |
+
+Only `seq_len` was stable. Worse, on a driver file that merely *calls* a loader
+and states no corpus, it invented `tokenizer: "load_wikitext2"` (a function
+name) and `tokenizer: "wikitext2"` (a dataset name) rather than declining.
+
+Both failures are disqualifying *specifically here*, because a corpus name is
+a **join key**: two runs share a corpus only when their identity strings match
+exactly. A detector that says "WikiText-2" once and "WikiText-2 data loading
+and tokenization" the next time reports two corpora where there is one, and
+the guard silently fails. A detector that fabricates a tokenizer reports
+agreement that was never checked — the exact bug this feature exists to close.
+An unreliable guard is worse than no guard, because it is believed.
+
+Meanwhile `ast` gets it exactly right in ~12 lines, offline, in milliseconds,
+because these are *literal arguments* and require no inference at all:
+
+```python
+load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1")   # source, config
+tiktoken.get_encoding("gpt2")                              # tokenizer
+```
+
+`corpus.detect_in_source` deliberately does not resolve variables:
+`load_dataset(name)` states nothing about which corpus was used, and reporting
+the variable's name would be the same fabrication in cheaper clothing.
+
+This is the same rule the rest of the repo already follows — "No LLM in
+composition tools: digest/runs_compare return structure, never prose" — and
+the reason generalises. The caller is a model, and a model is good at reading
+a weird loader and *telling the user* what it thinks. It is not good at
+minting a stable identifier that a join depends on.
+
 ### Manifest format, mirroring `metric_direction.toml`
 
 The repo already has a precedent for teaching the ledger a fact it cannot

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from attestation import ledger
+from attestation import corpus, ledger
 from attestation.db import get_db
 
 
@@ -705,3 +705,61 @@ def test_an_undeclared_metric_still_refuses():
     directions = ledger.metric_directions()
     assert ledger._metric_direction("best_val_novel_score", directions) is None
     assert ledger._metric_direction("final_throughput", directions) is None
+
+
+def test_corpus_detected_from_a_dataset_load_call(tmp_path):
+    """The corpus identity is in the source, and AST reads it exactly.
+
+    In ~/qc/scmoe not one of 34 result files records vocab_size or seq_len;
+    the corpus exists only as `load_dataset("Salesforce/wikitext",
+    "wikitext-2-raw-v1")` plus `get_encoding("gpt2")`. Those are literal
+    arguments, so a parser recovers them exactly -- no inference required.
+    """
+    src = tmp_path / "data.py"
+    src.write_text(
+        "import tiktoken\n"
+        "from datasets import load_dataset\n"
+        "def load():\n"
+        "    enc = tiktoken.get_encoding('gpt2')\n"
+        "    ds = load_dataset('Salesforce/wikitext', 'wikitext-2-raw-v1')\n"
+        "    return TokenDataset(ds, seq_len=256)\n"
+    )
+    found = corpus.detect_in_source(src)
+    assert found is not None
+    assert found.source == "Salesforce/wikitext"
+    assert found.config == "wikitext-2-raw-v1"
+    assert found.tokenizer == "gpt2"
+
+
+def test_corpus_detection_is_identical_across_repeated_reads():
+    """Identity is the join key: two runs share a corpus only if the strings
+    match exactly. A detector that returns 'WikiText-2' once and
+    'WikiText-2 data loading and tokenization' the next time makes the guard
+    silently fail, which is worse than not having it."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        src = Path(d) / "data.py"
+        src.write_text("from datasets import load_dataset\nds = load_dataset('a/b', 'c')\n")
+        seen = {corpus.detect_in_source(src) for _ in range(5)}
+    assert len(seen) == 1, seen
+
+
+def test_corpus_detection_reports_nothing_rather_than_guessing(tmp_path):
+    """A file that only *calls* a loader states no corpus. Returning None is
+    correct; inventing a tokenizer from a function name is the failure this
+    avoids."""
+    src = tmp_path / "driver.py"
+    src.write_text(
+        "from scmoe.lm.data import load_wikitext2\n"
+        "def main():\n    return load_wikitext2(seq_len=256, batch_size=8)\n"
+    )
+    found = corpus.detect_in_source(src)
+    assert found is None or (found.source is None and found.tokenizer is None), found
+
+
+def test_corpus_detection_survives_unparseable_source(tmp_path):
+    """A syntax error in one file must not abort a scan."""
+    src = tmp_path / "broken.py"
+    src.write_text("def f(:\n  pass\n")
+    assert corpus.detect_in_source(src) is None
