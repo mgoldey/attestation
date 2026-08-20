@@ -46,6 +46,57 @@ The failure is quiet in the worst way. Nothing errors. The table renders, the
 caveats about seed replication and effect size appear and are individually
 correct, and the reader concludes something false.
 
+## Prior art
+
+The reasonable objection to all of this is "use Sacred, or MLflow, or DVC."
+Worth answering concretely, because the run-tracking half of this ledger *is*
+largely a worse MLflow, and only two properties justify its existence.
+
+**Sacred is write-side instrumentation and structurally cannot do this.**
+Verified against source at `86865b0`, not documentation: the observer
+interface is entirely `*_event` sinks (`started_event`, `resource_event`,
+`log_metrics`) with no read path, and recording is hard-gated on
+`assert self.current_run is not None`. The word `dataset` appears zero times
+in `sacred/`; so do `higher_is_better`, `rank(`, and `caveat`. Pointed at
+`~/qc/scmoe` -- 34 JSON files from code that never imported it -- Sacred has
+nothing to say. It is maintained but janitorial (last release Nov 2024).
+
+The same holds, with variations, across the field:
+
+| Tool | Reads uninstrumented artifacts? | Corpus as an entity? | Guards comparisons? |
+|---|---|---|---|
+| Sacred | no -- push-only observers | no | no |
+| MLflow / W&B | no (`wandb sync` is TFEvents-only) | data hashes, not linked to comparison | no |
+| DVC | must invoke the code itself | yes, versioned properly | no |
+| HF `datasets` | n/a -- a data library | yes, xxh64 fingerprint | no runs at all (metrics removed in v3.0.0) |
+| Guild AI | own `guild export` archives only | no | `compare` is a `--min`/`--max` sort |
+| HiPlot | archived | no | visualization only |
+
+The gap is not that these tools are abandoned -- most are actively maintained.
+It is architectural: **data identity and run comparison live in different
+tools everywhere in this ecosystem**, and nothing joins them. HF divesting
+metrics in v3.0.0 is that split made explicit.
+
+So the two properties worth building for:
+
+1. **Retroactive reading.** Zero adoption cost is the whole design constraint
+   (see the module docstring). Every tool above requires the run to have been
+   instrumented before it happened, which is useless for work already done.
+2. **The honesty layer.** Declared metric direction, refusal to rank an
+   undeclared metric, and caveats about effect size and seed replication have
+   no counterpart in the ~30 tools surveyed. Direction exists only in W&B and
+   is being deprecated there.
+
+Two honest qualifications. First, "no tool does this" is a survey result, and
+absence of evidence is weaker than evidence of absence -- Sumatra in
+particular was not conclusively checked. Second, the retroactive approach has
+a real cost the instrumented tools do not pay: **a scanner infers structure
+where a tracker is told it.** Family grouping is a filename heuristic, and a
+wrong grouping produces a confident comparison of unrelated runs. That is why
+the grouping rule is stated in the caveat text rather than trusted silently,
+and it is the same reason this document exists: the corpus guard closes one
+more place where the ledger was inferring agreement it had not checked.
+
 ## What this is not
 
 Not a data versioning system. It does not store corpora, deduplicate them,
