@@ -54,6 +54,13 @@ METRIC_DIRECTION: dict[str, str] = {
     "cer": "lower_is_better",
     "loss": "lower_is_better",
     "val_loss": "lower_is_better",
+    # Perplexity is exp(loss) and NLL is loss under another name: lower is
+    # better by definition, not by convention. They are the metrics a language
+    # model reports, and omitting them made the ledger refuse to compare the
+    # runs it had just discovered.
+    "ppl": "lower_is_better",
+    "perplexity": "lower_is_better",
+    "nll": "lower_is_better",
     "mae": "lower_is_better",
     "rmse": "lower_is_better",
     "error": "lower_is_better",
@@ -74,16 +81,31 @@ _DEFAULT_METRIC_DIRECTION_PATH = Path.home() / ".hermes" / "metric_direction.tom
 # `top1_accuracy`, `f1_macro`) rather than bare. Stripping a *known* affix and
 # looking up the *declared* direction for the stem is still a declaration, not
 # a guess -- an undeclared stem still refuses.
-_METRIC_PREFIXES = ("train_", "val_", "test_", "eval_", "top1_")
+# `best_`/`final_` say *which* value of a metric was taken, not what it
+# measures, and they stack with a split prefix -- `best_val_loss` is the single
+# most common metric name a training loop writes. Stripping only one affix left
+# it undeclared, so a real repo's runs were discovered and then refused for
+# comparison.
+_METRIC_PREFIXES = ("train_", "val_", "valid_", "test_", "eval_", "top1_", "best_", "final_")
 _METRIC_SUFFIXES = ("_macro", "_micro")
 
 
 def _metric_stem(metric: str) -> str:
+    """`metric` with known split/qualifier affixes removed.
+
+    Loops until no affix matches, since they compose. This stays a declaration
+    rather than a guess: an unknown stem is still refused, so `best_val_score`
+    resolves to nothing exactly as `score` does.
+    """
     stem = metric
-    for prefix in _METRIC_PREFIXES:
-        if stem.startswith(prefix):
-            stem = stem[len(prefix) :]
-            break
+    changed = True
+    while changed:
+        changed = False
+        for prefix in _METRIC_PREFIXES:
+            if stem.startswith(prefix) and len(stem) > len(prefix):
+                stem = stem[len(prefix) :]
+                changed = True
+                break
     for suffix in _METRIC_SUFFIXES:
         if stem.endswith(suffix):
             stem = stem[: -len(suffix)]

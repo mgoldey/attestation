@@ -675,3 +675,33 @@ def test_a_dir_consumed_by_the_root_scan_is_not_also_reported_empty(conn, tmp_pa
 
     assert "results" not in out["empty"], out["empty"]
     assert "results" not in out["diagnostics"], out["diagnostics"]
+
+
+@pytest.mark.parametrize(
+    "metric",
+    [
+        "best_val_loss",
+        "final_val_loss",
+        "final_train_loss",
+        "best_val_ppl",
+        "val_perplexity",
+        "eval_nll",
+    ],
+)
+def test_standard_lm_metric_names_have_a_direction(metric):
+    """The names a language-model training loop actually writes must resolve.
+
+    `best_` and `final_` qualify a metric without changing which way is
+    better, and they stack with a split prefix (`best_val_loss`). Stripping
+    only one affix left the most standard names in the field undeclared, so a
+    real repo's runs were found and then refused for comparison. Perplexity is
+    exp(loss): lower is better by definition, not by guess.
+    """
+    assert ledger._metric_direction(metric, ledger.metric_directions()) == "lower_is_better"
+
+
+def test_an_undeclared_metric_still_refuses():
+    """Stripping more affixes must not turn the refusal into a guess."""
+    directions = ledger.metric_directions()
+    assert ledger._metric_direction("best_val_novel_score", directions) is None
+    assert ledger._metric_direction("final_throughput", directions) is None
