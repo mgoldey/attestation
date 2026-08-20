@@ -536,3 +536,104 @@ def test_compare_warns_when_a_family_has_only_one_arm(conn, tmp_path):
 
     assert result["winner"] == "solo_a"
     assert any("only one arm" in c for c in result["caveats"]), result["caveats"]
+
+
+# --- A training log is not an eval dump ---------------------------------------
+
+
+def test_jsonl_training_log_keeps_per_step_values(conn, tmp_path):
+    """Rows carrying distinct `step`s are one run measured over time, not N
+    independent samples. Averaging a descending loss curve reports a number
+    the run never had -- and `_best_step` exists precisely to pick across
+    steps, so the steps must survive ingestion."""
+    project = tmp_path / "p"
+    write(
+        project / "results" / "run_a.jsonl",
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"step": 1000, "val_loss": 2.55},
+                {"step": 2000, "val_loss": 1.99},
+                {"step": 3000, "val_loss": 1.71},
+            )
+        ),
+    )
+    ledger.scan(conn, tmp_path)
+
+    rows = list(
+        conn.execute("SELECT value, step FROM run_metrics WHERE metric = 'val_loss' ORDER BY step")
+    )
+
+    assert [r["step"] for r in rows] == [1000, 2000, 3000]
+    assert [round(r["value"], 2) for r in rows] == [2.55, 1.99, 1.71]
+
+
+def test_jsonl_training_log_is_not_counted_as_samples(conn, tmp_path):
+    """Three checkpoints of one run are not n=3 samples; claiming so triggers
+    a bogus 'differences at this size are likely noise' caveat."""
+    project = tmp_path / "p"
+    for arm, losses in (("run_a", (2.55, 1.99, 1.71)), ("run_b", (2.50, 1.90, 1.62))):
+        write(
+            project / "results" / f"{arm}.jsonl",
+            "\n".join(
+                json.dumps({"step": s, "val_loss": v})
+                for s, v in zip((1000, 2000, 3000), losses, strict=True)
+            ),
+        )
+    ledger.scan(conn, tmp_path)
+
+    result = ledger.compare(conn, "run", metric="val_loss")
+
+    assert result["winner"] == "run_b"
+    # best-across-steps, not the mean of the curve
+    assert round(result["arms"][0]["value"], 2) == 1.62
+    assert not any("likely noise" in c for c in result["caveats"]), result["caveats"]
+
+
+def test_per_sample_eval_dump_still_aggregates(conn, tmp_path):
+    """The existing behaviour must survive: rows with no step are independent
+    samples, and their mean plus n_records is exactly right."""
+    project = tmp_path / "p"
+    write(
+        project / "results" / "eval_a.json",
+        json.dumps([{"wer": 0.10}, {"wer": 0.20}, {"wer": 0.30}]),
+    )
+    ledger.scan(conn, tmp_path)
+
+    rows = dict(
+        (r["metric"], r["value"]) for r in conn.execute("SELECT metric, value FROM run_metrics")
+    )
+
+    assert round(rows["wer"], 4) == 0.2000
+    assert rows["n_records"] == 3.0
+
+
+def test_jsonl_survives_a_truncated_final_line(conn, tmp_path):
+    """JSONL is line-delimited so it survives a partial write: a run killed
+    mid-flush leaves a truncated last line, which is the commonest way these
+    files end. Discarding every valid row because of it is silent data loss."""
+    project = tmp_path / "p"
+    write(
+        project / "results" / "run_a.jsonl",
+        '{"step": 1000, "val_loss": 2.5}\n{"step": 2000, "val_loss": 1.9}\n{"step": 3000, "val_l',
+    )
+    ledger.scan(conn, tmp_path)
+
+    rows = list(
+        conn.execute("SELECT value, step FROM run_metrics WHERE metric = 'val_loss' ORDER BY step")
+    )
+
+    assert [r["step"] for r in rows] == [1000, 2000]
+
+
+def test_labelless_csv_diagnostic_names_the_missing_column(conn, tmp_path):
+    """Refusing a CSV with no arm-identity column is correct -- there is nothing
+    to name the runs after -- but the generic 'no metrics record' message
+    misdescribes a file whose numeric columns are fine."""
+    project = tmp_path / "p"
+    write(project / "results" / "grid.csv", "wer,cer\n0.05,0.02\n0.04,0.01\n")
+
+    out = ledger.scan(conn, tmp_path)
+
+    why = out["diagnostics"]["p"]
+    assert "config_name" in why, why

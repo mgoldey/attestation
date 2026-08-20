@@ -111,6 +111,16 @@ def _seed_config(payload) -> dict | None:
     return {"seed": str(seed)}
 
 
+def _row_step(row: dict) -> int | None:
+    """A row's step, under any of the names training loops conventionally use."""
+    for key in ("step", "global_step", "iteration", "iter", "epoch"):
+        value = row.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        return int(value)
+    return None
+
+
 def metrics_from_payload(payload, step: int | None, split: str | None) -> list[Metric]:
     """Extract metrics from the three JSON shapes that actually recur.
 
@@ -143,6 +153,21 @@ def metrics_from_payload(payload, step: int | None, split: str | None) -> list[M
 
     elif isinstance(payload, list):
         rows = [r for r in payload if isinstance(r, dict)]
+        # A list of dicts is two different things. Rows carrying distinct
+        # `step`s are ONE run measured over time -- a training log -- and
+        # averaging a descending loss curve reports a number the run never had,
+        # while calling its checkpoints `n_records` claims a sample size it does
+        # not have. Rows without steps are independent samples, where the mean
+        # is exactly right. Tell them apart by the steps themselves.
+        steps = [_row_step(r) for r in rows]
+        if (
+            rows
+            and len({s for s in steps if s is not None}) > 1
+            and all(s is not None for s in steps)
+        ):
+            for row, row_step in zip(rows, steps, strict=True):
+                out.extend(Metric(k, v, step=row_step, split=split) for k, v in _numeric_items(row))
+            return out
         if rows:
             # a per-item eval dump: aggregate to the mean of each numeric field
             fields: dict[str, list[float]] = {}
@@ -208,6 +233,12 @@ def _label_of(row: dict) -> str | None:
 def _load(path: Path):
     text = path.read_text(errors="replace")
     if path.suffix == ".jsonl":
+        # Skip unparseable lines rather than discarding the file. JSONL is
+        # line-delimited precisely so it survives a partial write, and a run
+        # killed mid-flush leaves a truncated final line -- the commonest way
+        # these files end. Dropping thousands of good rows for one bad one is
+        # silent data loss. A file that is not JSONL at all yields no valid
+        # rows and so still produces no run.
         rows = []
         for line in text.splitlines():
             line = line.strip()
@@ -215,8 +246,8 @@ def _load(path: Path):
                 try:
                     rows.append(json.loads(line))
                 except json.JSONDecodeError:
-                    return None
-        return rows
+                    continue
+        return rows or None
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -340,6 +371,18 @@ def diagnose_empty(root: Path) -> str:
             f"{len(readable)} readable file(s), none under a recognised results"
             f" directory (found them in: {', '.join(where)};"
             f" expected {'/, '.join(RESULT_DIRS)}/)"
+        )
+
+    # A CSV whose numeric columns are fine but which names no arm is a real
+    # and deliberate refusal (there is nothing to name the runs after), so it
+    # needs its own message -- "no metrics record" misdescribes it.
+    csvs = [p for p in in_result_dir if p.suffix.lower() == ".csv"]
+    unlabelled = [p for p in csvs if (rows := _csv_rows(p)) and not any(map(_label_of, rows))]
+    if unlabelled and len(unlabelled) == len(in_result_dir):
+        return (
+            f"{len(unlabelled)} CSV(s) with numeric columns but no column naming"
+            f" each row's arm, so the runs cannot be named -- add one of:"
+            f" config_name, config, name, run, variant, arm, label, id"
         )
 
     return (
