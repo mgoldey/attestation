@@ -637,3 +637,41 @@ def test_labelless_csv_diagnostic_names_the_missing_column(conn, tmp_path):
 
     why = out["diagnostics"]["p"]
     assert "config_name" in why, why
+
+
+def test_nan_in_one_file_does_not_abort_the_scan(conn, tmp_path):
+    """A degenerate statistic must not cost the other 33 result files.
+
+    A t-test between two identical arms is NaN, and json.dump writes it as a
+    bare `NaN` token that json.loads accepts. Real result sets contain these
+    routinely. Before this, `statistics.pstdev` raised on the NaN and the
+    traceback escaped `scan()`, so one such file took down every project in
+    the workspace and the CLI exited non-zero having recorded nothing.
+    """
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    (results / "degenerate.json").write_text(
+        '[{"arm": "a", "t_stat": NaN, "acc": 0.9}, {"arm": "a", "t_stat": NaN, "acc": 0.7}]'
+    )
+    (results / "healthy.json").write_text(json.dumps({"acc": 0.81}))
+
+    out = ledger.scan(conn, tmp_path)
+
+    assert out["scanned"].get("proj"), f"scan recorded nothing: {out}"
+    names = {r["name"] for r in ledger.list_runs(conn, project="proj")}
+    assert "healthy" in names, f"a NaN elsewhere hid an unrelated file: {names}"
+
+
+def test_nan_metric_is_dropped_not_stored_as_nan(conn, tmp_path):
+    """NaN must not reach the DB: it compares false to everything, so a NaN
+    silently loses every ranking it appears in rather than being reported."""
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    (results / "r.json").write_text('{"acc": 0.9, "p_value": NaN}')
+
+    ledger.scan(conn, tmp_path)
+
+    rows = conn.execute("SELECT metric, value FROM run_metrics").fetchall()
+    stored = {r["metric"]: r["value"] for r in rows}
+    assert "acc" in stored
+    assert all(v == v for v in stored.values()), f"NaN stored: {stored}"

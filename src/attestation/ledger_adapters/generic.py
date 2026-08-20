@@ -21,6 +21,7 @@ direction is better, because guessing ranks ablations backwards.
 """
 
 import json
+import math
 import re
 import statistics
 from pathlib import Path
@@ -64,10 +65,27 @@ def _split_from(stem: str) -> str | None:
 
 
 def _numeric_items(obj: dict) -> list[tuple[str, float]]:
+    """Numeric fields of a result object, excluding non-finite ones.
+
+    NaN and inf are ordinary in recorded results -- a t-test between two
+    identical arms is NaN, a diverged loss is inf -- and `json.dump` writes
+    them as bare `NaN`/`Infinity` tokens that `json.loads` accepts. They must
+    not become metrics: NaN compares false to everything, so a NaN would lose
+    every ranking it appeared in and be reported as a legitimate last place.
+    Dropping the field says "not measured", which is what happened.
+
+    This is the one place every numeric metric passes through, so filtering
+    here also protects the aggregate branch, where `statistics.pstdev` raises
+    on a NaN and the traceback escaped `scan()` -- one such file took down
+    every project in the workspace.
+    """
     return [
         (k.lower(), float(v))
         for k, v in obj.items()
-        if isinstance(v, (int, float)) and not isinstance(v, bool) and k.lower() not in _SKIP_KEYS
+        if isinstance(v, (int, float))
+        and not isinstance(v, bool)
+        and k.lower() not in _SKIP_KEYS
+        and math.isfinite(v)
     ]
 
 
@@ -437,13 +455,7 @@ def discover(root: Path) -> list[RunRecord]:
                 if name in seen:
                     continue
                 seen.add(name)
-                metrics = [
-                    Metric(k.lower(), float(v))
-                    for k, v in row.items()
-                    if isinstance(v, (int, float))
-                    and not isinstance(v, bool)
-                    and k.lower() not in _SKIP_KEYS
-                ]
+                metrics = [Metric(k, v) for k, v in _numeric_items(row)]
                 if not metrics:
                     continue
                 records.append(
