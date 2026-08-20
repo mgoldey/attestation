@@ -438,6 +438,27 @@ uv run attest runs compare <family>        # rank the arms of a sweep
 uv run attest runs show <project> <name>   # one run, with its source path
 ```
 
+Two conventions decide whether a project is read, and both are worth knowing
+before the first scan:
+
+```
+~/projects/
+  asr-ablation/            <- a project: any directory under RESEARCH_ROOT
+    results/               <- results live IN a recognised directory, not beside the run
+      asr_baseline.json    <- arms share a prefix; `asr` is the family
+      asr_biglm.json          {"wer": 0.0433} , or a list of per-sample records
+      asr_moredata.json       (a list also gives the comparison its sample size)
+    configs/               <- optional: recorded as provenance, never as a metric
+      asr_baseline.json
+```
+
+Recognised results directories are `results/`, `logs/`, `outputs/`, `metrics/`,
+`eval/`, `evals/`, `benchmarks/` and `reports/`; recognised config directories
+are `configs/`, `config/`, `conf/`, `experiments/` and `examples/`. A scan that
+finds nothing says which of these it looked for and where your files actually
+were, rather than reporting an empty success — and `runs compare` on something
+that is not a family names the families that exist.
+
 **This is deliberately not an experiment tracker.** MLflow, Sacred, W&B and DVC
 all instrument runs at the moment they happen. That does not help a corpus of
 runs which already finished, across many projects, in several languages, some

@@ -295,6 +295,60 @@ def family_of(stem: str) -> str | None:
     return "-".join(parts[:-1]) if len(parts) >= 2 else None
 
 
+def diagnose_empty(root: Path) -> str:
+    """Say why `discover` found nothing here. Called only when it found nothing.
+
+    A scan that reports "0 run(s)" and no reason is the failure this tool can
+    least afford: adoption cost is the design constraint, and a researcher whose
+    layout is ordinary-but-unrecognised sees a successful-looking command that
+    found nothing, with no next step. Every branch below names a real state and
+    the action that resolves it.
+    """
+    files = [p for p in root.rglob("*") if p.is_file() and not p.name.startswith(".")]
+    if not files:
+        return "no files in this directory"
+
+    readable = [p for p in files if p.suffix in (*CONFIG_SUFFIXES, ".jsonl", ".csv")]
+    if not readable:
+        kinds = sorted({p.suffix or "(no extension)" for p in files})
+        return (
+            f"{len(files)} file(s), none in a readable format"
+            f" (found {', '.join(kinds[:5])};"
+            f" expected {', '.join((*CONFIG_SUFFIXES, '.jsonl', '.csv'))})"
+        )
+
+    # Readable files exist, so the miss is about WHERE they are, or what is in
+    # them. Distinguish those: they need different fixes.
+    in_result_dir = [
+        p for p in readable if any(part in RESULT_DIRS for part in p.relative_to(root).parts[:-1])
+    ]
+    if not in_result_dir:
+        in_config_dir = [
+            p
+            for p in readable
+            if any(part in CONFIG_DIRS for part in p.relative_to(root).parts[:-1])
+        ]
+        if in_config_dir and len(in_config_dir) == len(readable):
+            return (
+                f"{len(in_config_dir)} config file(s) but no results:"
+                f" a spec with no result attached is recorded as a run with no"
+                f" metrics, so put eval output in one of"
+                f" {'/, '.join(RESULT_DIRS[:4])}/ to give it numbers"
+            )
+        where = sorted({str(p.relative_to(root).parent) for p in readable})[:3]
+        return (
+            f"{len(readable)} readable file(s), none under a recognised results"
+            f" directory (found them in: {', '.join(where)};"
+            f" expected {'/, '.join(RESULT_DIRS)}/)"
+        )
+
+    return (
+        f"{len(in_result_dir)} file(s) under a results directory, but none held"
+        f" a metrics record -- expected a JSON object of scalars like"
+        f' {{"wer": 0.05}}, a list of such objects, or a CSV with numeric columns'
+    )
+
+
 def discover(root: Path) -> list[RunRecord]:
     project = root.name
     records: list[RunRecord] = []

@@ -156,7 +156,12 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
 
     root = Path(root).expanduser()
     if not root.is_dir():
-        return {"scanned": {}, "empty": [], "message": f"no such directory: {root}"}
+        return {
+            "scanned": {},
+            "empty": [],
+            "diagnostics": {},
+            "message": f"no such directory: {root}",
+        }
 
     if project:
         candidates = [root / project]
@@ -165,19 +170,29 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
 
     scanned: dict[str, int] = {}
     empty: list[str] = []
+    # Why each empty project was empty. "0 run(s)" with no reason is the one
+    # failure this tool cannot afford -- an unrecognised-but-ordinary layout
+    # looks identical to an empty workspace, and the user has no next step.
+    diagnostics: dict[str, str] = {}
     for project_root in candidates:
         if not project_root.is_dir():
-            empty.append(f"{project_root.name} (no such directory)")
+            empty.append(project_root.name)
+            diagnostics[project_root.name] = "no such directory"
             continue
-        records = adapter_for(project_root.name).discover(project_root)
+        adapter = adapter_for(project_root.name)
+        records = adapter.discover(project_root)
         if not records:
             empty.append(project_root.name)
+            explain = getattr(adapter, "diagnose_empty", None)
+            diagnostics[project_root.name] = (
+                explain(project_root) if explain else "no recognisable runs"
+            )
             continue
         _replace_project(conn, project_root.name, records)
         scanned[project_root.name] = len(records)
 
     conn.commit()
-    return {"scanned": scanned, "empty": empty}
+    return {"scanned": scanned, "empty": empty, "diagnostics": diagnostics}
 
 
 def _replace_project(conn: sqlite3.Connection, project: str, records: list[RunRecord]) -> None:
@@ -285,7 +300,46 @@ def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) ->
         )
     ]
     if not runs:
-        return {"family": family, "metric": metric, "arms": [], "winner": None}
+        # A dead end here is the same failure as an unexplained empty scan.
+        # `compare <project>` is the intuitive first guess and finds nothing,
+        # because families are derived from filename prefixes rather than from
+        # the project directory -- so name the families that do exist.
+        available = [
+            r["family"]
+            for r in conn.execute(
+                "SELECT DISTINCT family FROM runs WHERE family IS NOT NULL ORDER BY family"
+            )
+        ]
+        in_project = [
+            r["name"]
+            for r in conn.execute(
+                "SELECT name FROM runs WHERE project = ? ORDER BY name", (family,)
+            )
+        ]
+        if in_project:
+            message = (
+                f"no family {family!r}, but it is a project with"
+                f" {len(in_project)} run(s). Families group arms by a shared"
+                f" filename prefix, not by project"
+            )
+        elif available:
+            message = f"no family {family!r}"
+        else:
+            message = (
+                f"no family {family!r}, and no run has one: families are derived"
+                f" from a shared filename prefix, so arms need names like"
+                f" `asr_baseline` / `asr_biglm` to be compared as a unit"
+            )
+        if available:
+            message += f". Available: {', '.join(available)}"
+        return {
+            "family": family,
+            "metric": metric,
+            "arms": [],
+            "winner": None,
+            "available_families": available,
+            "message": message,
+        }
 
     directions = metric_directions()
     run_ids_all = [r["id"] for r in runs]
@@ -389,7 +443,15 @@ def _caveats(scored: list[dict], metric: str) -> list[str]:
     what it does not know instead of implying it does.
     """
     out: list[str] = []
-    if len(scored) < 2:
+    if len(scored) == 1:
+        # A one-arm family always "wins". Reporting that without comment reads
+        # as the result of a comparison, when nothing was compared -- usually a
+        # sign the family heuristic split a sweep on inconsistent arm names.
+        return [
+            "only one arm in this family, so nothing was compared;"
+            " arms group by a shared filename prefix"
+        ]
+    if not scored:
         return out
 
     sizes = [a["n"] for a in scored if a["n"] is not None]

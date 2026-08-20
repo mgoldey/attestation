@@ -1014,6 +1014,9 @@ def _runs_scan_impl(
                 "message": f"{total} run(s) across {len(out['scanned'])} project(s)",
                 "scanned": out["scanned"],
                 "empty": out.get("empty", []),
+                # why each empty project was empty: the caller is a model, and
+                # a bare "0 run(s)" gives it nothing to tell the user or act on
+                "diagnostics": out.get("diagnostics", {}),
             }
         except Exception:
             log.exception("runs_scan failed for root=%s", target)

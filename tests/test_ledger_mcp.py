@@ -43,6 +43,25 @@ def test_scan_reads_the_workspace_from_the_environment(workspace):
     assert out["scanned"] == {"proj": 5}
 
 
+def test_scan_tells_the_caller_why_a_project_was_empty(tmp_path, monkeypatch):
+    """The caller is a model. A bare "0 run(s)" leaves it nothing to relay or
+    act on, so the reason each project came back empty has to cross the MCP
+    boundary too -- not just print in the CLI."""
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    get_db(tmp_path / "t.db").close()
+    root = tmp_path / "ws"
+    # an ordinary layout the conventions do not recognise: results sit in a
+    # per-arm directory rather than results/
+    write(root / "asr" / "baseline" / "results.json", json.dumps({"wer": 0.05}))
+    monkeypatch.setenv("RESEARCH_ROOT", str(root))
+
+    out = mcp_server._runs_scan_impl(confirm=True)
+
+    assert out["scanned"] == {}
+    assert "asr" in out["diagnostics"]
+    assert "results/" in out["diagnostics"]["asr"]
+
+
 def test_scan_without_a_configured_root_says_so(monkeypatch, tmp_path):
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
     monkeypatch.delenv("RESEARCH_ROOT", raising=False)

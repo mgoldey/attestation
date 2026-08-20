@@ -275,8 +275,11 @@ def cmd_runs_scan(args: argparse.Namespace) -> int:
             print(f"  {name:28s} {count} run(s)")
         print(f"{sum(out['scanned'].values())} run(s) across {len(out['scanned'])} project(s)")
         if out["empty"]:
-            # reported, not hidden: "found nothing" is not "nothing there"
-            print(f"no runs found in: {', '.join(out['empty'])}")
+            # reported with a reason, not hidden: "found nothing" is not
+            # "nothing there", and a bare count leaves the user no next step.
+            print()
+            for name in out["empty"]:
+                print(f"  no runs in {name}: {out['diagnostics'].get(name, 'unrecognised layout')}")
         return 0
 
 
@@ -307,7 +310,9 @@ def cmd_runs_compare(args: argparse.Namespace) -> int:
             print(exc)
             return 1
         if not result["arms"]:
-            print(f"no runs in family {args.family!r}")
+            # say which families exist rather than dead-ending: `compare
+            # <project>` is the intuitive first guess and is not a family
+            print(result.get("message") or f"no runs in family {args.family!r}")
             return 1
         print(f"{result['family']} — ranked by {result['metric']} ({result['direction']})\n")
         print(f"  {'arm':44s} {result['metric']:>10s} {'n':>6s}  {'step':>8s}  source")

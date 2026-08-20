@@ -455,3 +455,84 @@ def test_caveats_flag_no_seed_replication_for_single_run_arms(conn, tmp_path):
 
     assert result["winner"] == "arm_a"
     assert any("no seed replication" in c for c in result["caveats"])
+
+
+# --- Diagnosing an empty scan -------------------------------------------------
+# "0 run(s)" with no reason is this tool's worst failure mode: adoption cost is
+# the stated design constraint, and a researcher whose ordinary layout is not
+# recognised sees a successful-looking run that found nothing. Each test below
+# is a layout that legitimately yields no runs; the scan must say WHY.
+
+
+def test_empty_scan_names_the_unrecognised_result_dir(conn, tmp_path):
+    """Results in a per-arm directory rather than results/ -- an ordinary layout."""
+    project = tmp_path / "asr"
+    write(project / "baseline" / "results.json", json.dumps({"wer": 0.05}))
+    write(project / "bigger" / "results.json", json.dumps({"wer": 0.04}))
+
+    out = ledger.scan(conn, tmp_path)
+
+    assert out["scanned"] == {}
+    why = out["diagnostics"]["asr"]
+    # names both where it looked and where the files actually are
+    assert "results/" in why, why
+    assert "baseline" in why, why
+
+
+def test_empty_scan_reports_a_project_with_no_files_at_all(conn, tmp_path):
+    (tmp_path / "blank").mkdir()
+
+    out = ledger.scan(conn, tmp_path)
+
+    assert "no files" in out["diagnostics"]["blank"].lower()
+
+
+def test_empty_scan_reports_config_only_project(conn, tmp_path):
+    """A spec with no result attached is a real state, not an error -- say so."""
+    project = tmp_path / "specs"
+    write(project / "configs" / "arm_a.json", json.dumps({"lr": 0.001}))
+
+    out = ledger.scan(conn, tmp_path)
+
+    why = out["diagnostics"]["specs"]
+    assert "config" in why.lower(), why
+
+
+def test_successful_scan_reports_no_diagnostics(conn, tmp_path):
+    project = tmp_path / "p"
+    write(project / "results" / "arm_a.json", json.dumps({"wer": 0.05}))
+
+    out = ledger.scan(conn, tmp_path)
+
+    assert out["scanned"] == {"p": 1}
+    assert out["diagnostics"] == {}
+
+
+def test_compare_on_a_project_name_suggests_the_real_families(conn, tmp_path):
+    """`compare <project>` is the intuitive first guess and finds nothing:
+    families are derived from filename prefixes, not from the project. Dead-
+    ending there with no hint is the same silent failure as an unexplained
+    empty scan."""
+    project = tmp_path / "asr"
+    for arm in ("baseline", "bigger-lm", "more-data"):
+        write(project / "results" / f"{arm}.json", json.dumps({"wer": 0.05}))
+    ledger.scan(conn, tmp_path)
+
+    result = ledger.compare(conn, "asr", metric="wer")
+
+    assert result["winner"] is None
+    assert "bigger" in result["available_families"]
+    assert "asr" in result["message"]
+
+
+def test_compare_warns_when_a_family_has_only_one_arm(conn, tmp_path):
+    """A one-arm family always 'wins'. Saying so without a caveat implies a
+    comparison happened."""
+    project = tmp_path / "p"
+    write(project / "results" / "solo_a.json", json.dumps({"wer": 0.05}))
+    ledger.scan(conn, tmp_path)
+
+    result = ledger.compare(conn, "solo", metric="wer")
+
+    assert result["winner"] == "solo_a"
+    assert any("only one arm" in c for c in result["caveats"]), result["caveats"]
