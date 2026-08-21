@@ -758,15 +758,12 @@ def test_schedule_writes_exact_content_and_exec_bit(monkeypatch, tmp_path):
     result = install.step_schedule("agenthermes", check=False)
 
     script_path = fake_home / ".hermes" / "scripts" / "attestation-refresh.sh"
-    expected = (
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
-        'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"\n'
-        f"cd {tmp_path}\n"
-        "uv run attest ingest >/dev/null\n"
-        "uv run attest tag >/dev/null\n"
-    )
-    assert script_path.read_text() == expected
+    # Compare against the generator rather than a second copy of the script
+    # text: duplicating it here made one behaviour change break two unrelated
+    # tests, which taught nothing about what the script must actually do.
+    # The properties that matter are asserted by executing the script in the
+    # test_refresh_script_* tests below.
+    assert script_path.read_text() == install._refresh_script_content(tmp_path)
     assert os.access(script_path, os.X_OK)
     assert result.status == "FIXED"
 
@@ -808,6 +805,124 @@ def test_refresh_script_survives_crons_bare_path(tmp_path):
     failed = subprocess.run([str(script)], env=env, capture_output=True, text=True)
 
     assert failed.returncode != 0, "a failing refresh must exit non-zero so cron reports it"
+
+
+def _refresh_harness(tmp_path, uv_body: str, monkeypatch=None):
+    """Write the generated refresh script plus a fake `uv` reachable only via
+    the script's own PATH export, and return (script, home, env, marker).
+
+    When `monkeypatch` is given, Path.home() is redirected before generation so
+    the script's baked-in lock path lands under tmp_path. Tests that take the
+    lock MUST pass it: the real path belongs to the live cron job, and holding
+    it would make a genuine refresh skip.
+    """
+
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (home / ".hermes").mkdir(parents=True, exist_ok=True)
+
+    marker = tmp_path / "ran"
+    uv = home / ".local" / "bin" / "uv"
+    uv.write_text(uv_body.format(marker=marker))
+    uv.chmod(0o755)
+
+    if monkeypatch is not None:
+        monkeypatch.setattr(install.Path, "home", lambda: home)
+
+    script = tmp_path / "refresh.sh"
+    script.write_text(install._refresh_script_content(checkout))
+    script.chmod(0o755)
+
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "SHELL": "/bin/sh"}
+    return script, home, env, marker
+
+
+def test_refresh_script_skips_when_a_previous_run_still_holds_the_lock(tmp_path, monkeypatch):
+    """Regression: the generated script had no overlap guard, so a refresh
+    slower than its own cron interval stacked instead of skipping.
+
+    This is not hypothetical -- ingest+tag over a tagging backlog regularly
+    ran past the 4-hour interval, and the hand-written script it replaced
+    logged 12 consecutive "SKIP: previous run still holding lock" lines over
+    three days. Without flock, those 12 would have been 12 concurrent runs
+    all hitting one SQLite file.
+    """
+    import pathlib
+    import subprocess
+
+    script, home, env, _ = _refresh_harness(tmp_path, "#!/bin/sh\nsleep 5\n", monkeypatch)
+
+    # Read the lock path back out of the generated script rather than assuming
+    # it: locking a different file would make this test vacuously pass. The
+    # monkeypatched home keeps it under tmp_path, off the real cron's lock.
+    import re as _re
+
+    m = _re.search(r'^LOCK="([^"]+)"$', script.read_text(), _re.M)
+    assert m, "generated script must declare a LOCK path"
+    lock = pathlib.Path(m.group(1))
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    holder = subprocess.Popen(
+        ["/usr/bin/flock", "-x", str(lock), "-c", "sleep 5"],
+    )
+    try:
+        import time
+
+        time.sleep(0.5)  # let the holder acquire before we race it
+        second = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+    finally:
+        holder.kill()
+        holder.wait()
+
+    assert second.returncode == 0, "a skipped run is not a failed run"
+    assert "SKIP" in second.stdout, f"expected a SKIP line, got: {second.stdout!r}"
+
+
+def test_refresh_script_logs_what_it_did(tmp_path):
+    """Regression: the generated script sent both steps to /dev/null, so a
+    silent no-op and a healthy run were indistinguishable after the fact.
+    The only reason the stale-lock stall was diagnosable at all was that the
+    script it replaced wrote timestamped lines."""
+    import subprocess
+
+    script, _, env, _ = _refresh_harness(tmp_path, "#!/bin/sh\necho ran >> {marker}\nexit 0\n")
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert "ingest" in out and "tag" in out, f"each step must be traceable: {out!r}"
+
+
+def test_refresh_script_treats_a_tag_failure_as_degraded_not_fatal(tmp_path):
+    """A cold or busy Ollama must not turn the whole refresh into a failure.
+
+    Mirrors CLAUDE.md's reliability contract: ingest is deterministic and must
+    succeed, but tagging needs a chat model, and untagged items are simply
+    picked up by the next pass. Under a bare `set -e` a tag failure aborted
+    the run and cron reported an error for an ingest that had worked.
+    """
+    import subprocess
+
+    # ingest (first call) succeeds; tag (second) fails.
+    body = '#!/bin/sh\ncase "$*" in\n  *ingest*) exit 0 ;;\n  *tag*) exit 3 ;;\nesac\n'
+    script, _, env, _ = _refresh_harness(tmp_path, body)
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+
+    assert proc.returncode == 0, (
+        f"a tag failure is a degraded run, not a broken one: {proc.stdout!r} {proc.stderr!r}"
+    )
+    assert "tag" in proc.stdout
+
+
+def test_refresh_script_still_fails_when_ingest_fails(tmp_path):
+    """The counterpart: ingest is not allowed to fail quietly."""
+    import subprocess
+
+    script, _, env, _ = _refresh_harness(tmp_path, "#!/bin/sh\nexit 3\n")
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+
+    assert proc.returncode != 0, "a failing ingest must exit non-zero so cron reports it"
 
 
 def test_mcp_wiring_reports_broken_when_add_does_not_take(monkeypatch, tmp_path):

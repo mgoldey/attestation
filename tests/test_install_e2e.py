@@ -214,15 +214,13 @@ def test_fresh_install_demonstrates_end_to_end(tmp_path, monkeypatch):
         assert (box.skill_dest / "SKILL.md").exists()
         assert (box.skill_dest / "scripts" / "setup.sh").exists()
 
-        expected_script = (
-            "#!/usr/bin/env bash\n"
-            "set -euo pipefail\n"
-            'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"\n'
-            f"cd {box.repo_root}\n"
-            "uv run attest ingest >/dev/null\n"
-            "uv run attest tag >/dev/null\n"
-        )
-        assert box.refresh_script.read_text() == expected_script
+        # Assert the end-to-end wiring, not a second transcription of the
+        # script body (see test_install.py's note); the shipped content is
+        # pinned by _refresh_script_content and exercised by executing it.
+        script_text = box.refresh_script.read_text()
+        assert script_text == install._refresh_script_content(box.repo_root)
+        assert str(box.repo_root) in script_text
+        assert "flock" in script_text, "a scheduled refresh must guard against overlap"
         assert os.access(box.refresh_script, os.X_OK)
 
         log = box.log()

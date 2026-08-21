@@ -440,19 +440,59 @@ def step_reasoning_override(agent: str | None, check: bool = False) -> StepResul
 
 
 def _refresh_script_content(root: Path) -> str:
-    # cron runs a non-login shell with a bare PATH (typically /usr/bin:/bin), so
-    # `uv` -- installed to ~/.local/bin -- is NOT on it. The previous version of
-    # this script died with "uv: command not found" every hour AND exited 0
-    # while doing so, because `a && b` reports success when the chain
-    # short-circuits. Both halves of that are fixed here: prepend the usual user
-    # bin dirs, and `set -e` so a failure is a non-zero exit cron can report.
+    # Four failures are encoded here, each one observed:
+    #
+    # 1. cron runs a non-login shell with a bare PATH (typically /usr/bin:/bin),
+    #    so `uv` -- installed to ~/.local/bin -- is NOT on it. An earlier version
+    #    died with "uv: command not found" every hour AND exited 0 while doing
+    #    so, because `a && b` reports success when the chain short-circuits.
+    # 2. No overlap guard: ingest+tag over a tagging backlog routinely outruns
+    #    the cron interval, so runs stacked on one SQLite file instead of
+    #    skipping. flock makes a slow run skip the next tick, not race it.
+    # 3. Both steps redirected to /dev/null, which made a silent no-op and a
+    #    healthy run indistinguishable afterwards. Timestamped lines are the
+    #    only reason the stalled-lock period was diagnosable at all.
+    # 4. A bare `set -e` made a tag failure fatal, so a cold or busy Ollama
+    #    turned a successful ingest into a reported error. Per CLAUDE.md's
+    #    reliability contract ingest must succeed, but tagging is best-effort:
+    #    untagged items are picked up by the next pass.
+    lock = Path.home() / ".hermes" / f"{REFRESH_SCRIPT_NAME.removesuffix('.sh')}.lock"
     return (
         "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
+        # No `-e`: failures are handled per-step below, so that a non-fatal
+        # tag failure cannot abort the script before it logs why.
+        "set -uo pipefail\n"
         'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"\n'
-        f"cd {root}\n"
-        f"uv run {CLI_NAME} ingest >/dev/null\n"
-        f"uv run {CLI_NAME} tag >/dev/null\n"
+        f"cd {root} || exit 1\n"
+        "\n"
+        f'LOCK="{lock}"\n'
+        'mkdir -p "$(dirname "$LOCK")"\n'
+        'exec 9>"$LOCK"\n'
+        "if ! flock -n 9; then\n"
+        '  echo "[$(date -Is)] SKIP: previous run still holding lock"\n'
+        "  exit 0\n"
+        "fi\n"
+        "\n"
+        f'echo "[$(date -Is)] refresh start"\n'
+        "\n"
+        # Ingest is deterministic and needs no chat model; it must succeed.
+        f"if uv run {CLI_NAME} ingest >/dev/null; then\n"
+        '  echo "[$(date -Is)] ingest ok"\n'
+        "else\n"
+        "  rc=$?\n"
+        '  echo "[$(date -Is)] ingest FAILED (exit $rc)"\n'
+        '  exit "$rc"\n'
+        "fi\n"
+        "\n"
+        # Tagging needs Ollama. A cold model is a degraded run, not a broken one.
+        f"if uv run {CLI_NAME} tag >/dev/null; then\n"
+        '  echo "[$(date -Is)] tag ok"\n'
+        "else\n"
+        '  echo "[$(date -Is)] tag FAILED (exit $?) -- items remain untagged,"\n'
+        '  echo "[$(date -Is)] will retry next run"\n'
+        "fi\n"
+        "\n"
+        f'echo "[$(date -Is)] refresh done"\n'
     )
 
 
