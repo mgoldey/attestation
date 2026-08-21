@@ -3,6 +3,10 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+# Retag/migration snapshots: `*.db` does not match a .bak-retag-<stamp>
+# suffix, so an 8MB copy of the database was one `git add .` from the
+# history it can never be removed from.
+*.db.bak*
 .ruff_cache/
 .pytest_cache/
 .env
