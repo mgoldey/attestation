@@ -113,7 +113,8 @@
   <div class="eyebrow">attestation · architecture</div>
   <h1>Two Flows and a Starved Signal</h1>
   <p class="standfirst">How a question from a researcher and a nightly cron tick move through
-  the same 37 tools — and why the loop that is supposed to close between them mostly doesn't.</p>
+  the same 37 namespaced tools — and why the loop that is supposed to close between them
+  stayed open until it was fed synthetically.</p>
 </header>
 
 <div class="legend">
@@ -127,6 +128,13 @@
 <p>The agent never touches SQLite. It picks a tool from one of four namespaces, and every tool
 call opens its own short-lived connection, answers, and closes. That per-call connection is why
 the process stays stateless between calls and honours <code>RSS_DB</code> the way the CLI does.</p>
+
+<p>The namespace is the part an agent can see. Splitting the server into four files changed
+nothing for a caller — it reads a flat list of names — so the tools carry their domain in the
+name itself, and no tool repeats it: <code>kg.path</code>, not <code>kg.kg_path</code>. A
+37-way choice becomes a 4-way one and then a smaller one. Bounded arguments declare their
+bounds in the schema, so a client rejects <code>limit=0</code> before the call is made rather
+than the server refusing it afterwards.</p>
 
 <figure>
 <svg viewBox="0 0 860 420" role="img" aria-label="A researcher's question passes through Hermes Agent to one of four MCP tool namespaces, each of which opens its own SQLite connection; the ranking path additionally calls Ollama for embeddings.">
@@ -158,19 +166,19 @@ the process stays stateless between calls and honours <code>RSS_DB</code> the wa
 
     <g font-family="IBM Plex Mono, monospace" font-size="11">
       <rect x="14" y="184" width="118" height="56" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.4"/>
-      <text x="73" y="205" text-anchor="middle" font-size="12" font-weight="500">feed · 19</text>
-      <text x="73" y="223" text-anchor="middle" font-size="10" opacity=".7">list · search · digest</text>
+      <text x="73" y="205" text-anchor="middle" font-size="12" font-weight="500">feed.* · 19</text>
+      <text x="73" y="223" text-anchor="middle" font-size="10" opacity=".7">list · search · rate</text>
 
       <rect x="146" y="184" width="118" height="56" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.4"/>
-      <text x="205" y="205" text-anchor="middle" font-size="12" font-weight="500">kg · 5</text>
-      <text x="205" y="223" text-anchor="middle" font-size="10" opacity=".7">neighbors · path</text>
+      <text x="205" y="205" text-anchor="middle" font-size="12" font-weight="500">kg.* · 5</text>
+      <text x="205" y="223" text-anchor="middle" font-size="10" opacity=".7">concepts · path</text>
 
       <rect x="278" y="184" width="118" height="56" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.4"/>
-      <text x="337" y="205" text-anchor="middle" font-size="12" font-weight="500">runs · 6</text>
-      <text x="337" y="223" text-anchor="middle" font-size="10" opacity=".7">compare · claims</text>
+      <text x="337" y="205" text-anchor="middle" font-size="12" font-weight="500">runs.* · 6</text>
+      <text x="337" y="223" text-anchor="middle" font-size="10" opacity=".7">compare · claims_check</text>
 
       <rect x="410" y="184" width="102" height="56" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.4"/>
-      <text x="461" y="205" text-anchor="middle" font-size="12" font-weight="500">sym · 7</text>
+      <text x="461" y="205" text-anchor="middle" font-size="12" font-weight="500">sym.* · 7</text>
       <text x="461" y="223" text-anchor="middle" font-size="10" opacity=".7">solve · verify</text>
     </g>
 
@@ -211,7 +219,9 @@ the process stays stateless between calls and honours <code>RSS_DB</code> the wa
 </svg>
 <figcaption>A query fans out to one namespace of four. The <code>@tool</code> band is where the
 connection, the persona lookup and the response envelope are handled once, rather than
-thirty-seven times. Only the ranking and tagging paths reach Ollama, and nothing reaches past it.</figcaption>
+thirty-seven times. Only the ranking and tagging paths reach Ollama, and nothing reaches past it.
+Measured across all thirty-seven tools: nothing exceeds 2.6&nbsp;s or 2,558 characters, and the
+seven <code>sym.*</code> tools each pay ~2&nbsp;s for the subprocess that sandboxes them.</figcaption>
 </figure>
 
 <h2>Flow 2 — The nightly refresh</h2>
