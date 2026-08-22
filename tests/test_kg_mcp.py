@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from attestation import mcp_server
 from attestation.db import get_db
@@ -221,3 +222,63 @@ def test_kg_concepts_reports_truncation(tmp_path, monkeypatch):
     assert len(out["concepts"]) == _shared.MAX_LIST_LIMIT
     assert out["n_concepts"] == 81
     assert "81" in out["message"]
+
+
+def test_communities_returns_a_summary_not_a_dump(tmp_path, monkeypatch):
+    """13 communities came back as 12,055 chars -- 6x the next biggest tool.
+
+    One held 201 members listed alphabetically. That is the graph's contents,
+    not a finding: an agent cannot read it, cannot quote it, and cannot decide
+    anything from it. What a caller wants is which clusters exist, how big
+    they are, and what each is about.
+
+    Members are capped and the true size reported, so a large cluster is
+    visible as large rather than being pasted in full.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    # One big cluster of co-occurring tags plus a small one.
+    for item in range(1, 41):
+        conn.execute(
+            "INSERT INTO items(id, feed_id, title, url, summary, content_hash)"
+            " VALUES (?, NULL, ?, 'u', 's', ?)",
+            (item, f"t{item}", f"h{item}"),
+        )
+        group = [f"big{i}" for i in range(12)] if item <= 30 else ["small-a", "small-b", "small-c"]
+        for tag in group:
+            conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (item, tag))
+    conn.commit()
+    conn.close()
+
+    out = mcp_server._kg_communities_impl(min_size=3)
+
+    assert out["ok"] is True
+    assert out["communities"], "no communities found in a seeded graph"
+    for group in out["communities"]:
+        assert len(group["members"]) <= 12, f"{len(group['members'])} members pasted in full"
+        assert "n_members" in group, "the true size must survive truncation"
+        assert group["n_members"] >= len(group["members"])
+
+    payload = len(json.dumps(out))
+    assert payload < 2500, f"kg.communities is {payload} chars; a caller cannot read it"
+
+
+def test_communities_orders_by_size_so_the_big_ones_come_first(tmp_path, monkeypatch):
+    """A caller reading only the first few must see the largest clusters."""
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    for item in range(1, 41):
+        conn.execute(
+            "INSERT INTO items(id, feed_id, title, url, summary, content_hash)"
+            " VALUES (?, NULL, ?, 'u', 's', ?)",
+            (item, f"t{item}", f"h{item}"),
+        )
+        group = [f"big{i}" for i in range(12)] if item <= 30 else ["small-a", "small-b", "small-c"]
+        for tag in group:
+            conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (item, tag))
+    conn.commit()
+    conn.close()
+
+    groups = mcp_server._kg_communities_impl(min_size=3)["communities"]
+    sizes = [g["n_members"] for g in groups]
+    assert sizes == sorted(sizes, reverse=True), f"not ordered by size: {sizes}"

@@ -161,7 +161,11 @@ def test_mcp_domain_modules_stay_small():
     # (personas and subscriptions are the obvious seams) rather than another
     # raised number; the cap exists to force that conversation, not to be
     # edited past.
-    limits = {"feed.py": 620, "provenance.py": 215, "knowledge.py": 125, "symbolic.py": 117}
+    # Raised once for schema constraints -- Annotated[...] on every bounded
+    # argument is annotation, not behaviour, and it buys a client-side reject
+    # instead of a failed call. The seam note below still stands for the next
+    # genuine tool.
+    limits = {"feed.py": 650, "provenance.py": 225, "knowledge.py": 140, "symbolic.py": 117}
     oversized = []
     for path in (SRC / "mcp").glob("*.py"):
         if path.name not in limits:
@@ -320,3 +324,34 @@ def test_no_message_or_docstring_names_a_tool_that_does_not_exist():
                 if re.search(rf"\b{re.escape(name)}\s*\(", text) or f"call {name}" in text:
                     offenders.append(f"{path.name}: {name}")
     assert not offenders, "these name tools that no longer exist: " + ", ".join(offenders)
+
+
+def test_tool_schemas_constrain_their_arguments():
+    """A weak schema is how a small model sends garbage.
+
+    `content_type` accepted any string when only six values exist, and `limit`
+    had no bounds -- so limit=0 and since_days=-30 reached the tool and had to
+    be refused at runtime with a message the model then had to read and act
+    on. A constraint in the schema is enforced by the CLIENT before the call
+    is made, which is a round trip and a failed tool call cheaper.
+    """
+    import asyncio
+    import os
+    import tempfile
+
+    os.environ.setdefault("RSS_DB", tempfile.mkdtemp() + "/t.db")
+    from attestation import mcp_server
+
+    tools = {t.name: t.inputSchema for t in asyncio.run(mcp_server.mcp.list_tools())}
+
+    problems = []
+    for name, schema in tools.items():
+        for arg, spec in (schema.get("properties") or {}).items():
+            flat = str(spec)
+            if arg in {"limit", "per_topic", "days", "min_size"} and "minimum" not in flat:
+                problems.append(f"{name}.{arg}: no minimum")
+            if arg == "content_type" and "enum" not in flat:
+                problems.append(f"{name}.{arg}: not an enum")
+            if arg == "metric" and name == "kg.central" and "enum" not in flat:
+                problems.append(f"{name}.{arg}: not an enum")
+    assert not problems, "unconstrained tool arguments: " + ", ".join(problems)

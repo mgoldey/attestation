@@ -10,16 +10,27 @@ Concepts are tags used at least MIN_TAG_USES times; edges are co-occurrences of
 at least MIN_EDGE_WEIGHT. A tag used once is deliberately not a concept.
 """
 
+from typing import Annotated, Literal
+
+from pydantic import Field
+
 from attestation import kg
 from attestation.mcp._shared import MAX_LIST_LIMIT
 from attestation.mcp._tool import ToolError, tool
+
+# Argument constraints live in the SCHEMA, not just in runtime checks, so an
+# MCP client rejects a bad call before it is made. limit=0 and since_days=-30
+# both reached the tools and had to be refused with a message the model then
+# had to read and act on -- a round trip and a failed call more expensive than
+# a bound the client already knows about.
+Limit = Annotated[int, Field(ge=1, le=50)]
 
 
 def register(mcp) -> None:
     """Attach every kg.* tool to the server."""
 
     @mcp.tool(name="kg.neighbors")
-    def kg_neighbors(node: str, limit: int = 20) -> dict:
+    def kg_neighbors(node: str, limit: Limit = 20) -> dict:
         """Concepts directly adjacent to a given concept in the reading graph.
 
         The "what else should I read about this" query. Concepts come from the
@@ -47,14 +58,19 @@ def register(mcp) -> None:
         return _path(source, target)
 
     @mcp.tool(name="kg.central")
-    def kg_central(metric: str = "degree", limit: int = 10) -> dict:
+    def kg_central(
+        metric: Annotated[
+            Literal["degree", "betweenness"], Field(description="Centrality measure.")
+        ] = "degree",
+        limit: Limit = 10,
+    ) -> dict:
         """Most important concepts. metric="degree" for most-connected,
         "betweenness" for the bridges between otherwise separate clusters.
         """
         return _central(metric, limit)
 
     @mcp.tool(name="kg.communities")
-    def kg_communities(min_size: int = 3) -> dict:
+    def kg_communities(min_size: Annotated[int, Field(ge=2, le=100)] = 3) -> dict:
         """Topic clusters in the reading graph, each labelled by its most
         connected member. Useful for seeing what the reading actually splits into.
 
@@ -72,7 +88,7 @@ def register(mcp) -> None:
         return _communities(min_size)
 
     @mcp.tool(name="kg.concepts")
-    def kg_concepts(prefix: str | None = None, limit: int = 50) -> dict:
+    def kg_concepts(prefix: str | None = None, limit: Limit = 50) -> dict:
         """Concept names in the reading graph -- the vocabulary the other kg
         tools accept.
 
@@ -128,10 +144,40 @@ def _central(conn, metric: str = "degree", limit: int = 10) -> dict:
     return {"message": f"top {len(ranked)} by {metric}", "nodes": ranked}
 
 
+# How many members of a cluster to name. The live graph returned 13
+# communities as 12,055 characters, one of them 201 tags listed
+# alphabetically -- the graph's contents rather than a finding. A caller
+# wants which clusters exist, how big they are, and what each is about.
+MEMBERS_SHOWN = 8
+
+
 @tool(empty={"communities": []}, label="kg_communities")
 def _communities(conn, min_size: int = 3) -> dict:
     found = kg.communities(conn, min_size=min_size)
-    return {"message": f"{len(found)} communit(ies)", "communities": found}
+    # Largest first: a caller reading only the first few should see the
+    # clusters that dominate the reading, not whichever the algorithm
+    # happened to emit first.
+    found.sort(key=lambda c: (-len(c["members"]), c["label"]))
+    summarised = [
+        {
+            "label": c["label"],
+            "n_members": len(c["members"]),
+            "members": c["members"][:MEMBERS_SHOWN],
+        }
+        for c in found
+    ]
+    biggest = summarised[0]["n_members"] if summarised else 0
+    return {
+        "message": (
+            f"{len(found)} communit(ies), largest first"
+            + (
+                f"; the largest has {biggest} concepts, showing {MEMBERS_SHOWN}"
+                if biggest > MEMBERS_SHOWN
+                else ""
+            )
+        ),
+        "communities": summarised,
+    }
 
 
 @tool(empty={"concepts": [], "n_concepts": 0}, label="kg_concepts")

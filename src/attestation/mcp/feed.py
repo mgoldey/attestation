@@ -11,6 +11,10 @@ LLM runs inside `digest` -- it returns structure, never prose, because the
 caller is a model that can write the prose itself.
 """
 
+from typing import Annotated, Literal
+
+from pydantic import Field
+
 from attestation.explain import explain as explain_item_fn
 from attestation.llm import default_chat_fn
 from attestation.mcp._shared import (
@@ -24,12 +28,19 @@ from attestation.mcp._shared import (
 from attestation.mcp._tool import ToolError, tool
 from attestation.rank import forget_profile_vector, record_click
 
+# Argument constraints live in the SCHEMA, not just in runtime checks, so an
+# MCP client rejects a bad call before it is made. limit=0 and since_days=-30
+# both reached the tools and had to be refused with a message the model then
+# had to read and act on -- a round trip and a failed call more expensive than
+# a bound the client already knows about.
+Limit = Annotated[int, Field(ge=1, le=50)]
+
 
 def register(mcp) -> None:
     """Attach every feed.* tool to the server."""
 
     @mcp.tool(name="feed.list")
-    def list_feed(user: str, limit: int = 5, since_days: int | None = 14) -> dict:
+    def list_feed(user: str, limit: Limit = 5, since_days: int | None = 14) -> dict:
         """List this user's currently ranked, unread feed items (best first).
 
         Returns each item's id, title, url, source feed name, and its blended rank
@@ -111,12 +122,12 @@ def register(mcp) -> None:
         return _remove_feed(feed_id, confirm)
 
     @mcp.tool(name="feed.source_preview")
-    def preview_feed(url: str, limit: int = 5) -> dict:
+    def preview_feed(url: str, limit: Limit = 5) -> dict:
         """Show recent entries from a feed WITHOUT subscribing to it."""
         return _preview_feed(url, limit)
 
     @mcp.tool(name="feed.source_suggest")
-    def suggest_feeds(user: str, limit: int = 5) -> dict:
+    def suggest_feeds(user: str, limit: Limit = 5) -> dict:
         """Suggest feeds from a curated list, scored against tags this user liked."""
         return _suggest_feeds(user, limit)
 
@@ -136,7 +147,7 @@ def register(mcp) -> None:
         return _update_persona(name, interests)
 
     @mcp.tool(name="feed.persona_suggest_interests")
-    def propose_interests(limit: int = 12) -> dict:
+    def propose_interests(limit: Limit = 12) -> dict:
         """List the most common tags in the feed, to help write an interests string."""
         return _propose_interests(limit)
 
@@ -151,8 +162,11 @@ def register(mcp) -> None:
         user: str,
         query: str,
         tag: str | None = None,
-        content_type: str | None = None,
-        limit: int = 5,
+        content_type: Annotated[
+            Literal["paper", "survey", "announcement", "release", "blog", "other"] | None,
+            Field(description="Filter to one content type."),
+        ] = None,
+        limit: Limit = 5,
     ) -> dict:
         """Search items by keyword (and optional tag/content_type), ranked for this user.
 
@@ -201,7 +215,7 @@ def register(mcp) -> None:
         return _harvest_engagement(user)
 
     @mcp.tool(name="feed.simulate_ratings")
-    def simulate_feedback(user: str, limit: int = 10, confirm: bool = False) -> dict:
+    def simulate_feedback(user: str, limit: Limit = 10, confirm: bool = False) -> dict:
         """Generate simulated reader reactions for a persona, to train its ranking.
 
         WRITES CLICK ROWS -- needs confirm=true. SLOW: one local LLM call per
@@ -225,7 +239,12 @@ def register(mcp) -> None:
         return _simulate_feedback(user, limit, confirm)
 
     @mcp.tool(name="feed.digest")
-    def digest(user: str, days: int = 7, per_topic: int = 3, limit: int = 30) -> dict:
+    def digest(
+        user: str,
+        days: Annotated[int, Field(ge=0, le=3650)] = 7,
+        per_topic: Annotated[int, Field(ge=1, le=20)] = 3,
+        limit: Limit = 30,
+    ) -> dict:
         """This user's unread feed, ranked and grouped by topic — the weekly review.
 
         Composes the ranked feed with the reading graph's topic clusters: each item

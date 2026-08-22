@@ -11,10 +11,21 @@ ToolError with the reason spelled out, because it is caller-fixable.
 """
 
 from pathlib import Path
+from typing import Annotated
+
+from pydantic import Field
 
 from attestation import claims, ledger
 from attestation.mcp._shared import MAX_LIST_LIMIT
 from attestation.mcp._tool import ToolError, open_db, tool
+
+# Argument constraints live in the SCHEMA, not just in runtime checks, so an
+# MCP client rejects a bad call before it is made. limit=0 and since_days=-30
+# both reached the tools and had to be refused with a message the model then
+# had to read and act on -- a round trip and a failed call more expensive than
+# a bound the client already knows about.
+Limit = Annotated[int, Field(ge=1, le=50)]
+
 
 NO_ROOT = (
     "no workspace configured -- set RESEARCH_ROOT to the directory holding your"
@@ -45,7 +56,11 @@ def register(mcp) -> None:
         return _scan(root, project, confirm)
 
     @mcp.tool(name="runs.list")
-    def runs_list(project: str | None = None, family: str | None = None, limit: int = 20) -> dict:
+    def runs_list(
+        project: str | None = None,
+        family: str | None = None,
+        limit: Limit = 20,
+    ) -> dict:
         """Experiment runs in the ledger, with the families they group into.
 
         A `family` is a set of sibling runs -- the arms of a sweep, or one run's
