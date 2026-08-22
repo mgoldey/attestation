@@ -30,6 +30,8 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 
 ```
 |Entry points: cli.py:main()→`attest`|mcp_server.py:main()→`attest-mcp`|server.py:create_app()→FastAPI+HTMX @ 127.0.0.1:8899
+|Skills vs tools in Hermes' prompt: 68 skills cost 7KB (index only, ~70B each; the 25KB body loads on invoke), 67 tool schemas cost 85KB IN FULL every turn — hide TOOLS, not skills|`filament` alone is 40 tools / 39.6KB, 46% of the tool budget
+|Skill DESCRIPTIONS do collide: with arxiv/blogwatcher/weights-and-biases/research-paper-writing listed beside the feed tools, routing went 6/6 -> 3/6 on gemma4:e2b|per-skill attribution at n=6 was noise (dropping arxiv scored WORSE), so only the aggregate is trustworthy
 |Agent surfaces: ATTEST_TOOLS=feed|provenance|knowledge|symbolic restricts registration (19/7/7/8 incl. the ask router); unset serves all 41|a typo RAISES rather than serving everything|~/.hermes/config.yaml has attestation-<surface> entries, disabled by default
 |mcp/ask.py: 4 deterministic routers (question -> tool, no model call) returning a Pydantic Answer, so MCP emits a real outputSchema|MEASURED on gemma4:e2b over 15 turns x3: routed 13/15, flat-37 8/15, LLM swarm 7.3/15 at 2x latency — the swarm is REFUTED for routing
 |NO catch-all destination: an early `doctor` tool absorbed 3 of 4 remaining misses|an ambiguous question returns options, never a default
