@@ -74,14 +74,27 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
             # so this never opens a write transaction -- other connections can
             # still write to the db while feeds are being fetched/parsed.
             new_entries = []
+            # Dedup within the batch as well as against the database. _exists()
+            # only sees committed rows, so two entries sharing a GUID both
+            # passed here, the second hit the UNIQUE constraint during the
+            # write, and the rollback discarded every good item alongside it --
+            # a whole feed lost to one republished post.
+            seen_guids: set[str] = set()
+            seen_hashes: set[str] = set()
             for entry in parsed.entries:
                 title = (entry.get("title") or "").strip()
                 summary = strip_boilerplate(entry.get("summary", ""))
                 guid = entry.get("id")
                 chash = content_hash(title, summary)
-                if _exists(conn, feed["id"], guid, chash):
+                duplicate_in_batch = chash in seen_hashes or (
+                    guid is not None and guid in seen_guids
+                )
+                if duplicate_in_batch or _exists(conn, feed["id"], guid, chash):
                     stats["skipped"] += 1
                     continue
+                if guid is not None:
+                    seen_guids.add(guid)
+                seen_hashes.add(chash)
                 new_entries.append((entry, title, summary, guid, chash))
 
             # Pass 2: embed everything outside of any transaction. These are
@@ -91,7 +104,11 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
                 for entry, title, summary, guid, chash in new_entries
             ]
 
-            # Pass 3: short write transaction -- just the inserts + last_fetched update.
+            # Pass 3: short write transaction -- just the inserts + last_fetched
+            # update. `added` is counted locally and folded into stats only
+            # after the commit: the rollback below undoes the rows, so counting
+            # as we go reported items that no longer exist.
+            added_here = 0
             for entry, title, summary, guid, chash, vec in embedded:
                 cur = conn.execute(
                     "INSERT INTO items(feed_id, guid, title, url, summary, published, content_hash)"
@@ -110,11 +127,12 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
                     "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
                     (cur.lastrowid, vec.tobytes()),
                 )
-                stats["added"] += 1
+                added_here += 1
             conn.execute(
                 "UPDATE feeds SET last_fetched = datetime('now') WHERE id = ?", (feed["id"],)
             )
             conn.commit()
+            stats["added"] += added_here
         except Exception:
             log.exception("feed failed: %s", feed["url"])
             conn.rollback()
