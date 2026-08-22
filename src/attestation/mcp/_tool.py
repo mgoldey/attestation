@@ -93,7 +93,7 @@ def tool(
     empty = empty or {}
 
     def decorate(fn: Callable) -> Callable:
-        name = label or fn.__name__
+        name = label or getattr(fn, "__name__", "tool")
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):

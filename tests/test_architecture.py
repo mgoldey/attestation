@@ -4,6 +4,12 @@ A layering doc nobody re-reads cannot stop the next contributor -- human or
 agent -- from reaching through a boundary. These tests can. Each one fails
 loudly the first time a rule is broken, and names the rule in its message.
 
+One rule that used to be here is gone: sqlite3 confined to an infrastructure
+package. That guarded a repository layer the onion spec proposed and two
+reviews then talked us out of -- see `2026-08-21-onion-refactor-design.md`,
+superseded. A test enforcing a boundary that does not exist is worse than no
+test: it passes forever and reads like coverage.
+
 The rules here are deliberately narrow. An earlier draft of the design spec
 proposed banning deferred imports inside function bodies, on the theory that
 they hide import cycles. Measurement refuted it: 29 of the 30 are lazy loads
@@ -23,25 +29,6 @@ from collections import defaultdict
 
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "attestation"
 
-# Layers that may import sqlite3. Until stage 2 lands, db.py is the only
-# infrastructure that exists; the tuple grows as modules move, and shrinks to
-# just `infrastructure/` when stage 3 finishes.
-SQLITE_ALLOWED = {
-    "db.py",
-    # Stage 3 migrates these off sqlite3 one at a time. Delete each entry in
-    # the PR that migrates it -- this list is the stage-3 burndown, and an
-    # empty set is the stage's definition of done.
-    "claims.py",
-    "explain.py",
-    "features.py",
-    "feeds.py",
-    "ingest.py",
-    "kg.py",
-    "ledger.py",
-    "rank.py",
-    "server.py",
-}
-
 
 def _modules():
     return sorted(p for p in SRC.rglob("*.py") if p.name != "__init__.py")
@@ -49,35 +36,6 @@ def _modules():
 
 def _rel(path: pathlib.Path) -> str:
     return str(path.relative_to(SRC))
-
-
-def _imports_sqlite3(path: pathlib.Path) -> int | None:
-    tree = ast.parse(path.read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import) and any(a.name == "sqlite3" for a in node.names):
-            return node.lineno
-        if isinstance(node, ast.ImportFrom) and node.module == "sqlite3":
-            return node.lineno
-    return None
-
-
-def test_sqlite3_confined_to_allowed_modules():
-    """The onion's one mechanical rule: only infrastructure talks to the store.
-
-    Domain logic names a protocol, never a sqlite3.Connection. When this fails
-    for a module not on the burndown list, the fix is to route through that
-    module's repository -- not to add it to SQLITE_ALLOWED.
-    """
-    offenders = [
-        f"{_rel(p)}:{ln}"
-        for p in _modules()
-        if (ln := _imports_sqlite3(p)) and _rel(p) not in SQLITE_ALLOWED
-    ]
-    assert not offenders, (
-        "these modules import sqlite3 but are not infrastructure: "
-        + ", ".join(offenders)
-        + " -- route the queries through a repository instead"
-    )
 
 
 def _module_name(path: pathlib.Path) -> str:
@@ -170,3 +128,42 @@ def test_cli_help_stays_fast():
         f"attest --help took {elapsed:.2f}s (budget 0.5s). A lazy import in "
         "cli.py was probably promoted to module scope; move it back."
     )
+
+
+def test_mcp_domain_modules_stay_small():
+    """The split's actual goal: no module big enough to lose an agent in.
+
+    mcp_server.py was 1454 lines holding 34 tools written twice each. Line
+    count is a weak proxy for quality in general -- ledger.py is 637 lines of
+    one coherent argument and should stay that way -- but for the tool surface
+    specifically it tracks the thing that went wrong, which was ritual repeated
+    per tool rather than depth.
+    """
+    limits = {"feed.py": 600, "provenance.py": 300, "knowledge.py": 150, "symbolic.py": 150}
+    mcp_dir = SRC / "mcp"
+    oversized = [
+        f"{p.name}={len(p.read_text().splitlines())} (max {limits[p.name]})"
+        for p in mcp_dir.glob("*.py")
+        if p.name in limits and len(p.read_text().splitlines()) > limits[p.name]
+    ]
+    assert not oversized, "mcp domain modules grew: " + ", ".join(oversized)
+
+
+def test_every_tool_body_is_reachable_without_fastmcp():
+    """Tools must be callable directly, or they can only be tested through a server.
+
+    symbolic.py briefly defined all seven of its tools as closures inside
+    register(), which made them unreachable -- the seven `_sym_*_impl` tests
+    could not import anything to call. Each domain keeps its implementations at
+    module level and registers thin wrappers over them.
+    """
+    from attestation.mcp import feed, knowledge, provenance, symbolic
+
+    for mod, names in (
+        (feed, ["_list_feed", "_digest_body", "_search_feed"]),
+        (knowledge, ["_neighbors", "_path", "_central", "_communities"]),
+        (provenance, ["_scan", "_list", "_compare", "_detail"]),
+        (symbolic, ["_sym_simplify", "_sym_solve", "_sym_verify"]),
+    ):
+        for name in names:
+            assert callable(getattr(mod, name, None)), f"{mod.__name__}.{name} not reachable"

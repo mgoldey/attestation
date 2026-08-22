@@ -2,6 +2,8 @@ import pytest
 
 from attestation import mcp_server
 from attestation.db import get_db
+from attestation.mcp import _shared
+from attestation.mcp import feed as feed_mod
 
 
 @pytest.fixture(autouse=True)
@@ -29,8 +31,8 @@ def seeded_conn(_patch_env_db, fake_embedder, monkeypatch):
         )
     conn.commit()
     conn.close()
-    monkeypatch.setattr(mcp_server, "_embedder", fake_embedder)
-    monkeypatch.setattr(mcp_server, "_get_embedder", lambda: fake_embedder)
+    monkeypatch.setattr(_shared, "_embedder", fake_embedder)
+    monkeypatch.setattr(_shared, "get_embedder", lambda: fake_embedder)
     return _patch_env_db
 
 
@@ -70,7 +72,7 @@ class TestListFeed:
         # DB with a user but zero items
         conn = get_db(_patch_env_db)
         conn.close()
-        monkeypatch.setattr(mcp_server, "_get_embedder", lambda: fake_embedder)
+        monkeypatch.setattr(_shared, "get_embedder", lambda: fake_embedder)
         result = mcp_server._list_feed_impl("matt", limit=5)
         assert result["items"] == []
 
@@ -130,7 +132,7 @@ class TestExplainItem:
         conn.close()
 
         monkeypatch.setattr(
-            mcp_server,
+            feed_mod,
             "explain_item_fn",
             lambda conn, user_id, item_id, chat_fn=None: "why it's ranked here",
         )

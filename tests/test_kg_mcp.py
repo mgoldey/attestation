@@ -2,6 +2,7 @@ import asyncio
 
 from attestation import mcp_server
 from attestation.db import get_db
+from attestation.mcp import _shared
 
 
 def seed_env_db(db_path):
@@ -53,7 +54,7 @@ def test_kg_neighbors_never_exceeds_max_list_limit_total_rows(tmp_path, monkeypa
 
     for requested in (50, 200):
         out = mcp_server._kg_neighbors_impl("hub", limit=requested)
-        assert len(out["neighbors"]) <= mcp_server.MAX_LIST_LIMIT
+        assert len(out["neighbors"]) <= _shared.MAX_LIST_LIMIT
 
 
 def test_kg_neighbors_returns_adjacent_concepts(tmp_path, monkeypatch):

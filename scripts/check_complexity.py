@@ -24,7 +24,7 @@ BASELINE = {
     "src/attestation/ledger.py": 29,  # compare
     "src/attestation/ledger_adapters/generic.py": 29,  # discover
     "src/attestation/kg.py": 20,  # communities
-    "src/attestation/mcp_server.py": 19,  # _digest_impl -- drops when §4 splits this file
+    "src/attestation/mcp/feed.py": 14,  # _search_feed -- ranks then filters in Python
     "src/attestation/corpus.py": 17,  # detect_in_source
     "src/attestation/claims.py": 15,  # check_claim
     "src/attestation/cli.py": 14,  # cmd_claims

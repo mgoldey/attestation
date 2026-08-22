@@ -29,7 +29,7 @@ def register(mcp) -> None:
         LaTeX, plus how the input was parsed so a misread is visible.
 
         """
-        return _call("op_simplify", {"expr": expr}, timeout)
+        return _sym_simplify(expr, timeout)
 
     @mcp.tool()
     def sym_solve(expr: str, symbol: str | None = None, timeout: int = 10) -> dict:
@@ -40,14 +40,14 @@ def register(mcp) -> None:
         rather than guessing which variable you meant).
 
         """
-        return _call("op_solve", {"expr": expr, "symbol": symbol}, timeout)
+        return _sym_solve(expr, symbol, timeout)
 
     @mcp.tool()
     def sym_differentiate(
         expr: str, symbol: str | None = None, order: int = 1, timeout: int = 10
     ) -> dict:
         """Differentiate an expression. Example: "x**3" -> "3*x**2"."""
-        return _call("op_differentiate", {"expr": expr, "symbol": symbol, "order": order}, timeout)
+        return _sym_differentiate(expr, symbol, order, timeout)
 
     @mcp.tool()
     def sym_integrate(
@@ -58,7 +58,7 @@ def register(mcp) -> None:
         Example: "x**2" -> "x**3/3"; with bounds [0, 1] -> "1/3".
 
         """
-        return _call("op_integrate", {"expr": expr, "symbol": symbol, "bounds": bounds}, timeout)
+        return _sym_integrate(expr, symbol, bounds, timeout)
 
     @mcp.tool()
     def sym_derivation(
@@ -71,9 +71,7 @@ def register(mcp) -> None:
         result with a note saying so rather than pretending to a trace.
 
         """
-        return _call(
-            "op_derivation", {"expr": expr, "operation": operation, "symbol": symbol}, timeout
-        )
+        return _sym_derivation(expr, operation, symbol, timeout)
 
     @mcp.tool()
     def sym_verify(lhs: str, rhs: str, timeout: int = 10) -> dict:
@@ -84,7 +82,7 @@ def register(mcp) -> None:
         decide -- it is NOT a disproof, and must not be reported as "false".
 
         """
-        return _call("op_verify", {"lhs": lhs, "rhs": rhs}, timeout)
+        return _sym_verify(lhs, rhs, timeout)
 
     @mcp.tool()
     def sym_evaluate(
@@ -97,4 +95,40 @@ def register(mcp) -> None:
         Units: expr "5" with units "meter/second -> kilometer/hour" -> 18.
 
         """
-        return _call("op_evaluate", {"expr": expr, "subs": subs, "units": units}, timeout)
+        return _sym_evaluate(expr, subs, units, timeout)
+
+
+def _sym_simplify(expr: str, timeout: int = 10) -> dict:
+    return _call("op_simplify", {"expr": expr}, timeout)
+
+
+def _sym_solve(expr: str, symbol: str | None = None, timeout: int = 10) -> dict:
+    return _call("op_solve", {"expr": expr, "symbol": symbol}, timeout)
+
+
+def _sym_differentiate(
+    expr: str, symbol: str | None = None, order: int = 1, timeout: int = 10
+) -> dict:
+    return _call("op_differentiate", {"expr": expr, "symbol": symbol, "order": order}, timeout)
+
+
+def _sym_integrate(
+    expr: str, symbol: str | None = None, bounds: list | None = None, timeout: int = 10
+) -> dict:
+    return _call("op_integrate", {"expr": expr, "symbol": symbol, "bounds": bounds}, timeout)
+
+
+def _sym_derivation(
+    expr: str, operation: str = "integrate", symbol: str | None = None, timeout: int = 10
+) -> dict:
+    return _call("op_derivation", {"expr": expr, "operation": operation, "symbol": symbol}, timeout)
+
+
+def _sym_verify(lhs: str, rhs: str, timeout: int = 10) -> dict:
+    return _call("op_verify", {"lhs": lhs, "rhs": rhs}, timeout)
+
+
+def _sym_evaluate(
+    expr: str, subs: dict | None = None, units: str | None = None, timeout: int = 10
+) -> dict:
+    return _call("op_evaluate", {"expr": expr, "subs": subs, "units": units}, timeout)

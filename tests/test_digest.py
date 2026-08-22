@@ -4,6 +4,8 @@ import pytest
 
 from attestation import mcp_server
 from attestation.db import get_db
+from attestation.mcp import _shared
+from attestation.mcp import feed as feed_mod
 from attestation.rank import RankedItem
 
 
@@ -52,7 +54,7 @@ def _item(item_id, tags, score=1.0, title=None):
 
 
 def _fake_ranked_items(items):
-    """Build a stand-in for _ranked_items(conn, user_row, limit, since_days)."""
+    """Build a stand-in for ranked_items(conn, user_row, limit, since_days)."""
 
     def fake(conn, user_row, limit, since_days):
         return items
@@ -63,8 +65,8 @@ def _fake_ranked_items(items):
 def test_items_group_under_the_cluster_their_tags_match(db, monkeypatch):
     seed(db)
     monkeypatch.setattr(
-        mcp_server,
-        "_ranked_items",
+        feed_mod,
+        "ranked_items",
         _fake_ranked_items(
             [
                 _item(1, ["alpha", "beta"]),
@@ -85,8 +87,8 @@ def test_an_item_matching_no_cluster_is_reported_not_dropped(db, monkeypatch):
     expected to be non-empty -- its size is a real signal about the week."""
     seed(db)
     monkeypatch.setattr(
-        mcp_server,
-        "_ranked_items",
+        feed_mod,
+        "ranked_items",
         _fake_ranked_items([_item(9, ["nothing-matches-this"], title="orphan")]),
     )
 
@@ -100,7 +102,7 @@ def test_per_topic_truncates_but_n_total_stays_true(db, monkeypatch):
     """Silent truncation reads as 'that was everything'."""
     seed(db)
     items = [_item(i, ["alpha", "beta"]) for i in range(1, 6)]
-    monkeypatch.setattr(mcp_server, "_ranked_items", _fake_ranked_items(items))
+    monkeypatch.setattr(feed_mod, "ranked_items", _fake_ranked_items(items))
 
     out = mcp_server._digest_impl("matt", per_topic=2)
 
@@ -114,7 +116,7 @@ def test_single_class_clicks_report_the_classifier_as_inactive(db, monkeypatch):
     learned from the clicks. A digest that hides this looks identical to one
     from a well-trained ranker."""
     seed(db, clicks=((1, 1), (2, 1), (3, 1)))
-    monkeypatch.setattr(mcp_server, "_ranked_items", _fake_ranked_items([_item(1, ["alpha"])]))
+    monkeypatch.setattr(feed_mod, "ranked_items", _fake_ranked_items([_item(1, ["alpha"])]))
 
     quality = mcp_server._digest_impl("matt")["ranking_quality"]
 
@@ -125,7 +127,7 @@ def test_single_class_clicks_report_the_classifier_as_inactive(db, monkeypatch):
 
 def test_both_classes_activate_the_classifier(db, monkeypatch):
     seed(db, clicks=((1, 1), (2, 0)))
-    monkeypatch.setattr(mcp_server, "_ranked_items", _fake_ranked_items([_item(1, ["alpha"])]))
+    monkeypatch.setattr(feed_mod, "ranked_items", _fake_ranked_items([_item(1, ["alpha"])]))
 
     quality = mcp_server._digest_impl("matt")["ranking_quality"]
 
@@ -135,7 +137,7 @@ def test_both_classes_activate_the_classifier(db, monkeypatch):
 
 def test_empty_feed_preserves_success_path_keys(db, monkeypatch):
     seed(db)
-    monkeypatch.setattr(mcp_server, "_ranked_items", _fake_ranked_items([]))
+    monkeypatch.setattr(feed_mod, "ranked_items", _fake_ranked_items([]))
 
     out = mcp_server._digest_impl("matt")
 
@@ -155,7 +157,7 @@ def test_unknown_user_is_reported(db):
 def test_digest_is_deterministic(db, monkeypatch):
     seed(db)
     items = [_item(i, ["alpha", "beta"]) for i in range(1, 4)]
-    monkeypatch.setattr(mcp_server, "_ranked_items", _fake_ranked_items(items))
+    monkeypatch.setattr(feed_mod, "ranked_items", _fake_ranked_items(items))
 
     first = mcp_server._digest_impl("matt")
     second = mcp_server._digest_impl("matt")
@@ -185,8 +187,8 @@ def test_days_reaches_the_ranker(db, monkeypatch):
         seen["since_days"] = since_days
         return []
 
-    monkeypatch.setattr(mcp_server, "rank_items", fake_rank)
-    monkeypatch.setattr(mcp_server, "_get_embedder", lambda: object())
+    monkeypatch.setattr(_shared, "rank_items", fake_rank)
+    monkeypatch.setattr(_shared, "get_embedder", lambda: object())
 
     mcp_server._digest_impl("matt", days=30)
 
@@ -202,8 +204,8 @@ def test_list_feed_keeps_its_default_window(db, monkeypatch):
         seen["since_days"] = since_days
         return []
 
-    monkeypatch.setattr(mcp_server, "rank_items", fake_rank)
-    monkeypatch.setattr(mcp_server, "_get_embedder", lambda: object())
+    monkeypatch.setattr(_shared, "rank_items", fake_rank)
+    monkeypatch.setattr(_shared, "get_embedder", lambda: object())
 
     mcp_server._list_feed_impl("matt", limit=5)
 
