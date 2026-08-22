@@ -78,7 +78,8 @@ def test_relabelling_moves_them_out_of_the_trusted_sources(seeded):
     moved = personas.relabel_bootstrap(seeded)
     assert moved == 30
     sources = {
-        r["source"] for r in seeded.execute("SELECT DISTINCT source FROM clicks WHERE user_id = ?", (uid,))
+        r["source"]
+        for r in seeded.execute("SELECT DISTINCT source FROM clicks WHERE user_id = ?", (uid,))
     }
     assert sources == {"bootstrap"}
 
@@ -137,9 +138,12 @@ def test_merging_moves_feedback_and_unions_interests(seeded):
     kept = get_user(seeded, "real")
     assert "catalysis" in kept["interests"], "the dropped persona's interests were lost"
     assert "protein folding" in kept["interests"]
-    assert seeded.execute(
-        "SELECT COUNT(*) n FROM clicks WHERE user_id = ?", (kept["id"],)
-    ).fetchone()["n"] == 3
+    assert (
+        seeded.execute("SELECT COUNT(*) n FROM clicks WHERE user_id = ?", (kept["id"],)).fetchone()[
+            "n"
+        ]
+        == 3
+    )
 
 
 def test_a_conflicting_verdict_keeps_the_survivors(seeded):

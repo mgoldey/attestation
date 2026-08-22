@@ -279,7 +279,11 @@ def step_first_data(check: bool = False, yes: bool = False, now: bool = False) -
 
 
 def step_warmup(check: bool = False) -> StepResult:
-    # warmup pins both models with keep_alive=-1 ("Forever" in `ollama ps`).
+    # warmup loads both models and holds them for OLLAMA_KEEP_ALIVE (30m
+    # default). It used to pass keep_alive=-1 -- "Forever" in `ollama ps`, and
+    # literally the year 2318 in the expiry field -- which held 5.4GB across
+    # two llama-server processes on a 23GB machine and got a browser, a
+    # quantum-chemistry job and the terminal OOM-killed.
     # --check is a read-only doctor; it must not load ~9.6GB into VRAM.
     if check:
         return StepResult("warmup", Status.SKIPPED, "warmup does not run in --check")

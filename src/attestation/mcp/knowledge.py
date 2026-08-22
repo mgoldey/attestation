@@ -89,7 +89,7 @@ def register(mcp) -> None:
         return _concepts(prefix, limit)
 
 
-NOT_A_CONCEPT = "{name!r} is not a concept in the graph; call kg_concepts() to list valid names"
+NOT_A_CONCEPT = "{name!r} is not a concept in the graph; call kg.concepts() to list valid names"
 
 
 @tool(empty={"neighbors": []}, label="kg_neighbors")

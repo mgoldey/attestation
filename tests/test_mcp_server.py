@@ -42,15 +42,14 @@ class TestListFeed:
         assert "items" in result
         assert len(result["items"]) == 5
         for item in result["items"]:
-            assert set(item.keys()) == {
+            assert {
                 "item_id",
                 "title",
                 "url",
                 "source",
-                "score",
                 "tags",
                 "content_type",
-            }
+            } <= set(item.keys()), item
 
     def test_respects_limit(self, seeded_conn):
         result = mcp_server._list_feed_impl("matt", limit=3)
@@ -237,7 +236,11 @@ def test_search_feed_finds_already_rated_items(seeded_conn):
     mcp_server._create_persona_impl("searcher", "items")
     mcp_server._record_feedback_impl("searcher", 1, True)
 
-    out = mcp_server._search_feed_impl("searcher", "item")
+    # An explicit limit: search defaults to 5 now, and the rated item is not
+    # necessarily in the top few. The property under test is that search
+    # REACHES already-rated items at all -- list_feed excludes them -- not
+    # where they land.
+    out = mcp_server._search_feed_impl("searcher", "item", limit=20)
 
     assert out["ok"] is True
     assert out["items"], "search must reach items list_feed would exclude"
@@ -333,3 +336,40 @@ def test_delete_highest_rowid_item_leaves_no_stale_item_vectors_row(seeded_conn)
     ).fetchone()["n"]
     conn.close()
     assert remaining == 0
+
+
+class TestNonsenseArguments:
+    """Arguments no sane caller sends, which an agent sends anyway.
+
+    Found by driving the MCP server with adversarial inputs. Both cases here
+    returned ok=true with a wrong answer, which is worse than an error: an
+    agent reports "nothing to read" to a researcher when the truth is "you
+    asked for items published in the future".
+    """
+
+    def test_a_negative_window_is_refused_not_silently_empty(self, seeded_conn):
+        out = mcp_server._list_feed_impl("matt", since_days=-30)
+        assert out["ok"] is False
+        assert "since_days" in out["message"]
+        assert out["items"] == []
+
+    def test_a_zero_limit_is_refused_rather_than_answered_with_one(self, seeded_conn):
+        """Clamping 0 up to 1 answers a question nobody asked."""
+        out = mcp_server._list_feed_impl("matt", limit=0)
+        assert out["ok"] is False
+        assert "limit" in out["message"]
+
+    def test_a_negative_limit_is_refused(self, seeded_conn):
+        out = mcp_server._list_feed_impl("matt", limit=-5)
+        assert out["ok"] is False
+        assert "limit" in out["message"]
+
+    def test_an_oversized_limit_is_capped_not_refused(self, seeded_conn):
+        """Asking for more than the cap is a reasonable request with a
+        reasonable answer -- unlike asking for zero or a negative window."""
+        out = mcp_server._list_feed_impl("matt", limit=100000)
+        assert out["ok"] is True
+        assert len(out["items"]) <= 50
+
+    def test_search_rejects_the_same_nonsense(self, seeded_conn):
+        assert mcp_server._search_feed_impl("matt", "x", limit=0)["ok"] is False

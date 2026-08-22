@@ -2,6 +2,7 @@
 
 import argparse
 import contextlib
+import os
 import sys
 from pathlib import Path
 
@@ -136,6 +137,14 @@ def warmup() -> None:
     native /api base from the /v1 base URL; other backends don't need pinning."""
     from attestation.llm import base_url, chat_model, embed_model
 
+    # How long Ollama holds the models in RAM after warmup.
+    #
+    # This was `-1` -- forever, until Ollama restarts. On a 23 GB machine that
+    # pinned 5.4 GB across two llama-server processes and the kernel started
+    # OOM-killing whatever else was running: a browser, a quantum-chemistry
+    # job, the terminal. The pin exists so a demo does not stall on a cold
+    # model load, and a demo is minutes long, not permanent.
+    keep_alive = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
     native = base_url().rstrip("/").removesuffix("/v1")
     try:
         httpx.post(
@@ -144,20 +153,20 @@ def warmup() -> None:
                 "model": chat_model(),
                 "messages": [{"role": "user", "content": "hi"}],
                 "stream": False,
-                "keep_alive": -1,
+                "keep_alive": keep_alive,
                 "options": {"num_ctx": 8192},
             },
             timeout=300,
         ).raise_for_status()
         httpx.post(
             f"{native}/api/embed",
-            json={"model": embed_model(), "input": "warmup", "keep_alive": -1},
+            json={"model": embed_model(), "input": "warmup", "keep_alive": keep_alive},
             timeout=300,
         ).raise_for_status()
     except httpx.HTTPError:
         print("warmup is Ollama-only; skipping for this backend")
         return
-    print(f"models loaded and pinned (chat={chat_model()}, keep_alive=-1)")
+    print(f"models loaded (chat={chat_model()}, keep_alive={keep_alive})")
 
 
 def cmd_warmup(args: argparse.Namespace) -> int:

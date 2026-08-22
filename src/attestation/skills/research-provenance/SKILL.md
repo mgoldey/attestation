@@ -296,6 +296,140 @@ an HTML comment are excluded.
 
 Both are read-only. They report; they never edit a document.
 
+## Working patterns
+
+Sequences that work, and the mistakes that look reasonable but do not. Every
+one below was run against a live database before being written down.
+
+### "What should I read?"
+
+```
+feed.list(user="matt")
+```
+
+**Present each item as one line: a linked title, then source and topic.**
+
+```
+1. [LogicIF: Towards Complex Logic Instruction Following](https://arxiv.org/abs/2508.09125)
+   arXiv cs.LG · language-models, reasoning
+```
+
+Nothing else. Do not restate `item_id`, `content_type` or `n_tags` in prose --
+they are there for your next tool call, not for the reader. Do not reproduce
+the JSON.
+
+**If a response is too long to render, say so in one sentence and show
+fewer.** Do not apologise, do not re-render the same payload in another
+format, and do not fall back to dumping raw JSON. A watched failure ran
+exactly that loop -- bullet list, apology, JSON, apology -- and the reader
+saw half of one item. `feed.list` defaults to 5 for this reason; ask for more
+only when the reader does.
+
+**Read `ranking_quality` before you present the order.** It is on every tool
+that returns a ranking, and it is the difference between "here is what the
+system learned about you" and "here is cosine similarity in a trenchcoat":
+
+```
+"ranking_quality": {"clicks": 67, "classifier_active": true, ...}
+```
+
+`classifier_active: false` means the click classifier never fired -- the
+reader has feedback of only one kind -- and the `caveat` field says which
+terms are actually contributing. Say so rather than implying the ranking is
+personalised. A caveat is absent only when it has been earned.
+
+### "Find me papers about X"
+
+Do NOT guess a tag. Ask what vocabulary exists first:
+
+```
+kg.concepts(prefix="protein")     -> ["protein", "protein-engineering", ...]
+feed.search(user="matt", query="", tag="protein-folding")
+```
+
+`feed.search` takes a semantic query, a tag filter, or both. An empty
+`query` with a `tag` is a filter rather than a search, which is the right
+call when the reader named a topic rather than described one. The search is
+semantic: "LLM" finds papers titled "Large Language Models" with the acronym
+nowhere in the text, so do not fall back to keyword guessing when a query
+returns little.
+
+Every result carries `match` (`semantic`, `literal`, `both`) and a
+`relevance` score. `both` is the strongest signal. A short result list is
+usually the relevance floor doing its job, not a failure.
+
+### "Which arm won?"
+
+```
+runs.scan(confirm=true)        # only if runs.list says the ledger is empty
+runs.list()                    # returns `families`, which is what compare takes
+runs.compare(family="kdsweep", metric="wer")
+```
+
+**A family is a shared filename prefix, not a project.** `runs.compare` with
+a project name is the commonest mistake, and the error says so and lists what
+is comparable -- read it rather than guessing again.
+
+**Report every caveat, verbatim.** They are the point of the tool:
+
+```
+winner: kdsweep_t4
+caveat: the top two arms differ by 0.0017 (2.6%) -- too close to call
+caveat: each arm is a single run; no seed replication ...
+```
+
+A comparison whose margin is smaller than its seed variance has not found
+anything, and presenting the winner without the caveat misrepresents it.
+Also: `runs.compare` refuses outright when a metric's direction is
+undeclared, because guessing ranks an ablation backwards. That refusal is
+the tool working.
+
+### "Is this number in my draft right?"
+
+```
+runs.claims_check(path="paper.md")
+runs.claims_coverage(path="paper.md")
+```
+
+Four verdicts, and they mean different things. `contradicted` is the
+document disagreeing with the artifact. `unsupported` means no run backs it
+-- possibly true, but nothing here says so. `stale` means the value matches
+a run whose artifact changed afterwards. `malformed` is a broken annotation,
+reported rather than skipped so a claim cannot vanish from review silently.
+
+`claims_coverage` is the inverse and is the one people forget: numbers
+asserted in prose that no claim annotation covers at all.
+
+### Feedback: the part that gets skipped
+
+`feed.rate(user, item_id, useful)` after the reader expresses an opinion --
+**including the opinions they never label as feedback**. See the Procedure
+section for the phrasings that carry a verdict.
+
+Two tools exist because real feedback is scarce:
+
+- `feed.harvest_engagement(user)` -- free, instant, no model. Turns past
+  "why is this here?" questions into weak positives. Run it once for a
+  reader who has asked for explanations; it is idempotent.
+- `feed.simulate_ratings(user, confirm=true)` -- slow, one LLM call per item.
+  Generates BOTH classes so the classifier can fire at all. Check the
+  `caveat` it returns: if most of a persona's positives come from one feed,
+  the classifier can separate them by publication rather than by topic and
+  any evaluation score is meaningless.
+
+### Mistakes that look reasonable
+
+| Instead of | Do |
+|---|---|
+| Guessing a tag name | `kg.concepts(prefix=...)` first |
+| `runs.compare(family="<project>")` | `runs.list()` and use a name from `families` |
+| Presenting a winner alone | Include every caveat verbatim |
+| Presenting a ranking alone | Check `ranking_quality.caveat` |
+| Only recording what the reader liked | Record the negatives; the classifier needs both |
+| Retrying a failed call with different arguments | Read the message -- it names the fix |
+| Treating an empty search as broken | The relevance floor cuts weak matches on purpose |
+
+
 ## Procedure
 
 1. **Fetch the feed**: `curl -s --max-time 10 "http://127.0.0.1:8899/list?user=<name>"`.

@@ -7,12 +7,45 @@ after a split.
 
 import logging
 
+from attestation.mcp._tool import ToolError
 from attestation.ports import EmbedderPort
 from attestation.rank import rank_items
 
 log = logging.getLogger(__name__)
 
 MAX_LIST_LIMIT = 50
+
+
+def clamp_limit(limit: int) -> int:
+    """A caller's `limit`, capped at MAX_LIST_LIMIT. Refuses nonsense.
+
+    Asking for more than the cap is a reasonable request with a reasonable
+    answer, so it is capped silently. Asking for zero or fewer is not a
+    request at all, and the previous behaviour -- clamping up to 1 -- answered
+    a question nobody asked. An agent that sends limit=0 has a bug, and being
+    told is more useful than being handed one item.
+    """
+    limit = int(limit)
+    if limit < 1:
+        raise ToolError(f"limit must be at least 1, got {limit}")
+    return min(limit, MAX_LIST_LIMIT)
+
+
+def validate_window(since_days: int | None) -> int | None:
+    """`since_days` bounds how far BACK a feed reaches, so a negative value
+    asks for items published in the future.
+
+    That returned an empty list with ok=true, and an agent reading it told the
+    reader there was nothing to read -- a wrong answer dressed as a real one.
+    Zero is allowed and means today.
+    """
+    if since_days is not None and int(since_days) < 0:
+        raise ToolError(
+            f"since_days must be zero or positive, got {since_days}"
+            " -- it is a window into the past; pass None for no limit"
+        )
+    return since_days
+
 
 _embedder = None
 

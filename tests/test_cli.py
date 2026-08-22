@@ -265,3 +265,42 @@ def test_compare_header_names_the_shared_corpus(tmp_path, capsys, monkeypatch):
 
     out = capsys.readouterr().out
     assert "all arms on wikitext-2" in out, out
+
+
+from attestation import cli as attest_cli  # noqa: E402
+
+
+class _Ok:
+    def raise_for_status(self):
+        return None
+
+
+def test_warmup_pins_for_a_bounded_time_by_default(monkeypatch):
+    """`keep_alive: -1` holds a model in RAM until Ollama restarts.
+
+    On a 23 GB machine that meant 5.4 GB of llama-server pinned permanently
+    across two models, and the kernel OOM-killed Chrome, a quantum-chemistry
+    job and the terminal. The pin exists so a demo does not stall on a cold
+    load, which is a demo-length need, not a forever need.
+    """
+    sent = []
+    monkeypatch.setattr(
+        attest_cli.httpx, "post", lambda url, **kw: sent.append((url, kw.get("json", {}))) or _Ok()
+    )
+    attest_cli.warmup()
+
+    keep_alives = [body.get("keep_alive") for _, body in sent]
+    assert keep_alives, "warmup sent nothing"
+    assert -1 not in keep_alives, "models are still pinned forever"
+    assert all(isinstance(k, str) and k.endswith("m") for k in keep_alives), keep_alives
+
+
+def test_warmup_keep_alive_is_configurable(monkeypatch):
+    """A demo machine and a laptop want different answers."""
+    sent = []
+    monkeypatch.setenv("OLLAMA_KEEP_ALIVE", "2h")
+    monkeypatch.setattr(
+        attest_cli.httpx, "post", lambda url, **kw: sent.append((url, kw.get("json", {}))) or _Ok()
+    )
+    attest_cli.warmup()
+    assert all(body.get("keep_alive") == "2h" for _, body in sent)

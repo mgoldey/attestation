@@ -79,7 +79,7 @@ def test_list_before_any_scan_directs_the_caller(monkeypatch, tmp_path):
     out = mcp_server._runs_list_impl()
 
     assert out["ok"] is False
-    assert "runs_scan" in out["message"]
+    assert "runs.scan" in out["message"]
     assert out["runs"] == [] and out["families"] == []
 
 

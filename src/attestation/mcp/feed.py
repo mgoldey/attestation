@@ -13,7 +13,14 @@ caller is a model that can write the prose itself.
 
 from attestation.explain import explain as explain_item_fn
 from attestation.llm import default_chat_fn
-from attestation.mcp._shared import MAX_LIST_LIMIT, get_embedder, ranked_items, ranking_quality
+from attestation.mcp._shared import (
+    MAX_LIST_LIMIT,
+    clamp_limit,
+    get_embedder,
+    ranked_items,
+    ranking_quality,
+    validate_window,
+)
 from attestation.mcp._tool import ToolError, tool
 from attestation.rank import forget_profile_vector, record_click
 
@@ -22,7 +29,7 @@ def register(mcp) -> None:
     """Attach every feed.* tool to the server."""
 
     @mcp.tool(name="feed.list")
-    def list_feed(user: str, limit: int = 10, since_days: int | None = 14) -> dict:
+    def list_feed(user: str, limit: int = 5, since_days: int | None = 14) -> dict:
         """List this user's currently ranked, unread feed items (best first).
 
         Returns each item's id, title, url, source feed name, and its blended rank
@@ -75,7 +82,7 @@ def register(mcp) -> None:
         """List all available reader personas (users) and their interest profiles.
 
         Use this to discover which `user` values are valid for list_feed,
-        record_feedback, and explain_item before calling them.
+        feed.rate, and feed.explain before calling them.
         """
         return _list_users()
 
@@ -118,7 +125,7 @@ def register(mcp) -> None:
         """Create a reader persona from a name and an interests description.
 
         Ranking starts from the interests text and personalizes from the first
-        record_feedback call. Use propose_interests first if you want suggestions
+        feed.rate call. Use feed.persona_suggest_interests first if you want suggestions
         drawn from what is actually in the feed.
         """
         return _create_persona(name, interests)
@@ -145,7 +152,7 @@ def register(mcp) -> None:
         query: str,
         tag: str | None = None,
         content_type: str | None = None,
-        limit: int = 10,
+        limit: int = 5,
     ) -> dict:
         """Search items by keyword (and optional tag/content_type), ranked for this user.
 
@@ -189,7 +196,7 @@ def register(mcp) -> None:
 
         Only positives are inferred. No behaviour reliably means "not useful",
         and inferring rejection from silence would poison the class the ranker
-        is starving for. Use record_feedback for negatives.
+        is starving for. Use feed.rate for negatives.
         """
         return _harvest_engagement(user)
 
@@ -244,28 +251,74 @@ def register(mcp) -> None:
         return _digest(user, days, per_topic, limit)
 
 
-def _item_row(it) -> dict:
-    """The item shape list_feed and digest both return."""
-    return {
+# How many tags to return per item. Four was the natural output of the tagging
+# pass and roughly doubled a row's length; the first few carry the topic and
+# the rest are refinements a reader does not need in a list.
+MAX_TAGS_SHOWN = 3
+
+# How much abstract a search result carries. Enough to judge relevance, short
+# enough that ten of them stay readable.
+SUMMARY_CHARS = 240
+
+
+def _item_row(it, *, summary: bool = False) -> dict:
+    """The compact item shape list_feed, search and digest all return.
+
+    Deliberately small. A ten-item response used to run past 3,000 characters,
+    and gemma4:e2b could not reproduce one: it truncated, apologised,
+    re-rendered as raw JSON, truncated again, and never recovered. The reader
+    saw half of one item. A payload an agent cannot hold is one the tool should
+    not send.
+
+    `score` is gone. It was a blended RANK within a candidate set, so the same
+    item scored 11.19 in a 14-day window and 14.30 unbounded -- seventeen
+    digits that no caller could compare across calls and that invited being
+    read as a relevance measure. Order already carries the ranking.
+
+    Tags are capped, with `n_tags` reporting the true count, because silent
+    truncation is how an agent tells a reader an item has three topics when it
+    has six.
+    """
+    row = {
         "item_id": it.item_id,
         "title": it.title,
         "url": it.url,
         "source": it.source,
-        "score": it.score,
-        "tags": it.tags,
+        "tags": (it.tags or [])[:MAX_TAGS_SHOWN],
         "content_type": it.content_type,
     }
+    if it.tags and len(it.tags) > MAX_TAGS_SHOWN:
+        row["n_tags"] = len(it.tags)
+    elif it.tags:
+        row["n_tags"] = len(it.tags)
+    if summary and getattr(it, "summary", None):
+        text = it.summary.strip()
+        row["summary"] = text if len(text) <= SUMMARY_CHARS else text[:SUMMARY_CHARS].rstrip() + "…"
+    return row
 
 
 @tool(empty={"items": [], "ranking_quality": {}}, needs_user=True, label="list_feed")
-def _list_feed(conn, user_row, limit: int = 10, since_days: int | None = 14) -> dict:
+def _list_feed(conn, user_row, limit: int = 5, since_days: int | None = 14) -> dict:
     """`since_days` defaults to rank_items' own 14-day window so list_feed's
     behavior is unchanged; digest passes its `days` through here.
+
+    The default is 5, not 10. Ten items is a web page's worth; in a chat the
+    payload ran past 2,900 characters and gemma4:e2b could not reproduce it --
+    it truncated, apologised, re-rendered, truncated again. Five is ~380
+    tokens, which a small model can quote and reason over, and a reader asking
+    "what should I read" wants a handful rather than a page. Callers who want
+    more can say so.
     """
-    limit = min(max(int(limit), 1), MAX_LIST_LIMIT)
-    items = ranked_items(conn, user_row, limit, since_days)
+    limit = clamp_limit(limit)
+    since_days = validate_window(since_days)
+    items = ranked_items(conn, user_row, limit + 1, since_days)
+    more = len(items) > limit
+    items = items[:limit]
     return {
-        "message": f"{len(items)} item(s), best first",
+        "message": (
+            f"{len(items)} item(s), best first"
+            + (f"; more available -- raise limit (max {MAX_LIST_LIMIT})" if more else "")
+        ),
         "items": [_item_row(it) for it in items],
         "ranking_quality": ranking_quality(conn, user_row["id"]),
     }
@@ -371,7 +424,7 @@ def _create_persona(conn, name: str, interests: str) -> dict:
         "user_id": uid,
         "message": (
             f"created persona {name!r}. Ranking starts from its interests text; "
-            "record_feedback calls will personalize it from the first click."
+            "feed.rate calls will personalize it from the first click."
         ),
     }
 
@@ -565,11 +618,11 @@ def _search_feed(
     query: str,
     tag: str | None = None,
     content_type: str | None = None,
-    limit: int = 10,
+    limit: int = 5,
 ) -> dict:
     from attestation.rank import rank_items
 
-    limit = min(max(int(limit), 1), MAX_LIST_LIMIT)
+    limit = clamp_limit(limit)
     ranked = rank_items(
         conn, get_embedder(), user_row["id"], since_days=None, exclude_clicked=False
     )
@@ -592,17 +645,13 @@ def _search_feed(
     scored = _score_matches(kept, ranked, needle, similarity)
     matches = [
         {
-            "item_id": item.item_id,
-            "title": item.title,
-            "url": item.url,
-            "source": item.source,
-            "tags": item.tags,
-            "content_type": item.content_type,
+            **_item_row(item),
             "already_rated": item.item_id in clicked,
             # How this item was found, so a caller can tell relevance from
-            # noise when a result looks surprising.
+            # noise when a result looks surprising. Two decimals: the third
+            # never changed a decision and cost a character per row.
             "match": how if needle else "filter",
-            "relevance": round(score, 4),
+            "relevance": round(score, 2),
         }
         for score, item, how in scored[:limit]
     ]
@@ -763,7 +812,7 @@ def _simulate_feedback(conn, user_row, limit: int = 10, confirm: bool = False) -
             " distinguishable from real feedback) and calls a local LLM once per"
             " item."
         )
-    limit = min(max(int(limit), 1), MAX_LIST_LIMIT)
+    limit = clamp_limit(limit)
     # Sample round-robin across FEEDS, not down the ranking.
     #
     # Ranked candidates are the wrong pool twice over. They are ordered by

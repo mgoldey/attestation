@@ -150,7 +150,7 @@ def _scan(root: str | None = None, project: str | None = None, confirm: bool = F
 def _list(conn, project: str | None = None, family: str | None = None, limit: int = 20) -> dict:
     found = ledger.list_runs(conn, project=project, family=family, limit=min(limit, MAX_LIST_LIMIT))
     if not found:
-        raise ToolError("no runs recorded -- call runs_scan(confirm=true) first")
+        raise ToolError("no runs recorded -- call runs.scan(confirm=true) first")
     families = ledger.families(conn, project=project)
     # Cap the family list. `limit` bounds `runs` only, so a workspace with
     # hundreds of families returned all of them alongside a handful of runs --

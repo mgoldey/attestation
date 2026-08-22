@@ -150,7 +150,7 @@ def test_kg_path_unknown_target_is_not_reported_as_no_path(tmp_path, monkeypatch
     assert out["path"] is None
     assert "no path" not in out["message"].lower()
     assert "nonexistent" in out["message"]
-    assert "kg_concepts" in out["message"]
+    assert "kg.concepts" in out["message"]
 
 
 def test_kg_path_unknown_source_names_the_source(tmp_path, monkeypatch):
@@ -165,7 +165,7 @@ def test_kg_path_unknown_source_names_the_source(tmp_path, monkeypatch):
     assert out["path"] is None
     assert "nosuchsource" in out["message"]
     assert "no path" not in out["message"].lower()
-    assert "kg_concepts" in out["message"]
+    assert "kg.concepts" in out["message"]
 
 
 def test_kg_neighbors_unknown_node_points_at_kg_concepts(tmp_path, monkeypatch):
@@ -177,7 +177,7 @@ def test_kg_neighbors_unknown_node_points_at_kg_concepts(tmp_path, monkeypatch):
 
     assert out["ok"] is False
     assert "nonexistent" in out["message"]
-    assert "kg_concepts" in out["message"]
+    assert "kg.concepts" in out["message"]
 
 
 def test_kg_concepts_lists_every_concept(tmp_path, monkeypatch):

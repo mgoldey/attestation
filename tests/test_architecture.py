@@ -116,17 +116,26 @@ def test_cli_help_stays_fast():
     second onto every invocation. If this fails, someone promoted an import --
     move it back into the function body rather than raising the budget.
     """
-    start = time.perf_counter()
-    proc = subprocess.run(
-        [sys.executable, "-c", "import attestation.cli; attestation.cli.main()", "--help"],
-        capture_output=True,
-        timeout=30,
-    )
-    elapsed = time.perf_counter() - start
-    assert proc.returncode == 0, proc.stderr.decode()[:2000]
+    # Best of three. A single timing under a loaded machine is a coin flip --
+    # this test failed during a parallel review run while `attest --help`
+    # measured 0.15-0.27s on an idle box. Taking the minimum measures the
+    # import cost, which is what the budget is about, rather than whatever
+    # else the CPU was doing.
+    timings = []
+    for _ in range(3):
+        start = time.perf_counter()
+        proc = subprocess.run(
+            [sys.executable, "-c", "import attestation.cli; attestation.cli.main()", "--help"],
+            capture_output=True,
+            timeout=30,
+        )
+        timings.append(time.perf_counter() - start)
+        assert proc.returncode == 0, proc.stderr.decode()[:2000]
+
+    elapsed = min(timings)
     assert elapsed < 0.5, (
-        f"attest --help took {elapsed:.2f}s (budget 0.5s). A lazy import in "
-        "cli.py was probably promoted to module scope; move it back."
+        f"attest --help took {elapsed:.2f}s at best of {len(timings)} (budget 0.5s). "
+        "A lazy import in cli.py was probably promoted to module scope; move it back."
     )
 
 
@@ -261,3 +270,53 @@ def test_no_tool_repeats_its_own_namespace():
         if leaf.startswith(f"{namespace}_") or leaf.endswith(f"_{singular}"):
             redundant.append(name)
     assert not redundant, f"these repeat their namespace: {redundant}"
+
+
+def test_no_message_or_docstring_names_a_tool_that_does_not_exist():
+    """A recovery message is only useful if the tool it names is callable.
+
+    After namespacing, two error messages still said "call runs_scan(confirm=
+    true)" and "call kg_concepts()" -- an agent following either would call a
+    name the server no longer serves, turning a helpful message into a dead
+    end. Docstrings had the same drift.
+    """
+    import asyncio
+    import os
+    import re
+    import tempfile
+
+    os.environ.setdefault("RSS_DB", tempfile.mkdtemp() + "/t.db")
+    from attestation import mcp_server
+
+    served = {t.name for t in asyncio.run(mcp_server.mcp.list_tools())}
+    leaves = {n.split(".", 1)[1] for n in served}
+    # The pre-namespacing spellings: a leaf name prefixed by its own domain
+    # with an underscore, e.g. runs_scan for runs.scan.
+    stale = {f"{n.split('.')[0]}_{n.split('.', 1)[1]}" for n in served} | {
+        "list_feed",
+        "list_feeds",
+        "record_feedback",
+        "explain_item",
+        "create_persona",
+        "propose_interests",
+        "profile_status",
+        "search_feed",
+    }
+    stale -= leaves  # a leaf that is genuinely its own name is not stale
+
+    # Only STRINGS: docstrings an agent reads and messages it is handed. The
+    # Python identifiers (`def _sym_solve`, `_sym_solve(...)`) are internal and
+    # deliberately keep the flat spelling.
+    offenders = []
+    for path in (SRC / "mcp").glob("*.py"):
+        tree = ast.parse(path.read_text())
+        strings = [
+            n.value
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        ]
+        for text in strings:
+            for name in sorted(stale):
+                if re.search(rf"\b{re.escape(name)}\s*\(", text) or f"call {name}" in text:
+                    offenders.append(f"{path.name}: {name}")
+    assert not offenders, "these name tools that no longer exist: " + ", ".join(offenders)
