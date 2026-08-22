@@ -63,6 +63,39 @@ def _exists(conn, feed_id: int, guid: str | None, chash: str) -> bool:
     return row is not None
 
 
+def _new_entries(conn, feed_id: int, entries) -> tuple[list, int]:
+    """Entries worth storing, plus how many were skipped as duplicates.
+
+    Dedup checks are read-only (SELECT), so this never opens a write
+    transaction -- other connections can still write while feeds are being
+    fetched and parsed.
+
+    Dedup runs within the batch as well as against the database. `_exists()`
+    only sees committed rows, so two entries sharing a GUID both passed, the
+    second hit the UNIQUE constraint during the write, and the rollback
+    discarded every good item alongside it -- a whole feed lost to one
+    republished post.
+    """
+    new_entries: list = []
+    seen_guids: set[str] = set()
+    seen_hashes: set[str] = set()
+    skipped = 0
+    for entry in entries:
+        title = (entry.get("title") or "").strip()
+        summary = strip_boilerplate(entry.get("summary", ""))
+        guid = entry.get("id")
+        chash = content_hash(title, summary)
+        duplicate_in_batch = chash in seen_hashes or (guid is not None and guid in seen_guids)
+        if duplicate_in_batch or _exists(conn, feed_id, guid, chash):
+            skipped += 1
+            continue
+        if guid is not None:
+            seen_guids.add(guid)
+        seen_hashes.add(chash)
+        new_entries.append((entry, title, summary, guid, chash))
+    return new_entries, skipped
+
+
 def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -> dict:
     sync_feeds(conn, feeds_path)
     stats = {"added": 0, "skipped": 0, "failed_feeds": 0}
@@ -70,32 +103,8 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
         try:
             parsed = parse(feed["url"])
 
-            # Pass 1: collect new entries. Dedup checks are read-only (SELECT),
-            # so this never opens a write transaction -- other connections can
-            # still write to the db while feeds are being fetched/parsed.
-            new_entries = []
-            # Dedup within the batch as well as against the database. _exists()
-            # only sees committed rows, so two entries sharing a GUID both
-            # passed here, the second hit the UNIQUE constraint during the
-            # write, and the rollback discarded every good item alongside it --
-            # a whole feed lost to one republished post.
-            seen_guids: set[str] = set()
-            seen_hashes: set[str] = set()
-            for entry in parsed.entries:
-                title = (entry.get("title") or "").strip()
-                summary = strip_boilerplate(entry.get("summary", ""))
-                guid = entry.get("id")
-                chash = content_hash(title, summary)
-                duplicate_in_batch = chash in seen_hashes or (
-                    guid is not None and guid in seen_guids
-                )
-                if duplicate_in_batch or _exists(conn, feed["id"], guid, chash):
-                    stats["skipped"] += 1
-                    continue
-                if guid is not None:
-                    seen_guids.add(guid)
-                seen_hashes.add(chash)
-                new_entries.append((entry, title, summary, guid, chash))
+            new_entries, skipped = _new_entries(conn, feed["id"], parsed.entries)
+            stats["skipped"] += skipped
 
             # Pass 2: embed everything outside of any transaction. These are
             # the slow HTTP calls to Ollama -- no db lock is held while they run.

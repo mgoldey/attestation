@@ -24,19 +24,35 @@ import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
-from attestation.features import NON_TOPIC_TAGS, ItemTags  # noqa: E402
-from attestation.llm import ChatClient, chat_model  # noqa: E402
+from attestation.features import NON_TOPIC_TAGS, ItemTags
+from attestation.llm import ChatClient, chat_model
 
 CASES = json.loads((pathlib.Path(__file__).parent / "tagging_cases.json").read_text())
 
 # A shared vocabulary, as a real run would have. `vocab_should_reuse` cases
 # check the model prefers these over minting a synonym.
 VOCAB = [
-    "machine-learning", "transformers", "attention", "language-models",
-    "retrieval", "reinforcement-learning", "computer-vision", "biology",
-    "chemistry", "structural-biology", "cryo-em", "genomics", "crispr",
-    "materials-science", "superconductivity", "gpu-programming", "cuda",
-    "distributed-training", "scaling-laws", "evaluation", "long-context",
+    "machine-learning",
+    "transformers",
+    "attention",
+    "language-models",
+    "retrieval",
+    "reinforcement-learning",
+    "computer-vision",
+    "biology",
+    "chemistry",
+    "structural-biology",
+    "cryo-em",
+    "genomics",
+    "crispr",
+    "materials-science",
+    "superconductivity",
+    "gpu-programming",
+    "cuda",
+    "distributed-training",
+    "scaling-laws",
+    "evaluation",
+    "long-context",
 ]
 
 
@@ -67,7 +83,7 @@ def build_messages(variant: str, title: str, summary: str, vocab: list[str]) -> 
             "A tag names what the work is ABOUT, never where it appeared or"
             " what kind of post it is.\n"
             'Example: "Retraction: superconductivity in lutetium hydride"'
-            ' published in Nature ->'
+            " published in Nature ->"
             ' {"content_type": "announcement",'
             ' "tags": ["superconductivity", "materials-science"]}\n'
             "  -- not `retraction` (that is content_type), not `nature`"
@@ -101,7 +117,9 @@ def score_one(case: dict, out: dict) -> dict:
     result = {"id": case["id"], "errors": []}
     try:
         parsed = ItemTags.model_validate(out)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - a model returning an unparseable
+        # shape IS the measurement here; crashing would lose the score for the
+        # whole variant over one bad response.
         result["errors"].append(f"validation failed ({exc.__class__.__name__}) -- item lost")
         result["tags"] = out.get("tags")
         result["content_type"] = out.get("content_type")
@@ -174,7 +192,8 @@ def main() -> int:
             t0 = time.perf_counter()
             try:
                 out = client.chat_json(messages, schema)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - a transport blip must
+                # cost one case, not the run: the point is the aggregate.
                 out = {"_transport_error": str(exc)}
             latencies.append(time.perf_counter() - t0)
             scored = score_one(case, out)

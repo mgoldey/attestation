@@ -47,7 +47,7 @@ def load_env() -> None:
     never from library imports, so tests stay dotenv-free.
 
     Any OTHER entry point must call this itself. A standalone script that
-    imports hermes and skips it gets DEFAULT_CHAT_MODEL rather than the model
+    imports attestation and skips it gets DEFAULT_CHAT_MODEL rather than the model
     in .env, silently and with no error — a one-off re-tagging script did
     exactly that on 2026-08-11 and ran against the wrong model until the
     banner it printed gave it away.

@@ -1,4 +1,4 @@
-"""End-to-end demonstration of `hermes install`: no `_run` mocking.
+"""End-to-end demonstration of `attest install`: no `_run` mocking.
 
 Builds a real sandbox per test: a fake home (`Path.home()` monkeypatched), a
 PATH dir prepended with real stub executables (`hermes`, `ollama`) written
@@ -160,7 +160,7 @@ class _Sandbox:
             f"LLM_BASE_URL={base_url}\nCHAT_MODEL={CHAT_MODEL}\nEMBED_MODEL={EMBED_MODEL}\n"
         )
         # No skill fixture here on purpose: the skill ships inside the package
-        # (src/hermes/skills/), so step_skill_copy reads the real files rather
+        # (src/attestation/skills/), so step_skill_copy reads the real files rather
         # than anything planted under this fake repo root.
 
         bin_dir = tmp_path / "stubbin"

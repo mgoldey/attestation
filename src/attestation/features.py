@@ -96,19 +96,39 @@ class ItemTags(BaseModel):
         return [t for t in well_formed if t not in NON_TOPIC_TAGS]
 
 
-def tag_vocabulary(conn: sqlite3.Connection, limit: int = 40) -> list[str]:
-    """Most-used tags, to steer the model toward existing vocabulary.
+def tag_vocabulary(conn: sqlite3.Connection, limit: int = 150) -> list[str]:
+    """Most-used tags, canonicalized, to steer the model toward existing vocabulary.
+
+    Counts are summed over `kg.canonical` before ranking, which fixes a
+    feedback loop: the raw table ranks each spelling separately, so the
+    vocabulary shown to the model listed `machine-learning` (872) AND
+    `machinelearning` (463), and `llm` (642) beside `language-models` (212),
+    spending three of forty slots re-teaching the model the very variants the
+    graph then merges away. Worse, the spellings it taught were the ones
+    `canonical()` rewrites, so the model was being steered toward deprecated
+    forms. Merging first frees those slots and lets real concepts
+    (hugging-face, natural-language-processing, continual-learning) into the
+    list instead.
+
+    `limit` is 150 rather than 40 because 40 covered only 59% of tag
+    assignments on the live corpus against 67% at 150 -- a model shown 40 tags
+    for a 5000-item archive meets an unfamiliar subject constantly and mints a
+    new tag when it does. 150 canonical tags is ~1.4KB of prompt, which is
+    affordable next to the item summary it accompanies.
 
     Excludes NON_TOPIC_TAGS: the prompt asks the model not to emit them, so
-    suggesting them here would work against it. They are all low-use today and
-    none currently reach the top `limit`, but a corpus with more release notes
-    would push them in.
+    suggesting them here would work against it.
     """
-    rows = conn.execute(
-        "SELECT tag FROM item_tags GROUP BY tag ORDER BY COUNT(*) DESC, tag LIMIT ?",
-        (limit + len(NON_TOPIC_TAGS),),
-    )
-    return [r["tag"] for r in rows if r["tag"] not in NON_TOPIC_TAGS][:limit]
+    from attestation.kg import canonical
+
+    totals: dict[str, int] = {}
+    for row in conn.execute("SELECT tag, COUNT(*) n FROM item_tags GROUP BY tag"):
+        name = canonical(row["tag"])
+        if name in NON_TOPIC_TAGS:
+            continue
+        totals[name] = totals.get(name, 0) + row["n"]
+    ranked = sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [tag for tag, _ in ranked[: max(0, int(limit))]]
 
 
 def _tag_prompt(item: sqlite3.Row, vocab: list[str]) -> list[dict]:

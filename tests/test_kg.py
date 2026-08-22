@@ -1,3 +1,5 @@
+import pytest
+
 from attestation import kg
 from attestation.db import get_db
 
@@ -113,3 +115,171 @@ def test_aliases_merge_before_filtering_without_a_database():
     assert merged in adjacency, "aliasing must precede the frequency filter"
     assert adjacency[merged] == {"rag"}
     assert edges[tuple(sorted((merged, "rag")))] == 2
+
+
+# --- separator and plural folding in canonical() ---------------------------
+#
+# The alias table can only merge variants someone thought to list. Folding
+# handles the open-ended cases: on the live corpus (3955 distinct tags, 71%
+# used once) it merged 79 variant pairs the table never named.
+
+
+@pytest.mark.parametrize(
+    ("variant", "canon"),
+    [
+        ("machinelearning", "machine-learning"),  # separator, via fold_canonical
+        ("finetuning", "fine-tuning"),
+        ("multi-modal", "multimodal"),
+        ("risc-v", "risc-v"),
+        ("riscv", "risc-v"),
+        ("transformer", "transformers"),  # plural, via the alias table's target
+        ("datasets", "dataset"),  # plural, via the default spelling
+        ("proteins", "protein"),
+        ("stem-cells", "stem-cells"),
+        ("hallucinations", "hallucination"),
+        ("machine_learning", "machine-learning"),  # underscore separator
+    ],
+)
+def test_canonical_folds_spelling_variants(variant, canon):
+    assert kg.canonical(variant) == canon
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        # -ics field names are not plurals of physic/robotic/genomic.
+        "physics",
+        "robotics",
+        "genomics",
+        "ethics",
+        "dynamics",
+        "statistics",
+        # singular nouns that merely end in s
+        "series",
+        "species",
+        "analysis",
+        "bias",
+        "virus",
+        "mass",
+        "lens",
+        "news",
+        "gas",
+        "basis",
+        "axis",
+        # plurals that ARE the term of art, and plurals with no second
+        # spelling in the corpus: folding must not rename what it cannot merge
+        "mixture-of-experts",
+        "scaling-laws",
+        "agentic-workflows",
+        "neural-networks",
+        "diabetes",
+        "stochastic-processes",
+    ],
+)
+def test_canonical_leaves_a_tag_it_cannot_merge_alone(tag):
+    """Folding merges; it must never rename.
+
+    Two failure modes, both measured on the live corpus. A trailing "s" is
+    often not a plural, and stripping it invents words (physics -> physic,
+    series -> sery, lens -> len). And where the "s" IS a plural, the plural is
+    frequently the term of art (`mixture-of-experts`) or simply the only
+    spelling anyone used -- 506 of 588 computed folds had no merge partner at
+    all. Every tag here must survive unchanged.
+    """
+    assert kg.canonical(tag) == tag
+
+
+def test_canonical_never_merges_distinct_concepts():
+    """The constraint that makes an automatic rule safe at all.
+
+    Folding touches separators and a trailing plural "s" only, so it cannot
+    reach pairs that differ by a stem letter. `rna`/`dna` is the catastrophic
+    case; the rest are near-misses on the live tag list.
+    """
+    must_stay_distinct = [
+        ("rna", "dna"),
+        ("attention", "attention-mechanisms"),
+        ("physics", "physical"),
+        ("bias", "bias-mitigation"),
+        ("cell", "cell-free"),
+        ("protein", "proteomics"),
+        ("graph", "graphics"),
+        ("optimization", "optimizers"),
+    ]
+    for left, right in must_stay_distinct:
+        assert kg.canonical(left) != kg.canonical(right), f"{left!r} merged into {right!r}"
+
+
+def test_folding_merges_a_pair_the_alias_table_never_listed():
+    """The point of folding: a variant nobody hand-listed still merges.
+
+    Neither spelling is in kg_aliases.toml, and each is used once, so without
+    folding both would be culled by MIN_TAG_USES and the concept would vanish
+    from the graph entirely.
+    """
+    assert "nanocarriers" not in kg.ALIASES and "nanocarrier" not in kg.ALIASES
+
+    assignments = [
+        (1, "nanocarriers"),
+        (1, "drug-delivery"),
+        (2, "nanocarrier"),
+        (2, "drug-delivery"),
+    ]
+    adjacency, _ = kg.build_graph(assignments)
+
+    assert "nanocarrier" in adjacency, "folding must precede the frequency filter"
+    assert "nanocarriers" not in adjacency
+
+
+def test_canonical_is_idempotent():
+    """canonical(canonical(t)) == canonical(t) for every tag the table names.
+
+    A fold that moved a tag on each pass would make the graph depend on how
+    many times aliasing ran.
+    """
+    tags = (
+        set(kg.ALIASES)
+        | set(kg.ALIASES.values())
+        | {
+            "machinelearning",
+            "transformer",
+            "datasets",
+            "physics",
+            "series",
+            "huggingface",
+        }
+    )
+    for tag in tags:
+        once = kg.canonical(tag)
+        assert kg.canonical(once) == once, f"{tag!r} -> {once!r} is not stable"
+
+
+def test_health_counts_canonical_tags_not_raw_rows(tmp_path):
+    """singleton_rate must see the merging it exists to watch.
+
+    Counting raw item_tags rows made every alias invisible to the metric:
+    both spellings stayed in the denominator as separate tags. Here one
+    concept is spelled two ways across two items -- canonically that is a
+    single tag used twice, so nothing is a singleton.
+    """
+    conn = get_db(tmp_path / "t.db")
+    seed(conn, [["machinelearning", "shared"], ["machine-learning", "shared"]])
+
+    out = kg.health(conn)
+
+    assert out["distinct_tags"] == 2, "machinelearning and machine-learning are one tag"
+    assert out["singleton_rate"] == 0.0
+    conn.close()
+
+
+def test_folding_never_renames_a_tag_with_no_merge_partner():
+    """The guard on the whole mechanism: no partner, no rewrite.
+
+    A computed singular would rewrite all of these. Because canonical() only
+    folds onto spellings kg_aliases.toml actually names, a lone tag keeps the
+    spelling the corpus gave it -- so `canonical` can be applied to any tag,
+    including one no rule anticipated, without corrupting it.
+    """
+    for tag in ("quantum-dots", "exoplanets", "microrobots", "wildfires"):
+        assert tag not in kg.ALIASES
+        assert kg.canonical(tag) == tag

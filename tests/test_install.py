@@ -1,4 +1,4 @@
-"""hermes install: step engine, detection steps, doctor mode.
+"""attest install: step engine, detection steps, doctor mode.
 
 Fake `_run` records every invocation and returns canned CompletedProcess
 results, so tests assert exactly what subprocess calls (if any) a run makes.
@@ -671,7 +671,7 @@ def test_skill_copy_skips_when_source_missing(monkeypatch, tmp_path, check):
 def packaged_install(monkeypatch, tmp_path):
     """Simulate a non-editable install: _REPO_ROOT with no pyproject.toml marker.
 
-    The wheel packages only src/hermes, so _REPO_ROOT resolves to
+    The wheel packages only src/attestation, so _REPO_ROOT resolves to
     <venv>/lib/pythonX.Y — a directory that exists and is writable but is
     not a checkout (no .env.sample, no skills/, no feeds.toml).
     """

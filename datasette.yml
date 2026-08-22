@@ -4,7 +4,7 @@
 # database cannot be modified by anything that happens in a browser tab.
 # Nothing in the package imports it, so a broken version cannot break the tools.
 #
-#   hermes browse            # or: datasette --immutable <db> --metadata datasette.yml
+#   attest browse            # or: datasette --immutable <db> --metadata datasette.yml
 #
 # The value here is the canned queries below. Each one is a named, saved SQL
 # view with a shareable URL, which is the audit property a screenshot lacks:

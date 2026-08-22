@@ -20,4 +20,98 @@
 "languagemodels" = "large-language-models"      # 2 -> 124
 "opensource" = "open-source"                    # 5 -> 257
 "transferlearning" = "transfer-learning"        # 5 -> 40
-"multi-lingual" = "multilingual"                # 3 -> 8
+# Fold-key spellings: the canonical form for a family of separator/plural
+# variants that [aliases] does not already name.
+#
+# `canonical()` folds separators and a trailing plural "s" away to get a key,
+# then looks the key up HERE. It never computes a spelling of its own. That
+# restraint is measured: a computed singular touched 588 tags on the live
+# corpus, but 506 of them had no second spelling to merge with -- pure
+# renames that mint non-words (`diabetes` -> `diabete`) and rewrite terms of
+# art whose plural is the name (`mixture-of-experts`, `scaling-laws`).
+#
+# So an entry earns its place only when two spellings of ONE concept were
+# actually observed. Generated from the live tag distribution and reviewed by
+# hand; counts are documentation, not assertions. Spelling only -- never a
+# conceptual hierarchy, the same rule as [aliases].
+[fold_canonical]
+"machinelearning" = "machine-learning"              # machinelearning=463
+"finetuning" = "fine-tuning"                        # finetuning=1
+"multimodal" = "multimodal"                         # multi-modal=6
+"huggingface" = "hugging-face"                      # huggingface=357
+"automl" = "auto-ml"                                # automl=1
+"reranking" = "re-ranking"                          # reranking=1
+"riscv" = "risc-v"                                  # riscv=2, risc-v=1
+"multiview" = "multi-view"                          # multiview=1
+"multiscale" = "multi-scale"                        # multiscale=2
+"multitask" = "multi-task"                          # multitask=2
+"deepfakedetection" = "deepfake-detection"          # deep-fake-detection=1
+"changepointdetection" = "change-point-detection"   # changepoint-detection=1
+"braincomputerinterface" = "brain-computer-interface"  # brain-computer-interfaces=1
+"onpremise" = "on-premise"                          # on-premises=1
+
+# Plural/singular families. The more-used spelling wins; where both are equal
+# the hyphenated or singular form is chosen for consistency.
+"dataset" = "dataset"                               # datasets=10, dataset=11
+"bandit" = "bandit"                                 # bandits=8, bandit=8
+"hallucination" = "hallucination"                   # hallucinations=4
+"algorithm" = "algorithm"                           # algorithms=3
+"architecture" = "architecture"                     # architectures=1
+"benchmark" = "benchmark"                           # benchmarks=1
+"embedding" = "embeddings"                          # embedding=5, embeddings=8
+"model" = "models"                                  # model=1, models=6
+"foundationmodel" = "foundation-models"             # foundation-model=2
+"powersystem" = "power-systems"                     # power-system=2
+"molecularsimulation" = "molecular-simulation"      # molecular-simulations=1
+"partnership" = "partnership"                       # partnerships=1
+"lowerbound" = "lower-bound"                        # lower-bounds=3
+"digitaltwin" = "digital-twin"                      # digital-twins=2
+"knowledgegraph" = "knowledge-graph"                # knowledge-graphs=3
+"perovskite" = "perovskites"                        # perovskite=1
+"pinn" = "pinn"                                     # pinns=1
+"visiontransformer" = "vision-transformers"         # vision-transformer=1
+"vaccine" = "vaccine"                               # vaccines=2
+"workflow" = "workflow"                             # workflows=1
+"decisiontree" = "decision-tree"                    # decision-trees=2
+"inverseproblem" = "inverse-problem"                # inverse-problems=1
+"electrolyte" = "electrolytes"                      # electrolyte=1
+"database" = "database"                             # databases=1
+"forest" = "forests"                                # forest=1
+"framework" = "frameworks"                          # framework=1
+"manifold" = "manifold"                             # manifolds=1
+"statespacemodel" = "state-space-models"            # state-space-model=1
+"stemcell" = "stem-cells"                           # stem-cell=1
+"wirelesscommunication" = "wireless-communication"  # wireless-communications=2
+"accelerator" = "accelerators"                      # accelerator=1
+"attack" = "attack"                                 # attacks=1
+"career" = "career"                                 # careers=1
+"distributionshift" = "distribution-shift"          # distribution-shifts=1
+"latentspace" = "latent-space"                      # latent-spaces=1
+"lossfunction" = "loss-functions"                   # loss-function=1
+"multimodalembedding" = "multimodal-embedding"      # multimodal-embeddings=1
+"nanopore" = "nanopores"                            # nanopore=1
+"pointcloud" = "point-cloud"                        # point-clouds=1
+"policygradient" = "policy-gradients"               # policy-gradient=1
+"socialscience" = "social-science"                  # social-sciences=1
+"telescope" = "telescope"                           # telescopes=1
+"audit" = "audit"                                   # audits=1
+"clinicaltrial" = "clinical-trial"                  # clinical-trials=1
+"codellm" = "code-llm"                              # code-llms=1
+"converter" = "converter"                           # converters=1
+"dimension" = "dimension"                           # dimensions=1
+"errorbound" = "error-bound"                        # error-bounds=1
+"fluctuation" = "fluctuation"                       # fluctuations=1
+"glueball" = "glueball"                             # glueballs=1
+"knowledgebase" = "knowledge-base"                  # knowledge-bases=1
+"mousemodel" = "mouse-model"                        # mouse-models=1
+"nanocarrier" = "nanocarrier"                       # nanocarriers=1
+"patent" = "patent"                                 # patents=1
+"peptide" = "peptide"                               # peptides=1
+"physicsmaterial" = "physics-material"              # physics-materials=1
+"protein" = "protein"                               # proteins=1
+"rewardfunction" = "reward-function"                # reward-functions=1
+"risk" = "risk"                                     # risks=1
+"shapleyvalue" = "shapley-value"                    # shapley-values=1
+"supportvectormachine" = "support-vector-machine"   # support-vector-machines=1
+"temporaldifference" = "temporal-difference"        # temporal-differences=1
+"vanet" = "vanet"                                   # vanets=1

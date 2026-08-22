@@ -213,7 +213,7 @@ of mutating anything, so use that as a dry-run to see what would happen.
 
 `add_feed(url, title)` is **register-only**: it validates the URL parses as
 a feed and subscribes, but does not fetch anything. New items only appear
-after the next ingest (hourly cron, or `hermes ingest`) — don't expect
+after the next ingest (hourly cron, or `attest ingest`) — do not expect
 `list_feed` to show items from a feed added moments ago.
 
 **Knowledge graph** — derived from the tagging pass (concepts are tags used
@@ -223,7 +223,13 @@ give it ("what else should I read about this"), strongest co-occurrence
 first. It returns direct neighbours only — for anything spanning more than
 one hop, use `kg_path(source, target)`, which finds the shortest chain of
 concepts linking two topics, returning `ok=false` with `path=null` when they
-never co-occur — a real answer, not an error;
+never co-occur — a real answer, not an error. That answer is only ever given
+about two concepts that really are in the graph: a name that is not a concept
+is refused separately and says so, so a typo can never come back as "these
+topics never co-occur". `kg_concepts(prefix, limit)` lists the valid names
+(`prefix` is a case-insensitive substring match, and `n_concepts` reports how
+many matched so a capped list is never mistaken for the whole vocabulary) —
+call it when you are not certain a name exists;
 `kg_central(metric, limit)` surfaces the most-connected (`metric="degree"`)
 or most-bridging (`metric="betweenness"`) concepts; `kg_communities(min_size)`
 clusters the graph into topic groups by modularity, each labelled by its hub

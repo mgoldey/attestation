@@ -107,7 +107,7 @@ Rehearse once end-to-end before the call.
 - Deterministic core / LLM garnish split = reliability contracts per layer.
 - Cold start: interests text -> profile embedding; ramps smoothly into the
   classifier as clicks arrive. No cliff.
-- `hermes eval` exists and reports honest noise at n=15 — eval-first habit,
+- `attest eval` exists and reports honest noise at n=15 — eval-first habit,
   not decorative metrics.
 - What this grows into at scale: preference-optimization post-training
   (DPO/ORPO), learned rerankers, pgvector. Same shapes, bigger substrate.
@@ -129,7 +129,7 @@ the full command-by-command transcript. Summary:
   took ~94s for a single `/explanation` call (partial CPU offload) — over the
   60s "painfully slow" threshold. Switching to `hermes3:8b` brought explain
   latency down to ~5.7s on a warm model. For the "explanations as garnish"
-  demo beat, export `CHAT_MODEL=hermes3:8b` before `hermes warmup` and
+  demo beat, export `CHAT_MODEL=hermes3:8b` before `attest warmup` and
   `attest serve`.
 - `uv run attest ingest` on this run: `{'added': 889, 'skipped': 616,
   'failed_feeds': 0}` against all 7 configured feeds — no feed failures.

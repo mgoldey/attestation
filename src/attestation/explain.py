@@ -1,7 +1,7 @@
 """LangGraph explain agent: click history -> profile -> one-sentence 'why ranked here'.
 
 Hermes is the orchestrator; the chat model is a swappable OpenAI-compatible backend
-(see src/hermes/llm.py).
+(see src/attestation/llm.py).
 
 Reliability contract: lazy, cached, degrades to None. Ranking never waits on this.
 """

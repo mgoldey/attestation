@@ -47,7 +47,7 @@ attest-mcp = "attestation.mcp_server:main"
 
 [dependency-groups]
 # datasette is a dev/ops dependency, never imported by the package: it browses
-# hermes.db as a separate process, so a `uvx hermes-rss` install never pays for
+# hermes.db as a separate process, so a `uvx attestation` install never pays for
 # it and a broken version cannot break the tools.
 dev = ["pytest>=8", "ruff>=0.6", "ty", "radon>=6", "datasette>=0.64", "datasette-vega>=0.6", "pre-commit>=3.7"]
 
@@ -60,6 +60,16 @@ packages = ["src/attestation"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "live_model: needs a running Ollama; excluded from the default run and CI",
+]
+# Live-model tests are opt-in: `uv run pytest -m live_model`. They assert that
+# real embeddings behave the way search assumes -- an acronym reaching its
+# expansion, unrelated domains staying apart -- which a hash-based fake cannot
+# check. Excluded by default because CI has no model and the pre-commit hook
+# should stay a fixed cost.
+addopts = "-m 'not live_model'"
+
 
 [tool.ruff]
 line-length = 100

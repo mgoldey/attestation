@@ -85,7 +85,7 @@ def register(mcp) -> None:
 
         Validates that the URL parses as a feed, then registers it. Does NOT fetch
         its articles: items appear after the next ingest (hourly cron, or
-        `hermes ingest`). Use preview_feed first to check a feed's content.
+        `attest ingest`). Use preview_feed first to check a feed's content.
         """
         return _add_feed(url, title)
 
@@ -404,6 +404,104 @@ def _profile_status(conn, user_row) -> dict:
     }
 
 
+# How much a query's semantic match counts against the reader's profile.
+# Search is a directed question, so relevance to the query dominates -- but a
+# profile still breaks ties, which is why a persona's search differs from a
+# stranger's. Ranking purely by profile was the old bug: the query barely
+# participated and results were "highest-ranked items that contain the string".
+QUERY_WEIGHT = 0.75
+
+# Keep semantic hits within this fraction of the BEST match for this query.
+#
+# Relative, not absolute, because absolute thresholds do not survive contact
+# with real data. Measured against embeddinggemma over 5,162 items: "large
+# language models" tops out at cosine 0.619 while "cryo-EM protein structure"
+# tops at 0.443, so any fixed cutoff either floods one query or starves the
+# other. Similarity also decays slowly -- 0.619 to 0.500 across 200 items --
+# so "everything above X" is never a clean answer.
+#
+# At 0.90 the same measurement gives 28 hits for a broad query, 12 for a
+# middling one, and 2 for "superconductivity", which has exactly two genuinely
+# superconducting papers in the corpus. The floor adapts to how well the
+# archive actually covers the question, which is the property that matters.
+RELEVANCE_FLOOR = 0.90
+
+
+def _semantic_hits(conn, embedder, query: str, k: int) -> dict[int, float]:
+    """item_id -> similarity, via the sqlite-vec index.
+
+    Indexed with DOC_PROMPT and searched with QUERY_PROMPT: embed.py's prompts
+    are asymmetric because the model was trained that way, and mixing them
+    measurably degrades retrieval. `embed_query` existed for exactly this and
+    had no caller until now.
+
+    Vectors are L2-normalised by truncate_normalize, so sqlite-vec's L2
+    distance d relates to cosine similarity as cos = 1 - d^2/2.
+    """
+    vec = embedder.embed_query(query)
+    rows = conn.execute(
+        "SELECT rowid, distance FROM item_vectors"
+        " WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+        (vec.tobytes(), k),
+    ).fetchall()
+    sims = {r["rowid"]: 1.0 - (r["distance"] ** 2) / 2.0 for r in rows}
+    if not sims:
+        return sims
+    # sqlite-vec returns k rows whether or not they are relevant, so without a
+    # floor a search for anything returns the whole archive in similarity
+    # order -- the same "returns everything" failure as the old substring
+    # search, only harder to notice.
+    best = max(sims.values())
+    return {rid: sim for rid, sim in sims.items() if sim >= best * RELEVANCE_FLOOR}
+
+
+def _passes_filters(item, needle: str, similarity: dict, tag, content_type) -> bool:
+    """Whether an item survives the query and the explicit filters.
+
+    A query keeps an item if the semantic index reached it OR the words appear
+    literally -- the two find different things, which is why both run.
+    """
+    if needle and item.item_id not in similarity and not _literal_match(item, needle):
+        return False
+    if tag and tag not in (item.tags or []):
+        return False
+    return not (content_type and item.content_type != content_type)
+
+
+def _literal_match(item, needle: str) -> bool:
+    return needle in (item.title or "").lower() or needle in (item.summary or "").lower()
+
+
+def _score_matches(kept: list, ranked: list, needle: str, similarity: dict) -> list:
+    """Blend query relevance with the reader's profile, best first.
+
+    The profile is a tie-breaker, not the ranking: search is a directed
+    question. Ordering by profile and filtering afterwards was the old bug --
+    results were the highest-ranked items that happened to contain the string,
+    so the query barely participated.
+    """
+    profile_rank = {item.item_id: i for i, item in enumerate(ranked)}
+    n = max(len(ranked), 1)
+    scored = []
+    for item in kept:
+        literal = bool(needle) and _literal_match(item, needle)
+        sim = similarity.get(item.item_id)
+        relevance = sim if sim is not None else 0.0
+        if literal:
+            # A boost, not a floor. Flooring every literal hit at one value
+            # made 711 items matching "llm" tie at the same score, so profile
+            # rank silently decided the order and the query stopped
+            # discriminating. A title match outweighs a body match, since a
+            # body can mention a term in passing.
+            relevance += 0.35 if needle in (item.title or "").lower() else 0.15
+        profile_score = 1.0 - (profile_rank[item.item_id] / n)
+        combined = QUERY_WEIGHT * min(relevance, 1.0) + (1.0 - QUERY_WEIGHT) * profile_score
+        how = "both" if literal and sim is not None else ("literal" if literal else "semantic")
+        scored.append((combined, item, how))
+    scored.sort(key=lambda t: (-t[0], t[1].item_id))
+    return scored
+
+
 @tool(empty={"items": [], "ranking_quality": {}}, needs_user=True, label="search_feed")
 def _search_feed(
     conn,
@@ -423,34 +521,38 @@ def _search_feed(
         r["item_id"]
         for r in conn.execute("SELECT item_id FROM clicks WHERE user_id = ?", (user_row["id"],))
     }
-    needle = query.lower()
-    matches = []
-    for item in ranked:
-        if (
-            needle
-            and needle not in (item.title or "").lower()
-            and needle not in (item.summary or "").lower()
-        ):
-            continue
-        if tag and tag not in (item.tags or []):
-            continue
-        if content_type and item.content_type != content_type:
-            continue
-        matches.append(
-            {
-                "item_id": item.item_id,
-                "title": item.title,
-                "url": item.url,
-                "source": item.source,
-                "tags": item.tags,
-                "content_type": item.content_type,
-                "already_rated": item.item_id in clicked,
-            }
+
+    # An empty query is a filter, not a search: keep profile order and let the
+    # tag/content_type filters do the work.
+    similarity: dict[int, float] = {}
+    if query.strip():
+        # Over-fetch so post-filtering by tag/content_type still has candidates.
+        similarity = _semantic_hits(
+            conn, get_embedder(), query, k=min(len(ranked), max(limit * 10, 100))
         )
-        if len(matches) >= limit:
-            break
+
+    needle = query.lower().strip()
+    kept = [item for item in ranked if _passes_filters(item, needle, similarity, tag, content_type)]
+    scored = _score_matches(kept, ranked, needle, similarity)
+    matches = [
+        {
+            "item_id": item.item_id,
+            "title": item.title,
+            "url": item.url,
+            "source": item.source,
+            "tags": item.tags,
+            "content_type": item.content_type,
+            "already_rated": item.item_id in clicked,
+            # How this item was found, so a caller can tell relevance from
+            # noise when a result looks surprising.
+            "match": how if needle else "filter",
+            "relevance": round(score, 4),
+        }
+        for score, item, how in scored[:limit]
+    ]
+    mode = "filtered" if not needle else "searched"
     return {
-        "message": f"{len(matches)} match(es), best first",
+        "message": f"{len(matches)} item(s) {mode}, best first",
         "items": matches,
         "ranking_quality": ranking_quality(conn, user_row["id"]),
     }

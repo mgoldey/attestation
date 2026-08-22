@@ -29,12 +29,91 @@ MIN_TAG_USES = 2
 MIN_EDGE_WEIGHT = 2
 
 _ALIAS_PATH = Path(__file__).resolve().parent / "kg_aliases.toml"
-ALIASES: dict[str, str] = tomllib.loads(_ALIAS_PATH.read_text()).get("aliases", {})
+_ALIAS_DOC = tomllib.loads(_ALIAS_PATH.read_text())
+ALIASES: dict[str, str] = _ALIAS_DOC.get("aliases", {})
+
+# Fold key -> the spelling to canonicalize to. Populated below from the alias
+# table's targets plus [fold_canonical], so that folding never has to guess
+# which of two spellings is the real one.
+_FOLD_CANON: dict[str, str] = {}
+
+
+# Suffixes where a trailing "s" is not a plural marker. Stripping it anyway
+# is what makes an automatic rule dangerous, so each group is here for a
+# reason observed on the live tag list:
+#   ss/us/is/as/os/ys  -- mass, virus, analysis, gas, alloys: the "s" is stem
+#   ics                -- physics, robotics, genomics, ethics, dynamics are
+#                         field names, not plurals of physic/robotic/genomic
+#   ews/ens            -- news, lens
+#   ies                -- series and species are singular; folding -ies to -y
+#                         also mints non-words (series -> sery)
+_NOT_PLURAL = ("ss", "us", "is", "as", "os", "ys", "ics", "ews", "ens", "ies")
+
+
+def _singular(word: str) -> str:
+    """Strip one trailing plural "s". Conservative by construction."""
+    if len(word) < 4 or not word.endswith("s") or word.endswith(_NOT_PLURAL):
+        return word
+    return word[:-1]
+
+
+def _fold(tag: str) -> str:
+    """The equivalence key: separators removed, last word singularized.
+
+    Only these two axes fold. Both are spelling, never meaning: `rna` and
+    `dna` differ by a letter that is not a separator or a plural, so no rule
+    here can reach them. Stemming or edit-distance would, which is why
+    neither is used.
+    """
+    return _singular(tag.replace("_", "-").replace("-", ""))
+
+
+# Every alias target is authoritative for its own fold key, so `hugging-face`
+# beats `huggingface` and `large-language-models` beats `languagemodels`
+# without the corpus being consulted. [fold_canonical] in the TOML names a
+# spelling for any remaining key the default would get wrong.
+for _target in set(ALIASES.values()):
+    _FOLD_CANON[_fold(_target)] = _target
+for _key, _spelling in _ALIAS_DOC.get("fold_canonical", {}).items():
+    _FOLD_CANON[_fold(_key)] = _spelling
 
 
 def canonical(tag: str) -> str:
-    """Map a tag to its canonical spelling. Identity for unmapped tags."""
-    return ALIASES.get(tag, tag)
+    """Map a tag to its canonical spelling. Identity for unmapped tags.
+
+    Two layers, hand-curated first. `ALIASES` is consulted before and after
+    folding, so the alias table always wins: it is the only place that can
+    merge things folding cannot see (`nlp` -> `natural-language-processing`)
+    and the only place that can pick a canonical spelling folding would get
+    wrong (folding alone would elect `huggingface`, the more frequent
+    spelling, over the `hugging-face` the table names).
+
+    Folding then handles the open-ended cases no hand-list can enumerate:
+    separator variants (`machinelearning`, `fine-tuning`/`finetuning`) and
+    singular/plural pairs (`transformer`/`transformers`). On the live corpus
+    this merges 79 variant pairs the table never listed.
+
+    A tag only folds onto a spelling that is already NAMED -- an alias target
+    or a [fold_canonical] entry. An unrecognised fold key is left alone rather
+    than rewritten to a computed singular, because measurement showed that
+    computing one is both useless and harmful: of 588 tags a computed fold
+    touched on the live corpus, 506 had no merge partner at all. Those gained
+    nothing and cost accuracy, renaming established tags
+    (`agentic-workflows` x457, `neural-networks` x91) and minting non-words
+    (`diabetes` -> `diabete`, `stochastic-processes` -> `stochastic-processe`).
+    Worse, a plural is often the term of art -- `mixture-of-experts` and
+    `scaling-laws` are not "one expert" or "one law".
+
+    So folding is a merging rule, never a renaming rule: it fires only where
+    a canonical spelling is already known, which keeps `canonical()` a pure
+    function of the tag and leaves the graph's node names stable.
+    """
+    if tag in ALIASES:
+        return ALIASES[tag]
+    folded = _FOLD_CANON.get(_fold(tag))
+    if folded is None:
+        return tag
+    return ALIASES.get(folded, folded)
 
 
 def tag_assignments(conn: sqlite3.Connection) -> list[tuple[int, str]]:
@@ -270,11 +349,26 @@ def health(conn: sqlite3.Connection) -> dict:
     `singleton_rate` showed one tagging model minting 85% one-off tags where
     another minted 74%, and `largest_community_pct` at 95% exposed the
     clustering bug that made kg_communities useless.
+
+    `distinct_tags` and `singleton_rate` count CANONICAL tags over distinct
+    items -- the same vocabulary build_graph filters. Counting raw rows
+    instead (as this did) made the metric blind to the merging it exists to
+    watch: every alias added left `singleton_rate` unmoved, because both
+    spellings were still counted separately, and a tag on two copies of one
+    item read as reused when the graph saw it once.
     """
-    adjacency, edges = build_graph(tag_assignments(conn))
+    assignments = tag_assignments(conn)
+    adjacency, edges = build_graph(assignments)
     degrees = sorted((len(v) for v in adjacency.values()), reverse=True)
-    tags = conn.execute("SELECT tag, COUNT(*) n FROM item_tags GROUP BY tag").fetchall()
-    singles = sum(1 for r in tags if r["n"] == 1)
+    per_item: dict[int, set[str]] = defaultdict(set)
+    for item_id, tag in assignments:
+        per_item[item_id].add(canonical(tag))
+    uses: dict[str, int] = defaultdict(int)
+    for names in per_item.values():
+        for name in names:
+            uses[name] += 1
+    tags = uses
+    singles = sum(1 for n in uses.values() if n == 1)
     nodes = len(adjacency)
     groups = communities(conn, min_size=3, graph=(adjacency, edges))
     largest = max((len(c["members"]) for c in groups), default=0)

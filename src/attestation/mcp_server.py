@@ -72,6 +72,7 @@ _kg_neighbors_impl = _kg._neighbors
 _kg_path_impl = _kg._path
 _kg_central_impl = _kg._central
 _kg_communities_impl = _kg._communities
+_kg_concepts_impl = _kg._concepts
 
 _runs_scan_impl = _prov._scan
 _runs_list_impl = _prov._list

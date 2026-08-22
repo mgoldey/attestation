@@ -2,14 +2,14 @@
 # Thin delegator: resolves a local checkout (or the uvx-from-git fallback)
 # and hands off to `attest install --yes`, the idempotent installer/doctor.
 # Model checks, .env creation, first-data ingest, warmup, MCP/skill/cron
-# wiring — all of that is now the installer's job (src/hermes/install.py),
+# wiring — all of that is now the installer's job (src/attestation/install.py),
 # not this script's. See SKILL.md's "Configuration contract" table.
 set -uo pipefail
 
 # Default to the checkout this script lives in, found by walking up to a
 # pyproject.toml marker (same test install.py:_checkout_root() uses). Walking
 # beats a fixed "../.." count: the script ships inside the package, so it runs
-# from src/hermes/skills/<name>/scripts/ in a checkout, from site-packages
+# from src/attestation/skills/<name>/scripts/ in a checkout, from site-packages
 # under uvx, and from ~/.hermes/skills/<name>/scripts/ once copied out. Only
 # the first is a checkout; the other two fall through to uvx-from-git below.
 _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

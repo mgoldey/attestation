@@ -2,7 +2,7 @@
 
 Auditable research provenance, fully local: experiment runs, verifiable claims,
 a reading knowledge graph, symbolic derivations, and a personalized science feed.
-Exposed as 34 MCP tools plus a small HTMX web UI and an `attest` CLI.
+Exposed as 36 MCP tools plus a small HTMX web UI and an `attest` CLI.
 
 ## Docs Index
 
@@ -27,7 +27,7 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 
 ```
 |Entry points: cli.py:main()→`attest`|mcp_server.py:main()→`attest-mcp`|server.py:create_app()→FastAPI+HTMX @ 127.0.0.1:8899
-|MCP surface: 34 tools in mcp/{feed,knowledge,provenance,symbolic}.py; mcp_server.py is an 89-line entry point + one-release `_<name>_impl` aliases|mcp/_tool.py's @tool owns the ritual: connection, user lookup, and BOTH envelopes — a body returns only what it computed|expected refusals `raise ToolError(msg)` (verbatim to caller); anything else is a bug (logged, generic message)|`empty={...}` makes a failure envelope structurally match its success envelope
+|MCP surface: 36 tools in mcp/{feed,knowledge,provenance,symbolic}.py; mcp_server.py is an 89-line entry point + one-release `_<name>_impl` aliases|mcp/_tool.py's @tool owns the ritual: connection, user lookup, and BOTH envelopes — a body returns only what it computed|expected refusals `raise ToolError(msg)` (verbatim to caller); anything else is a bug (logged, generic message)|`empty={...}` makes a failure envelope structurally match its success envelope
 |Ranking: rank_items(conn,embedder,user_id,since_days=14,*,exclude_clicked=True)→list[RankedItem]|blend_weight(n_clicks) mixes click_ranks vs profile_rank|classifier_probs() returns None on single-class history (guard) → order is embedding-only
 |Ranking honesty: _ranking_quality() reports classifier_active + caveat|surface it rather than letting a reader assume the ranker learned something
 |Candidates: _candidate_items(conn,user_id,since_days,*,exclude_clicked)|since_days=None + exclude_clicked=False = search_feed semantics (older/already-rated items are legitimate hits)

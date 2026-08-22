@@ -6,7 +6,7 @@ it is a no-op afterwards); these functions are the supported way to change
 which feeds are tracked, and they work with no checkout present.
 
 add_feed is register-only by design: it validates the URL parses and inserts
-the row, leaving the fetch to the next `hermes ingest`. Ingesting inline
+the row, leaving the fetch to the next `attest ingest`. Ingesting inline
 would mean network I/O plus one embedding per item -- minutes for a busy
 feed, inside a tool call an agent may time out on.
 """
@@ -59,7 +59,7 @@ def add_feed(
         "feed_id": cur.lastrowid,
         "message": (
             f"subscribed to {resolved_title!r}. Items appear after the next ingest "
-            "(run `hermes ingest`, or wait for the hourly refresh)."
+            "(run `attest ingest`, or wait for the hourly refresh)."
         ),
     }
 

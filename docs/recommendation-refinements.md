@@ -1,11 +1,11 @@
-# Recommendation-system refinement survey — hermes-rss
+# Recommendation-system refinement survey — attestation
 
 Scope: assess fit for the actual regime, not general recsys practice. Regime: single
 machine, 1-3 users, tens-to-hundreds of total clicks, ~1,500 live items, ~900
 new/day, CPU-only numpy/sklearn, no training infra, local 8B Ollama chat model
 (~5.7s/call warm) used today only for post-hoc explanation.
 
-Current system (`src/hermes/rank.py`): items and a profile-text query both
+Current system (`src/attestation/rank.py`): items and a profile-text query both
 embedded with `embeddinggemma` (256-dim, unit-norm) via sqlite-vec; candidate
 score = `w * rank(classifier_probs) + (1-w) * rank(profile_cosine)`,
 `w = n_clicks/(n_clicks+5)`; per-user `LogisticRegression(class_weight="balanced",

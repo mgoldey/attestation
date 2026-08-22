@@ -122,7 +122,7 @@ def _checkout_root() -> Path | None:
     `llm._REPO_ROOT` is `parents[2]` of the module file, which is the real
     checkout for editable installs but resolves to `<venv>/lib/pythonX.Y`
     under a wheel (uvx). That path *exists and is writable*, so it fails
-    silently rather than loudly. The wheel packages only `src/hermes`, so
+    silently rather than loudly. The wheel packages only `src/attestation`, so
     probing for a repo-root marker distinguishes the two reliably.
     """
     import attestation.llm as llm
@@ -303,8 +303,8 @@ def _skill_source_dir() -> Path:
     """Skill files ship inside the package, so this resolves in every install mode.
 
     Package-relative (not _REPO_ROOT-relative): the wheel bundles
-    hermes/skills/, so uvx installs get the skill too, and an editable
-    checkout resolves to the same files under src/hermes/skills/.
+    attestation/skills/, so uvx installs get the skill too, and an editable
+    checkout resolves to the same files under src/attestation/skills/.
     """
     return Path(__file__).resolve().parent / "skills" / SKILL_NAME
 

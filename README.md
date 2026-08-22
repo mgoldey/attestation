@@ -138,7 +138,7 @@ uv run attest ingest                # fetch feeds.toml -> hermes.db
 cp .env.sample .env    # then edit — gemma4:e2b is pre-selected as the chat model
 ```
 
-The `hermes` CLI and the MCP server load `.env` at startup (real environment
+The `attest` CLI and the MCP server load `.env` at startup (real environment
 variables always win), so your shell, cron, and hermes-agent-spawned
 processes all see the same configuration. All LLM traffic speaks the
 OpenAI-compatible API (`LLM_BASE_URL`, default Ollama's
@@ -212,7 +212,7 @@ mcp_servers:
 
 Verify with `hermes mcp list` — you should see `attestation ... ✓ enabled`.
 
-The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 35 tools:
+The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 36 tools:
 
 | Tool | What it does | Speed |
 |---|---|---|
@@ -243,7 +243,7 @@ The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 35 tools
 | `kg_path(source, target)` | Shortest chain of concepts linking two topics | instant |
 | `kg_central(metric, limit)` | Most-connected or most-bridging concepts | instant |
 | `kg_communities(min_size)` | Topic clusters, each labelled by its hub concept | instant |
-| `kg_rebuild(confirm)` | Regenerate the graph (needs `confirm=true`; `attest tag` does this automatically) | instant |
+| `kg_concepts(prefix, limit)` | List the concept names the other `kg_*` tools accept | instant |
 | `runs_scan(root, project, confirm)` | Read experiment runs from artifacts on disk into the ledger | fast |
 | `runs_list(project, family, limit)` | Recorded runs, and the families they group into | instant |
 | `runs_compare(family, metric)` | Rank the arms of a sweep, with provenance and caveats | instant |
