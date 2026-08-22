@@ -15,9 +15,9 @@ exclude these the way it excludes bootstrap rows.
 
 import pytest
 
+from attestation import implicit
 from attestation.db import get_db
 from attestation.rank import CLICK_SOURCES, get_user, record_click
-from attestation import implicit
 
 
 @pytest.fixture
@@ -50,9 +50,7 @@ def test_asking_why_becomes_a_weak_positive(seeded):
     out = implicit.harvest(seeded, "ana")
 
     assert out["recorded"] == 2
-    rows = seeded.execute(
-        "SELECT item_id, useful, source FROM clicks ORDER BY item_id"
-    ).fetchall()
+    rows = seeded.execute("SELECT item_id, useful, source FROM clicks ORDER BY item_id").fetchall()
     assert [r["item_id"] for r in rows] == [1, 2]
     assert all(r["useful"] == 1 for r in rows)
     assert all(r["source"] == "implicit" for r in rows)

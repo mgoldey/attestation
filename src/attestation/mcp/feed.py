@@ -754,14 +754,32 @@ def _simulate_feedback(conn, user_row, limit: int = 10, confirm: bool = False) -
             " item."
         )
     limit = min(max(int(limit), 1), MAX_LIST_LIMIT)
-    items = ranked_items(conn, user_row, limit, None)
-    if not items:
-        raise ToolError("no items to react to -- run an ingest first")
-
+    # Sample round-robin across FEEDS, not down the ranking.
+    #
+    # Ranked candidates are the wrong pool twice over. They are ordered by
+    # relevance to this very persona, so the top of the list asks the model to
+    # reject what the ranker just selected for relevance; and the archive is
+    # lopsided -- 1,744 of any 2,000 candidates here are arXiv cs.LG, whose
+    # subject matter IS matt's stated interest, so walking further down samples
+    # more of the same. Measured: 1 negative in 12, and that one's own
+    # reasoning called the paper "highly relevant".
+    #
+    # Feed is the axis that actually varies. Taking the newest few from each in
+    # turn puts chemistry, neuroscience and general news in front of a reader
+    # of ML papers, and the same model rejected 7 of 8 such items at full
+    # confidence. A simulated reader can only reject what it is shown.
     rows = conn.execute(
-        "SELECT id, title, summary FROM items WHERE id IN ({})".format(",".join("?" * len(items))),
-        [i.item_id for i in items],
+        "SELECT id, title, summary FROM ("
+        "  SELECT i.id, i.title, i.summary,"
+        "         ROW_NUMBER() OVER (PARTITION BY i.feed_id ORDER BY i.published DESC) rn"
+        "  FROM items i"
+        "  WHERE i.summary IS NOT NULL AND i.summary != ''"
+        "    AND i.id NOT IN (SELECT item_id FROM clicks WHERE user_id = ?)"
+        ") WHERE rn <= ? ORDER BY rn, id LIMIT ?",
+        (user_row["id"], max(limit // 3, 2), limit),
     ).fetchall()
+    if not rows:
+        raise ToolError("no unrated items to react to -- run an ingest first")
     out = run_simulation(conn, default_chat_fn, user_row["name"], rows)
     counts = out["counts"]
     return {
