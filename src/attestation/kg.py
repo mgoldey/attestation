@@ -19,10 +19,10 @@ No networkx: at ~183 nodes, BFS over an adjacency dict is both fast (0.226s
 for a full build) and obvious.
 """
 
-import hashlib
 import sqlite3
 import tomllib
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 
 MIN_TAG_USES = 2
@@ -37,17 +37,26 @@ def canonical(tag: str) -> str:
     return ALIASES.get(tag, tag)
 
 
+def tag_assignments(conn: sqlite3.Connection) -> list[tuple[int, str]]:
+    """Every (item_id, tag) pair. The only storage read the graph needs."""
+    return [(r["item_id"], r["tag"]) for r in conn.execute("SELECT item_id, tag FROM item_tags")]
+
+
 def build_graph(
-    conn: sqlite3.Connection,
+    assignments: Iterable[tuple[int, str]],
 ) -> tuple[dict[str, set[str]], dict[tuple[str, str], int]]:
-    """Derive (adjacency, edge_weights) from item_tags.
+    """Derive (adjacency, edge_weights) from (item_id, tag) pairs.
 
     Aliases first, then the frequency filter, then co-occurrence -- see the
     module docstring for why that order is load-bearing.
+
+    Takes assignments rather than a connection so that ordering can be tested
+    without a database, and so a caller already holding a graph does not derive
+    it twice -- health() did, via communities().
     """
     items: dict[int, set[str]] = defaultdict(set)
-    for row in conn.execute("SELECT item_id, tag FROM item_tags"):
-        items[row["item_id"]].add(canonical(row["tag"]))
+    for item_id, tag in assignments:
+        items[item_id].add(canonical(tag))
 
     uses: dict[str, int] = defaultdict(int)
     for tags in items.values():
@@ -70,47 +79,6 @@ def build_graph(
     return dict(adjacency), edges
 
 
-def fingerprint(conn: sqlite3.Connection) -> str:
-    """Cheap staleness hash. Catches hand edits and restored backups.
-
-    hermes tag auto-rebuilds, so this is the backstop for changes that do not
-    go through run_tagging, not the primary freshness mechanism.
-    """
-    row = conn.execute(
-        "SELECT COUNT(*) AS n, COALESCE(MAX(rowid), 0) AS top FROM item_tags"
-    ).fetchone()
-    return hashlib.sha256(f"{row['n']}:{row['top']}".encode()).hexdigest()[:16]
-
-
-def rebuild(conn: sqlite3.Connection) -> dict:
-    """Regenerate kg_nodes/kg_edges from item_tags. Idempotent."""
-    adjacency, edges = build_graph(conn)
-    conn.execute("DELETE FROM kg_edges")
-    conn.execute("DELETE FROM kg_nodes")
-    conn.executemany(
-        "INSERT INTO kg_nodes(name, node_type, degree) VALUES (?, 'concept', ?)",
-        [(name, len(neighbours)) for name, neighbours in adjacency.items()],
-    )
-    conn.executemany(
-        "INSERT INTO kg_edges(source, target, edge_type, weight) VALUES (?, ?, 'CO_OCCURS', ?)",
-        [(left, right, w) for (left, right), w in edges.items()],
-    )
-    conn.execute(
-        "INSERT OR REPLACE INTO kg_meta(key, value) VALUES ('fingerprint', ?)",
-        (fingerprint(conn),),
-    )
-    conn.commit()
-    return {"nodes": len(adjacency), "edges": len(edges)}
-
-
-def is_stale(conn: sqlite3.Connection) -> bool:
-    """True when the stored graph no longer matches item_tags."""
-    row = conn.execute("SELECT value FROM kg_meta WHERE key = 'fingerprint'").fetchone()
-    if row is None:
-        return True
-    return row["value"] != fingerprint(conn)
-
-
 def neighbors(conn: sqlite3.Connection, node: str, limit: int = 20) -> list[dict]:
     """Direct neighbours of `node`, strongest edge first. Unknown -> empty list.
 
@@ -128,7 +96,7 @@ def neighbors(conn: sqlite3.Connection, node: str, limit: int = 20) -> list[dict
     exactly and cheaply; a truncated breadth-first walk answered them
     approximately and, as shipped, sometimes wrongly.
     """
-    adjacency, weights = build_graph(conn)
+    adjacency, weights = build_graph(tag_assignments(conn))
     if node not in adjacency:
         return []
 
@@ -147,7 +115,7 @@ def shortest_path(conn: sqlite3.Connection, source: str, target: str) -> list[st
     """BFS shortest path. None when the two are in different components."""
     from collections import deque
 
-    adjacency, _ = build_graph(conn)
+    adjacency, _ = build_graph(tag_assignments(conn))
     if source not in adjacency or target not in adjacency:
         return None
     if source == target:
@@ -206,7 +174,7 @@ def central(conn: sqlite3.Connection, metric: str = "degree", limit: int = 10) -
     """Most-connected (degree) or most-bridging (betweenness) concepts."""
     if metric not in ("degree", "betweenness"):
         raise ValueError(f"unknown metric: {metric!r} (expected 'degree' or 'betweenness')")
-    adjacency, _ = build_graph(conn)
+    adjacency, _ = build_graph(tag_assignments(conn))
     if metric == "degree":
         scores = {name: float(len(neighbours)) for name, neighbours in adjacency.items()}
     else:
@@ -215,7 +183,11 @@ def central(conn: sqlite3.Connection, metric: str = "degree", limit: int = 10) -
     return [{"name": name, "score": score} for name, score in ranked[: max(1, int(limit))]]
 
 
-def communities(conn: sqlite3.Connection, min_size: int = 3) -> list[dict]:
+def communities(
+    conn: sqlite3.Connection,
+    min_size: int = 3,
+    graph: tuple[dict[str, set[str]], dict[tuple[str, str], int]] | None = None,
+) -> list[dict]:
     """Topic clusters by modularity (Louvain phase 1), seeded for determinism.
 
     Label propagation was used here first and produced ONE cluster holding 95%
@@ -242,7 +214,7 @@ def communities(conn: sqlite3.Connection, min_size: int = 3) -> list[dict]:
     graph coarsening -- since at this scale it already resolves topics and the
     result stays a direct node->community map.
     """
-    adjacency, weights = build_graph(conn)
+    adjacency, weights = graph if graph is not None else build_graph(tag_assignments(conn))
 
     def edge_weight(a: str, b: str) -> int:
         return weights.get((a, b) if a < b else (b, a), 0)
@@ -299,12 +271,12 @@ def health(conn: sqlite3.Connection) -> dict:
     another minted 74%, and `largest_community_pct` at 95% exposed the
     clustering bug that made kg_communities useless.
     """
-    adjacency, edges = build_graph(conn)
+    adjacency, edges = build_graph(tag_assignments(conn))
     degrees = sorted((len(v) for v in adjacency.values()), reverse=True)
     tags = conn.execute("SELECT tag, COUNT(*) n FROM item_tags GROUP BY tag").fetchall()
     singles = sum(1 for r in tags if r["n"] == 1)
     nodes = len(adjacency)
-    groups = communities(conn, min_size=3)
+    groups = communities(conn, min_size=3, graph=(adjacency, edges))
     largest = max((len(c["members"]) for c in groups), default=0)
 
     def pct(part: float, whole: float) -> float:

@@ -66,22 +66,6 @@ CREATE TABLE IF NOT EXISTS item_tags(
   tag TEXT NOT NULL,
   PRIMARY KEY (item_id, tag)
 );
-CREATE TABLE IF NOT EXISTS kg_nodes(
-  name TEXT PRIMARY KEY,
-  node_type TEXT NOT NULL,
-  degree INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS kg_edges(
-  source TEXT NOT NULL,
-  target TEXT NOT NULL,
-  edge_type TEXT NOT NULL,
-  weight INTEGER NOT NULL DEFAULT 1,
-  PRIMARY KEY (source, target, edge_type)
-);
-CREATE TABLE IF NOT EXISTS kg_meta(
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS runs(
   id INTEGER PRIMARY KEY,
   project TEXT NOT NULL,

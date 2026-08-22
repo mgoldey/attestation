@@ -205,17 +205,6 @@ def run_tagging(conn, chat_fn=None, limit: int | None = None) -> dict:
             else:
                 stats["failed"] += 1
             bar.set_postfix(tagged=stats["tagged"], failed=stats["failed"], refresh=False)
-    # One rebuild after the loop, never per item: 0.226s against a ~571s
-    # tagging run is 0.04% overhead, while per-item would waste ~92s on a
-    # 408-item backlog for an identical result.
-    from attestation import kg
-
-    try:
-        kg.rebuild(conn)
-    except Exception:
-        # tag_one_item commits per item, so no tagging work is lost here --
-        # only the graph rebuild, which the next run (or kg_rebuild) retries.
-        log.exception("knowledge graph rebuild failed after tagging")
     return stats
 
 

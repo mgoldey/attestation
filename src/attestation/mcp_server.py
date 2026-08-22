@@ -815,17 +815,15 @@ def _kg_neighbors_impl(node: str, limit: int = 20) -> dict:
                     "ok": False,
                     "message": f"{node!r} is not a concept in the graph",
                     "neighbors": [],
-                    "stale": kg.is_stale(conn),
                 }
             return {
                 "ok": True,
                 "message": f"{len(found)} neighbour(s)",
                 "neighbors": found,
-                "stale": kg.is_stale(conn),
             }
         except Exception:
             log.exception("kg_neighbors failed for node=%s", node)
-            return {"ok": False, "message": "internal error", "neighbors": [], "stale": True}
+            return {"ok": False, "message": "internal error", "neighbors": []}
 
 
 def _kg_path_impl(source: str, target: str) -> dict:
@@ -839,17 +837,15 @@ def _kg_path_impl(source: str, target: str) -> dict:
                     "ok": False,
                     "message": f"no path between {source!r} and {target!r}",
                     "path": None,
-                    "stale": kg.is_stale(conn),
                 }
             return {
                 "ok": True,
                 "message": f"{len(found) - 1} hop(s)",
                 "path": found,
-                "stale": kg.is_stale(conn),
             }
         except Exception:
             log.exception("kg_path failed for %s -> %s", source, target)
-            return {"ok": False, "message": "internal error", "path": None, "stale": True}
+            return {"ok": False, "message": "internal error", "path": None}
 
 
 def _kg_central_impl(metric: str = "degree", limit: int = 10) -> dict:
@@ -862,13 +858,12 @@ def _kg_central_impl(metric: str = "degree", limit: int = 10) -> dict:
                 "ok": True,
                 "message": f"top {len(ranked)} by {metric}",
                 "nodes": ranked,
-                "stale": kg.is_stale(conn),
             }
         except ValueError as exc:
-            return {"ok": False, "message": str(exc), "nodes": [], "stale": kg.is_stale(conn)}
+            return {"ok": False, "message": str(exc), "nodes": []}
         except Exception:
             log.exception("kg_central failed for metric=%s", metric)
-            return {"ok": False, "message": "internal error", "nodes": [], "stale": True}
+            return {"ok": False, "message": "internal error", "nodes": []}
 
 
 def _kg_communities_impl(min_size: int = 3) -> dict:
@@ -881,34 +876,10 @@ def _kg_communities_impl(min_size: int = 3) -> dict:
                 "ok": True,
                 "message": f"{len(found)} cluster(s)",
                 "communities": found,
-                "stale": kg.is_stale(conn),
             }
         except Exception:
             log.exception("kg_communities failed")
-            return {"ok": False, "message": "internal error", "communities": [], "stale": True}
-
-
-def _kg_rebuild_impl(confirm: bool = False) -> dict:
-    from attestation import kg
-
-    if not confirm:
-        return {
-            "ok": False,
-            "message": (
-                "refusing to rebuild without confirm=true. This replaces the "
-                "kg_nodes and kg_edges tables (the graph is derived, so nothing "
-                "unrecoverable is lost)."
-            ),
-            "nodes": 0,
-            "edges": 0,
-        }
-    with open_db() as conn:
-        try:
-            counts = kg.rebuild(conn)
-            return {"ok": True, "message": "graph rebuilt", **counts}
-        except Exception:
-            log.exception("kg_rebuild failed")
-            return {"ok": False, "message": "internal error", "nodes": 0, "edges": 0}
+            return {"ok": False, "message": "internal error", "communities": []}
 
 
 @mcp.tool()
@@ -959,20 +930,6 @@ def kg_communities(min_size: int = 3) -> dict:
     wherever its links are strongest.
     """
     return _kg_communities_impl(min_size)
-
-
-@mcp.tool()
-def kg_rebuild(confirm: bool = False) -> dict:
-    """Regenerate the stored kg_nodes/kg_edges tables from current tags.
-    Requires confirm=true.
-
-    Every kg_* read tool derives its answer fresh from item_tags on each
-    call, so this does not change what those tools return -- it only
-    refreshes the stored tables (used for external inspection) and clears
-    stale=true. Normally unnecessary since `hermes tag` rebuilds
-    automatically; use this after editing the database by hand.
-    """
-    return _kg_rebuild_impl(confirm)
 
 
 # ---------------------------------------------------------------------------

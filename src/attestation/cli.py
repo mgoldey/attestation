@@ -369,8 +369,6 @@ def cmd_kg_report(args: argparse.Namespace) -> int:
     with open_db(args.db) as conn:
         for key, value in kg.health(conn).items():
             print(f"{key:24s} {value}")
-        if kg.is_stale(conn):
-            print("\nNOTE: stored graph is stale; `attest tag` rebuilds it")
         print()
         for i, c in enumerate(kg.communities(conn, min_size=args.min_size), 1):
             print(f"{i}. [{c['label']}] — {len(c['members'])} concepts")

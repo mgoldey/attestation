@@ -2,7 +2,7 @@
 
 Auditable research provenance, fully local: experiment runs, verifiable claims,
 a reading knowledge graph, symbolic derivations, and a personalized science feed.
-Exposed as 35 MCP tools plus a small HTMX web UI and an `attest` CLI.
+Exposed as 34 MCP tools plus a small HTMX web UI and an `attest` CLI.
 
 ## Docs Index
 
@@ -27,14 +27,14 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 
 ```
 |Entry points: cli.py:main()→`attest`|mcp_server.py:main()→`attest-mcp`|server.py:create_app()→FastAPI+HTMX @ 127.0.0.1:8899
-|MCP surface: 35 @mcp.tool()s in mcp_server.py|each tool pairs with _<name>_impl() kept FastMCP-free so tests import it directly
+|MCP surface: 34 @mcp.tool()s in mcp_server.py|each tool pairs with _<name>_impl() kept FastMCP-free so tests import it directly
 |Ranking: rank_items(conn,embedder,user_id,since_days=14,*,exclude_clicked=True)→list[RankedItem]|blend_weight(n_clicks) mixes click_ranks vs profile_rank|classifier_probs() returns None on single-class history (guard) → order is embedding-only
 |Ranking honesty: _ranking_quality() reports classifier_active + caveat|surface it rather than letting a reader assume the ranker learned something
 |Candidates: _candidate_items(conn,user_id,since_days,*,exclude_clicked)|since_days=None + exclude_clicked=False = search_feed semantics (older/already-rated items are legitimate hits)
 |Storage: db.py SQLite + sqlite-vec|tables: users,feeds,items,clicks,explanations,item_features,item_tags,kg_nodes,kg_edges,kg_meta,runs,run_metrics,corpora,corpus_splits
 |DB path: resolve_db_path() precedence = explicit --db → RSS_DB env → ~/.hermes/skills/science-recommendations/data/hermes.db (only if it exists) → ./hermes.db
 |Feeds: DB is source of truth; feeds.toml seeds first ingest only (sync_feeds uses INSERT OR IGNORE, no-op afterwards)|add_feed is register-only — fetch happens on next ingest, never inline
-|Graph: kg.build_graph() derives fresh from item_tags every read|concepts = tags with uses ≥ MIN_TAG_USES(2), edges = co-occurrence ≥ MIN_EDGE_WEIGHT(2)|order is load-bearing: canonical() aliases → frequency filter → co-occurrence|stored kg_nodes/kg_edges are advisory; is_stale() never changes a read tool's answer
+|Graph: kg.build_graph(assignments) is PURE — takes (item_id, tag) pairs, not a conn; kg.tag_assignments(conn) reads them|concepts = tags with uses ≥ MIN_TAG_USES(2), edges = co-occurrence ≥ MIN_EDGE_WEIGHT(2)|order is load-bearing: canonical() aliases → frequency filter → co-occurrence, tested DB-free|kg_nodes/kg_edges/kg_meta were DELETED 2026-08-21: nothing read them, and the 8 kg tool answers were byte-identical before and after
 |Ledger: ledger.scan()→RunRecord/Metric from artifacts|compare() emits _caveats() rather than silent verdicts|adapters in ledger_adapters/ read nested result structures
 |Corpus: corpus.detect_in_source() reads the corpus from driver-script syntax (AST), not from a model — result artifacts record the model exhaustively and the data not at all|runs.corpus_id links a run to its corpus; compare() guards arms that cross one rather than ranking losses from different tasks
 |Claims: claims.parse_file()→find_claims()→check_claim()→Verdict|coverage() lints numbers in prose no claim covers (negatives included)

@@ -349,33 +349,6 @@ def test_scores_are_per_user(tmp_path):
     assert pref_scores_for_items(conn, other, [b])[0] == 0.5
 
 
-def test_run_tagging_rebuilds_the_graph_once(tmp_path, monkeypatch):
-    """Auto-rebuild closes the drift window, but must run once after the loop
-    -- per-item would cost ~92s on a 408-item backlog for no benefit."""
-    from attestation import features, kg
-    from attestation.db import get_db
-
-    conn = get_db(tmp_path / "t.db")
-    for i in (1, 2):
-        conn.execute(
-            "INSERT INTO items(id, feed_id, title, url, summary, content_hash)"
-            " VALUES (?, NULL, ?, 'u', 's', ?)",
-            (i, f"item {i}", f"h{i}"),
-        )
-    conn.commit()
-
-    calls = []
-    monkeypatch.setattr(kg, "rebuild", lambda c: calls.append(1) or {"nodes": 0, "edges": 0})
-
-    def fake_chat(messages, schema):
-        return {"content_type": "paper", "tags": ["alpha", "beta"]}
-
-    features.run_tagging(conn, chat_fn=fake_chat)
-
-    assert len(calls) == 1, "rebuild must run once after the loop, not per item"
-    conn.close()
-
-
 def test_tag_vocabulary_excludes_non_topic_tags(tmp_path):
     """The prompt tells the model not to emit provenance tags, so suggesting
     them as vocabulary would work against it. They are low-use today, but a

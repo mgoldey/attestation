@@ -20,7 +20,7 @@ def test_singleton_tags_are_excluded(tmp_path):
     conn = get_db(tmp_path / "t.db")
     seed(conn, [["alpha", "beta"], ["alpha", "beta"], ["lonely", "alpha"]])
 
-    adjacency, _ = kg.build_graph(conn)
+    adjacency, _ = kg.build_graph(kg.tag_assignments(conn))
 
     assert "lonely" not in adjacency, "a tag used once must not be a node"
     assert "alpha" in adjacency and "beta" in adjacency
@@ -33,7 +33,7 @@ def test_edge_requires_min_weight(tmp_path):
     # alpha+beta share 2 items; alpha+gamma share only 1
     seed(conn, [["alpha", "beta"], ["alpha", "beta"], ["alpha", "gamma"], ["gamma", "beta"]])
 
-    adjacency, weights = kg.build_graph(conn)
+    adjacency, weights = kg.build_graph(kg.tag_assignments(conn))
 
     assert weights.get(("alpha", "beta")) == 2
     assert ("alpha", "gamma") not in weights
@@ -50,7 +50,7 @@ def test_aliases_merge_before_filtering(tmp_path):
     kg.ALIASES["variant"] = "canon"
     try:
         seed(conn, [["variant", "shared"], ["canon", "shared"]])
-        adjacency, weights = kg.build_graph(conn)
+        adjacency, weights = kg.build_graph(kg.tag_assignments(conn))
 
         assert "variant" not in adjacency, "the alias must not survive as its own node"
         assert "canon" in adjacency
@@ -76,7 +76,7 @@ def test_huggingface_hyphenation_variant_is_merged(tmp_path):
             ["hugging-face", "shared"],
         ],
     )
-    adjacency, _ = kg.build_graph(conn)
+    adjacency, _ = kg.build_graph(kg.tag_assignments(conn))
 
     assert "huggingface" not in adjacency
     assert "hugging-face" in adjacency
@@ -94,32 +94,22 @@ def test_alias_file_maps_only_to_real_canonical_forms():
         assert target not in kg.ALIASES, f"{target!r} is both a target and an alias"
 
 
-def test_rebuild_writes_tables_and_is_idempotent(tmp_path):
-    conn = get_db(tmp_path / "t.db")
-    seed(conn, [["alpha", "beta"], ["alpha", "beta"], ["beta", "gamma"], ["beta", "gamma"]])
+def test_aliases_merge_before_filtering_without_a_database():
+    """The alias -> frequency-filter -> co-occurrence order, tested on plain data.
 
-    first = kg.rebuild(conn)
-    assert first["nodes"] > 0 and first["edges"] > 0
+    This is the ordering the module docstring calls load-bearing. "llm" and
+    "llms" both alias to large-language-models. Each spelling is used once, so
+    if MIN_TAG_USES culled before aliasing, neither would survive and the
+    concept would vanish. Merged first, it has two uses and stays.
 
-    rows_first = conn.execute("SELECT name FROM kg_nodes ORDER BY name").fetchall()
-    second = kg.rebuild(conn)
-    rows_second = conn.execute("SELECT name FROM kg_nodes ORDER BY name").fetchall()
+    It needed a database until build_graph took a connection. Now it does not,
+    which is the point of the signature change.
+    """
+    assignments = [(1, "llm"), (1, "rag"), (2, "llms"), (2, "rag")]
+    adjacency, edges = kg.build_graph(assignments)
 
-    assert second == first
-    assert [r["name"] for r in rows_first] == [r["name"] for r in rows_second]
-    conn.close()
-
-
-def test_fingerprint_changes_when_tags_change(tmp_path):
-    conn = get_db(tmp_path / "t.db")
-    seed(conn, [["alpha", "beta"], ["alpha", "beta"]])
-    kg.rebuild(conn)
-    assert kg.is_stale(conn) is False
-
-    before = kg.fingerprint(conn)
-    conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (1, 'delta')")
-    conn.commit()
-
-    assert kg.fingerprint(conn) != before
-    assert kg.is_stale(conn) is True
-    conn.close()
+    merged = "large-language-models"
+    assert kg.canonical("llm") == merged and kg.canonical("llms") == merged
+    assert merged in adjacency, "aliasing must precede the frequency filter"
+    assert adjacency[merged] == {"rag"}
+    assert edges[tuple(sorted((merged, "rag")))] == 2

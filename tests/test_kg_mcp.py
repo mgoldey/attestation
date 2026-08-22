@@ -1,3 +1,5 @@
+import asyncio
+
 from attestation import mcp_server
 from attestation.db import get_db
 
@@ -88,43 +90,10 @@ def test_kg_central_rejects_unknown_metric(tmp_path, monkeypatch):
     assert out["nodes"] == []
 
 
-def test_kg_rebuild_without_confirm_mutates_nothing(tmp_path, monkeypatch):
-    db = tmp_path / "t.db"
-    monkeypatch.setenv("RSS_DB", str(db))
-    seed_env_db(db)
-
-    out = mcp_server._kg_rebuild_impl(confirm=False)
-
-    assert out["ok"] is False
-    conn = get_db(db)
-    assert conn.execute("SELECT COUNT(*) n FROM kg_nodes").fetchone()["n"] == 0
-    conn.close()
-
-
-def test_read_tools_flag_staleness(tmp_path, monkeypatch):
-    """The graph is auto-rebuilt by hermes tag, but a hand edit must surface."""
-    db = tmp_path / "t.db"
-    monkeypatch.setenv("RSS_DB", str(db))
-    seed_env_db(db)
-    mcp_server._kg_rebuild_impl(confirm=True)
-
-    fresh = mcp_server._kg_neighbors_impl("B")
-    assert fresh["stale"] is False
-
-    conn = get_db(db)
-    conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (1, 'D')")
-    conn.commit()
-    conn.close()
-
-    assert mcp_server._kg_neighbors_impl("B")["stale"] is True
-
-
-def test_all_five_kg_tools_are_served():
-    import asyncio
-
+def test_the_four_kg_tools_are_served(tmp_path, monkeypatch):
+    """kg_rebuild is deliberately absent: it materialized kg_nodes/kg_edges,
+    which nothing read. Deleting it took the tool count from 36 to 35."""
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
     names = {t.name for t in asyncio.run(mcp_server.mcp.list_tools())}
-    assert {"kg_neighbors", "kg_path", "kg_central", "kg_communities", "kg_rebuild"} <= names
-    # No total-count assertion: it fails on every unrelated tool added, which
-    # makes it a change-detector rather than a test of anything. Each tool group
-    # asserts its own names instead.
-    assert len(names) >= 5
+    assert {"kg_neighbors", "kg_path", "kg_central", "kg_communities"} <= names
+    assert "kg_rebuild" not in names

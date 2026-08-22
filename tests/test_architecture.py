@@ -21,8 +21,6 @@ import sys
 import time
 from collections import defaultdict
 
-import pytest
-
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "attestation"
 
 # Layers that may import sqlite3. Until stage 2 lands, db.py is the only
@@ -71,7 +69,9 @@ def test_sqlite3_confined_to_allowed_modules():
     module's repository -- not to add it to SQLITE_ALLOWED.
     """
     offenders = [
-        f"{_rel(p)}:{ln}" for p in _modules() if (ln := _imports_sqlite3(p)) and _rel(p) not in SQLITE_ALLOWED
+        f"{_rel(p)}:{ln}"
+        for p in _modules()
+        if (ln := _imports_sqlite3(p)) and _rel(p) not in SQLITE_ALLOWED
     ]
     assert not offenders, (
         "these modules import sqlite3 but are not infrastructure: "

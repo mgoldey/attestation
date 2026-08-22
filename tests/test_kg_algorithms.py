@@ -236,7 +236,7 @@ def test_neighbors_reports_only_direct_neighbours(direct_neighbour_cut_by_limit,
     """
     conn = direct_neighbour_cut_by_limit
     result = kg.neighbors(conn, "hub", limit=limit)
-    adjacency, weights = kg.build_graph(conn)
+    adjacency, weights = kg.build_graph(kg.tag_assignments(conn))
 
     assert {r["name"] for r in result} <= adjacency["hub"]
     for row in result:
