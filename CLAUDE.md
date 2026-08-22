@@ -31,7 +31,7 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 |Ranking: rank_items(conn,embedder,user_id,since_days=14,*,exclude_clicked=True)→list[RankedItem]|blend_weight(n_clicks) mixes click_ranks vs profile_rank|classifier_probs() returns None on single-class history (guard) → order is embedding-only
 |Ranking honesty: _ranking_quality() reports classifier_active + caveat|surface it rather than letting a reader assume the ranker learned something
 |Candidates: _candidate_items(conn,user_id,since_days,*,exclude_clicked)|since_days=None + exclude_clicked=False = search_feed semantics (older/already-rated items are legitimate hits)
-|Storage: db.py SQLite + sqlite-vec|tables: users,feeds,items,clicks,explanations,item_features,item_tags,kg_nodes,kg_edges,kg_meta,runs,run_metrics,corpora,corpus_splits
+|Storage: db.py SQLite + sqlite-vec|tables: users,feeds,items,clicks,explanations,item_features,item_tags,runs,run_metrics,corpora,corpus_splits (11 — kg_* dropped 2026-08-21)
 |DB path: resolve_db_path() precedence = explicit --db → RSS_DB env → ~/.hermes/skills/science-recommendations/data/hermes.db (only if it exists) → ./hermes.db
 |Feeds: DB is source of truth; feeds.toml seeds first ingest only (sync_feeds uses INSERT OR IGNORE, no-op afterwards)|add_feed is register-only — fetch happens on next ingest, never inline
 |Graph: kg.build_graph(assignments) is PURE — takes (item_id, tag) pairs, not a conn; kg.tag_assignments(conn) reads them|concepts = tags with uses ≥ MIN_TAG_USES(2), edges = co-occurrence ≥ MIN_EDGE_WEIGHT(2)|order is load-bearing: canonical() aliases → frequency filter → co-occurrence, tested DB-free|kg_nodes/kg_edges/kg_meta were DELETED 2026-08-21: nothing read them, and the 8 kg tool answers were byte-identical before and after
@@ -40,7 +40,7 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 |Claims: claims.parse_file()→find_claims()→check_claim()→Verdict|coverage() lints numbers in prose no claim covers (negatives included)
 |LLM: llm.py ChatClient/EmbeddingClient→Ollama-compatible @ DEFAULT_BASE_URL|DEFAULT_CHAT_MODEL=gemma4:e2b-it-q4_K_M, DEFAULT_EMBED_MODEL=embeddinggemma|hermes3 workaround is scoped to hermes3 only
 |Embeddings: embed.py DOC_PROMPT vs QUERY_PROMPT are asymmetric — index with doc, search with query|truncate_normalize() before storing
-|Reliability contract: explain.py + rank.py catch broad exceptions on purpose (BLE001 per-file-ignored in pyproject)|ranking never waits on explanations; a cold Ollama degrades to a cached vector, never a 500
+|Reliability contract: 4 inline `# noqa: BLE001` sites (cli.py:244, install.py:292, symbolic.py:238, rank.py:170), each carrying its reason — there is NO per-file-ignores section in pyproject|rank.py:170 is a specific policy, not a swallow: embedder down + warm cache serves stale, cold cache raises|ranking never waits on explanations; a cold Ollama degrades to a cached vector, never a 500
 |No LLM in composition tools: digest/runs_compare return structure, never prose — the caller is a model
 ```
 
