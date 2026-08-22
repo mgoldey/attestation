@@ -1,8 +1,16 @@
 # Onion refactor — design
 
 **Date:** 2026-08-21
-**Status:** proposed
+**Status:** SUPERSEDED by `2026-08-21-tool-surface-design.md`. Retained for its
+findings, which the successor inherits: the `scan()` transaction analysis, the
+`item_tags` ownership argument, and four corrections to its own claims.
 **Roadmap:** spec 1 of 5, see `2026-08-21-architecture-roadmap.md`
+
+> **Superseded 2026-08-21, same day.** A Hickey-lens review found that this
+> design adds three layers of indirection and removes one real braid, and that
+> the braid costs one line to remove on its own. Its verified findings survive
+> in the successor spec; its architecture does not. See "Why this was
+> superseded" at the end.
 
 ## Problem
 
@@ -361,3 +369,53 @@ system's layers. It needs its own spec.
 No behavior changes. No new features. No LLM anywhere it is not already. The
 ranker stays deterministic, the ledger stays artifact-read, and
 `digest`/`runs_compare` keep returning structure rather than prose.
+
+
+---
+
+## Why this was superseded
+
+A review against Rich Hickey's simple-vs-easy lens made four arguments. Three
+were verified against the source and accepted; one was rejected.
+
+**Accepted: stages 1-4 relocate the tangle rather than decomplecting it.** The
+`_impl` split moves clamp/orchestrate/shape/catch from one function to two
+files. Same four jobs, one more file boundary. The genuine decomplection in this
+spec -- `build_graph()` taking tag assignments instead of a connection -- needs
+no ports, no repositories, and no services. It is one signature change.
+
+**Accepted: a 34-method `FeedRepo` is a bag of queries wearing an interface.**
+Roughly 1.4 SQL statements per method is a one-method-per-callsite mapping,
+which is a rename, not an abstraction. It also makes adding a query four times
+more expensive: port, implementation, fake, contract test. And it cannot express
+what the code actually does -- `rank.py:221` chunks `IN (...)` at 900 for
+SQLite's bind-variable limit, so the port is either SQLite-shaped forever or
+leaks the limit to its callers.
+
+**Accepted: this spec answered a question it claimed to defer.** It recorded
+"whether `KnowledgeRepo` should exist is a live question for stage 2" while
+planning a port, an implementation, a fake, and a contract suite for three
+tables nothing reads. Building infrastructure that presumes an answer is not
+deferring the question; it makes reversal four times as costly.
+
+**Rejected: that domain-level error degradation should stay untouched.** The
+review is right that `rank.py:170` encodes a specific, well-documented policy
+(embedder down + warm cache serves stale; cold cache raises) that a service
+layer lacks the knowledge to reproduce, and right that hoisting it would be the
+behavior regression this spec forbids. That part is accepted. But the review
+treats the ~30 identical `except Exception: return {"ok": False, ...}` blocks in
+`mcp_server.py` as the only hoistable ones, which is where it stops short: those
+are the presentation envelope and belong in one decorator, and this spec was
+wrong to have conflated the two kinds. The successor separates them.
+
+**A fifth error, found while checking the review.** This spec claimed `cli.py`
+"goes over HTTP to reach logic it could call in-process," inherited from the
+roadmap and used to justify stage 4. False. The only `httpx` calls in `cli.py`
+are lines 141 and 152, both in `warmup()`, both hitting Ollama to pin models in
+VRAM. That is the one thing in the file that must be HTTP. The roadmap is
+corrected too.
+
+Five of this document's claims about its own codebase were wrong, each found by
+reading the source rather than reasoning about it. That record is the argument
+for the successor's much smaller scope: a design whose premises keep failing
+verification should not be the one that touches every module.
