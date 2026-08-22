@@ -1,0 +1,6 @@
+# Planned, not yet run. The ledger records a specification with no result
+# rather than guessing a number for it.
+
+model:
+  name: colbert-v2
+  dim: 128

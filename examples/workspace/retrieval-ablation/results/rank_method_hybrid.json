@@ -1,0 +1,6 @@
+{
+  "tag": "rank_method_hybrid",
+  "corpus": "msmarco-dev",
+  "ndcg_at_10": 0.501,
+  "n_records": 6980
+}

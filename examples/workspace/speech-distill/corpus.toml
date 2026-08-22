@@ -1,0 +1,14 @@
+# Declared corpus. The ledger reads this so `runs_compare` can refuse to rank
+# arms that did not see the same data.
+[corpus]
+name = "librispeech-100h"
+source = "openslr-12"
+tokenizer = "char"
+seq_len = 1024
+
+[corpus.splits.train]
+n_records = 28539
+n_tokens = 9_412_000
+
+[corpus.splits.test]
+n_records = 2620

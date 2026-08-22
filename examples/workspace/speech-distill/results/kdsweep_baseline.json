@@ -1,0 +1,12 @@
+{
+  "tag": "kdsweep_baseline",
+  "seed": 42,
+  "corpus": "librispeech-100h",
+  "n_params": 41287424,
+  "n_layers": 8,
+  "d_model": 512,
+  "epochs": 20,
+  "wer": 0.0731,
+  "val_loss": 2.41,
+  "n_records": 2620
+}
