@@ -248,6 +248,7 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
                     consumed.add(rel.parts[0])
         _link_corpora(conn, records, manifest, assignments)
         _replace_project(conn, project_root.name, records)
+        conn.commit()
         scanned[project_root.name] = len(records)
 
     conn.commit()

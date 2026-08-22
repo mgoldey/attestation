@@ -295,14 +295,22 @@ accumulates. It hasn't, and the reason is countable rather than architectural.</
   <tbody>
     <tr><td>Web buttons</td><td><code>ui</code></td><td class="num">68</td><td>Requires opening a local page and clicking</td></tr>
     <tr><td>Agent-recorded</td><td><code>agent</code></td><td class="num">2</td><td>Agent must choose to call it, unprompted</td></tr>
-    <tr><td>Asked "why?"</td><td><code>implicit</code></td><td class="num">99</td><td>Already logged — and until now, uncounted</td></tr>
+    <tr><td>Asked "why?"</td><td><code>implicit</code></td><td class="num">34</td><td>Harvested from 99 logged requests; the rest were already rated</td></tr>
+    <tr><td>Simulated reader</td><td><code>simulated</code></td><td class="num">24</td><td>The only channel that produces a negative</td></tr>
   </tbody>
 </table>
 </div>
 
-<p>Seventy stated opinions across 5,162 items, every one of them positive. The click classifier
-needs both classes to fire at all, so it has never fired for a real account: ranking falls back
-to embedding similarity, permanently, no matter how many items get approved.</p>
+<p>Seventy stated opinions across 5,167 items, every one of them positive. The click classifier
+needs both classes to fire at all, so for a real account it never fired: ranking fell back to
+embedding similarity permanently, no matter how many items got approved.</p>
+
+<p>Running the two synthetic channels on <code>matt</code> took that history to 128 rows and
+turned the classifier on for the first time — <code>evaluate_user</code> went from
+<code>None</code> to a number. The number was <strong>1.0</strong>, which is the next problem:
+42 of 45 positives came from arXiv cs.LG, so the classifier can separate the classes by
+<em>source</em> rather than by topic and score perfectly while learning nothing about the reader.
+<code>simulate_feedback</code> now measures that skew and returns it beside the counts.</p>
 
 <figure>
 <svg viewBox="0 0 860 268" role="img" aria-label="Three feedback channels feed the clicks table: explicit clicks are rare and all positive, harvested engagement adds weak positives, and simulated reactions supply the negatives that let the classifier train.">
@@ -319,6 +327,7 @@ to embedding similarity, permanently, no matter how many items get approved.</p>
     <rect x="14" y="20" width="196" height="52" rx="3" fill="none" stroke="#A85C32" stroke-width="1.6" stroke-dasharray="4 3"/>
     <text x="112" y="41" text-anchor="middle" font-size="12" font-weight="600">stated opinion</text>
     <text x="112" y="58" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" opacity=".72">ui + agent · 70 rows · all +</text>
+    <text x="112" y="82" text-anchor="middle" font-size="9.5" opacity=".6">one opinion per 74 items</text>
 
     <rect x="14" y="96" width="196" height="52" rx="3" fill="none" stroke="#A85C32" stroke-width="1.6"/>
     <text x="112" y="117" text-anchor="middle" font-size="12" font-weight="600">asked "why is this here?"</text>
@@ -347,9 +356,11 @@ to embedding similarity, permanently, no matter how many items get approved.</p>
     <path d="M 664 154 L 664 200 L 413 200 L 413 158" fill="none" stroke="#3A6B8C" stroke-width="1.3" marker-end="url(#c-m)"/>
     <text x="540" y="216" text-anchor="middle" font-size="10.5" font-family="IBM Plex Mono, monospace" fill="#3A6B8C">re-ranks the next list_feed</text>
 
-    <text x="790" y="112" text-anchor="middle" font-size="10.5" opacity=".7">bootstrap</text>
-    <text x="790" y="127" text-anchor="middle" font-size="10.5" opacity=".7">rows excluded:</text>
-    <text x="790" y="142" text-anchor="middle" font-size="10.5" opacity=".7">tautological</text>
+    <text x="790" y="98" text-anchor="middle" font-size="10.5" opacity=".7">bootstrap rows</text>
+    <text x="790" y="113" text-anchor="middle" font-size="10.5" opacity=".7">excluded:</text>
+    <text x="790" y="128" text-anchor="middle" font-size="10.5" opacity=".7">tautological</text>
+    <text x="790" y="150" text-anchor="middle" font-size="10.5" fill="#8A6D1F">skew is</text>
+    <text x="790" y="164" text-anchor="middle" font-size="10.5" fill="#8A6D1F">caveated</text>
   </g>
 </svg>
 <figcaption>Only the simulated channel supplies negatives. Nothing infers rejection from silence —
