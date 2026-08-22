@@ -152,11 +152,18 @@ def _list(conn, project: str | None = None, family: str | None = None, limit: in
     if not found:
         raise ToolError("no runs recorded -- call runs.scan(confirm=true) first")
     families = ledger.families(conn, project=project)
+    # A sample, not a listing. Fifty of 403 was 73% of this response and an
+    # agent could not act on any of it -- a caller asking "which arm won?"
+    # got a wall of names ahead of the runs it asked for. A handful shows the
+    # SHAPE of what is comparable; the count and the narrowing hint do the
+    # rest, and runs.compare's own error names the alternatives when a guess
+    # misses.
+    FAMILY_SAMPLE = 8
     # Cap the family list. `limit` bounds `runs` only, so a workspace with
     # hundreds of families returned all of them alongside a handful of runs --
     # the field advertised as the bridge to runs_compare was the one that blew
     # the caller's context. Truncation is reported, never silent.
-    shown = families[:MAX_LIST_LIMIT]
+    shown = families[:FAMILY_SAMPLE]
     message = f"{len(found)} run(s)"
     if len(families) > len(shown):
         message += (

@@ -139,6 +139,36 @@ def survey(conn: sqlite3.Connection) -> list[dict]:
     return out
 
 
+def _merge_interests(texts: list[str]) -> str:
+    """Join interest strings, dropping exact repeats and dangling conjunctions.
+
+    Only EXACT repeats. Near-duplicates stay, which looks untidy and is
+    correct: measured against matt's real positives on the live corpus, the
+    redundant merged string scored 0.588 mean similarity, a hand-tightened
+    rewrite 0.568, and an aggressive dedup 0.582. The interests text IS the
+    profile embedding, and repetition weights it toward what the reader
+    actually clicks. Tidying it makes ranking worse.
+
+    A merged tail like "MCPs, agent harnesses, quantum chemistry, and
+    photovoltaics" leaves "and photovoltaics" as a fragment. `removeprefix`
+    rather than `lstrip`: lstrip takes a CHARACTER SET, and an early version
+    turned "attention" into "ttention" and "diarization" into "iarization".
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for text in texts:
+        for raw in (text or "").split(","):
+            part = raw.strip().removeprefix("and ").strip()
+            if not part:
+                continue
+            key = part.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(part)
+    return ", ".join(out)
+
+
 def merge(conn: sqlite3.Connection, *, into: str, drop: list[str]) -> dict:
     """Fold personas into one, keeping their feedback and their interests.
 
@@ -196,7 +226,7 @@ def merge(conn: sqlite3.Connection, *, into: str, drop: list[str]) -> dict:
         if loser["interests"]:
             interests.append(loser["interests"])
 
-    merged_interests = ", ".join(t.strip().rstrip(",") for t in interests if t.strip())
+    merged_interests = _merge_interests(interests)
     conn.execute("UPDATE users SET interests = ? WHERE id = ?", (merged_interests, keeper["id"]))
     # The keeper's cached profile vector was computed from the old text.
     forget_profile_vector(conn, keeper["id"])

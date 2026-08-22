@@ -173,3 +173,49 @@ def test_merging_into_an_unknown_persona_is_refused(seeded):
 def test_a_persona_cannot_be_merged_into_itself(seeded):
     with pytest.raises(ValueError, match="itself"):
         personas.merge(seeded, into="real", drop=["real"])
+
+
+def test_merging_drops_exact_duplicate_interests(seeded):
+    """A merge concatenates interests, and two personas describing one person
+    repeat themselves. `matt` came out of its merge carrying `quantum
+    chemistry` twice and both `LLM systems` and `LLM`.
+
+    Only EXACT repeats are dropped. Near-duplicates stay: measured on the live
+    profile, the redundant string scored matt's real positives at 0.588 mean
+    similarity against 0.568 for a hand-tightened rewrite and 0.582 for an
+    aggressive dedup. Repetition weights the embedding toward what the reader
+    actually clicks, so tidying it makes the ranking worse.
+    """
+    seeded.execute("UPDATE users SET interests = 'catalysis, spectroscopy' WHERE name = 'seeded'")
+    seeded.execute("UPDATE users SET interests = 'protein folding, catalysis' WHERE name = 'real'")
+    seeded.commit()
+
+    out = personas.merge(seeded, into="real", drop=["seeded"])
+
+    parts = [p.strip() for p in out["interests"].split(",")]
+    assert parts.count("catalysis") == 1, f"exact duplicate survived: {out['interests']}"
+    assert "protein folding" in parts
+    assert "spectroscopy" in parts
+
+
+def test_merging_does_not_mangle_words(seeded):
+    """A first attempt stripped a leading "and " with str.lstrip, which strips
+    a CHARACTER SET -- `attention` became `ttention` and `diarization` became
+    `iarization`. A profile is embedded text; corrupting it corrupts ranking.
+    """
+    seeded.execute("UPDATE users SET interests = 'attention, diarization' WHERE name = 'seeded'")
+    seeded.execute("UPDATE users SET interests = 'agents, and photovoltaics' WHERE name = 'real'")
+    seeded.commit()
+
+    out = personas.merge(seeded, into="real", drop=["seeded"])
+
+    # Compare the PARTS, not substrings: "ttention" is inside "attention",
+    # so a naive `not in` on the whole string always passes and proves nothing.
+    parts = {p.strip() for p in out["interests"].split(",")}
+    assert "attention" in parts
+    assert "diarization" in parts
+    assert "ttention" not in parts
+    assert "iarization" not in parts
+    # A dangling conjunction from a merged tail is noise in an embedded string.
+    assert "and photovoltaics" not in out["interests"]
+    assert "photovoltaics" in out["interests"]

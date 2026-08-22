@@ -167,3 +167,39 @@ def test_claims_check_without_a_path_or_root_says_so(monkeypatch, tmp_path):
 
     assert out["ok"] is False
     assert "RESEARCH_ROOT" in out["message"]
+
+
+def test_runs_list_does_not_bury_the_runs_under_a_family_dump(tmp_path, monkeypatch):
+    """`families` exists so a caller can find a name for runs.compare.
+
+    Fifty of 403 is neither a complete list nor a useful sample -- it was 73%
+    of the response (3,030 of 4,151 chars) and an agent could not act on any
+    of it. A UI agent asking "which arm won?" got a wall of family names ahead
+    of the runs it asked for.
+
+    Show a few, say how many there are, and tell the caller how to narrow.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    for i in range(60):
+        conn.execute(
+            "INSERT INTO runs(project, name, family, status, source_path)"
+            " VALUES (?, ?, ?, 'recorded', ?)",
+            (f"proj{i % 3}", f"fam{i}_arm", f"fam{i}", f"/tmp/r{i}.json"),
+        )
+    conn.commit()
+    conn.close()
+
+    out = mcp_server._runs_list_impl(limit=5)
+
+    assert out["ok"] is True
+    assert len(out["runs"]) == 5
+    assert len(out["families"]) <= 12, (
+        f"{len(out['families'])} families returned; the caller cannot use a dump"
+    )
+    assert out["n_families"] == 60, "the true count must survive truncation"
+    assert "60" in out["message"], "the caller must be told how many exist"
+    assert "project=" in out["message"], "and how to narrow them"
+
+    payload = len(json.dumps(out))
+    assert payload < 2500, f"runs.list is {payload} chars; families should not dominate"
