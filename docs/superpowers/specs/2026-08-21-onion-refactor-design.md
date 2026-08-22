@@ -273,8 +273,8 @@ Stage 3's nine modules: `rank`, `kg`, `ledger`, `claims`, `corpus`, `features`,
 ## Success criteria
 
 - `import sqlite3` outside `infrastructure/` — zero occurrences, enforced by test
-- Module import graph acyclic — enforced by test (one cycle to fix:
-  `symbolic` <-> `symbolic_ops`)
+- Module import graph acyclic at module scope — enforced by test, currently
+  passing; the test is verified against an injected cycle rather than trusted
 - `attest --help` under 0.5s — enforced by test, protecting the lazy imports
 - No module over ~400 lines (from 1454, 637, 614)
 - All 36 tools reachable under both namespaced and legacy names
