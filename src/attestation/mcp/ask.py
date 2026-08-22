@@ -159,7 +159,14 @@ def route_runs(question: str) -> Decision:
             options=("runs.list", "runs.compare", "runs.claims_check"),
         )
     if _has(
-        q, "forget to cite", "forgot to cite", "uncovered", "no claim", "not cited", "coverage"
+        q,
+        "forget to cite",
+        "forgot to cite",
+        "not cite",
+        "uncovered",
+        "no claim",
+        "not cited",
+        "coverage",
     ):
         return Decision("runs.claims_coverage", {})
     if _has(
@@ -491,8 +498,44 @@ def _sym_ask(expr: str, question: str = "simplify") -> dict:
     }
 
 
+def _tools_listing(surface: str) -> dict:
+    """What the specific tools in this agent are, and how to reach them."""
+    return {
+        "ok": True,
+        "answer": (
+            f"The {surface} agent's specific tools are hidden by default,"
+            " because a visible tool gets called: measured on gemma4:e2b, a"
+            " model picked the ask router 1 time in 26 when the specifics were"
+            f" listed alongside it, and 26 in 26 when they were not. Set"
+            f" ATTEST_EXPAND=1 on the server to see them, or keep using"
+            f" {surface}.ask, which routes by rule and asks back when a"
+            " question is ambiguous."
+        ),
+        "refs": [],
+        "caveat": None,
+        "options": [f"{surface}.ask"],
+        "tool_used": f"{surface}.tools",
+    }
+
+
 def register(mcp) -> None:
-    """Attach the four `ask` routers."""
+    """Attach the four `ask` routers and their disclosure tools."""
+
+    for _surface in ("feed", "runs", "kg", "sym"):
+
+        def _make(surface=_surface):
+            @mcp.tool(name=f"{surface}.tools")
+            def _list_tools() -> Answer:
+                """Explain how to reach this agent's specific tools.
+
+                The specific tools are hidden by default so the router is
+                chosen instead of guessed at. This says how to reveal them.
+                """
+                return Answer(**_tools_listing(surface))
+
+            return _list_tools
+
+        _make()
 
     @mcp.tool(name="feed.ask")
     def feed_ask(user: str, question: str) -> Answer:

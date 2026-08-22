@@ -165,3 +165,19 @@ def test_an_ambiguous_ask_returns_the_options(tmp_path, monkeypatch):
     assert out["ok"] is False
     assert out["options"], "an ambiguous ask must name the alternatives"
     assert "?" in out["answer"], "and must actually ask"
+
+
+def test_not_cited_phrasings_all_reach_coverage():
+    """ "did I not cite" and "did I forget to cite" are the same question.
+
+    Found by driving the shipped surfaces: the model picked
+    runs.claims_check, and the router declined, so neither path worked. A rule
+    table only catches the words it lists.
+    """
+    for turn in (
+        "what numbers did I not cite?",
+        "what numbers did I forget to cite?",
+        "which numbers have no claim?",
+        "what is uncovered in my draft?",
+    ):
+        assert route_runs(turn).tool == "runs.claims_coverage", turn

@@ -19,7 +19,10 @@ import pytest
 from attestation.mcp import AGENT_SURFACES, register_all
 
 
-def _served(monkeypatch, tmp_path, surface=None):
+def _served(monkeypatch, tmp_path, surface=None, *, expand=True):
+    """Tools this agent serves. `expand` defaults to True because most tests
+    here are about the BOUNDARY -- which tools an agent may touch -- and the
+    default surface hides the specifics behind disclosure."""
     from mcp.server.fastmcp import FastMCP
 
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
@@ -27,6 +30,7 @@ def _served(monkeypatch, tmp_path, surface=None):
         monkeypatch.delenv("ATTEST_TOOLS", raising=False)
     else:
         monkeypatch.setenv("ATTEST_TOOLS", surface)
+    monkeypatch.setenv("ATTEST_EXPAND", "1" if expand else "0")
     mcp = FastMCP("test")
     register_all(mcp)
     return {t.name for t in asyncio.run(mcp.list_tools())}
@@ -60,7 +64,7 @@ def test_a_provenance_tool_is_absent_from_the_feed_agent(monkeypatch, tmp_path):
 
 
 def test_the_knowledge_agent_can_still_reach_items(monkeypatch, tmp_path):
-    """"How does X connect to Y, and what did I read about it" is one
+    """ "How does X connect to Y, and what did I read about it" is one
     question. A knowledge session with no way to reach the items is a dead
     end, so feed.search is deliberately duplicated into it."""
     names = _served(monkeypatch, tmp_path, "knowledge")
@@ -96,3 +100,50 @@ def test_the_surfaces_cover_every_tool(monkeypatch, tmp_path):
     for surface in AGENT_SURFACES:
         reachable |= _served(monkeypatch, tmp_path, surface)
     assert everything - reachable == set(), f"unreachable: {sorted(everything - reachable)}"
+
+
+def test_progressive_disclosure_hides_the_specifics_by_default(monkeypatch, tmp_path):
+    """Measured: with the specific tools visible the model picks `ask` 1 time
+    in 26. With only `ask` visible, 26 in 26.
+
+    Marking the specifics "advanced; prefer .ask" in their descriptions moved
+    the feed agent from 8/10 to 7/10 -- inside noise, and no help. A visible
+    tool gets called. So the specifics are genuinely absent until a caller
+    asks for them, which is what "ask first, specifics on request" has to mean
+    to be worth anything.
+    """
+    names = _served(monkeypatch, tmp_path, "feed", expand=False)
+    assert "feed.ask" in names
+    assert "feed.tools" in names, "there must be a way to reach the specifics"
+    assert "feed.list" not in names, "a specific tool is visible by default"
+    assert len(names) == 2, f"the default surface should be ask + tools, got {sorted(names)}"
+
+
+def test_the_full_surface_is_reachable_on_request(monkeypatch, tmp_path):
+    """Hiding without an escape hatch is worse than not hiding: a question the
+    router mis-routes would have nowhere to go."""
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    monkeypatch.setenv("ATTEST_TOOLS", "feed")
+    monkeypatch.setenv("ATTEST_EXPAND", "1")
+    from mcp.server.fastmcp import FastMCP
+
+    mcp = FastMCP("test")
+    register_all(mcp)
+    names = {t.name for t in asyncio.run(mcp.list_tools())}
+    assert "feed.list" in names
+    assert len(names) > 10
+
+
+def test_expanding_never_crosses_the_agent_boundary(monkeypatch, tmp_path):
+    """Disclosure reveals THIS agent's tools, never another's -- otherwise the
+    restriction is advisory."""
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    monkeypatch.setenv("ATTEST_TOOLS", "provenance")
+    monkeypatch.setenv("ATTEST_EXPAND", "1")
+    from mcp.server.fastmcp import FastMCP
+
+    mcp = FastMCP("test")
+    register_all(mcp)
+    names = {t.name for t in asyncio.run(mcp.list_tools())}
+    assert "runs.compare" in names
+    assert not any(n.startswith("feed.") or n.startswith("sym.") for n in names)

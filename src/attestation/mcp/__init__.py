@@ -60,19 +60,36 @@ class _FilteringServer:
     A wrapper rather than a post-registration filter: FastMCP has no public
     deregister, and dropping at the decorator keeps the tool from ever being
     constructed.
+
+    `expand` controls progressive disclosure. Measured on gemma4:e2b over 26
+    turns across the four agents: with the specific tools visible the model
+    picked the `ask` router 1 time in 26; with only `ask` visible, 26 in 26.
+    Marking the specifics "advanced; prefer .ask" in their descriptions moved
+    one agent from 8/10 to 7/10 -- inside noise, and no help. A visible tool
+    gets called, so "ask first, specifics on request" has to mean the
+    specifics are genuinely absent until requested.
     """
 
-    def __init__(self, inner, surface: frozenset[str]):
+    def __init__(self, inner, surface: frozenset[str], expand: bool):
         self._inner = inner
         self._surface = surface
+        self._expand = expand
 
     def tool(self, *args, name: str | None = None, **kwargs):
-        if name is not None and not _allowed(name, self._surface):
-            return lambda fn: fn  # registered nowhere; the tool simply is not
+        if name is not None:
+            if not _allowed(name, self._surface):
+                return lambda fn: fn  # registered nowhere; the tool simply is not
+            if not self._expand and not _is_entry_point(name):
+                return lambda fn: fn
         return self._inner.tool(*args, name=name, **kwargs)
 
     def __getattr__(self, attr):
         return getattr(self._inner, attr)
+
+
+def _is_entry_point(name: str) -> bool:
+    """The two tools an agent sees before it asks for more."""
+    return name.endswith(".ask") or name.endswith(".tools")
 
 
 def register_all(mcp) -> None:
@@ -91,6 +108,11 @@ def register_all(mcp) -> None:
                 f"unknown ATTEST_TOOLS surface: {requested!r}."
                 f" Expected one of {', '.join(sorted(AGENT_SURFACES))}"
             )
-        mcp = _FilteringServer(mcp, AGENT_SURFACES[requested])
+        # ATTEST_EXPAND=1 reveals this agent's specific tools from the start,
+        # for a caller that already knows what it wants. It never crosses the
+        # surface boundary -- disclosure widens what you can see, never what
+        # you are allowed to touch.
+        expand = os.environ.get("ATTEST_EXPAND", "").strip() not in ("", "0", "false")
+        mcp = _FilteringServer(mcp, AGENT_SURFACES[requested], expand)
     for domain in DOMAINS:
         domain.register(mcp)
