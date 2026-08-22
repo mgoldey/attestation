@@ -1,0 +1,102 @@
+"""Reading knowledge graph tools: the `kg.*` namespace.
+
+The graph is derived fresh from item_tags on every read -- `kg.build_graph`
+takes the tag assignments and returns adjacency plus edge weights. There is no
+stored graph: kg_nodes/kg_edges/kg_meta were deleted on 2026-08-21 after a
+characterization run showed all eight kg answers were byte-identical with and
+without them.
+
+Concepts are tags used at least MIN_TAG_USES times; edges are co-occurrences of
+at least MIN_EDGE_WEIGHT. A tag used once is deliberately not a concept.
+"""
+
+from attestation import kg
+from attestation.mcp._shared import MAX_LIST_LIMIT
+from attestation.mcp._tool import ToolError, tool
+
+
+def register(mcp) -> None:
+    """Attach every kg.* tool to the server."""
+
+    @mcp.tool()
+    def kg_neighbors(node: str, limit: int = 20) -> dict:
+        """Concepts directly adjacent to a given concept in the reading graph.
+
+        The "what else should I read about this" query. Concepts come from the
+        tagging pass; a tag used only once is not in the graph.
+
+        Returns only DIRECT neighbours, ranked by co-occurrence weight (how many
+        items carry both concepts), strongest first, capped at `limit` (clamped
+        to 50). Each row's `weight` is that real edge weight. For questions that
+        span more than one hop, use `kg_path`, which answers them exactly.
+
+        """
+        return _neighbors(node, limit)
+
+    @mcp.tool()
+    def kg_path(source: str, target: str) -> dict:
+        """Shortest chain of concepts connecting two topics in the reading graph.
+
+        Returns ok=false with path=null when the two are in different components —
+        that is a legitimate answer meaning "these never co-occur", not an error.
+
+        """
+        return _path(source, target)
+
+    @mcp.tool()
+    def kg_central(metric: str = "degree", limit: int = 10) -> dict:
+        """Most important concepts. metric="degree" for most-connected,
+        "betweenness" for the bridges between otherwise separate clusters.
+        """
+        return _central(metric, limit)
+
+    @mcp.tool()
+    def kg_communities(min_size: int = 3) -> dict:
+        """Topic clusters in the reading graph, each labelled by its most
+        connected member. Useful for seeing what the reading actually splits into.
+
+        Clusters by modularity, so a dense hub does not swallow the graph: a
+        concept joins a group only when its links there beat what chance predicts.
+        Densely-interconnected corpora still split into real topics -- on the live
+        graph, 7 of them, from a machine-learning core down to a small
+        quantum-chemistry group.
+
+        Expect overlapping subject matter across clusters rather than clean
+        partitions; concepts sit in exactly one group, so a bridging concept lands
+        wherever its links are strongest.
+
+        """
+        return _communities(min_size)
+
+
+@tool(empty={"neighbors": []}, label="kg_neighbors")
+def _neighbors(conn, node: str, limit: int = 20) -> dict:
+    found = kg.neighbors(conn, node, limit=min(limit, MAX_LIST_LIMIT))
+    if not found:
+        raise ToolError(f"{node!r} is not a concept in the graph")
+    return {"message": f"{len(found)} neighbour(s)", "neighbors": found}
+
+
+@tool(empty={"path": None}, label="kg_path")
+def _path(conn, source: str, target: str) -> dict:
+    found = kg.shortest_path(conn, source, target)
+    if found is None:
+        raise ToolError(f"no path between {source!r} and {target!r}")
+    return {"message": f"{len(found) - 1} hop(s)", "path": found}
+
+
+@tool(empty={"nodes": []}, label="kg_central")
+def _central(conn, metric: str = "degree", limit: int = 10) -> dict:
+    try:
+        ranked = kg.central(conn, metric=metric, limit=min(limit, MAX_LIST_LIMIT))
+    except ValueError as exc:
+        # An unknown metric is the caller's typo, not a bug: name the valid
+        # ones rather than logging a traceback they cannot act on.
+        raise ToolError(str(exc)) from exc
+    return {"message": f"top {len(ranked)} by {metric}", "nodes": ranked}
+
+
+@tool(empty={"communities": []}, label="kg_communities")
+def _communities(conn, min_size: int = 3) -> dict:
+    found = kg.communities(conn, min_size=min_size)
+    return {"message": f"{len(found)} communit(ies)", "communities": found}

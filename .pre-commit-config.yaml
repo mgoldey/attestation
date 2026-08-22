@@ -50,6 +50,18 @@ repos:
         files: ^(pyproject\.toml|uv\.lock)$
         pass_filenames: false
 
+      - id: complexity
+        name: complexity ratchet (radon)
+        entry: uv run --frozen python scripts/check_complexity.py
+        language: system
+        types: [python]
+        pass_filenames: false
+        # Per-file, not global. A single --max-absolute threshold set loose
+        # enough to pass a clean checkout also permits any file to grow a
+        # function at that rank -- verified by adding a 17-branch function and
+        # watching a global gate return 0. Each file is pinned at its own
+        # measured worst instead, so getting worse requires editing the list.
+
       - id: pytest
         name: pytest
         entry: uv run --frozen pytest -q
