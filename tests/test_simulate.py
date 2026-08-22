@@ -131,8 +131,8 @@ def test_a_single_source_dominating_the_positives_is_caveated(tmp_path, monkeypa
     embedding encodes trivially -- and learns nothing about the reader.
     """
     from attestation.db import get_db
-    from attestation.mcp.feed import _source_skew_caveat
     from attestation.rank import get_user, record_click
+    from attestation.simulate import source_skew_caveat
 
     db = tmp_path / "t.db"
     monkeypatch.setenv("RSS_DB", str(db))
@@ -156,7 +156,7 @@ def test_a_single_source_dominating_the_positives_is_caveated(tmp_path, monkeypa
         record_click(conn, uid, i, False, source="simulated")
     conn.commit()
 
-    caveat = _source_skew_caveat(conn, uid)
+    caveat = source_skew_caveat(conn, uid)
     assert caveat is not None
     assert "100%" in caveat or "one feed" in caveat
 
@@ -167,5 +167,5 @@ def test_a_single_source_dominating_the_positives_is_caveated(tmp_path, monkeypa
     for i in range(10, 13):
         record_click(conn, uid, i, True, source="simulated")
     conn.commit()
-    assert _source_skew_caveat(conn, uid) is None, "a balanced history must not warn"
+    assert source_skew_caveat(conn, uid) is None, "a balanced history must not warn"
     conn.close()

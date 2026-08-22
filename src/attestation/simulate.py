@@ -26,6 +26,7 @@ excludes bootstrap rows.
 
 import logging
 import sqlite3
+from collections import Counter
 
 from pydantic import BaseModel, Field
 
@@ -155,3 +156,35 @@ def classifier_would_train(conn: sqlite3.Connection, user_id: int) -> bool:
         "SELECT DISTINCT useful FROM clicks WHERE user_id = ?", (user_id,)
     ).fetchall()
     return len({r["useful"] for r in rows}) > 1
+
+
+def source_skew_caveat(conn: sqlite3.Connection, user_id: int) -> str | None:
+    """Warn when the two classes are separable by feed rather than by topic.
+
+    Sampling round-robin across feeds is what finally produced negatives, but
+    it has a cost: on matt's history it left 42 of 45 positives in arXiv cs.LG
+    while negatives spread over nine other sources. A classifier fit on that
+    can score a perfect AUC by learning "cs.LG means useful" -- which the
+    embedding encodes trivially -- and learn nothing about the reader.
+
+    An AUC of 1.0 usually means the task was easy, not that the model is good.
+    Saying so with the result is cheaper than someone trusting it.
+    """
+    rows = conn.execute(
+        "SELECT c.useful, i.feed_id FROM clicks c JOIN items i ON i.id = c.item_id"
+        " WHERE c.user_id = ? AND c.source != 'bootstrap'",
+        (user_id,),
+    ).fetchall()
+    positive = [r["feed_id"] for r in rows if r["useful"]]
+    if len(positive) < 5:
+        return None
+    top = Counter(positive).most_common(1)[0][1]
+    share = top / len(positive)
+    if share < 0.8:
+        return None
+    return (
+        f"{share:.0%} of this persona's positive feedback comes from one feed,"
+        " so a classifier can separate the classes by source rather than by"
+        " topic -- rate some items from that feed as not-useful before trusting"
+        " an evaluation score"
+    )

@@ -11,8 +11,6 @@ LLM runs inside `digest` -- it returns structure, never prose, because the
 caller is a model that can write the prose itself.
 """
 
-from collections import Counter
-
 from attestation.explain import explain as explain_item_fn
 from attestation.llm import default_chat_fn
 from attestation.mcp._shared import MAX_LIST_LIMIT, get_embedder, ranked_items, ranking_quality
@@ -747,6 +745,7 @@ def _digest_body(conn, user_row, days: int = 7, per_topic: int = 3, limit: int =
 def _simulate_feedback(conn, user_row, limit: int = 10, confirm: bool = False) -> dict:
     from attestation.llm import default_chat_fn
     from attestation.simulate import simulate_feedback as run_simulation
+    from attestation.simulate import source_skew_caveat
 
     if not confirm:
         raise ToolError(
@@ -784,7 +783,7 @@ def _simulate_feedback(conn, user_row, limit: int = 10, confirm: bool = False) -
         raise ToolError("no unrated items to react to -- run an ingest first")
     out = run_simulation(conn, default_chat_fn, user_row["name"], rows)
     counts = out["counts"]
-    caveat = _source_skew_caveat(conn, user_row["id"])
+    caveat = source_skew_caveat(conn, user_row["id"])
     return {
         "message": (
             f"{counts['useful']} useful, {counts['not_useful']} not-useful"
@@ -795,38 +794,6 @@ def _simulate_feedback(conn, user_row, limit: int = 10, confirm: bool = False) -
         "reactions": out["reactions"],
         "caveat": caveat,
     }
-
-
-def _source_skew_caveat(conn, user_id: int) -> str | None:
-    """Warn when the two classes are separable by feed rather than by topic.
-
-    Sampling round-robin across feeds is what finally produced negatives, but
-    it has a cost: on matt's history it left 42 of 45 positives in arXiv cs.LG
-    while negatives spread over nine other sources. A classifier fit on that
-    can score a perfect AUC by learning "cs.LG means useful" -- which the
-    embedding encodes trivially -- and learn nothing about the reader.
-
-    An AUC of 1.0 usually means the task was easy, not that the model is good.
-    Saying so with the result is cheaper than someone trusting it.
-    """
-    rows = conn.execute(
-        "SELECT c.useful, i.feed_id FROM clicks c JOIN items i ON i.id = c.item_id"
-        " WHERE c.user_id = ? AND c.source != 'bootstrap'",
-        (user_id,),
-    ).fetchall()
-    positive = [r["feed_id"] for r in rows if r["useful"]]
-    if len(positive) < 5:
-        return None
-    top = Counter(positive).most_common(1)[0][1]
-    share = top / len(positive)
-    if share < 0.8:
-        return None
-    return (
-        f"{share:.0%} of this persona's positive feedback comes from one feed,"
-        " so a classifier can separate the classes by source rather than by"
-        " topic -- rate some items from that feed as not-useful before trusting"
-        " an evaluation score"
-    )
 
 
 @tool(
