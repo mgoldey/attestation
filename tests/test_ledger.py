@@ -1018,3 +1018,51 @@ def test_a_successful_scan_leaves_no_dangling_corpus_reference(workspace, tmp_pa
     ).fetchone()["n"]
     assert dangling == 0
     conn.close()
+
+
+def test_comparing_never_ranks_one_arm_on_train_against_another_on_test(tmp_path):
+    """The failure this module's docstring says it exists to prevent.
+
+    `_best_step` picks a run's best value across steps -- correct, since a run
+    that diverges late should not be judged by where it ended up. But it took
+    the best across SPLITS too. An arm reporting train loss 0.01 and test loss
+    0.90 was ranked at 0.01 and beat an arm whose test loss was 0.50, so the
+    ablation came out backwards with no caveat saying why.
+
+    The corpus guard already refuses to compare arms that saw different data.
+    Splits are the same class of mistake one level down.
+    """
+    write(
+        tmp_path / "exp" / "results" / "exp_armA.json",
+        '{"train": {"loss": 0.01}, "test": {"loss": 0.90}}',
+    )
+    write(tmp_path / "exp" / "results" / "exp_armB.json", '{"test": {"loss": 0.50}}')
+
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, tmp_path)
+    out = ledger.compare(conn, "exp", metric="loss")
+
+    assert out["winner"] == "exp_armB", (
+        "armA won on its TRAIN loss while being worse on test -- "
+        f"arms: {[(a['name'], a.get('value'), a.get('split')) for a in out['arms']]}"
+    )
+    by_name = {a["name"]: a for a in out["arms"]}
+    assert by_name["exp_armA"]["value"] == 0.90, "armA must be judged on test, not train"
+    assert by_name["exp_armA"]["split"] == "test"
+    conn.close()
+
+
+def test_an_arm_with_only_a_train_split_is_flagged_not_silently_ranked(tmp_path):
+    """If no arm has an evaluation split, ranking on train is all that is
+    available -- but the reader has to be told that is what happened."""
+    write(tmp_path / "exp" / "results" / "exp_armA.json", '{"train": {"loss": 0.01}}')
+    write(tmp_path / "exp" / "results" / "exp_armB.json", '{"train": {"loss": 0.50}}')
+
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, tmp_path)
+    out = ledger.compare(conn, "exp", metric="loss")
+
+    assert " ".join(out["caveats"]).find("train") >= 0, (
+        f"ranking on a training split must be caveated; got {out['caveats']}"
+    )
+    conn.close()

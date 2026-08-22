@@ -21,7 +21,7 @@ import sys
 # file -> highest cyclomatic complexity permitted, measured 2026-08-21.
 # Lower these when the tree improves. Raising one requires a reason.
 BASELINE = {
-    "src/attestation/ledger.py": 29,  # compare
+    "src/attestation/ledger.py": 30,  # compare -- +1 for the split-preference guard
     "src/attestation/ledger_adapters/generic.py": 29,  # discover
     "src/attestation/kg.py": 20,  # communities
     "src/attestation/mcp/feed.py": 14,  # _search_feed -- ranks then filters in Python
@@ -29,6 +29,7 @@ BASELINE = {
     "src/attestation/claims.py": 15,  # check_claim
     "src/attestation/cli.py": 14,  # cmd_claims
     "src/attestation/rank.py": 13,  # rank_items
+    "src/attestation/symbolic_ops.py": 11,  # op_evaluate -- units + subs + free-symbol paths
 }
 
 # Anything not listed must stay at or below this. New code starts strict.

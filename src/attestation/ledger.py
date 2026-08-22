@@ -358,13 +358,45 @@ def detail(conn: sqlite3.Connection, project: str, name: str) -> dict | None:
     return out
 
 
+# Splits a model is judged ON, in the order a reader would trust them. A run
+# reporting several is judged by the first it has, never by whichever number
+# happened to be best.
+_EVAL_SPLITS = ("test", "eval", "val", "valid", "validation", "dev", "holdout")
+_TRAIN_SPLITS = ("train", "training", "fit")
+
+
+def _split_rank(split: str | None) -> int:
+    """Lower sorts first. Unlabelled sits between eval and train: it is usually
+    a headline number, but nothing says so, and it must not outrank an explicit
+    test score."""
+    if split is None:
+        return len(_EVAL_SPLITS)
+    lowered = split.lower()
+    for i, name in enumerate(_EVAL_SPLITS):
+        if lowered == name or lowered.startswith(name):
+            return i
+    if any(lowered.startswith(t) for t in _TRAIN_SPLITS):
+        return len(_EVAL_SPLITS) + 1
+    return len(_EVAL_SPLITS)
+
+
 def _best_step(values: list[dict], direction: str) -> dict | None:
     """The run's best value for a metric, not its last -- a training run that
-    diverges late should not be judged by where it ended up."""
+    diverges late should not be judged by where it ended up.
+
+    Best *within one split*, though. Picking the extreme across every split
+    ranked an arm reporting train 0.01 / test 0.90 at 0.01, beating an arm
+    whose test loss was 0.50 -- the ablation came out backwards, silently,
+    which is the failure this module's docstring says it exists to prevent.
+    So the most trustworthy split a run reports is chosen first, and the
+    best step is taken only within it.
+    """
     if not values:
         return None
+    best_split = min(_split_rank(v.get("split")) for v in values)
+    candidates = [v for v in values if _split_rank(v.get("split")) == best_split]
     pick = min if direction == "lower_is_better" else max
-    return pick(values, key=lambda v: v["value"])
+    return pick(candidates, key=lambda v: v["value"])
 
 
 def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) -> dict:
@@ -483,6 +515,9 @@ def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) ->
                 "status": r["status"],
                 "value": best["value"] if best else None,
                 "step": best["step"] if best else None,
+                # which split the number came from: a reader comparing arms
+                # needs to know whether they are looking at test or train
+                "split": best["split"] if best else None,
                 # provenance: every number must be traceable to the file it came
                 # from, or the comparison cannot be audited
                 "source_path": r["source_path"],
@@ -574,6 +609,24 @@ def _caveats(scored: list[dict], metric: str) -> list[str]:
     what it does not know instead of implying it does.
     """
     out: list[str] = []
+
+    splits = {a.get("split") for a in scored}
+    if splits and all(_split_rank(sp) > len(_EVAL_SPLITS) for sp in splits):
+        # Every arm is being judged on training data. That may be all that was
+        # recorded, but a training loss ranks how well an arm memorised, not
+        # how well it generalises, and a reader must not mistake one for the
+        # other.
+        out.append(
+            f"every arm's {metric} comes from a training split; this ranks fit, "
+            "not generalisation -- record an eval/test split to compare properly"
+        )
+    elif len({sp for sp in splits if sp is not None}) > 1:
+        named = ", ".join(sorted(sp for sp in splits if sp is not None))
+        out.append(
+            f"arms are judged on different splits ({named}); "
+            "the comparison is only as sound as those splits are comparable"
+        )
+
     if len(scored) == 1:
         # A one-arm family always "wins". Reporting that without comment reads
         # as the result of a comparison, when nothing was compared -- usually a

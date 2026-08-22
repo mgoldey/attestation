@@ -146,19 +146,47 @@ def _scan(root: str | None = None, project: str | None = None, confirm: bool = F
     }
 
 
-@tool(empty={"runs": [], "families": []}, label="runs_list")
+@tool(empty={"runs": [], "families": [], "n_families": 0}, label="runs_list")
 def _list(conn, project: str | None = None, family: str | None = None, limit: int = 20) -> dict:
     found = ledger.list_runs(conn, project=project, family=family, limit=min(limit, MAX_LIST_LIMIT))
     if not found:
         raise ToolError("no runs recorded -- call runs_scan(confirm=true) first")
+    families = ledger.families(conn, project=project)
+    # Cap the family list. `limit` bounds `runs` only, so a workspace with
+    # hundreds of families returned all of them alongside a handful of runs --
+    # the field advertised as the bridge to runs_compare was the one that blew
+    # the caller's context. Truncation is reported, never silent.
+    shown = families[:MAX_LIST_LIMIT]
+    message = f"{len(found)} run(s)"
+    if len(families) > len(shown):
+        message += (
+            f"; showing {len(shown)} of {len(families)} families -- pass project= to narrow them"
+        )
     return {
-        "message": f"{len(found)} run(s)",
+        "message": message,
         "runs": found,
-        "families": ledger.families(conn, project=project),
+        "families": shown,
+        "n_families": len(families),
     }
 
 
-@tool(empty={"family": None, "metric": None, "arms": [], "winner": None}, label="runs_compare")
+@tool(
+    empty={
+        "family": None,
+        "metric": None,
+        "arms": [],
+        "winner": None,
+        # These four are as load-bearing as the ranking. SKILL.md tells an
+        # agent that a comparison with no caveats has earned that silence, so
+        # `caveats` missing on failure would be indistinguishable from a clean
+        # comparison. Declared here so failure and success have one shape.
+        "caveats": [],
+        "direction": None,
+        "corpus": None,
+        "without_metric": [],
+    },
+    label="runs_compare",
+)
 def _compare(conn, family: str, metric: str | None = None) -> dict:
     try:
         result = ledger.compare(conn, family, metric=metric)
@@ -167,7 +195,12 @@ def _compare(conn, family: str, metric: str | None = None) -> dict:
         # reason is surfaced rather than flattened to "internal error"
         raise ToolError(str(exc)) from exc
     if not result["arms"]:
-        raise ToolError(f"no runs in family {family!r}")
+        # ledger.compare already built the recovery message for this case --
+        # it distinguishes "no such family" from "you named a project, not a
+        # family" and lists what IS comparable. An earlier version of this
+        # wrapper replaced it with a bare "no runs in family 'x'", throwing
+        # away the one thing that tells the caller what to do next.
+        raise ToolError(result.get("message") or f"no runs in family {family!r}")
     return {"message": f"{len(result['arms'])} arm(s)", **result}
 
 

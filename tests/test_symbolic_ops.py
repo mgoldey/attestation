@@ -154,3 +154,39 @@ def test_unit_expr_handles_exponents():
 def test_evaluate_converts_units_with_exponents():
     out = ops.op_evaluate({"expr": "5", "subs": None, "units": "meter**2 -> foot**2"})
     assert out["numeric"] == pytest.approx(53.8195, abs=0.01)
+
+
+def test_numeric_is_null_when_symbols_remain_free():
+    """A symbolic result must not report a number.
+
+    The units path needs a coefficient -- 18 in `18*kilometer/hour` -- and the
+    fallback that extracts it was reached for EVERY non-numeric result, not
+    only unit ones. So `x**2 + 1` reported numeric=1.0 and `2*x` reported 2.0:
+    the coefficient of an arbitrary arg, presented as the value. An agent
+    quoting that to a researcher is confidently wrong, which is worse than a
+    tool that refuses.
+    """
+    for expr in ("x**2+1", "2*x", "sin(x)", "a*b + c"):
+        out = ops.op_evaluate({"expr": expr})
+        assert out["numeric"] is None, f"{expr} reported numeric={out['numeric']}"
+        assert "free" in out.get("message", "").lower(), (
+            f"{expr} should say which symbols are unresolved"
+        )
+
+
+def test_partial_substitution_still_reports_no_number():
+    out = ops.op_evaluate({"expr": "x+y", "subs": {"x": 1}})
+    assert out["result"] == "y + 1"
+    assert out["numeric"] is None
+    assert "y" in out["message"]
+
+
+def test_full_substitution_does_report_a_number():
+    out = ops.op_evaluate({"expr": "x**2+1", "subs": {"x": 3}})
+    assert out["numeric"] == 10.0
+
+
+def test_units_conversion_keeps_its_coefficient():
+    """The case the fallback exists for must keep working."""
+    out = ops.op_evaluate({"expr": "5", "units": "meter/second -> kilometer/hour"})
+    assert out["numeric"] == pytest.approx(18.0)

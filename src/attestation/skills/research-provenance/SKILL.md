@@ -72,7 +72,7 @@ co-located database automatically — no `--db` flag needed.
 The live database lives at
 `~/.hermes/skills/research-provenance/data/hermes.db`, co-located with
 other hermes-agent skill state rather than inside the project checkout. DB
-path resolution order (see `resolve_db_path` in `src/hermes/db.py`):
+path resolution order (see `resolve_db_path` in `src/attestation/db.py`):
 
 1. explicit `--db <path>` flag
 2. `RSS_DB` env var
@@ -82,7 +82,7 @@ path resolution order (see `resolve_db_path` in `src/hermes/db.py`):
 
 ### Running without a local checkout (uvx)
 
-If `src/hermes/skills/research-provenance/scripts/setup.sh` doesn't find a local
+If `src/attestation/skills/research-provenance/scripts/setup.sh` doesn't find a local
 project checkout at `HERMES_RSS_PROJECT_DIR` (default
 `/home/matt/attestation`), it looks for a `science_recommendations.repo_url`
 key in `~/.hermes/config.yaml`:
@@ -163,7 +163,7 @@ the user doesn't say which profile, default to `matt` and ask if unsure.
 ## MCP tools
 
 When running alongside hermes-agent, the rest of the toolset is exposed as
-native MCP tools (`src/hermes/mcp_server.py`), not HTTP — call these
+native MCP tools (`src/attestation/mcp/`), not HTTP — call these
 directly rather than reaching for `curl`.
 
 **Personas** — `create_persona(name, interests)` makes a new reader profile
@@ -232,17 +232,19 @@ when their links there beat chance, so even a tightly interconnected corpus
 splits into real topics). Groups overlap in subject matter and each concept
 belongs to exactly one, so a bridging concept lands where its links are
 strongest.
-`kg_rebuild(confirm)` regenerates the stored `kg_nodes`/`kg_edges` tables
-from current tags and needs `confirm=true`; it's normally unnecessary since
-`attest tag` rebuilds automatically. Every `kg_*` read tool derives the graph
-fresh from `item_tags` on each call, so the stored tables (and the
-`stale: true` flag other `kg_*` tools report when they no longer match
-`item_tags`) are advisory only -- `stale: true` never changes what a read
-tool answers.
+Every `kg_*` read tool derives the graph fresh from `item_tags` on each call,
+so there is nothing to rebuild and no staleness to report. A `kg_rebuild` tool
+and a `stale` flag existed until 2026-08-21; the tables they maintained were
+never read by anything, and all eight kg answers were byte-identical with and
+without them, so both were deleted.
+
+Concepts come from the tagging pass (`attest tag`). On an untagged database
+every `kg_*` tool returns an empty graph, which is a setup gap rather than a
+finding about the reading.
 
 **Symbolic math** — `sym_simplify(expr, timeout)` simplifies an expression
 to canonical form; `sym_solve(expr, symbol, timeout)` solves expr = 0 for a
-given symbol (or auto-detects if the expression has exactly one); `sym_differentiate(expr, symbol, order, timeout)` and `sym_integrate(expr, symbol, bounds, timeout)` compute derivatives and integrals; `sym_derivation(expr, operation, symbol, timeout)` returns a step-by-step trace (genuine rule-by-rule tracing exists only for integrals; the differentiate branch returns the result with a note saying so); `sym_verify(lhs, rhs, timeout)` tests symbolic equality and returns `equal`, `unequal`, or `unproven` — **"unproven" is NOT a disproof**, since `simplify` is incomplete and can only mean "could not decide"; and `sym_evaluate(expr, subs, units, timeout)` computes a numeric value, optionally with variable substitutions and unit conversion (e.g. `units="meter/second -> kilometer/hour"`).
+given symbol (or auto-detects if the expression has exactly one); `sym_differentiate(expr, symbol, order, timeout)` and `sym_integrate(expr, symbol, bounds, timeout)` compute derivatives and integrals; `sym_derivation(expr, operation, symbol, timeout)` returns a step-by-step trace (genuine rule-by-rule tracing exists only for integrals; the differentiate branch returns the result with a note saying so); `sym_verify(lhs, rhs, timeout)` tests symbolic equality and returns `equal`, `unequal`, or `unproven` — **"unproven" is NOT a disproof**, since `simplify` is incomplete and can only mean "could not decide"; and `sym_evaluate(expr, subs, units, timeout)` computes a numeric value, optionally with variable substitutions and unit conversion (e.g. `units="meter/second -> kilometer/hour"`). `numeric` is `null` whenever any symbol is still free, and the message names which — an unsubstituted expression has no value to report, and reporting one anyway is how a wrong number reaches a paper.
 
 **Experiment ledger** — records of the user's *own* runs, read from artifacts
 already on disk (`results/`, `logs/`, `configs/`, `outputs/`, `benchmarks/`

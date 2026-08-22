@@ -192,17 +192,38 @@ def op_evaluate(payload: dict) -> dict:
         source, target = (part.strip() for part in units.split("->", 1))
         expr = convert_to(expr * _unit_expr(source), _unit_expr(target))
     out = describe(sp.simplify(expr))
-    if out["numeric"] is None:
+    if out["numeric"] is None and units:
         try:
-            # expr.args[0] is typed as Basic by SymPy's stubs, but the numeric
-            # coefficient of a units expression (e.g. 18 in "18*kilometer/hour")
-            # is always float-convertible -- the except below catches when it
-            # is not.
+            # A units conversion leaves `18*kilometer/hour`, whose coefficient
+            # IS the answer. Scoped to the units path on purpose: the same
+            # fallback used to run for every symbolic result, so `x**2 + 1`
+            # reported numeric=1.0 and `2*x` reported 2.0 -- the coefficient of
+            # an arbitrary arg, handed back as though it were the value. A
+            # confidently wrong number is worse than no number.
             out["numeric"] = float(cast(sp.Expr, expr.args[0])) if expr.args else float(expr)
         except (TypeError, ValueError, IndexError):
             out["numeric"] = None
+
+    if out["numeric"] is None:
+        out["message"] = _free_symbol_note(sp.simplify(expr))
     out["parsed_input"] = payload["expr"]
     return out
+
+
+def _free_symbol_note(expr) -> str:
+    """Why there is no number, named specifically enough to act on.
+
+    An empty string when nothing is free -- the expression is unevaluatable for
+    some other reason and inventing an explanation would be worse than silence.
+    """
+    free = sorted(str(sym) for sym in expr.free_symbols)
+    if not free:
+        return ""
+    verb = "is" if len(free) == 1 else "are"
+    return (
+        f"no numeric value: {', '.join(free)} {verb} still free"
+        " -- pass subs={...} to substitute them"
+    )
 
 
 def _unit_expr(text: str):
