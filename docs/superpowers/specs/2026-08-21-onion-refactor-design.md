@@ -95,8 +95,8 @@ Reading the code revised the roadmap's guess of five repositories down to
 
 | Port | Tables owned | Backs |
 |---|---|---|
-| `FeedRepo` | `users`, `feeds`, `items`, `clicks`, `explanations`, `item_features`, `item_vectors` | `FeedService` → `feed.*` |
-| `KnowledgeRepo` | `kg_nodes`, `kg_edges`, `kg_meta`, `item_tags` | `KnowledgeService` → `kg.*` |
+| `FeedRepo` | `users`, `feeds`, `items`, `clicks`, `explanations`, `item_features`, `item_vectors`, `item_tags` | `FeedService` → `feed.*` |
+| `KnowledgeRepo` | `kg_nodes`, `kg_edges`, `kg_meta` | `KnowledgeService` → `kg.*` |
 | `LedgerRepo` | `runs`, `run_metrics`, `corpora`, `corpus_splits` | `ProvenanceService` → `runs.*` |
 
 Two deliberate departures from the roadmap:
@@ -110,9 +110,38 @@ would create an empty abstraction.
 across two repositories on every comparison — the aggregate boundary is wrong
 there. `corpora` and `corpus_splits` belong to `LedgerRepo`.
 
-**`item_tags` goes to `KnowledgeRepo`,** not `FeedRepo`. `kg.build_graph()`
-derives the graph fresh from it on every read. It is knowledge-owned data that
-ingestion happens to write.
+**`item_tags` goes to `FeedRepo`.**
+
+**Correction, 2026-08-21.** An earlier draft assigned it to `KnowledgeRepo`,
+reasoning that `kg.build_graph()` derives from it on every read. Two independent
+scoping passes over the codebase refuted this, and the evidence is decisive:
+
+- `item_tags.item_id` is `REFERENCES items(id)` (`db.py:65`) — a hard foreign key
+  into `FeedRepo`'s aggregate.
+- Its only writer is the tagging pass in `features.py:158-162`, which is feed
+  territory.
+- Two live queries join it to `clicks` (`features.py:225`, `feeds.py:143`) —
+  cross-aggregate joins of exactly the kind cited as disqualifying for
+  `CorpusRepo`. Six further feed-side call sites read it.
+- **Nothing in `src/` reads `kg_nodes` or `kg_edges` at all.** Verified by grep:
+  the only statements touching them are the two `DELETE`s in `kg.rebuild()`.
+  `README.md:262` says so outright. The materialized graph is write-only.
+
+The criterion used to reject `CorpusRepo` was right; the earlier draft applied it
+inconsistently. `item_tags` in `KnowledgeRepo` would create more cross-repo joins
+than the corpus case it rejected.
+
+The correction improves the design rather than merely relocating a table.
+`build_graph()` takes the tag assignments as a parameter and becomes a **pure
+function**, so `test_aliases_merge_before_filtering` — guarding the load-bearing
+alias -> filter -> co-occurrence ordering — becomes a unit test needing no
+database.
+
+`KnowledgeRepo` is left owning `kg_nodes`, `kg_edges`, `kg_meta`: a write-side
+materialization port plus `stored_fingerprint()`. Since nothing reads what it
+materializes, whether it should exist at all is a live question for stage 2 —
+recorded here rather than settled, because deleting a feature is not this
+refactor's job.
 
 `SymbolicService` has no repository: `symbolic.py` and `symbolic_ops.py` touch
 no tables. Its port is the process-isolation boundary (`run_isolated`), not
@@ -132,9 +161,38 @@ def list_feed(user: str, limit: int = 10, since_days: int | None = 14) -> dict:
 
 The repository opens and closes per method call. This preserves `open_db()`'s
 existing one-connection-per-tool-call contract exactly — it is relocated behind
-an interface, not changed. No pooling, no unit-of-work, no shared global
-connection: WAL plus `check_same_thread=False` across FastAPI's threadpool is
-where subtle bugs live, and this refactor is not the place to take that on.
+an interface, not changed. No pooling, no shared global connection: WAL plus
+`check_same_thread=False` across FastAPI's threadpool is where subtle bugs live,
+and this refactor is not the place to take that on.
+
+### The one exception: `ledger.scan()`
+
+**Per-call connections would corrupt data here.** `scan()` calls
+`_link_corpora()` (which calls `corpus.upsert()`) and then `_replace_project()`
+inside a single uncommitted transaction, looping over every project and
+committing once at `ledger.py:253`. `runs.corpus_id` is a foreign key to a
+corpora row that `upsert()` creates *within that same transaction*.
+
+Split across two per-call connections and the write tears: a run row referencing
+a corpus id that was rolled back, or corpora orphaned by a failed run insert.
+The rule as written would have shipped a data-corruption bug.
+
+`LedgerRepo` therefore exposes one transactional method covering both writes:
+
+```python
+def record_scan(
+    self,
+    projects: Sequence[ScannedProject],   # project name, records, corpus entries
+) -> None:
+    """Replace every scanned project's runs and their corpora in ONE
+    transaction. Split into per-call connections and runs.corpus_id can
+    reference a rolled-back corpora row."""
+```
+
+This is the only place in the fourteen tables where the per-call rule is unsafe,
+and it is unsafe because of an FK populated mid-transaction. A test asserts the
+atomicity directly: force a failure partway through a multi-project scan and
+assert no orphaned corpora and no runs with dangling `corpus_id`.
 
 `db.py` retains migrations, `SCHEMA`, `embed_dims()`, `resolve_db_path()` and
 `seed_demo_users()`, and moves to `infrastructure/sqlite/`. Its
