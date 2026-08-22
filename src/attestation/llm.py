@@ -97,7 +97,39 @@ class ChatClient:
             payload.pop("reasoning_effort")
             resp = self.client.post("/chat/completions", json=payload)
         resp.raise_for_status()
-        return json.loads(resp.json()["choices"][0]["message"]["content"])
+        return _first_json_object(resp.json()["choices"][0]["message"]["content"])
+
+
+def _first_json_object(text: str) -> dict:
+    """The first complete JSON object in a reply, ignoring anything around it.
+
+    Schema-constrained decoding is a request, not a guarantee. gemma4:e2b
+    emitted a valid object followed by a second one, and `json.loads` raised
+    "Extra data: line 3 column 2" straight out of chat_json -- an explanation
+    request crashed rather than degrading, and explain.py's retry could not
+    help because the second attempt hits the same behaviour. Prose before the
+    object is the same failure wearing a different hat.
+
+    Anything after the first complete object is the model failing to stop, so
+    it is dropped. A reply with no object at all is a real failure and raises:
+    recovering must not shade into inventing.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    decoder = json.JSONDecoder()
+    start = text.find("{")
+    while start != -1:
+        try:
+            obj, _ = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            start = text.find("{", start + 1)
+            continue
+        if isinstance(obj, dict):
+            return obj
+        start = text.find("{", start + 1)
+    raise ValueError(f"no JSON object in model reply: {text[:200]!r}")
 
 
 class EmbeddingClient:

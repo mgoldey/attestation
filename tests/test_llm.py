@@ -171,3 +171,50 @@ def test_env_sample_documents_exactly_the_vars_the_code_reads():
     }
     known = set(llm.ENV_VARS) | {"EMBED_DIMS", "RSS_DB"}
     assert documented == known
+
+
+def test_a_reply_with_trailing_junk_is_recovered_not_crashed():
+    """Small models append a second object, or prose, after valid JSON.
+
+    Observed live on gemma4:e2b: the reply parsed as `{"text": "..."}` followed
+    by more content, and json.loads raised "Extra data: line 3 column 2".
+    That propagates out of chat_json as an unhandled JSONDecodeError -- an
+    explanation request crashes rather than degrading, and explain.py's retry
+    cannot help because the second attempt hits the same behaviour.
+
+    The first complete JSON object is what the schema asked for; anything
+    after it is the model failing to stop.
+    """
+    body = '{"text": "Covers KV-cache compression, which you follow."}\n{"text": "extra"}'
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": body}}]})
+
+    client = ChatClient(base_url="https://x/v1", transport=httpx.MockTransport(handler))
+    out = client.chat_json([{"role": "user", "content": "hi"}], {"type": "object"})
+    assert out == {"text": "Covers KV-cache compression, which you follow."}
+
+
+def test_prose_before_the_json_is_recovered():
+    """The other half of the same failure: a preamble the model was told not
+    to write."""
+    body = 'Here is the answer:\n{"text": "Overlaps your retrieval work."}'
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": body}}]})
+
+    client = ChatClient(base_url="https://x/v1", transport=httpx.MockTransport(handler))
+    out = client.chat_json([{"role": "user", "content": "hi"}], {"type": "object"})
+    assert out == {"text": "Overlaps your retrieval work."}
+
+
+def test_a_reply_with_no_json_at_all_still_raises():
+    """Recovery must not become silent invention -- a reply with nothing
+    parseable is a real failure and the caller decides what to do."""
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": "sorry!"}}]})
+
+    client = ChatClient(base_url="https://x/v1", transport=httpx.MockTransport(handler))
+    with pytest.raises(ValueError):
+        client.chat_json([{"role": "user", "content": "hi"}], {"type": "object"})

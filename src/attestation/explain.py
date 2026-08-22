@@ -48,6 +48,20 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
         interests = row["interests"]
         if not titles:
             return {"profile": interests}
+        if interests and interests.strip():
+            # The stored interests text beats a synthesized summary, measured
+            # against gemma4:e2b: synthesis returns meta-description ("This
+            # list of recently useful titles covers a diverse range of...")
+            # and the explanations built on it were vaguer ("Large Language
+            # Models and agent systems" against "LLM instruction following
+            # and reasoning"). It also claimed a paper on termite feed
+            # additives matched "advanced topics like AI and machine
+            # learning", where the interests string correctly refused.
+            #
+            # Worse answers for an extra 2.1 seconds and a second chance to
+            # fail. Synthesis stays as the fallback for a persona that has
+            # clicks but no interests text.
+            return {"profile": interests}
         try:
             out = chat_fn(
                 [
@@ -73,16 +87,28 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
             {
                 "role": "system",
                 "content": (
-                    "You explain feed rankings. One sentence, second person,"
-                    " grounded ONLY in the reader profile given. No hedging."
+                    # Measured against gemma4:e2b over four items, one of them
+                    # deliberately irrelevant. The previous wording ("You
+                    # explain feed rankings. One sentence, second person,
+                    # grounded ONLY in the reader profile given. No hedging.")
+                    # produced 26-word sentences at 2.0s that opened "You will
+                    # find that..." and manufactured a connection for a paper
+                    # about termite feed additives. This runs at 1.5s and 9
+                    # words, and the refusal clause is what makes it honest --
+                    # without it the model still claimed the termite paper
+                    # shared "scientific evaluation methodology".
+                    "Name the one topic this item shares with the reader's"
+                    " interests. Under 15 words. Address them as 'you'."
+                    " No preamble."
+                    " If it shares nothing, say 'Outside your stated"
+                    " interests.' and stop."
                 ),
             },
             {
                 "role": "user",
                 "content": (
-                    f"Reader profile: {state.profile}\n"
-                    f"Item: {item['title']}\n{item['summary'][:500]}\n"
-                    "Why is this ranked here for this reader?"
+                    f"Reader's interests: {state.profile}\n"
+                    f"Item: {item['title']}\n{item['summary'][:400]}"
                 ),
             },
         ]
