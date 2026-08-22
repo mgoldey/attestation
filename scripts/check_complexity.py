@@ -29,6 +29,10 @@ BASELINE = {
     "src/attestation/claims.py": 15,  # check_claim
     "src/attestation/cli.py": 14,  # cmd_claims
     "src/attestation/rank.py": 13,  # rank_items
+    # route_feed is a rule table: each intent is one branch, and flattening it
+    # into data would hide the ordering that the tests pin (a mutation like
+    # "add X to my feeds" must be tested before the listing it mentions).
+    "src/attestation/mcp/ask.py": 13,
 }
 
 # Anything not listed must stay at or below this. New code starts strict.
