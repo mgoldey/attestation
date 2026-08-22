@@ -1,0 +1,181 @@
+[
+  {
+    "id": "paper-lm",
+    "title": "Scaling Laws for Mixture-of-Experts Language Models",
+    "summary": "We train 42 MoE language models from 100M to 7B parameters and derive empirical scaling laws relating expert count, active parameters and validation loss. We find the optimal expert count grows sublinearly.",
+    "content_type": "paper",
+    "should_include_any": [
+      "mixture-of-experts",
+      "scaling-laws",
+      "language-models",
+      "moe",
+      "scaling"
+    ],
+    "must_not": [
+      "arxiv",
+      "preprint",
+      "paper",
+      "announcement"
+    ]
+  },
+  {
+    "id": "survey-rag",
+    "title": "A Survey of Retrieval-Augmented Generation",
+    "summary": "This survey reviews 180 papers on retrieval-augmented generation, organising them by retriever architecture, fusion strategy and evaluation methodology. We identify open problems.",
+    "content_type": "survey",
+    "should_include_any": [
+      "retrieval-augmented-generation",
+      "rag",
+      "retrieval",
+      "survey-methodology",
+      "information-retrieval"
+    ],
+    "must_not": [
+      "survey",
+      "arxiv",
+      "preprint"
+    ]
+  },
+  {
+    "id": "release-pytorch",
+    "title": "PyTorch 2.9 Released",
+    "summary": "PyTorch 2.9 is now available. This release adds improved compile times, better ROCm support, and a new distributed checkpointing API.",
+    "content_type": "release",
+    "should_include_any": [
+      "pytorch",
+      "deep-learning-frameworks",
+      "distributed-training",
+      "compilers"
+    ],
+    "must_not": [
+      "release",
+      "announcement",
+      "news",
+      "update"
+    ]
+  },
+  {
+    "id": "announcement-grant",
+    "title": "NSF Announces $50M for AI Research Institutes",
+    "summary": "The National Science Foundation announced funding for five new AI research institutes focused on trustworthy systems and climate modeling.",
+    "content_type": "announcement",
+    "should_include_any": [
+      "research-funding",
+      "ai-policy",
+      "climate-modeling",
+      "trustworthy-ai"
+    ],
+    "must_not": [
+      "announcement",
+      "news",
+      "press-release",
+      "nsf"
+    ]
+  },
+  {
+    "id": "blog-debug",
+    "title": "How I Debugged a 3am Kernel Panic",
+    "summary": "A walkthrough of tracking down a race condition in a custom CUDA kernel using compute-sanitizer and a lot of coffee.",
+    "content_type": "blog",
+    "should_include_any": [
+      "cuda",
+      "gpu-programming",
+      "debugging",
+      "kernels",
+      "race-conditions"
+    ],
+    "must_not": [
+      "blog",
+      "news"
+    ]
+  },
+  {
+    "id": "trap-nature",
+    "title": "Structure of the human nucleolar rRNA processing complex",
+    "summary": "Published in Nature. We report cryo-EM structures of the human small-subunit processome at 2.8 angstrom resolution, revealing how rRNA folding is coupled to assembly.",
+    "content_type": "paper",
+    "should_include_any": [
+      "cryo-em",
+      "structural-biology",
+      "rrna",
+      "ribosome",
+      "molecular-biology"
+    ],
+    "must_not": [
+      "nature",
+      "journal",
+      "paper",
+      "preprint",
+      "science"
+    ]
+  },
+  {
+    "id": "trap-retraction",
+    "title": "Retraction: Room-temperature superconductivity in nitrogen-doped lutetium hydride",
+    "summary": "The authors retract this paper following an investigation that found the electrical resistance data could not be reproduced.",
+    "content_type": "announcement",
+    "should_include_any": [
+      "superconductivity",
+      "materials-science",
+      "condensed-matter",
+      "research-integrity"
+    ],
+    "must_not": [
+      "retraction",
+      "nature",
+      "announcement",
+      "news"
+    ]
+  },
+  {
+    "id": "acronym-crispr",
+    "title": "CRISPR-Cas12a base editing in primary T cells",
+    "summary": "We achieve 78% base editing efficiency in primary human T cells using an engineered Cas12a variant, with no detectable off-target edits by GUIDE-seq.",
+    "content_type": "paper",
+    "should_include_any": [
+      "crispr",
+      "gene-editing",
+      "base-editing",
+      "immunology",
+      "t-cells"
+    ],
+    "must_not": [
+      "paper",
+      "arxiv"
+    ]
+  },
+  {
+    "id": "vocab-reuse",
+    "title": "Sparse attention patterns in long-context transformers",
+    "summary": "We analyse attention sparsity in models with 128k context windows and show that 90% of attention mass concentrates on 5% of positions.",
+    "content_type": "paper",
+    "should_include_any": [
+      "attention",
+      "transformers",
+      "long-context",
+      "sparsity"
+    ],
+    "must_not": [
+      "paper",
+      "arxiv"
+    ],
+    "vocab_should_reuse": [
+      "attention",
+      "transformers"
+    ]
+  },
+  {
+    "id": "empty-ok",
+    "title": "Weekly Newsletter #47",
+    "summary": "This week: three links, a job board update, and a reminder that the conference deadline is Friday.",
+    "content_type": "other",
+    "should_include_any": [],
+    "must_not": [
+      "newsletter",
+      "news",
+      "announcement",
+      "update",
+      "conference"
+    ]
+  }
+]
