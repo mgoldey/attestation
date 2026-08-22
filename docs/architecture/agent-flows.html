@@ -1,0 +1,367 @@
+<title>Attestation Agent Flows</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --ground: #FBFAF7;
+    --raised: #F4F2EC;
+    --ink: #1C1B18;
+    --ink-soft: #55534C;
+    --rule: #DAD6CB;
+    --machine: #3A6B8C;
+    --human: #A85C32;
+    --warn: #8A6D1F;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    --serif: "Newsreader", Georgia, "Times New Roman", serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #16161A;
+      --raised: #1E1E23;
+      --ink: #E8E5DE;
+      --ink-soft: #A6A29A;
+      --rule: #33333A;
+      --machine: #7FB2D4;
+      --human: #D9865A;
+      --warn: #C8A648;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #16161A;
+    --raised: #1E1E23;
+    --ink: #E8E5DE;
+    --ink-soft: #A6A29A;
+    --rule: #33333A;
+    --machine: #7FB2D4;
+    --human: #D9865A;
+    --warn: #C8A648;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16.5px;
+    line-height: 1.65;
+    margin: 0;
+    padding: 4rem 1.5rem 7rem;
+  }
+  .wrap { max-width: 74ch; margin: 0 auto; display: flex; flex-direction: column; gap: 2.4rem; }
+
+  header { display: flex; flex-direction: column; gap: .6rem; }
+  .eyebrow {
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--ink-soft);
+  }
+  h1 {
+    font-family: var(--serif); font-weight: 600; font-size: clamp(2.1rem, 5vw, 2.9rem);
+    line-height: 1.12; margin: 0; text-wrap: balance; letter-spacing: -0.015em;
+  }
+  .standfirst { font-size: 1.08rem; color: var(--ink-soft); margin: 0; max-width: 62ch; }
+
+  h2 {
+    font-family: var(--serif); font-weight: 600; font-size: 1.55rem;
+    margin: 1.6rem 0 0; text-wrap: balance; letter-spacing: -0.01em;
+    padding-top: 1.6rem; border-top: 1px solid var(--rule);
+  }
+  h3 { font-family: var(--sans); font-weight: 600; font-size: 1rem; margin: .5rem 0 -.6rem; }
+  p { margin: 0; max-width: 68ch; }
+  code {
+    font-family: var(--mono); font-size: .88em;
+    background: var(--raised); padding: .1em .35em; border-radius: 3px;
+  }
+  strong { font-weight: 600; }
+
+  figure {
+    margin: .6rem 0; padding: 1.4rem 1.2rem 1rem;
+    background: var(--raised); border: 1px solid var(--rule); border-radius: 4px;
+    overflow-x: auto;
+  }
+  figure svg { display: block; width: 100%; height: auto; min-width: 540px; }
+  figcaption {
+    font-size: .86rem; color: var(--ink-soft); margin-top: 1rem;
+    padding-top: .8rem; border-top: 1px solid var(--rule); max-width: 68ch;
+  }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 1.2rem; font-size: .8rem; color: var(--ink-soft); }
+  .legend span { display: inline-flex; align-items: center; gap: .45rem; }
+  .swatch { width: 22px; height: 0; border-top-width: 2px; border-top-style: solid; }
+  .swatch.machine { border-color: var(--machine); }
+  .swatch.human { border-color: var(--human); }
+  .swatch.dashed { border-color: var(--ink-soft); border-top-style: dashed; }
+
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); font-weight: 500; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .tablewrap { overflow-x: auto; }
+
+  .note {
+    border-left: 2px solid var(--warn); padding: .1rem 0 .1rem 1rem;
+    color: var(--ink-soft); font-size: .95rem; max-width: 66ch;
+  }
+  .note strong { color: var(--ink); }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">attestation · architecture</div>
+  <h1>Two Flows and a Starved Signal</h1>
+  <p class="standfirst">How a question from a researcher and a nightly cron tick move through
+  the same 37 tools — and why the loop that is supposed to close between them mostly doesn't.</p>
+</header>
+
+<div class="legend">
+  <span><span class="swatch machine"></span> machine-initiated</span>
+  <span><span class="swatch human"></span> human-initiated</span>
+  <span><span class="swatch dashed"></span> rarely traversed</span>
+</div>
+
+<h2>Flow 1 — A question from the researcher</h2>
+
+<p>The agent never touches SQLite. It picks a tool from one of four namespaces, and every tool
+call opens its own short-lived connection, answers, and closes. That per-call connection is why
+the process stays stateless between calls and honours <code>RSS_DB</code> the way the CLI does.</p>
+
+<figure>
+<svg viewBox="0 0 860 420" role="img" aria-label="A researcher's question passes through Hermes Agent to one of four MCP tool namespaces, each of which opens its own SQLite connection; the ranking path additionally calls Ollama for embeddings.">
+  <defs>
+    <marker id="a-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3A6B8C"/>
+    </marker>
+    <marker id="a-h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#A85C32"/>
+    </marker>
+  </defs>
+  <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+
+    <rect x="14" y="22" width="150" height="52" rx="3" fill="none" stroke="#A85C32" stroke-width="1.6"/>
+    <text x="89" y="43" text-anchor="middle" font-size="13" font-weight="600">Researcher</text>
+    <text x="89" y="61" text-anchor="middle" font-size="11" opacity=".72">"what's new on MoE?"</text>
+
+    <line x1="164" y1="48" x2="228" y2="48" stroke="#A85C32" stroke-width="1.6" marker-end="url(#a-h)"/>
+
+    <rect x="228" y="22" width="152" height="52" rx="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+    <text x="304" y="43" text-anchor="middle" font-size="13" font-weight="600">Hermes Agent</text>
+    <text x="304" y="61" text-anchor="middle" font-size="10.5" font-family="IBM Plex Mono, monospace" opacity=".72">picks a tool</text>
+
+    <line x1="304" y1="74" x2="304" y2="112" stroke="#3A6B8C" stroke-width="1.6" marker-end="url(#a-m)"/>
+    <text x="313" y="97" font-size="10.5" font-family="IBM Plex Mono, monospace" fill="#3A6B8C">MCP stdio</text>
+
+    <rect x="96" y="112" width="416" height="40" rx="3" fill="none" stroke="currentColor" stroke-width="1.3" opacity=".55"/>
+    <text x="304" y="137" text-anchor="middle" font-size="11.5" font-family="IBM Plex Mono, monospace">mcp/_tool.py @tool — connection · user lookup · envelope</text>
+
+    <g font-family="IBM Plex Mono, monospace" font-size="11">
+      <rect x="14" y="184" width="118" height="56" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.4"/>
+      <text x="73" y="205" text-anchor="middle" font-size="12" font-weight="500">feed · 19</text>
+      <text x="73" y="223" text-anchor="middle" font-size="10" opacity=".7">list · search · digest</text>
+
+      <rect x="146" y="184" width="118" height="56" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.4"/>
+      <text x="205" y="205" text-anchor="middle" font-size="12" font-weight="500">kg · 5</text>
+      <text x="205" y="223" text-anchor="middle" font-size="10" opacity=".7">neighbors · path</text>
+
+      <rect x="278" y="184" width="118" height="56" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.4"/>
+      <text x="337" y="205" text-anchor="middle" font-size="12" font-weight="500">runs · 6</text>
+      <text x="337" y="223" text-anchor="middle" font-size="10" opacity=".7">compare · claims</text>
+
+      <rect x="410" y="184" width="102" height="56" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.4"/>
+      <text x="461" y="205" text-anchor="middle" font-size="12" font-weight="500">sym · 7</text>
+      <text x="461" y="223" text-anchor="middle" font-size="10" opacity=".7">solve · verify</text>
+    </g>
+
+    <line x1="200" y1="152" x2="90" y2="180" stroke="#3A6B8C" stroke-width="1.2" marker-end="url(#a-m)"/>
+    <line x1="270" y1="152" x2="212" y2="180" stroke="#3A6B8C" stroke-width="1.2" marker-end="url(#a-m)"/>
+    <line x1="338" y1="152" x2="344" y2="180" stroke="#3A6B8C" stroke-width="1.2" marker-end="url(#a-m)"/>
+    <line x1="408" y1="152" x2="455" y2="180" stroke="#3A6B8C" stroke-width="1.2" marker-end="url(#a-m)"/>
+
+    <line x1="73" y1="240" x2="73" y2="300" stroke="#3A6B8C" stroke-width="1.4" marker-end="url(#a-m)"/>
+    <line x1="205" y1="240" x2="205" y2="300" stroke="#3A6B8C" stroke-width="1.4" marker-end="url(#a-m)"/>
+    <line x1="337" y1="240" x2="337" y2="300" stroke="#3A6B8C" stroke-width="1.4" marker-end="url(#a-m)"/>
+    <text x="214" y="272" font-size="10" font-family="IBM Plex Mono, monospace" opacity=".7">one conn per call</text>
+
+    <rect x="14" y="300" width="382" height="46" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <text x="205" y="322" text-anchor="middle" font-size="12.5" font-weight="600">hermes.db — SQLite + sqlite-vec</text>
+    <text x="205" y="338" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" opacity=".7">items · item_vectors · clicks · runs · corpora</text>
+
+    <rect x="596" y="184" width="150" height="56" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.4" stroke-dasharray="3 3"/>
+    <text x="671" y="205" text-anchor="middle" font-size="12" font-weight="500" font-family="IBM Plex Mono, monospace">Ollama</text>
+    <text x="671" y="223" text-anchor="middle" font-size="10" opacity=".7">embed · chat</text>
+
+    <line x1="132" y1="200" x2="592" y2="200" stroke="#3A6B8C" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#a-m)"/>
+    <text x="360" y="195" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" fill="#3A6B8C">embed_query() on search</text>
+
+    <line x1="671" y1="240" x2="671" y2="300" stroke="currentColor" stroke-width="1.1" stroke-dasharray="3 3"/>
+    <text x="680" y="272" font-size="10" opacity=".68">nothing leaves</text>
+    <text x="680" y="286" font-size="10" opacity=".68">the machine</text>
+
+    <line x1="512" y1="323" x2="596" y2="323" stroke="currentColor" stroke-width="1" opacity=".4"/>
+    <rect x="596" y="300" width="150" height="46" rx="3" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".55"/>
+    <text x="671" y="328" text-anchor="middle" font-size="11" opacity=".75">local disk only</text>
+
+    <line x1="410" y1="323" x2="512" y2="323" stroke="#A85C32" stroke-width="1.6" marker-end="url(#a-h)"/>
+    <text x="461" y="316" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" fill="#A85C32">answer</text>
+
+    <path d="M 512 323 L 800 323 L 800 48 L 384 48" fill="none" stroke="#A85C32" stroke-width="1.6" marker-end="url(#a-h)"/>
+  </g>
+</svg>
+<figcaption>A query fans out to one namespace of four. The <code>@tool</code> band is where the
+connection, the persona lookup and the response envelope are handled once, rather than
+thirty-seven times. Only the ranking and tagging paths reach Ollama, and nothing reaches past it.</figcaption>
+</figure>
+
+<h2>Flow 2 — The nightly refresh</h2>
+
+<p>Cron runs one script under <code>flock</code>. The two steps have deliberately different
+failure contracts, and that asymmetry is the whole design: <strong>ingest must succeed</strong>
+because it is deterministic and needs no model, while <strong>tagging is best-effort</strong>
+because a cold Ollama is a degraded run, not a broken one.</p>
+
+<figure>
+<svg viewBox="0 0 860 300" role="img" aria-label="Cron fires a refresh script guarded by flock; ingest is fatal on failure while tagging failure is logged and retried next run, so untagged items accumulate rather than aborting the pipeline.">
+  <defs>
+    <marker id="b-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3A6B8C"/>
+    </marker>
+    <marker id="b-w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8A6D1F"/>
+    </marker>
+  </defs>
+  <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+
+    <rect x="14" y="70" width="104" height="46" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.5"/>
+    <text x="66" y="90" text-anchor="middle" font-size="12.5" font-weight="600">cron</text>
+    <text x="66" y="106" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" opacity=".7">hourly</text>
+
+    <line x1="118" y1="93" x2="168" y2="93" stroke="#3A6B8C" stroke-width="1.5" marker-end="url(#b-m)"/>
+
+    <rect x="168" y="62" width="126" height="62" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.5"/>
+    <text x="231" y="84" text-anchor="middle" font-size="12" font-weight="600" font-family="IBM Plex Mono, monospace">flock -n</text>
+    <text x="231" y="101" text-anchor="middle" font-size="10" opacity=".72">one run at a time</text>
+    <text x="231" y="115" text-anchor="middle" font-size="10" opacity=".72">busy → skip tick</text>
+
+    <path d="M 231 124 L 231 156 L 128 156" fill="none" stroke="currentColor" stroke-width="1.1" stroke-dasharray="3 3"/>
+    <text x="126" y="160" text-anchor="end" font-size="10" opacity=".68">exit 0, logged</text>
+
+    <line x1="294" y1="93" x2="344" y2="93" stroke="#3A6B8C" stroke-width="1.5" marker-end="url(#b-m)"/>
+
+    <rect x="344" y="62" width="146" height="62" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.7"/>
+    <text x="417" y="84" text-anchor="middle" font-size="12.5" font-weight="600" font-family="IBM Plex Mono, monospace">attest ingest</text>
+    <text x="417" y="101" text-anchor="middle" font-size="10" opacity=".72">fetch · dedup · embed</text>
+    <text x="417" y="115" text-anchor="middle" font-size="10" font-weight="600" fill="#3A6B8C">must succeed</text>
+
+    <path d="M 417 124 L 417 176" fill="none" stroke="#8A6D1F" stroke-width="1.4" marker-end="url(#b-w)"/>
+    <text x="426" y="152" font-size="10" fill="#8A6D1F">fails → exit nonzero, no tag</text>
+
+    <line x1="490" y1="93" x2="540" y2="93" stroke="#3A6B8C" stroke-width="1.5" marker-end="url(#b-m)"/>
+
+    <rect x="540" y="62" width="146" height="62" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <text x="613" y="84" text-anchor="middle" font-size="12.5" font-weight="600" font-family="IBM Plex Mono, monospace">attest tag</text>
+    <text x="613" y="101" text-anchor="middle" font-size="10" opacity=".72">LLM tags → item_tags</text>
+    <text x="613" y="115" text-anchor="middle" font-size="10" font-weight="600" fill="#8A6D1F">best-effort</text>
+
+    <path d="M 613 124 L 613 176" fill="none" stroke="#8A6D1F" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#b-w)"/>
+    <text x="622" y="152" font-size="10" fill="#8A6D1F">fails → logged, retried next run</text>
+
+    <rect x="344" y="196" width="342" height="44" rx="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <text x="515" y="216" text-anchor="middle" font-size="12" font-weight="600">hermes.db</text>
+    <text x="515" y="232" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" opacity=".7">items + item_vectors always · item_tags eventually</text>
+
+    <line x1="740" y1="93" x2="740" y2="196" stroke="currentColor" stroke-width="1.1" opacity=".45"/>
+    <text x="750" y="130" font-size="10.5" opacity=".7">the graph is</text>
+    <text x="750" y="145" font-size="10.5" opacity=".7">derived fresh</text>
+    <text x="750" y="160" font-size="10.5" opacity=".7">from item_tags</text>
+    <text x="750" y="175" font-size="10.5" opacity=".7">on every read</text>
+  </g>
+</svg>
+<figcaption>Four observed failures are encoded in this script: a bare <code>PATH</code> that hid
+<code>uv</code>, stacked runs racing one SQLite file, both steps silenced to
+<code>/dev/null</code>, and a <code>set -e</code> that made a cold model fatal. Tagging failing
+leaves items untagged, never unsaved.</figcaption>
+</figure>
+
+<h2>The loop that doesn't close</h2>
+
+<p>Both flows write to the same database, and ranking is supposed to improve as feedback
+accumulates. It hasn't, and the reason is countable rather than architectural.</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Channel</th><th>Source</th><th class="num">Rows</th><th>Why it's rare</th></tr></thead>
+  <tbody>
+    <tr><td>Web buttons</td><td><code>ui</code></td><td class="num">68</td><td>Requires opening a local page and clicking</td></tr>
+    <tr><td>Agent-recorded</td><td><code>agent</code></td><td class="num">2</td><td>Agent must choose to call it, unprompted</td></tr>
+    <tr><td>Asked "why?"</td><td><code>implicit</code></td><td class="num">99</td><td>Already logged — and until now, uncounted</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Seventy stated opinions across 5,162 items, every one of them positive. The click classifier
+needs both classes to fire at all, so it has never fired for a real account: ranking falls back
+to embedding similarity, permanently, no matter how many items get approved.</p>
+
+<figure>
+<svg viewBox="0 0 860 268" role="img" aria-label="Three feedback channels feed the clicks table: explicit clicks are rare and all positive, harvested engagement adds weak positives, and simulated reactions supply the negatives that let the classifier train.">
+  <defs>
+    <marker id="c-h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#A85C32"/>
+    </marker>
+    <marker id="c-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3A6B8C"/>
+    </marker>
+  </defs>
+  <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+
+    <rect x="14" y="20" width="196" height="52" rx="3" fill="none" stroke="#A85C32" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <text x="112" y="41" text-anchor="middle" font-size="12" font-weight="600">stated opinion</text>
+    <text x="112" y="58" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" opacity=".72">ui + agent · 70 rows · all +</text>
+
+    <rect x="14" y="96" width="196" height="52" rx="3" fill="none" stroke="#A85C32" stroke-width="1.6"/>
+    <text x="112" y="117" text-anchor="middle" font-size="12" font-weight="600">asked "why is this here?"</text>
+    <text x="112" y="134" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" opacity=".72">implicit · weak + only</text>
+
+    <rect x="14" y="172" width="196" height="52" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.6"/>
+    <text x="112" y="193" text-anchor="middle" font-size="12" font-weight="600">simulated reader</text>
+    <text x="112" y="210" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" opacity=".72">simulated · + and −</text>
+
+    <line x1="210" y1="46" x2="330" y2="80" stroke="#A85C32" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#c-h)"/>
+    <line x1="210" y1="122" x2="330" y2="112" stroke="#A85C32" stroke-width="1.5" marker-end="url(#c-h)"/>
+    <line x1="210" y1="198" x2="330" y2="142" stroke="#3A6B8C" stroke-width="1.5" marker-end="url(#c-m)"/>
+
+    <rect x="330" y="82" width="166" height="72" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="413" y="106" text-anchor="middle" font-size="12.5" font-weight="600" font-family="IBM Plex Mono, monospace">clicks</text>
+    <text x="413" y="124" text-anchor="middle" font-size="10" opacity=".75">source kept forever</text>
+    <text x="413" y="140" text-anchor="middle" font-size="10" opacity=".75">so rows stay separable</text>
+
+    <line x1="496" y1="118" x2="576" y2="118" stroke="#3A6B8C" stroke-width="1.5" marker-end="url(#c-m)"/>
+
+    <rect x="576" y="82" width="176" height="72" rx="3" fill="none" stroke="#3A6B8C" stroke-width="1.6"/>
+    <text x="664" y="106" text-anchor="middle" font-size="12.5" font-weight="600">click classifier</text>
+    <text x="664" y="124" text-anchor="middle" font-size="10" opacity=".75">needs BOTH classes</text>
+    <text x="664" y="141" text-anchor="middle" font-size="10" font-weight="600" fill="#8A6D1F">silent without a −</text>
+
+    <path d="M 664 154 L 664 200 L 413 200 L 413 158" fill="none" stroke="#3A6B8C" stroke-width="1.3" marker-end="url(#c-m)"/>
+    <text x="540" y="216" text-anchor="middle" font-size="10.5" font-family="IBM Plex Mono, monospace" fill="#3A6B8C">re-ranks the next list_feed</text>
+
+    <text x="790" y="112" text-anchor="middle" font-size="10.5" opacity=".7">bootstrap</text>
+    <text x="790" y="127" text-anchor="middle" font-size="10.5" opacity=".7">rows excluded:</text>
+    <text x="790" y="142" text-anchor="middle" font-size="10.5" opacity=".7">tautological</text>
+  </g>
+</svg>
+<figcaption>Only the simulated channel supplies negatives. Nothing infers rejection from silence —
+an unopened item could be boring, untimely, or already known, and guessing would poison the one
+class the ranker is starving for.</figcaption>
+</figure>
+
+<p class="note"><strong>Provenance is the load-bearing part.</strong> Every row keeps its
+<code>source</code> forever, because provenance decides what a row may be used for.
+<code>bootstrap</code> labels are a linear threshold on the same embedding the classifier trains
+on, so evaluating against them is a tautology and <code>evaluate_user</code> excludes them.
+<code>simulated</code> rows come from a model reading text, independent of the vector — trainable,
+but still not a person's judgement.</p>
+
+</div>
