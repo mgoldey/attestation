@@ -282,3 +282,34 @@ def test_real_embeddings_rank_the_right_domain_first(real_db):
         assert any(w in titles[0].lower() for w in wanted), (
             f"{query!r} ranked {titles[0]!r} first; expected one of {wanted}"
         )
+
+
+def test_a_negative_best_similarity_returns_nothing():
+    """ "The best match points away from the query" is not a result.
+
+    Note what this test does NOT prove. It passes with the `best <= 0` guard
+    removed, because the relative floor filters these out anyway -- a fraction
+    of a negative number is closer to zero, so the bound tightens rather than
+    loosening. I wrote the guard believing the opposite and only found out by
+    removing it and watching the test still pass.
+
+    It is kept because the guard states an intent the arithmetic only happens
+    to satisfy, and because the assertion is right either way: a query whose
+    nearest neighbour is anti-correlated should return nothing.
+    """
+    from attestation.mcp import feed as f
+
+    class FakeCursor(list):
+        def fetchall(self):
+            return list(self)
+
+    class FakeConn:
+        def execute(self, sql, params):
+            # distance > sqrt(2) => cosine = 1 - d^2/2 < 0
+            return FakeCursor([{"rowid": 1, "distance": 1.9}, {"rowid": 2, "distance": 1.95}])
+
+    class E:
+        def embed_query(self, text):
+            return np.zeros(4, dtype=np.float32)
+
+    assert f._semantic_hits(FakeConn(), E(), "q", k=5) == {}
