@@ -169,7 +169,7 @@ def test_digest_is_served():
     import asyncio
 
     names = {t.name for t in asyncio.run(mcp_server.mcp.list_tools())}
-    assert "digest" in names
+    assert "feed.digest" in names
 
 
 def test_days_reaches_the_ranker(db, monkeypatch):

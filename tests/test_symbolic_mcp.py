@@ -58,12 +58,12 @@ def test_all_seven_tools_are_served():
 
     names = {t.name for t in asyncio.run(mcp_server.mcp.list_tools())}
     expected = {
-        "sym_simplify",
-        "sym_solve",
-        "sym_differentiate",
-        "sym_integrate",
-        "sym_derivation",
-        "sym_verify",
-        "sym_evaluate",
+        "sym.simplify",
+        "sym.solve",
+        "sym.differentiate",
+        "sym.integrate",
+        "sym.derivation",
+        "sym.verify",
+        "sym.evaluate",
     }
     assert expected <= names

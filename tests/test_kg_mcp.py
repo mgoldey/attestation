@@ -127,8 +127,8 @@ def test_the_five_kg_tools_are_served(tmp_path, monkeypatch):
     brings it back to 36."""
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
     names = {t.name for t in asyncio.run(mcp_server.mcp.list_tools())}
-    assert {"kg_neighbors", "kg_path", "kg_central", "kg_communities", "kg_concepts"} <= names
-    assert "kg_rebuild" not in names
+    assert {"kg.neighbors", "kg.path", "kg.central", "kg.communities", "kg.concepts"} <= names
+    assert "kg.rebuild" not in names
 
 
 def test_kg_path_unknown_target_is_not_reported_as_no_path(tmp_path, monkeypatch):

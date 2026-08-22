@@ -99,8 +99,8 @@ Click ✓/✗ on items; the feed retrains and re-ranks on every click. Switch us
 in the nav to see the same feed ranked per-identity.
 
 `feeds.toml` seeds the feed list when the database is first created. After
-that the **database is the source of truth**: use the `add_feed` /
-`remove_feed` MCP tools (or edit the database directly) to change which feeds
+that the **database is the source of truth**: use the `feed.source_add` /
+`feed.source_remove` MCP tools (or edit the database directly) to change which feeds
 are tracked, then run `uv run attest ingest` to fetch from any newly added
 feed. Editing `feeds.toml` after the first ingest has no effect.
 
@@ -216,41 +216,41 @@ The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 37 tools
 
 | Tool | What it does | Speed |
 |---|---|---|
-| `list_users()` | List reader personas + interest profiles | instant |
-| `list_feed(user, limit)` | Ranked unread items, best first (capped at 50) | fast |
-| `search_feed(user, query, tag, content_type, limit)` | Search the whole archive, ranked for this user; includes already-rated items | fast |
-| `record_feedback(user, item_id, useful)` | Record a ✓/✗ click; retrains ranking | fast |
-| `explain_item(user, item_id)` | One-sentence "why did this rank here" | **slow** first call (local LLM), cached after |
-| `create_persona(name, interests)` | Create a reader persona | instant |
-| `update_persona(name, interests)` | Replace a persona's interests text | instant |
-| `propose_interests(limit)` | Most common tags, to help write an interests string | instant |
-| `profile_status(user)` | Click count, behavior-vs-text blend weight, top liked/disliked tags | instant |
-| `delete_persona(name, confirm)` | Delete a persona and its feedback (needs `confirm=true`) | instant |
-| `reset_feedback(name, confirm)` | Clear a persona's clicks, keep the persona (needs `confirm=true`) | instant |
-| `add_feed(url, title)` | Subscribe to a feed (register-only; items arrive at the next ingest) | fast |
-| `list_feeds()` | Subscribed feeds with item counts and last-fetched times | instant |
-| `preview_feed(url, limit)` | Show a feed's recent entries without subscribing | fast |
-| `remove_feed(feed_id, confirm)` | Unsubscribe; keeps existing items and feedback (needs `confirm=true`) | instant |
-| `suggest_feeds(user, limit)` | Suggest feeds from a curated list, scored against liked tags | instant |
-| `sym_simplify(expr, timeout)` | Simplify an expression to canonical form | fast |
-| `sym_solve(expr, symbol, timeout)` | Solve expr = 0 for a symbol | fast |
-| `sym_differentiate(expr, symbol, order, timeout)` | Differentiate | fast |
-| `sym_integrate(expr, symbol, bounds, timeout)` | Integrate, indefinitely or over bounds | fast |
-| `sym_derivation(expr, operation, symbol, timeout)` | Step-by-step trace (genuine only for integrals) | fast |
-| `sym_verify(lhs, rhs, timeout)` | Test symbolic equality; "unproven" is NOT a disproof | fast |
-| `sym_evaluate(expr, subs, units, timeout)` | Numeric value, substitutions, unit conversion | fast |
-| `kg_neighbors(node, limit)` | Concepts directly adjacent to this one in your reading graph | instant |
-| `kg_path(source, target)` | Shortest chain of concepts linking two topics | instant |
-| `kg_central(metric, limit)` | Most-connected or most-bridging concepts | instant |
-| `kg_communities(min_size)` | Topic clusters, each labelled by its hub concept | instant |
-| `kg_concepts(prefix, limit)` | List the concept names the other `kg_*` tools accept | instant |
-| `runs_scan(root, project, confirm)` | Read experiment runs from artifacts on disk into the ledger | fast |
-| `runs_list(project, family, limit)` | Recorded runs, and the families they group into | instant |
-| `runs_compare(family, metric)` | Rank the arms of a sweep, with provenance and caveats | instant |
-| `runs_detail(project, name)` | One run: config, every metric, source path, hypothesis header | instant |
-| `claims_check(path, verdict)` | Verify Markdown claims against recorded runs | instant |
-| `claims_coverage(path)` | Numbers asserted in prose that no claim covers | instant |
-| `digest(user, days, per_topic, limit)` | Ranked unread feed grouped by topic, with a ranking-quality caveat | fast |
+| `feed.personas()` | List reader personas + interest profiles | instant |
+| `feed.list(user, limit)` | Ranked unread items, best first (capped at 50) | fast |
+| `feed.search(user, query, tag, content_type, limit)` | Search the whole archive, ranked for this user; includes already-rated items | fast |
+| `feed.rate(user, item_id, useful)` | Record a ✓/✗ click; retrains ranking | fast |
+| `feed.explain(user, item_id)` | One-sentence "why did this rank here" | **slow** first call (local LLM), cached after |
+| `feed.persona_create(name, interests)` | Create a reader persona | instant |
+| `feed.persona_update(name, interests)` | Replace a persona's interests text | instant |
+| `feed.persona_suggest_interests(limit)` | Most common tags, to help write an interests string | instant |
+| `feed.persona_status(user)` | Click count, behavior-vs-text blend weight, top liked/disliked tags | instant |
+| `feed.persona_delete(name, confirm)` | Delete a persona and its feedback (needs `confirm=true`) | instant |
+| `feed.persona_reset(name, confirm)` | Clear a persona's clicks, keep the persona (needs `confirm=true`) | instant |
+| `feed.source_add(url, title)` | Subscribe to a feed (register-only; items arrive at the next ingest) | fast |
+| `feed.sources()` | Subscribed feeds with item counts and last-fetched times | instant |
+| `feed.source_preview(url, limit)` | Show a feed's recent entries without subscribing | fast |
+| `feed.source_remove(feed_id, confirm)` | Unsubscribe; keeps existing items and feedback (needs `confirm=true`) | instant |
+| `feed.source_suggest(user, limit)` | Suggest feeds from a curated list, scored against liked tags | instant |
+| `sym.simplify(expr, timeout)` | Simplify an expression to canonical form | fast |
+| `sym.solve(expr, symbol, timeout)` | Solve expr = 0 for a symbol | fast |
+| `sym.differentiate(expr, symbol, order, timeout)` | Differentiate | fast |
+| `sym.integrate(expr, symbol, bounds, timeout)` | Integrate, indefinitely or over bounds | fast |
+| `sym.derivation(expr, operation, symbol, timeout)` | Step-by-step trace (genuine only for integrals) | fast |
+| `sym.verify(lhs, rhs, timeout)` | Test symbolic equality; "unproven" is NOT a disproof | fast |
+| `sym.evaluate(expr, subs, units, timeout)` | Numeric value, substitutions, unit conversion | fast |
+| `kg.neighbors(node, limit)` | Concepts directly adjacent to this one in your reading graph | instant |
+| `kg.path(source, target)` | Shortest chain of concepts linking two topics | instant |
+| `kg.central(metric, limit)` | Most-connected or most-bridging concepts | instant |
+| `kg.communities(min_size)` | Topic clusters, each labelled by its hub concept | instant |
+| `kg.concepts(prefix, limit)` | List the concept names the other `kg_*` tools accept | instant |
+| `runs.scan(root, project, confirm)` | Read experiment runs from artifacts on disk into the ledger | fast |
+| `runs.list(project, family, limit)` | Recorded runs, and the families they group into | instant |
+| `runs.compare(family, metric)` | Rank the arms of a sweep, with provenance and caveats | instant |
+| `runs.detail(project, name)` | One run: config, every metric, source path, hypothesis header | instant |
+| `runs.claims_check(path, verdict)` | Verify Markdown claims against recorded runs | instant |
+| `runs.claims_coverage(path)` | Numbers asserted in prose that no claim covers | instant |
+| `feed.digest(user, days, per_topic, limit)` | Ranked unread feed grouped by topic, with a ranking-quality caveat | fast |
 
 The knowledge graph is derived from the tagging pass, not from separate
 content: concepts are tags used at least twice, and two concepts are linked
@@ -281,7 +281,7 @@ may be used for:
 | source | what it is |
 |---|---|
 | `ui` | you pressed a button on the web page |
-| `agent` | an MCP `record_feedback` call, usually the agent reading your reply |
+| `agent` | an MCP `feed.rate` call, usually the agent reading your reply |
 | `implicit` | you asked why an item ranked; engagement, counted as a weak positive |
 | `simulated` | a local model reacting to the text as the persona would |
 | `bootstrap` | synthetic persona seeding |
@@ -289,7 +289,7 @@ may be used for:
 `bootstrap` labels are a linear threshold on the same embedding the ranker's
 classifier consumes, so scoring against them is a tautology and
 `evaluate_user` excludes them. The other four are trainable, and
-`profile_status` breaks the counts down by source so you can see how much of a
+`feed.persona_status` breaks the counts down by source so you can see how much of a
 persona's history is yours.
 
 Explicit feedback is scarce by nature — this project's own database held 68
@@ -424,9 +424,9 @@ hermes            # start a hermes-agent chat session
 
 Then try, in chat:
 
-- *"What's in my science feed?"* → agent calls `list_feed`
-- *"Mark the second one useful"* → `record_feedback`
-- *"Why did that first paper rank so high?"* → `explain_item` (slow first call)
+- *"What's in my science feed?"* → agent calls `feed.list`
+- *"Mark the second one useful"* → `feed.rate`
+- *"Why did that first paper rank so high?"* → `feed.explain` (slow first call)
 
 The web UI can run at the same time (`uv run attest serve`) — clicks from
 either side land in the same database. Concurrent use is safe: writers keep

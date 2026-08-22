@@ -21,7 +21,7 @@ from attestation.rank import forget_profile_vector, record_click
 def register(mcp) -> None:
     """Attach every feed.* tool to the server."""
 
-    @mcp.tool()
+    @mcp.tool(name="feed.list")
     def list_feed(user: str, limit: int = 10, since_days: int | None = 14) -> dict:
         """List this user's currently ranked, unread feed items (best first).
 
@@ -47,7 +47,7 @@ def register(mcp) -> None:
         """
         return _list_feed(user, limit, since_days)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.rate")
     def record_feedback(user: str, item_id: int, useful: bool) -> dict:
         """Record whether a feed item was useful for this user, retraining their ranking.
 
@@ -58,7 +58,7 @@ def register(mcp) -> None:
         """
         return _record_feedback(user, item_id, useful)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.explain")
     def explain_item(user: str, item_id: int) -> dict:
         """Explain in one sentence why a specific feed item was ranked for this user.
 
@@ -70,7 +70,7 @@ def register(mcp) -> None:
         """
         return _explain_item(user, item_id)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.personas")
     def list_users() -> dict:
         """List all available reader personas (users) and their interest profiles.
 
@@ -79,7 +79,7 @@ def register(mcp) -> None:
         """
         return _list_users()
 
-    @mcp.tool()
+    @mcp.tool(name="feed.source_add")
     def add_feed(url: str, title: str | None = None) -> dict:
         """Subscribe to an RSS/Atom feed.
 
@@ -89,12 +89,12 @@ def register(mcp) -> None:
         """
         return _add_feed(url, title)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.sources")
     def list_feeds() -> dict:
         """List subscribed feeds with item counts and when each was last fetched."""
         return _list_feeds()
 
-    @mcp.tool()
+    @mcp.tool(name="feed.source_remove")
     def remove_feed(feed_id: int, confirm: bool = False) -> dict:
         """Unsubscribe from a feed. Requires confirm=true.
 
@@ -103,17 +103,17 @@ def register(mcp) -> None:
         """
         return _remove_feed(feed_id, confirm)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.source_preview")
     def preview_feed(url: str, limit: int = 5) -> dict:
         """Show recent entries from a feed WITHOUT subscribing to it."""
         return _preview_feed(url, limit)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.source_suggest")
     def suggest_feeds(user: str, limit: int = 5) -> dict:
         """Suggest feeds from a curated list, scored against tags this user liked."""
         return _suggest_feeds(user, limit)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.persona_create")
     def create_persona(name: str, interests: str) -> dict:
         """Create a reader persona from a name and an interests description.
 
@@ -123,23 +123,23 @@ def register(mcp) -> None:
         """
         return _create_persona(name, interests)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.persona_update")
     def update_persona(name: str, interests: str) -> dict:
         """Replace a persona's interests text; re-steers ranking immediately."""
         return _update_persona(name, interests)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.persona_suggest_interests")
     def propose_interests(limit: int = 12) -> dict:
         """List the most common tags in the feed, to help write an interests string."""
         return _propose_interests(limit)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.persona_status")
     def profile_status(user: str) -> dict:
         """Show how well-trained a persona is: click count, how much ranking is
         driven by behavior vs the written interests, and top liked/disliked tags."""
         return _profile_status(user)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.search")
     def search_feed(
         user: str,
         query: str,
@@ -160,17 +160,17 @@ def register(mcp) -> None:
         """
         return _search_feed(user, query, tag, content_type, limit)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.persona_delete")
     def delete_persona(name: str, confirm: bool = False) -> dict:
         """Delete a persona AND all its feedback. Requires confirm=true. Irreversible."""
         return _delete_persona(name, confirm)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.persona_reset")
     def reset_feedback(name: str, confirm: bool = False) -> dict:
         """Erase a persona's clicks but keep the persona. Requires confirm=true."""
         return _reset_feedback(name, confirm)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.harvest_engagement")
     def harvest_engagement(user: str) -> dict:
         """Turn this user's past "why is this here?" questions into weak positive feedback.
 
@@ -193,7 +193,7 @@ def register(mcp) -> None:
         """
         return _harvest_engagement(user)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.simulate_ratings")
     def simulate_feedback(user: str, limit: int = 10, confirm: bool = False) -> dict:
         """Generate simulated reader reactions for a persona, to train its ranking.
 
@@ -217,7 +217,7 @@ def register(mcp) -> None:
         """
         return _simulate_feedback(user, limit, confirm)
 
-    @mcp.tool()
+    @mcp.tool(name="feed.digest")
     def digest(user: str, days: int = 7, per_topic: int = 3, limit: int = 30) -> dict:
         """This user's unread feed, ranked and grouped by topic — the weekly review.
 

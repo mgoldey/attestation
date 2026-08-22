@@ -18,7 +18,7 @@ from attestation.mcp._tool import ToolError, tool
 def register(mcp) -> None:
     """Attach every kg.* tool to the server."""
 
-    @mcp.tool()
+    @mcp.tool(name="kg.neighbors")
     def kg_neighbors(node: str, limit: int = 20) -> dict:
         """Concepts directly adjacent to a given concept in the reading graph.
 
@@ -33,7 +33,7 @@ def register(mcp) -> None:
         """
         return _neighbors(node, limit)
 
-    @mcp.tool()
+    @mcp.tool(name="kg.path")
     def kg_path(source: str, target: str) -> dict:
         """Shortest chain of concepts connecting two topics in the reading graph.
 
@@ -46,14 +46,14 @@ def register(mcp) -> None:
         """
         return _path(source, target)
 
-    @mcp.tool()
+    @mcp.tool(name="kg.central")
     def kg_central(metric: str = "degree", limit: int = 10) -> dict:
         """Most important concepts. metric="degree" for most-connected,
         "betweenness" for the bridges between otherwise separate clusters.
         """
         return _central(metric, limit)
 
-    @mcp.tool()
+    @mcp.tool(name="kg.communities")
     def kg_communities(min_size: int = 3) -> dict:
         """Topic clusters in the reading graph, each labelled by its most
         connected member. Useful for seeing what the reading actually splits into.
@@ -71,7 +71,7 @@ def register(mcp) -> None:
         """
         return _communities(min_size)
 
-    @mcp.tool()
+    @mcp.tool(name="kg.concepts")
     def kg_concepts(prefix: str | None = None, limit: int = 50) -> dict:
         """Concept names in the reading graph -- the vocabulary the other kg
         tools accept.

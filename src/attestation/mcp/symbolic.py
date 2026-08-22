@@ -36,7 +36,7 @@ def _call(op_name: str, payload: dict, timeout: int) -> dict:
 def register(mcp) -> None:
     """Attach every sym.* tool to the server."""
 
-    @mcp.tool()
+    @mcp.tool(name="sym.simplify")
     def sym_simplify(expr: str, timeout: int = 10) -> dict:
         """Simplify a mathematical expression to canonical form.
 
@@ -46,7 +46,7 @@ def register(mcp) -> None:
         """
         return _sym_simplify(expr, timeout)
 
-    @mcp.tool()
+    @mcp.tool(name="sym.solve")
     def sym_solve(expr: str, symbol: str | None = None, timeout: int = 10) -> dict:
         """Solve expr = 0 for a symbol. Example: "x**2 - 4" -> [-2, 2].
 
@@ -57,14 +57,14 @@ def register(mcp) -> None:
         """
         return _sym_solve(expr, symbol, timeout)
 
-    @mcp.tool()
+    @mcp.tool(name="sym.differentiate")
     def sym_differentiate(
         expr: str, symbol: str | None = None, order: int = 1, timeout: int = 10
     ) -> dict:
         """Differentiate an expression. Example: "x**3" -> "3*x**2"."""
         return _sym_differentiate(expr, symbol, order, timeout)
 
-    @mcp.tool()
+    @mcp.tool(name="sym.integrate")
     def sym_integrate(
         expr: str, symbol: str | None = None, bounds: list | None = None, timeout: int = 10
     ) -> dict:
@@ -75,7 +75,7 @@ def register(mcp) -> None:
         """
         return _sym_integrate(expr, symbol, bounds, timeout)
 
-    @mcp.tool()
+    @mcp.tool(name="sym.derivation")
     def sym_derivation(
         expr: str, operation: str = "integrate", symbol: str | None = None, timeout: int = 10
     ) -> dict:
@@ -88,7 +88,7 @@ def register(mcp) -> None:
         """
         return _sym_derivation(expr, operation, symbol, timeout)
 
-    @mcp.tool()
+    @mcp.tool(name="sym.verify")
     def sym_verify(lhs: str, rhs: str, timeout: int = 10) -> dict:
         """Check whether two expressions are mathematically equal.
 
@@ -99,7 +99,7 @@ def register(mcp) -> None:
         """
         return _sym_verify(lhs, rhs, timeout)
 
-    @mcp.tool()
+    @mcp.tool(name="sym.evaluate")
     def sym_evaluate(
         expr: str, subs: dict | None = None, units: str | None = None, timeout: int = 10
     ) -> dict:

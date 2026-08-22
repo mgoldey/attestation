@@ -125,7 +125,7 @@ def test_detail_for_a_missing_run_preserves_success_keys(workspace):
 def test_all_four_tools_are_served():
     names = {t.name for t in mcp_server.mcp._tool_manager.list_tools()}
 
-    assert {"runs_scan", "runs_list", "runs_compare", "runs_detail"} <= names
+    assert {"runs.scan", "runs.list", "runs.compare", "runs.detail"} <= names
 
 
 def test_claims_check_reports_each_verdict(workspace, tmp_path):

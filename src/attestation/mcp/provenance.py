@@ -25,7 +25,7 @@ NO_ROOT = (
 def register(mcp) -> None:
     """Attach every runs.* tool to the server."""
 
-    @mcp.tool()
+    @mcp.tool(name="runs.scan")
     def runs_scan(
         root: str | None = None, project: str | None = None, confirm: bool = False
     ) -> dict:
@@ -44,7 +44,7 @@ def register(mcp) -> None:
         """
         return _scan(root, project, confirm)
 
-    @mcp.tool()
+    @mcp.tool(name="runs.list")
     def runs_list(project: str | None = None, family: str | None = None, limit: int = 20) -> dict:
         """Experiment runs in the ledger, with the families they group into.
 
@@ -55,7 +55,7 @@ def register(mcp) -> None:
         """
         return _list(project, family, limit)
 
-    @mcp.tool()
+    @mcp.tool(name="runs.compare")
     def runs_compare(family: str, metric: str | None = None) -> dict:
         """Rank the arms of an experiment family by a metric.
 
@@ -71,7 +71,7 @@ def register(mcp) -> None:
         """
         return _compare(family, metric)
 
-    @mcp.tool()
+    @mcp.tool(name="runs.detail")
     def runs_detail(project: str, name: str) -> dict:
         """One run in full: config shape, every metric, source path, and the
         header comment from its config if it had one.
@@ -82,7 +82,7 @@ def register(mcp) -> None:
         """
         return _detail(project, name)
 
-    @mcp.tool()
+    @mcp.tool(name="runs.claims_coverage")
     def claims_coverage(path: str | None = None) -> dict:
         """Numbers asserted in Markdown that no claim annotation covers.
 
@@ -99,7 +99,7 @@ def register(mcp) -> None:
         """
         return _coverage(path)
 
-    @mcp.tool()
+    @mcp.tool(name="runs.claims_check")
     def claims_check(path: str | None = None, verdict: str | None = None) -> dict:
         """Verify numeric claims written in Markdown against runs in the ledger.
 

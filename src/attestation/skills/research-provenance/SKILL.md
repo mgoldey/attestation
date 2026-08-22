@@ -166,31 +166,31 @@ When running alongside hermes-agent, the rest of the toolset is exposed as
 native MCP tools (`src/attestation/mcp/`), not HTTP — call these
 directly rather than reaching for `curl`.
 
-**Personas** — `create_persona(name, interests)` makes a new reader profile
-from a freeform interests string; `update_persona(name, interests)` replaces
-that text and re-steers ranking immediately; `propose_interests(limit)`
+**Personas** — `feed.persona_create(name, interests)` makes a new reader profile
+from a freeform interests string; `feed.persona_update(name, interests)` replaces
+that text and re-steers ranking immediately; `feed.persona_suggest_interests(limit)`
 returns the most common tags currently in the feed, useful for drafting an
-interests string before creating or updating a persona; `profile_status(user)`
+interests string before creating or updating a persona; `feed.persona_status(user)`
 reports click count, how much of the ranking is behavior-driven vs.
 text-driven, and top liked/disliked tags — good for "how well-trained is
 this persona?" questions.
 
-**Search** — `search_feed(user, query, tag, content_type, limit)` searches
+**Search** — `feed.search(user, query, tag, content_type, limit)` searches
 the *whole* archive (not just unread items) for a keyword, optionally
 filtered by tag or content type, and flags items already rated. Use this
 instead of the `/list` HTTP endpoint when the user wants to find something
 specific rather than browse what's new.
 
-**Digest** — `digest(user, days, per_topic, limit)` is the weekly-review tool:
+**Digest** — `feed.digest(user, days, per_topic, limit)` is the weekly-review tool:
 it returns the ranked unread feed already grouped by topic, so "what's worth
 reading this week, and why?" is one call rather than manual assembly from
-`list_feed` + `kg_communities` + `explain_item`. Each item joins the cluster
+`feed.list` + `kg.communities` + `feed.explain`. Each item joins the cluster
 its tags overlap most (ties break on label, so repeated calls agree); items
 matching no cluster come back in `unclustered` rather than being dropped, and
 that bucket being large is a real signal, not a bug. `per_topic` caps the items
 shown per group while `n_total` reports how many the group actually had —
 truncation is visible. It returns structure and never prose: no LLM runs
-inside it, and a per-item `explanation` appears only when `explain_item`
+inside it, and a per-item `explanation` appears only when `feed.explain`
 already cached one, so ask for explanations separately if they're missing.
 **Read `ranking_quality` before trusting the order** — it reports whether the
 click classifier is actually active, and with a single-class click history it
@@ -198,40 +198,40 @@ never fires, leaving the order as embedding similarity alone. `days` bounds
 how far back the feed reaches (default 7, echoed back as `window_days`), so
 widen it when a quiet week returns little.
 
-**Feed management** — `list_feeds()` shows subscribed feeds with item counts
-and last-fetch times; `preview_feed(url, limit)` shows a candidate feed's
-recent entries without subscribing (use before `add_feed`); `suggest_feeds(user, limit)`
+**Feed management** — `feed.sources()` shows subscribed feeds with item counts
+and last-fetch times; `feed.source_preview(url, limit)` shows a candidate feed's
+recent entries without subscribing (use before `feed.source_add`); `feed.source_suggest(user, limit)`
 recommends feeds from a curated candidate list, scored against tags the user
 has marked useful.
 
-**Destructive actions require `confirm=true`**: `delete_persona(name, confirm)`
-(irreversibly removes a persona and its feedback), `reset_feedback(name, confirm)`
-(clears a persona's clicks but keeps the persona), and `remove_feed(feed_id, confirm)`
+**Destructive actions require `confirm=true`**: `feed.persona_delete(name, confirm)`
+(irreversibly removes a persona and its feedback), `feed.persona_reset(name, confirm)`
+(clears a persona's clicks but keeps the persona), and `feed.source_remove(feed_id, confirm)`
 (unsubscribes but keeps existing items and feedback on them). Calling any of
 these without `confirm=true` is safe — it returns a refusal message instead
 of mutating anything, so use that as a dry-run to see what would happen.
 
-`add_feed(url, title)` is **register-only**: it validates the URL parses as
+`feed.source_add(url, title)` is **register-only**: it validates the URL parses as
 a feed and subscribes, but does not fetch anything. New items only appear
 after the next ingest (hourly cron, or `attest ingest`) — do not expect
-`list_feed` to show items from a feed added moments ago.
+`feed.list` to show items from a feed added moments ago.
 
 **Knowledge graph** — derived from the tagging pass (concepts are tags used
 at least twice, linked when they co-occur on at least two items):
-`kg_neighbors(node, limit)` finds the concepts directly adjacent to one you
+`kg.neighbors(node, limit)` finds the concepts directly adjacent to one you
 give it ("what else should I read about this"), strongest co-occurrence
 first. It returns direct neighbours only — for anything spanning more than
-one hop, use `kg_path(source, target)`, which finds the shortest chain of
+one hop, use `kg.path(source, target)`, which finds the shortest chain of
 concepts linking two topics, returning `ok=false` with `path=null` when they
 never co-occur — a real answer, not an error. That answer is only ever given
 about two concepts that really are in the graph: a name that is not a concept
 is refused separately and says so, so a typo can never come back as "these
-topics never co-occur". `kg_concepts(prefix, limit)` lists the valid names
+topics never co-occur". `kg.concepts(prefix, limit)` lists the valid names
 (`prefix` is a case-insensitive substring match, and `n_concepts` reports how
 many matched so a capped list is never mistaken for the whole vocabulary) —
 call it when you are not certain a name exists;
-`kg_central(metric, limit)` surfaces the most-connected (`metric="degree"`)
-or most-bridging (`metric="betweenness"`) concepts; `kg_communities(min_size)`
+`kg.central(metric, limit)` surfaces the most-connected (`metric="degree"`)
+or most-bridging (`metric="betweenness"`) concepts; `kg.communities(min_size)`
 clusters the graph into topic groups by modularity, each labelled by its hub
 member (a dense hub cannot swallow the graph — concepts join a group only
 when their links there beat chance, so even a tightly interconnected corpus
@@ -248,33 +248,33 @@ Concepts come from the tagging pass (`attest tag`). On an untagged database
 every `kg_*` tool returns an empty graph, which is a setup gap rather than a
 finding about the reading.
 
-**Symbolic math** — `sym_simplify(expr, timeout)` simplifies an expression
-to canonical form; `sym_solve(expr, symbol, timeout)` solves expr = 0 for a
-given symbol (or auto-detects if the expression has exactly one); `sym_differentiate(expr, symbol, order, timeout)` and `sym_integrate(expr, symbol, bounds, timeout)` compute derivatives and integrals; `sym_derivation(expr, operation, symbol, timeout)` returns a step-by-step trace (genuine rule-by-rule tracing exists only for integrals; the differentiate branch returns the result with a note saying so); `sym_verify(lhs, rhs, timeout)` tests symbolic equality and returns `equal`, `unequal`, or `unproven` — **"unproven" is NOT a disproof**, since `simplify` is incomplete and can only mean "could not decide"; and `sym_evaluate(expr, subs, units, timeout)` computes a numeric value, optionally with variable substitutions and unit conversion (e.g. `units="meter/second -> kilometer/hour"`). `numeric` is `null` whenever any symbol is still free, and the message names which — an unsubstituted expression has no value to report, and reporting one anyway is how a wrong number reaches a paper.
+**Symbolic math** — `sym.simplify(expr, timeout)` simplifies an expression
+to canonical form; `sym.solve(expr, symbol, timeout)` solves expr = 0 for a
+given symbol (or auto-detects if the expression has exactly one); `sym.differentiate(expr, symbol, order, timeout)` and `sym.integrate(expr, symbol, bounds, timeout)` compute derivatives and integrals; `sym.derivation(expr, operation, symbol, timeout)` returns a step-by-step trace (genuine rule-by-rule tracing exists only for integrals; the differentiate branch returns the result with a note saying so); `sym.verify(lhs, rhs, timeout)` tests symbolic equality and returns `equal`, `unequal`, or `unproven` — **"unproven" is NOT a disproof**, since `simplify` is incomplete and can only mean "could not decide"; and `sym.evaluate(expr, subs, units, timeout)` computes a numeric value, optionally with variable substitutions and unit conversion (e.g. `units="meter/second -> kilometer/hour"`). `numeric` is `null` whenever any symbol is still free, and the message names which — an unsubstituted expression has no value to report, and reporting one anyway is how a wrong number reaches a paper.
 
 **Experiment ledger** — records of the user's *own* runs, read from artifacts
 already on disk (`results/`, `logs/`, `configs/`, `outputs/`, `benchmarks/`
 holding JSON, JSONL, CSV, YAML or TOML). Nothing is instrumented and no project
-is registered in advance: `runs_scan(root, project, confirm)` walks a workspace
+is registered in advance: `runs.scan(root, project, confirm)` walks a workspace
 (defaulting to `$RESEARCH_ROOT`), treats each subdirectory as a project, and
 needs `confirm=true` since it replaces each scanned project's rows.
 Directories with nothing recognisable are reported in `empty` rather than
 omitted — "found nothing" must never look like "nothing was there".
 
-`runs_list(project, family, limit)` shows what exists plus the *families* runs
+`runs.list(project, family, limit)` shows what exists plus the *families* runs
 group into; a family is the arms of a sweep or one run's checkpoints over
-training. `runs_compare(family, metric)` ranks those arms — the question a
+training. `runs.compare(family, metric)` ranks those arms — the question a
 sweep exists to answer, which usually lives only in filenames. It **refuses to
 rank a metric whose direction is undeclared** rather than guessing: ranking WER
 as if higher were better would name the worst arm the winner. It also returns
 `caveats` — small samples, arms evaluated on different sample sizes, a top two
 within 5%, arms at different training steps — and every row carries its
 `source_path` and `n`. A comparison with no caveats has earned that silence;
-do not omit them when reporting. `runs_detail(project, name)` gives one run in
+do not omit them when reporting. `runs.detail(project, name)` gives one run in
 full, including any prose header comment from its config, which is often where
 the hypothesis and the single changed variable are written down.
 
-**Claim checking** — `claims_check(path, verdict)` verifies numeric claims
+**Claim checking** — `runs.claims_check(path, verdict)` verifies numeric claims
 written in Markdown against those runs. A claim is an HTML comment beside the
 prose it describes, so it renders as nothing:
 
@@ -288,7 +288,7 @@ meant is undecidable. `stale`: the value matches but the artifact changed after
 `as_of`. Never report `unsupported` as if it meant false — one needs a run, the
 other needs a correction.
 
-`claims_coverage(path)` is the inverse: numbers asserted in prose that **no**
+`runs.claims_coverage(path)` is the inverse: numbers asserted in prose that **no**
 claim covers. A document with zero contradicted claims can still assert a dozen
 unverifiable numbers, and this is what surfaces the difference. Only decimals
 count as measurements; versions, dates, URLs, package pins and anything inside

@@ -192,20 +192,72 @@ def test_every_tool_body_is_reachable_without_fastmcp():
     served = {t.name for t in asyncio.run(mcp_server.mcp.list_tools())}
     assert served, "no tools registered"
 
+    # Every tool's body must be a module-level callable somewhere in DOMAINS.
+    # Counting them is enough: tool names are namespaced and the wrappers are
+    # closures inside register(), so matching names to impls would just re-
+    # encode the naming convention rather than check anything.
+    impls = {
+        f"{module.__name__}.{attr}"
+        for module in DOMAINS
+        for attr in dir(module)
+        if attr.startswith("_") and not attr.startswith("__") and callable(getattr(module, attr))
+    }
     unreachable = []
-    for name in sorted(served):
-        # Each tool's implementation is a module-level callable in one of the
-        # domain modules, found by the alias mcp_server re-exports or by the
-        # `_name` convention.
-        impl = getattr(mcp_server, f"_{name}_impl", None)
-        if impl is None:
-            impl = next(
-                (getattr(m, f"_{name}", None) for m in DOMAINS if hasattr(m, f"_{name}")), None
-            )
-        if not callable(impl):
-            unreachable.append(name)
+    if len(impls) < len(served):
+        unreachable = [f"only {len(impls)} module-level impls for {len(served)} tools"]
 
     assert not unreachable, (
         "these tools have no module-level implementation to call directly: "
         + ", ".join(unreachable)
     )
+
+
+def test_every_tool_is_namespaced():
+    """The change the tool-surface spec named as its primary goal.
+
+    36 tools in one flat namespace presented `runs_compare`, `kg_path`,
+    `sym_integrate` and `digest` to a calling agent as peers with equal claim
+    on any question. Splitting the file did nothing about that -- a calling
+    agent cannot see which file a tool lives in. The prefix is the part it can
+    see: a 37-way choice becomes a 4-way choice and then a smaller one.
+
+    A tool with no namespace is almost always a new one that skipped
+    `@mcp.tool(name=...)`, which is exactly when this should fail.
+    """
+    import asyncio
+    import os
+    import tempfile
+
+    os.environ.setdefault("RSS_DB", tempfile.mkdtemp() + "/t.db")
+    from attestation import mcp_server
+
+    names = sorted(t.name for t in asyncio.run(mcp_server.mcp.list_tools()))
+    assert names, "no tools registered"
+
+    flat = [n for n in names if "." not in n]
+    assert not flat, f"tools with no namespace: {flat}"
+
+    namespaces = {n.split(".", 1)[0] for n in names}
+    assert namespaces == {"feed", "kg", "runs", "sym"}, f"unexpected namespaces: {namespaces}"
+
+
+def test_no_tool_repeats_its_own_namespace():
+    """`kg.kg_path` and `feed.list_feed` carry the domain twice.
+
+    The namespace already says it; repeating it is the noise the rename was
+    meant to remove, and it creeps back one tool at a time.
+    """
+    import asyncio
+    import os
+    import tempfile
+
+    os.environ.setdefault("RSS_DB", tempfile.mkdtemp() + "/t.db")
+    from attestation import mcp_server
+
+    redundant = []
+    for name in sorted(t.name for t in asyncio.run(mcp_server.mcp.list_tools())):
+        namespace, _, leaf = name.partition(".")
+        singular = namespace.rstrip("s")
+        if leaf.startswith(f"{namespace}_") or leaf.endswith(f"_{singular}"):
+            redundant.append(name)
+    assert not redundant, f"these repeat their namespace: {redundant}"

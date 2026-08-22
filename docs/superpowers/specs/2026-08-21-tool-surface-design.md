@@ -1,7 +1,7 @@
 # Tool surface — design
 
 **Date:** 2026-08-21
-**Status:** proposed
+**Status:** implemented 2026-08-21/22, with two deviations recorded below
 **Supersedes:** `2026-08-21-onion-refactor-design.md`
 **Roadmap:** replaces spec 1 of 5 in `2026-08-21-architecture-roadmap.md`
 
@@ -220,10 +220,37 @@ Each is independently revertible and independently valuable. §4 is where the
 stated problem gets measured: after it lands, check whether tool-choice
 confusion actually improved before committing to the swarm in roadmap spec 4.
 
+## Outcome
+
+Delivered, with two departures from what was written here.
+
+**Tool count is 37, not 35.** The count was wrong in the spec to begin with
+(the repo had 35, not 36, and `CLAUDE.md` claimed both), then `kg_rebuild` was
+deleted and three tools were added during implementation: `kg.concepts`,
+`feed.harvest_engagement`, `feed.simulate_ratings`.
+
+**No aliases.** The spec proposed keeping the flat names for one release. That
+would have doubled the listing to ~74 entries, making the surface worse in
+exactly the way the rename exists to fix, so the old names were removed
+outright and the skill documentation was updated in the same commit.
+
+**Namespacing landed a day late.** The file split shipped first and the rename
+did not, which a later architecture review caught: tools had moved between
+files, which a calling agent cannot see, so the primary stated problem was
+untouched while the spec's success criteria read as met. Names now carry the
+namespace and two tests in `test_architecture.py` enforce it.
+
+**The `_impl` doubling survives**, contrary to what is written below. Each tool
+is still a thin `@mcp.tool()` wrapper over a module-level implementation. That
+turned out to be load-bearing rather than incidental: the wrapper holds the
+docstring an agent reads, the implementation is what tests call directly, and
+`mcp.tool()` applied as a plain call would have merged the two only by giving
+up one of those. Not delivered, and no longer wanted.
+
 ## Success criteria
 
-- 35 tools, namespaced, reachable under both names
-- No `_impl` doubling; one definition per tool
+- 37 tools, namespaced `feed.*` / `kg.*` / `runs.*` / `sym.*` — DONE
+- ~~No `_impl` doubling; one definition per tool~~ — NOT DONE, see above
 - `mcp_server.py` -> four modules, each near 200 lines as a consequence
 - Zero `kg_nodes`/`kg_edges`/`kg_meta` references outside migrations
 - Every tool's failure envelope structurally matches its success envelope,
