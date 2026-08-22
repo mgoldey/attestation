@@ -15,7 +15,7 @@ from attestation.explain import explain as explain_item_fn
 from attestation.llm import default_chat_fn
 from attestation.mcp._shared import MAX_LIST_LIMIT, get_embedder, ranked_items, ranking_quality
 from attestation.mcp._tool import ToolError, tool
-from attestation.rank import _PROFILE_VEC_CACHE, _db_identity, record_click
+from attestation.rank import forget_profile_vector, record_click
 
 
 def register(mcp) -> None:
@@ -334,6 +334,10 @@ def _update_persona(conn, user_row, interests: str) -> dict:
     name = user_row["name"]
     conn.execute("UPDATE users SET interests = ? WHERE id = ?", (interests, user_row["id"]))
     conn.commit()
+    # Without this, the embedder-down fallback in rank._profile_vector would
+    # serve a vector computed from the interests text just replaced -- it
+    # returns a cached entry without comparing hashes, by design.
+    forget_profile_vector(conn, user_row["id"])
     return {"message": f"updated interests for {name!r}; ranking re-embeds on next use"}
 
 
@@ -470,7 +474,7 @@ def _delete_persona(conn, user_row, confirm: bool = False) -> dict:
     conn.execute("DELETE FROM explanations WHERE user_id = ?", (user_row["id"],))
     conn.execute("DELETE FROM users WHERE id = ?", (user_row["id"],))
     conn.commit()
-    _PROFILE_VEC_CACHE.pop((_db_identity(conn), user_row["id"]), None)
+    forget_profile_vector(conn, user_row["id"])
     return {"message": f"deleted persona {name!r} and its {n} click(s)"}
 
 

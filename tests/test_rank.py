@@ -453,3 +453,56 @@ def test_rank_items_beyond_sqlite_variable_limit(tmp_path, monkeypatch):
 
     assert len(result) == n
     conn.close()
+
+
+def test_updating_interests_evicts_the_cached_profile_vector(tmp_path, fake_embedder, monkeypatch):
+    """A changed persona must not keep ranking against its old interests.
+
+    The hash check normally saves this: changed text misses the cache and gets
+    recomputed. But the embedder-down fallback returns the cached vector
+    WITHOUT comparing hashes -- deliberately, since a stale vector beats a dead
+    feed. Those two behaviours combine badly: update the interests, lose the
+    embedder, and the fallback serves a vector computed from text the user
+    already replaced, with no signal that it happened.
+
+    Eviction on update closes it. The user then gets the honest error (cold
+    cache, embedder unavailable) instead of silently-wrong ranking.
+    """
+    from attestation import rank
+    from attestation.mcp import feed as feed_mod
+
+    db = tmp_path / "t.db"
+    monkeypatch.setenv("RSS_DB", str(db))  # the tool resolves its own connection
+    conn = get_db(db)
+    conn.execute("INSERT INTO users(name, interests) VALUES ('ana', 'quantum chemistry')")
+    conn.commit()
+    user_id = conn.execute("SELECT id FROM users WHERE name='ana'").fetchone()["id"]
+
+    rank._PROFILE_VEC_CACHE.clear()
+    warm = rank._profile_vector(conn, fake_embedder, user_id, "quantum chemistry")
+    key = (rank._db_identity(conn), user_id)
+    assert key in rank._PROFILE_VEC_CACHE
+
+    conn.close()
+    feed_mod._update_persona("ana", "medieval poetry")
+
+    conn = get_db(db)
+    assert (rank._db_identity(conn), user_id) not in rank._PROFILE_VEC_CACHE, (
+        "update_persona must evict; otherwise the embedder-down fallback serves "
+        "a vector computed from the interests text the user just replaced"
+    )
+
+    class DeadEmbedder:
+        dims = 256
+
+        def embed_query(self, text):
+            raise RuntimeError("ollama is down")
+
+        def embed_document(self, title, text):
+            raise RuntimeError("ollama is down")
+
+    with pytest.raises(RuntimeError, match="no cached profile vector"):
+        rank._profile_vector(conn, DeadEmbedder(), user_id, "medieval poetry")
+
+    assert warm is not None
+    conn.close()

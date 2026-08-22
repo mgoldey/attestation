@@ -948,3 +948,73 @@ def test_compare_caveats_when_only_some_arms_record_a_corpus(conn, tmp_path):
     joined = " ".join(out["caveats"]).lower()
     assert "corpus" in joined and "unverified" in joined, out["caveats"]
     assert "lm_b" in joined, out["caveats"]
+
+
+def test_a_scan_that_fails_partway_leaves_no_torn_write(workspace, tmp_path, monkeypatch):
+    """scan() must be all-or-nothing across every project it touches.
+
+    The transaction is real and load-bearing: _link_corpora() creates corpora
+    rows via corpus.upsert(), _replace_project() then writes runs whose
+    corpus_id is a foreign key to a row from that same uncommitted transaction,
+    and the single commit lands after the loop over ALL projects.
+
+    Nothing proved that until now. An earlier design for this refactor proposed
+    "repositories open and close per method call", which would have split those
+    two writes across two connections and two transactions -- producing exactly
+    the torn state this test forbids: runs pointing at corpora that were rolled
+    back, or corpora orphaned by a failed run insert.
+
+    Failure is injected in the SECOND project so the first has already written
+    rows that must not survive.
+    """
+    conn = get_db(tmp_path / "t.db")
+    projects = sorted(p.name for p in workspace.iterdir() if p.is_dir())
+    assert len(projects) >= 2, "this test needs a multi-project workspace"
+
+    real_replace = ledger._replace_project
+    calls = []
+
+    def exploding_replace(conn_, project, records):
+        calls.append(project)
+        if len(calls) > 1:
+            raise RuntimeError("disk full partway through the scan")
+        return real_replace(conn_, project, records)
+
+    monkeypatch.setattr(ledger, "_replace_project", exploding_replace)
+
+    with pytest.raises(RuntimeError, match="disk full"):
+        ledger.scan(conn, workspace)
+
+    conn.rollback()  # what a caller that caught the error would do
+
+    assert conn.execute("SELECT COUNT(*) n FROM runs").fetchone()["n"] == 0, (
+        "the first project's runs survived a scan that failed on the second"
+    )
+    assert conn.execute("SELECT COUNT(*) n FROM run_metrics").fetchone()["n"] == 0
+    assert conn.execute("SELECT COUNT(*) n FROM corpora").fetchone()["n"] == 0, (
+        "corpora created by _link_corpora outlived the runs that referenced them"
+    )
+
+    dangling = conn.execute(
+        "SELECT COUNT(*) n FROM runs r"
+        " WHERE r.corpus_id IS NOT NULL"
+        "   AND NOT EXISTS (SELECT 1 FROM corpora c WHERE c.id = r.corpus_id)"
+    ).fetchone()["n"]
+    assert dangling == 0, "a run references a corpus row that does not exist"
+    conn.close()
+
+
+def test_a_successful_scan_leaves_no_dangling_corpus_reference(workspace, tmp_path):
+    """The invariant the failure test checks, asserted on the happy path too --
+    otherwise the test above would pass on a database that is simply empty."""
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, workspace)
+
+    assert conn.execute("SELECT COUNT(*) n FROM runs").fetchone()["n"] > 0
+    dangling = conn.execute(
+        "SELECT COUNT(*) n FROM runs r"
+        " WHERE r.corpus_id IS NOT NULL"
+        "   AND NOT EXISTS (SELECT 1 FROM corpora c WHERE c.id = r.corpus_id)"
+    ).fetchone()["n"]
+    assert dangling == 0
+    conn.close()

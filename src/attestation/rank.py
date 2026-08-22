@@ -38,6 +38,26 @@ def _db_identity(conn: sqlite3.Connection) -> str:
     return conn.execute("PRAGMA database_list").fetchone()["file"]
 
 
+def forget_profile_vector(conn: sqlite3.Connection, user_id: int) -> None:
+    """Drop this user's cached profile vector. Call after changing or deleting
+    the persona.
+
+    Necessary because of how the two cache paths interact. The hash check in
+    _profile_vector normally makes eviction unnecessary -- changed interests
+    text hashes differently and misses. But the embedder-down fallback
+    deliberately returns a cached vector WITHOUT comparing hashes, since a
+    stale vector beats a dead feed. Together: change the interests, lose the
+    embedder, and the fallback serves a vector computed from text the user
+    already replaced, silently.
+
+    Evicting here means that case raises the honest cold-cache error instead.
+
+    Exposed as a function so callers do not reconstruct the key by hand --
+    mcp_server used to do exactly that, which is why update_persona was missed.
+    """
+    _PROFILE_VEC_CACHE.pop((_db_identity(conn), user_id), None)
+
+
 class RankedItem(BaseModel):
     item_id: int
     title: str
