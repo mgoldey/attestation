@@ -109,6 +109,44 @@ def record_click(conn, user_id: int, item_id: int, useful: bool, source: str = "
     conn.commit()
 
 
+# How much feedback the preference term needs before it may rank anything.
+#
+# It fired at n_clicks > 0, and one click was enough to move items 190
+# positions on the live corpus: a single positive on materials-scientist's own
+# top item left 1 of the top 10 in place and pushed the rest to #187 and #196.
+#
+# The cause is an asymmetry in `_score`'s Laplace smoothing, (u+1)/(u+n+2).
+# Downvotes work: one not-useful takes a key to 0.333, twenty take it to 0.045,
+# so disliked keys separate cleanly from untouched ones at 0.5. Upvotes cannot:
+# a key the reader has only ever liked lands at 0.667 or 0.955, and an
+# untouched key sits at 0.500, so nothing is ever ranked BELOW neutral. The
+# term stops measuring preference and starts measuring how many of an item's
+# keys the reader has touched at all -- coverage, which tracks feed size and so
+# ranks by whatever they subscribe to most.
+#
+# Hence the rule below is one-directional. A purely-downvoting reader has real
+# signal and keeps it; a purely-upvoting one does not, and waits.
+MIN_PREF_UPVOTE_CLICKS = 10
+
+
+def _preference_ready(conn: sqlite3.Connection, user_id: int) -> bool:
+    """Whether the feature-preference term has anything to say.
+
+    Any not-useful click is enough, because a downvote genuinely separates a
+    key from the untouched baseline. Upvotes alone need volume AND a downvote
+    to compare against, since on their own they cannot rank anything below
+    neutral.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) n, SUM(useful) pos FROM clicks WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    total, positive = row["n"], row["pos"] or 0
+    negative = total - positive
+    if negative:
+        return True
+    return total >= MIN_PREF_UPVOTE_CLICKS and positive < total
+
+
 def blend_weight(n_clicks: int) -> float:
     return n_clicks / (n_clicks + 5)
 
@@ -231,7 +269,7 @@ def rank_items(
     click_ranks = []
     if probs is not None:
         click_ranks.append(ranks(probs))
-    if n_clicks > 0:
+    if _preference_ready(conn, user_id):
         pref = pref_scores_for_items(conn, user_id, [r["id"] for r in rows])
         # Tie-averaged ranks: tied (mostly neutral-0.5) items share one rank value, so the
         # pref term adds no tie-break noise and an all-neutral array is a blend no-op.

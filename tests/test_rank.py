@@ -506,3 +506,90 @@ def test_updating_interests_evicts_the_cached_profile_vector(tmp_path, fake_embe
 
     assert warm is not None
     conn.close()
+
+
+def test_one_click_does_not_reorder_the_whole_feed(tmp_path, fake_embedder):
+    """A single click must not move items by hundreds of positions.
+
+    Measured on the live corpus before this guard: one positive click on
+    materials-scientist's own top item left 1 of the top 10 in place and pushed
+    the rest from #4 to #187 and #9 to #196. A new reader's feed got worse the
+    moment they engaged with it, which is the opposite of the intended effect.
+
+    Two causes, both in the preference term. `_score` is Laplace-smoothed as
+    (u+1)/(u+n+2), so a positives-only history can never score any key BELOW
+    0.5 -- the term stops measuring preference and starts measuring "how many
+    of this item's keys has the reader touched at all". And it fired at
+    n_clicks > 0, so one observation moved every candidate.
+    """
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO users(name, interests) VALUES ('ana', 'protein folding')")
+    for i in range(1, 61):
+        cur = conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (NULL, ?, 'u', ?, ?)",
+            (f"Item {i}", f"Summary {i}", f"h{i}"),
+        )
+        vec = fake_embedder.embed_document(f"Item {i}", f"Summary {i}")
+        conn.execute(
+            "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+            (cur.lastrowid, vec.tobytes()),
+        )
+        conn.execute(
+            "INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (cur.lastrowid, f"t{i % 7}")
+        )
+    conn.commit()
+    uid = get_user(conn, "ana")["id"]
+
+    before = [it.item_id for it in rank_items(conn, fake_embedder, uid, since_days=None)]
+    record_click(conn, uid, before[0], True)
+    conn.commit()
+    after = [it.item_id for it in rank_items(conn, fake_embedder, uid, since_days=None)]
+
+    kept = len(set(before[:10]) & set(after[:10]))
+    assert kept >= 8, (
+        f"one click changed {10 - kept} of the top 10; a single observation "
+        "must not reorder the feed"
+    )
+    conn.close()
+
+
+def test_the_preference_term_waits_for_both_classes(tmp_path, fake_embedder):
+    """It cannot separate anything from a single-class history.
+
+    With only positives every key scores at or above neutral, so the ordering
+    it produces reflects coverage rather than taste. The classifier already
+    refuses to fire in that situation (classifier_probs returns None); the
+    preference term now applies the same rule instead of confidently ranking
+    on nothing.
+    """
+    from attestation.rank import _preference_ready
+
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO users(name, interests) VALUES ('ana', 'x')")
+    for i in range(1, 31):
+        conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (NULL, ?, 'u', 's', ?)",
+            (f"t{i}", f"h{i}"),
+        )
+    conn.commit()
+    uid = get_user(conn, "ana")["id"]
+
+    assert not _preference_ready(conn, uid), "no clicks at all"
+    for i in range(1, 13):
+        record_click(conn, uid, i, True)
+    conn.commit()
+    assert not _preference_ready(conn, uid), "12 upvotes cannot rank anything below neutral"
+
+    record_click(conn, uid, 13, False)
+    conn.commit()
+    assert _preference_ready(conn, uid), "one downvote gives the term something to separate"
+
+    # A purely-downvoting reader keeps its signal: not-useful takes a key to
+    # 0.333 and below, which genuinely distinguishes it from untouched at 0.5.
+    conn.execute("DELETE FROM clicks WHERE user_id = ?", (uid,))
+    record_click(conn, uid, 1, False)
+    conn.commit()
+    assert _preference_ready(conn, uid), "a single downvote is real signal"
+    conn.close()
