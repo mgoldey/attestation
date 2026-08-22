@@ -171,6 +171,29 @@ def register(mcp) -> None:
         return _reset_feedback(name, confirm)
 
     @mcp.tool()
+    def harvest_engagement(user: str) -> dict:
+        """Turn this user's past "why is this here?" questions into weak positive feedback.
+
+        Cheap and idempotent -- no LLM call, no network. Reads what is already
+        recorded and records nothing twice.
+
+        Explicit feedback is a channel almost nobody uses, so a ranker waiting
+        to be told what is useful waits forever. Asking why an item was ranked
+        is engagement: weaker than a stated opinion, but real, and already
+        logged. Each such item that was never rated becomes one weak positive
+        under source='implicit', so a later evaluation can weight or exclude
+        them.
+
+        An item the user already rated is left alone -- an explicit "not
+        useful" is never overwritten by the reader's own curiosity.
+
+        Only positives are inferred. No behaviour reliably means "not useful",
+        and inferring rejection from silence would poison the class the ranker
+        is starving for. Use record_feedback for negatives.
+        """
+        return _harvest_engagement(user)
+
+    @mcp.tool()
     def simulate_feedback(user: str, limit: int = 10, confirm: bool = False) -> dict:
         """Generate simulated reader reactions for a persona, to train its ranking.
 
@@ -748,4 +771,22 @@ def _simulate_feedback(conn, user_row, limit: int = 10, confirm: bool = False) -
         ),
         "counts": counts,
         "reactions": out["reactions"],
+    }
+
+
+@tool(
+    empty={"candidates": 0, "recorded": 0, "skipped_already_rated": 0},
+    needs_user=True,
+    label="harvest_engagement",
+)
+def _harvest_engagement(conn, user_row) -> dict:
+    from attestation.implicit import harvest
+
+    out = harvest(conn, user_row["name"])
+    return {
+        "message": (
+            f"recorded {out['recorded']} weak positive(s) from engagement"
+            f" ({out['skipped_already_rated']} already rated)"
+        ),
+        **out,
     }

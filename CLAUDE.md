@@ -11,7 +11,7 @@ IMPORTANT: Prefer retrieval-led reasoning over pre-training-led reasoning for an
 ```
 [Project Docs Index]|root: .
 |.:{README.md,DEMO.md,CLAUDE.md,pyproject.toml,datasette.yml,.pre-commit-config.yaml,.env.sample,LICENSE}
-|src/attestation:{__init__.py,cli.py,mcp_server.py,server.py,db.py,rank.py,embed.py,llm.py,ingest.py,feeds.py,features.py,explain.py,kg.py,ledger.py,claims.py,corpus.py,symbolic.py,symbolic_ops.py,simulate.py,ports.py,install.py,feeds.toml,feed_candidates.toml,kg_aliases.toml}
+|src/attestation:{__init__.py,implicit.py,cli.py,mcp_server.py,server.py,db.py,rank.py,embed.py,llm.py,ingest.py,feeds.py,features.py,explain.py,kg.py,ledger.py,claims.py,corpus.py,symbolic.py,symbolic_ops.py,simulate.py,ports.py,install.py,feeds.toml,feed_candidates.toml,kg_aliases.toml}
 |src/attestation/mcp:{__init__.py,_tool.py,_shared.py,feed.py,knowledge.py,provenance.py,symbolic.py}
 |evals:{run_tagging_eval.py,tagging_cases.json}|examples:{README.md,workspace/}
 |src/attestation/ledger_adapters:{__init__.py,generic.py}
@@ -31,7 +31,9 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 |Entry points: cli.py:main()→`attest`|mcp_server.py:main()→`attest-mcp`|server.py:create_app()→FastAPI+HTMX @ 127.0.0.1:8899
 |MCP surface: 36 tools in mcp/{feed,knowledge,provenance,symbolic}.py; mcp_server.py is an 89-line entry point + one-release `_<name>_impl` aliases|mcp/_tool.py's @tool owns the ritual: connection, user lookup, and BOTH envelopes — a body returns only what it computed|expected refusals `raise ToolError(msg)` (verbatim to caller); anything else is a bug (logged, generic message)|`empty={...}` makes a failure envelope structurally match its success envelope
 |Search: search_feed queries sqlite-vec with embed_query() then blends with profile rank (QUERY_WEIGHT=0.75)|RELEVANCE_FLOOR=0.90 is RELATIVE to the best hit for that query — absolute cutoffs fail because top similarity varies 0.44-0.62 by query|a literal hit is a BOOST not a floor: flooring made all 711 "llm" matches tie
-|Feedback: clicks.source = ui|agent|bootstrap|simulated, and provenance decides what a row may be used for|bootstrap labels are a linear threshold on the SAME embedding the classifier trains on → tautological, excluded by evaluate_user|simulated = a chat model reacting to TEXT as the persona, independent of the vector, so trainable
+|Feedback: clicks.source = ui|agent|bootstrap|simulated|implicit, and provenance decides what a row may be used for|bootstrap labels are a linear threshold on the SAME embedding the classifier trains on → tautological, excluded by evaluate_user|simulated = a chat model reacting to TEXT as the persona, independent of the vector, so trainable
+|Signal scarcity is the core problem: 68 ui + 2 agent clicks across 5162 items, ALL positive → classifier never fired for a real account|implicit.py harvests explanation requests as weak positives (recovered 34 for matt, 8→42 clicks)|SKILL.md tells the agent to extract verdicts from ordinary discourse, since users never press buttons
+|Only POSITIVES are inferred: no behaviour reliably means "not useful", and inferring rejection from silence poisons the class the ranker is starving for
 |simulate.py: Reaction asks for `confidence` (how sure), NOT `strength` — the first version asked "how strongly you feel" and a correct rejection came back at 1 and was filtered as indifference, discarding every negative
 |Ranking: rank_items(conn,embedder,user_id,since_days=14,*,exclude_clicked=True)→list[RankedItem]|blend_weight(n_clicks) mixes click_ranks vs profile_rank|classifier_probs() returns None on single-class history (guard) → order is embedding-only
 |Ranking honesty: _ranking_quality() reports classifier_active + caveat|surface it rather than letting a reader assume the ranker learned something

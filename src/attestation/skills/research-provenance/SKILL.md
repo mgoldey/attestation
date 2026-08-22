@@ -305,13 +305,39 @@ Both are read-only. They report; they never edit a document.
    already ranked best-first; the top ~10-15 are usually what's worth
    surfacing conversationally.
 
-2. **Act on feedback**: when the user says an item is useful/interesting or
-   not, find its `item_id` from the most recently fetched list (match by
-   title if the user refers to it by name, or by position — "the second one"
-   — against the order you just presented) and `POST /clicks` with
-   `useful=1` (useful) or `useful=0` (not useful). The response is the
-   re-ranked feed fragment; the engine retrains on every click, so re-fetch
-   or re-parse it if you want to show the new order.
+2. **Act on feedback — including feedback the user never labels as such.**
+   Find the `item_id` from the most recently fetched list (match by title, or
+   by position — "the second one" — against the order you just presented) and
+   `POST /clicks` with `useful=1` or `useful=0`. The response is the re-ranked
+   feed fragment; the engine retrains on every click.
+
+   **Record the negatives.** This is the part that gets skipped, and skipping
+   it is why the ranker cannot learn. The click classifier needs BOTH classes
+   to fire at all: a reader whose history is all positive gets ranked by
+   embedding similarity alone, forever, no matter how many items they approve.
+   In this project's own database, real users had recorded 70 clicks across
+   5,162 items and every one was positive.
+
+   Ordinary conversation is full of verdicts that are never phrased as
+   feedback. Treat these as `useful=0`:
+
+   - "not really what I'm after" / "that's not my area"
+   - "I've already read that one" / "old news"
+   - "too applied" / "too theoretical" / "wrong subfield"
+   - asking for something *instead of* an item — "anything on X rather than
+     these?" rejects what was shown
+   - skipping past items to ask about one further down the list
+
+   And these as `useful=1`:
+
+   - "that looks interesting", "send me that one", "good find"
+   - asking a follow-up question **about the item's content** (not about why
+     it ranked — see step 3, which is recorded separately as weak engagement)
+
+   When you are unsure whether a remark is a verdict, ask — one short
+   question is cheaper than a wrong label. But do not wait to be told
+   explicitly: a user who never presses a button still has opinions, and an
+   unrecorded opinion trains nothing.
 
 3. **Explain a ranking** (optional, only if asked "why is this here" / "why
    did this rank first"): `GET /explanation?user=<name>&item_id=<id>`. This
