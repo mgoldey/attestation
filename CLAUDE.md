@@ -27,7 +27,7 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 
 ```
 |Entry points: cli.py:main()→`attest`|mcp_server.py:main()→`attest-mcp`|server.py:create_app()→FastAPI+HTMX @ 127.0.0.1:8899
-|MCP surface: 34 @mcp.tool()s in mcp_server.py|each tool pairs with _<name>_impl() kept FastMCP-free so tests import it directly
+|MCP surface: 34 tools in mcp/{feed,knowledge,provenance,symbolic}.py; mcp_server.py is an 89-line entry point + one-release `_<name>_impl` aliases|mcp/_tool.py's @tool owns the ritual: connection, user lookup, and BOTH envelopes — a body returns only what it computed|expected refusals `raise ToolError(msg)` (verbatim to caller); anything else is a bug (logged, generic message)|`empty={...}` makes a failure envelope structurally match its success envelope
 |Ranking: rank_items(conn,embedder,user_id,since_days=14,*,exclude_clicked=True)→list[RankedItem]|blend_weight(n_clicks) mixes click_ranks vs profile_rank|classifier_probs() returns None on single-class history (guard) → order is embedding-only
 |Ranking honesty: _ranking_quality() reports classifier_active + caveat|surface it rather than letting a reader assume the ranker learned something
 |Candidates: _candidate_items(conn,user_id,since_days,*,exclude_clicked)|since_days=None + exclude_clicked=False = search_feed semantics (older/already-rated items are legitimate hits)
@@ -38,7 +38,7 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 |Ledger: ledger.scan()→RunRecord/Metric from artifacts|compare() emits _caveats() rather than silent verdicts|adapters in ledger_adapters/ read nested result structures
 |Corpus: corpus.detect_in_source() reads the corpus from driver-script syntax (AST), not from a model — result artifacts record the model exhaustively and the data not at all|runs.corpus_id links a run to its corpus; compare() guards arms that cross one rather than ranking losses from different tasks
 |Claims: claims.parse_file()→find_claims()→check_claim()→Verdict|coverage() lints numbers in prose no claim covers (negatives included)
-|LLM: llm.py ChatClient/EmbeddingClient→Ollama-compatible @ DEFAULT_BASE_URL|DEFAULT_CHAT_MODEL=gemma4:e2b-it-q4_K_M, DEFAULT_EMBED_MODEL=embeddinggemma|hermes3 workaround is scoped to hermes3 only
+|Ports: ports.py ChatPort/EmbeddingPort/EmbedderPort are structural Protocols — NO repository protocol, deliberately (see superseded onion spec)|EmbedderPort is separate from EmbeddingPort because embed.py's doc/query prompts are asymmetric|LLM: llm.py ChatClient/EmbeddingClient→any OpenAI-compatible server (zero ollama refs in library code; LLM_BASE_URL points anywhere) @ DEFAULT_BASE_URL|DEFAULT_CHAT_MODEL=gemma4:e2b-it-q4_K_M, DEFAULT_EMBED_MODEL=embeddinggemma|hermes3 workaround is scoped to hermes3 only
 |Embeddings: embed.py DOC_PROMPT vs QUERY_PROMPT are asymmetric — index with doc, search with query|truncate_normalize() before storing
 |Reliability contract: 4 inline `# noqa: BLE001` sites (cli.py:244, install.py:292, symbolic.py:238, rank.py:170), each carrying its reason — there is NO per-file-ignores section in pyproject|rank.py:170 is a specific policy, not a swallow: embedder down + warm cache serves stale, cold cache raises|ranking never waits on explanations; a cold Ollama degrades to a cached vector, never a 500
 |No LLM in composition tools: digest/runs_compare return structure, never prose — the caller is a model

@@ -7,6 +7,7 @@ after a split.
 
 import logging
 
+from attestation.ports import EmbedderPort
 from attestation.rank import rank_items
 
 log = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ MAX_LIST_LIMIT = 50
 _embedder = None
 
 
-def get_embedder():
+def get_embedder() -> EmbedderPort:
     """Lazily built and shared across calls -- it is just an httpx client.
 
     Constructed on first use rather than at import so that starting the server
