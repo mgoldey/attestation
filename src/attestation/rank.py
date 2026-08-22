@@ -83,7 +83,13 @@ def create_user(conn, name: str, interests: str) -> int:
     return cur.lastrowid
 
 
-CLICK_SOURCES = ("ui", "agent", "bootstrap")
+# Where a click came from, kept distinguishable forever because provenance
+# decides what a row may be used for. `bootstrap` labels are a linear threshold
+# on the embedding the classifier trains on, so evaluate_user excludes them --
+# see bootstrap_persona. `simulated` rows are a chat model reacting to text as
+# a persona would: independent of the embedding, which is what makes them
+# trainable, but still not a person's judgement.
+CLICK_SOURCES = ("ui", "agent", "bootstrap", "simulated")
 
 
 def record_click(conn, user_id: int, item_id: int, useful: bool, source: str = "ui") -> None:

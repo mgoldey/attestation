@@ -171,6 +171,30 @@ def register(mcp) -> None:
         return _reset_feedback(name, confirm)
 
     @mcp.tool()
+    def simulate_feedback(user: str, limit: int = 10, confirm: bool = False) -> dict:
+        """Generate simulated reader reactions for a persona, to train its ranking.
+
+        WRITES CLICK ROWS -- needs confirm=true. SLOW: one local LLM call per
+        item, several seconds each.
+
+        The ranker's click classifier needs both useful AND not-useful feedback
+        to fire at all; a persona that has only ever marked things useful ranks
+        by embedding similarity alone forever. Real feedback is overwhelmingly
+        positive because saying no to a recommendation is work nobody does, so
+        this asks a local model to read each item and react AS the persona --
+        in prose, then a verdict -- and records what it decides.
+
+        Rows are written with source='simulated' and stay distinguishable from
+        real `ui`/`agent` clicks permanently. These are a training aid, not
+        evidence about the persona: each reaction carries the reasoning behind
+        its verdict so a human can audit what the ranker was taught.
+
+        Returns per-item verdicts with reasoning, plus counts. Items the model
+        is unsure about are skipped rather than recorded as a coin flip.
+        """
+        return _simulate_feedback(user, limit, confirm)
+
+    @mcp.tool()
     def digest(user: str, days: int = 7, per_topic: int = 3, limit: int = 30) -> dict:
         """This user's unread feed, ranked and grouped by topic — the weekly review.
 
@@ -687,4 +711,41 @@ def _digest_body(conn, user_row, days: int = 7, per_topic: int = 3, limit: int =
         "unclustered": unclustered,
         "ranking_quality": ranking_quality(conn, row["id"]),
         "window_days": days,
+    }
+
+
+@tool(
+    empty={"counts": {}, "reactions": []},
+    needs_user=True,
+    label="simulate_feedback",
+)
+def _simulate_feedback(conn, user_row, limit: int = 10, confirm: bool = False) -> dict:
+    from attestation.llm import default_chat_fn
+    from attestation.simulate import simulate_feedback as run_simulation
+
+    if not confirm:
+        raise ToolError(
+            "refusing to simulate without confirm=true. This writes click rows"
+            f" for {user_row['name']!r} (marked source='simulated', so they stay"
+            " distinguishable from real feedback) and calls a local LLM once per"
+            " item."
+        )
+    limit = min(max(int(limit), 1), MAX_LIST_LIMIT)
+    items = ranked_items(conn, user_row, limit, None)
+    if not items:
+        raise ToolError("no items to react to -- run an ingest first")
+
+    rows = conn.execute(
+        "SELECT id, title, summary FROM items WHERE id IN ({})".format(",".join("?" * len(items))),
+        [i.item_id for i in items],
+    ).fetchall()
+    out = run_simulation(conn, default_chat_fn, user_row["name"], rows)
+    counts = out["counts"]
+    return {
+        "message": (
+            f"{counts['useful']} useful, {counts['not_useful']} not-useful"
+            f" ({counts['skipped_unsure']} unsure, {counts['failed']} failed)"
+        ),
+        "counts": counts,
+        "reactions": out["reactions"],
     }

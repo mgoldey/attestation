@@ -133,23 +133,32 @@ def test_cli_help_stays_fast():
 def test_mcp_domain_modules_stay_small():
     """The split's actual goal: no module big enough to lose an agent in.
 
-    mcp_server.py was 1454 lines holding 34 tools written twice each. Line
-    count is a weak proxy for quality in general -- ledger.py is 637 lines of
-    one coherent argument and should stay that way -- but for the tool surface
-    specifically it tracks the thing that went wrong, which was ritual repeated
-    per tool rather than depth.
+    Counts CODE lines, not total lines. 28% of feed.py is docstrings, and in
+    an MCP module the docstrings ARE the product -- they are what a calling
+    agent reads to choose a tool, and two reviews said the surface needed more
+    of that guidance, not less. A raw line cap taxes the fix.
+
+    Line count is a weak proxy generally: ledger.py is 637 lines of one
+    coherent argument and should stay that way. For the tool surface it tracks
+    the thing that went wrong, which was ritual repeated per tool.
     """
-    # knowledge.py went 150 -> 175 on 2026-08-21 for kg_concepts, a fifth tool.
-    # The cap is meant to catch ritual repeated per tool, not to price a module
-    # out of gaining a genuinely new one -- so a real tool buys headroom, while
-    # the limit still binds against boilerplate creeping back in.
-    limits = {"feed.py": 720, "provenance.py": 300, "knowledge.py": 175, "symbolic.py": 150}
-    mcp_dir = SRC / "mcp"
-    oversized = [
-        f"{p.name}={len(p.read_text().splitlines())} (max {limits[p.name]})"
-        for p in mcp_dir.glob("*.py")
-        if p.name in limits and len(p.read_text().splitlines()) > limits[p.name]
-    ]
+    # Measured 2026-08-22 plus ~40 lines of headroom, so a real new tool fits
+    # and a slow accretion of ritual does not.
+    limits = {"feed.py": 578, "provenance.py": 215, "knowledge.py": 125, "symbolic.py": 117}
+    oversized = []
+    for path in (SRC / "mcp").glob("*.py"):
+        if path.name not in limits:
+            continue
+        tree = ast.parse(path.read_text())
+        doc_lines = 0
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                doc = ast.get_docstring(node)
+                if doc:
+                    doc_lines += len(doc.splitlines()) + 2
+        code = len(path.read_text().splitlines()) - doc_lines
+        if code > limits[path.name]:
+            oversized.append(f"{path.name}={code} code lines (max {limits[path.name]})")
     assert not oversized, "mcp domain modules grew: " + ", ".join(oversized)
 
 

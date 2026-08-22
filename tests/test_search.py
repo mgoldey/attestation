@@ -190,18 +190,30 @@ def test_search_reports_how_it_matched(search_db):
 
 
 REAL_ITEMS = [
-    ("Scaling behaviour of transformer language models",
-     "We fit power laws relating parameter count to validation perplexity."),
-    ("Attention is sparse in long-context decoders",
-     "Most attention mass concentrates on a small subset of positions."),
-    ("Cryo-EM structure of the bacterial ribosome",
-     "We resolve the 50S subunit at 2.4 angstrom and describe the peptidyl site."),
-    ("Predicting protein folds from sequence",
-     "A neural network predicts tertiary structure from primary sequence alone."),
-    ("Ambient-pressure superconductivity in a hydride",
-     "Electrical resistance drops to zero at 250 kelvin under 150 gigapascals."),
-    ("Sourdough starter hydration ratios",
-     "A baker's guide to maintaining a rye starter at 100 percent hydration."),
+    (
+        "Scaling behaviour of transformer language models",
+        "We fit power laws relating parameter count to validation perplexity.",
+    ),
+    (
+        "Attention is sparse in long-context decoders",
+        "Most attention mass concentrates on a small subset of positions.",
+    ),
+    (
+        "Cryo-EM structure of the bacterial ribosome",
+        "We resolve the 50S subunit at 2.4 angstrom and describe the peptidyl site.",
+    ),
+    (
+        "Predicting protein folds from sequence",
+        "A neural network predicts tertiary structure from primary sequence alone.",
+    ),
+    (
+        "Ambient-pressure superconductivity in a hydride",
+        "Electrical resistance drops to zero at 250 kelvin under 150 gigapascals.",
+    ),
+    (
+        "Sourdough starter hydration ratios",
+        "A baker's guide to maintaining a rye starter at 100 percent hydration.",
+    ),
 ]
 
 
@@ -233,7 +245,7 @@ def real_db(tmp_path, monkeypatch):
 
 @pytest.mark.live_model
 def test_real_embeddings_match_an_acronym_to_its_expansion(real_db):
-    """"LLM" appears nowhere in the corpus. Substring search returns nothing;
+    """ "LLM" appears nowhere in the corpus. Substring search returns nothing;
     a real embedding should still reach the language-model papers."""
     out = feed_mod._search_feed("ana", "LLM", limit=3)
     assert out["ok"], out["message"]

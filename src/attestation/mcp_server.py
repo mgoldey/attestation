@@ -88,3 +88,4 @@ _sym_integrate_impl = _sym._sym_integrate
 _sym_derivation_impl = _sym._sym_derivation
 _sym_verify_impl = _sym._sym_verify
 _sym_evaluate_impl = _sym._sym_evaluate
+_simulate_feedback_impl = _feed._simulate_feedback
