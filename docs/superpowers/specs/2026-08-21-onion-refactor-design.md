@@ -90,7 +90,7 @@ degradation is deliberate and visible in one place per domain.
 **Correction:** `CLAUDE.md` states `BLE001` is per-file-ignored in
 `pyproject.toml`. It is not — `pyproject.toml` has no `per-file-ignores` section
 at all. There are four inline `# noqa: BLE001` comments (`cli.py:244`,
-`install.py:292`, `symbolic.py:238`, `rank.py:170`), each carrying its own
+`install.py:292`, `symbolic.py:238`, `rank.py:198`), each carrying its own
 reason. That is the better arrangement: the suppression travels with the code
 when it moves. `CLAUDE.md` gets fixed as part of stage 1.
 
@@ -399,7 +399,7 @@ tables nothing reads. Building infrastructure that presumes an answer is not
 deferring the question; it makes reversal four times as costly.
 
 **Rejected: that domain-level error degradation should stay untouched.** The
-review is right that `rank.py:170` encodes a specific, well-documented policy
+review is right that `rank.py:198` encodes a specific, well-documented policy
 (embedder down + warm cache serves stale; cold cache raises) that a service
 layer lacks the knowledge to reproduce, and right that hoisting it would be the
 behavior regression this spec forbids. That part is accepted. But the review

@@ -174,17 +174,38 @@ def test_every_tool_body_is_reachable_without_fastmcp():
     """Tools must be callable directly, or they can only be tested through a server.
 
     symbolic.py briefly defined all seven of its tools as closures inside
-    register(), which made them unreachable -- the seven `_sym_*_impl` tests
-    could not import anything to call. Each domain keeps its implementations at
-    module level and registers thin wrappers over them.
-    """
-    from attestation.mcp import feed, knowledge, provenance, symbolic
+    register(), which made them unreachable. An earlier version of this test
+    hardcoded 14 names and so covered 14 of 37 impls -- renaming _sym_integrate
+    to _HIDDEN_sym_integrate left it green, which is the regression it names.
 
-    for mod, names in (
-        (feed, ["_list_feed", "_digest_body", "_search_feed"]),
-        (knowledge, ["_neighbors", "_path", "_central", "_communities"]),
-        (provenance, ["_scan", "_list", "_compare", "_detail"]),
-        (symbolic, ["_sym_simplify", "_sym_solve", "_sym_verify"]),
-    ):
-        for name in names:
-            assert callable(getattr(mod, name, None)), f"{mod.__name__}.{name} not reachable"
+    The list now comes from the registry, so a tool cannot be added without
+    being covered.
+    """
+    import asyncio
+    import os
+    import tempfile
+
+    os.environ.setdefault("RSS_DB", tempfile.mkdtemp() + "/t.db")
+    from attestation import mcp_server
+    from attestation.mcp import DOMAINS
+
+    served = {t.name for t in asyncio.run(mcp_server.mcp.list_tools())}
+    assert served, "no tools registered"
+
+    unreachable = []
+    for name in sorted(served):
+        # Each tool's implementation is a module-level callable in one of the
+        # domain modules, found by the alias mcp_server re-exports or by the
+        # `_name` convention.
+        impl = getattr(mcp_server, f"_{name}_impl", None)
+        if impl is None:
+            impl = next(
+                (getattr(m, f"_{name}", None) for m in DOMAINS if hasattr(m, f"_{name}")), None
+            )
+        if not callable(impl):
+            unreachable.append(name)
+
+    assert not unreachable, (
+        "these tools have no module-level implementation to call directly: "
+        + ", ".join(unreachable)
+    )

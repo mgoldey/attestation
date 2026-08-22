@@ -3,7 +3,7 @@
 The graph is built from `item_tags`, not from new content: the tagging pass
 already extracted the concepts. Two measured facts drive the construction:
 
-1. 2020 of 2347 tags (86%) are used exactly once and connect to nothing, so a
+1. 2736 of 3879 canonical tags (70%) are used exactly once and connect to nothing, so a
    graph including them would be mostly isolated points. Filtering at
    MIN_TAG_USES is what turns this data into a graph.
 2. Variant spellings split hubs -- `machine-learning` and `machinelearning`
@@ -15,7 +15,7 @@ would silently drop concepts. On the current corpus both orderings happen to
 agree, so this ordering is guarded by a synthetic test rather than by the live
 numbers -- see test_aliases_merge_before_filtering.
 
-No networkx: at ~183 nodes, BFS over an adjacency dict is both fast (0.226s
+No networkx: at ~711 nodes, BFS over an adjacency dict is both fast (0.226s
 for a full build) and obvious.
 """
 

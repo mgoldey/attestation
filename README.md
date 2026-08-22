@@ -212,7 +212,7 @@ mcp_servers:
 
 Verify with `hermes mcp list` — you should see `attestation ... ✓ enabled`.
 
-The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 36 tools:
+The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 37 tools:
 
 | Tool | What it does | Speed |
 |---|---|---|
@@ -257,13 +257,16 @@ content: concepts are tags used at least twice, and two concepts are linked
 when they co-occur on at least two items. Spelling variants are merged via
 `src/attestation/kg_aliases.toml` — without that, `machine-learning` and
 `machinelearning` appear as two separate hubs and every centrality number is
-wrong. Tags used only once (86% of them) are excluded: they connect to
+wrong. Tags used only once (70% of them) are excluded: they connect to
 nothing. Every `kg_*` read tool derives the graph fresh from `item_tags` on
-each call via `build_graph` -- nothing reads the stored `kg_nodes`/`kg_edges`
-tables. Those tables (and the `stale: true` flag, which compares a
-fingerprint of `item_tags` against the last `kg_rebuild`/`attest tag`) exist
-for external inspection and are advisory only: `stale: true` can never change
-what a read tool answers, because the answer is never read from that cache.
+each call via `build_graph`, which takes the tag assignments as a plain
+argument rather than a connection.
+
+There is no stored graph. `kg_nodes`, `kg_edges`, `kg_meta`, a `kg_rebuild`
+tool and a `stale` flag existed until 2026-08-21; nothing ever read the
+tables, and all eight `kg_*` answers were byte-identical with and without
+them, so they were deleted rather than left as a cache that could only ever
+be wrong.
 
 Symbolic tools never `eval` your input: expressions are parsed against a
 whitelist of mathematical names with builtins removed, and every computation
@@ -272,11 +275,27 @@ malicious expression is refused, and a runaway one is cancelled rather than
 taking down the server — at the cost of roughly 0.3 s of process spawn per
 call.
 
-Every recorded click stores its provenance — `ui` for the web UI, `agent` for
-MCP `record_feedback` calls, `bootstrap` for synthetic persona seeding.
-Ranking currently treats all three identically; `profile_status` breaks the
-counts down by source so you can see how much of a persona's training came
-from the agent rather than from you.
+Every recorded click stores its provenance, and provenance decides what a row
+may be used for:
+
+| source | what it is |
+|---|---|
+| `ui` | you pressed a button on the web page |
+| `agent` | an MCP `record_feedback` call, usually the agent reading your reply |
+| `implicit` | you asked why an item ranked; engagement, counted as a weak positive |
+| `simulated` | a local model reacting to the text as the persona would |
+| `bootstrap` | synthetic persona seeding |
+
+`bootstrap` labels are a linear threshold on the same embedding the ranker's
+classifier consumes, so scoring against them is a tautology and
+`evaluate_user` excludes them. The other four are trainable, and
+`profile_status` breaks the counts down by source so you can see how much of a
+persona's history is yours.
+
+Explicit feedback is scarce by nature — this project's own database held 68
+web clicks and 2 agent clicks across 5,167 items before the two synthetic
+channels were added, every one of them positive, which is why the click
+classifier had never fired for a real account.
 
 The MCP server reads `.env` from the checkout at startup, so `CHAT_MODEL` set there applies — no `--env` flag needed (though `--env` still works and wins over `.env`).
 

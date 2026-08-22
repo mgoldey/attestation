@@ -316,7 +316,7 @@ Both are read-only. They report; they never edit a document.
    to fire at all: a reader whose history is all positive gets ranked by
    embedding similarity alone, forever, no matter how many items they approve.
    In this project's own database, real users had recorded 70 clicks across
-   5,162 items and every one was positive.
+   5,167 items and every one was positive.
 
    Ordinary conversation is full of verdicts that are never phrased as
    feedback. Treat these as `useful=0`:

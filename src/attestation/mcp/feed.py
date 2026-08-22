@@ -461,7 +461,7 @@ QUERY_WEIGHT = 0.75
 # Keep semantic hits within this fraction of the BEST match for this query.
 #
 # Relative, not absolute, because absolute thresholds do not survive contact
-# with real data. Measured against embeddinggemma over 5,162 items: "large
+# with real data. Measured against embeddinggemma over 5,167 items: "large
 # language models" tops out at cosine 0.619 while "cryo-EM protein structure"
 # tops at 0.443, so any fixed cutoff either floods one query or starves the
 # other. Similarity also decays slowly -- 0.619 to 0.500 across 200 items --
@@ -507,10 +507,19 @@ def _passes_filters(item, needle: str, similarity: dict, tag, content_type) -> b
 
     A query keeps an item if the semantic index reached it OR the words appear
     literally -- the two find different things, which is why both run.
+
+    Tags compare CANONICAL to CANONICAL. kg_concepts hands an agent the graph's
+    aliased names, and the documented workflow is to feed one straight back in
+    here; comparing it against the raw stored spellings made that workflow
+    under-return badly. On the live corpus `hugging-face` reached 23 of the 380
+    items carrying that concept, because the other 357 are stored as
+    `huggingface`, and `large-language-models` reached 226 of 1,072.
     """
+    from attestation.kg import canonical
+
     if needle and item.item_id not in similarity and not _literal_match(item, needle):
         return False
-    if tag and tag not in (item.tags or []):
+    if tag and canonical(tag) not in {canonical(t) for t in (item.tags or [])}:
         return False
     return not (content_type and item.content_type != content_type)
 

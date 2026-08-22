@@ -29,7 +29,6 @@ BASELINE = {
     "src/attestation/claims.py": 15,  # check_claim
     "src/attestation/cli.py": 14,  # cmd_claims
     "src/attestation/rank.py": 13,  # rank_items
-    "src/attestation/symbolic_ops.py": 11,  # op_evaluate -- units + subs + free-symbol paths
 }
 
 # Anything not listed must stay at or below this. New code starts strict.

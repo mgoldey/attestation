@@ -1,6 +1,6 @@
 """The MCP tool surface, split by domain.
 
-`mcp_server.py` reached 1454 lines holding 34 tools written twice each -- an
+`mcp_server.py` reached 1454 lines holding 37 tools written twice each -- an
 `_impl` function plus a `@mcp.tool()` wrapper that was a docstring and one
 delegating call -- with the same ritual repeated in every body: 26 copies of
 `with open_db()`, 28 broad `except` blocks, 10 hand-written unknown-user

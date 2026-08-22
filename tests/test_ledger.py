@@ -1066,3 +1066,39 @@ def test_an_arm_with_only_a_train_split_is_flagged_not_silently_ranked(tmp_path)
         f"ranking on a training split must be caveated; got {out['caveats']}"
     )
     conn.close()
+
+
+def test_a_training_arm_beating_an_unlabelled_one_is_caveated(tmp_path):
+    """The gap between the two split branches.
+
+    `_split_rank(None)` returns len(_EVAL_SPLITS) and train returns one more,
+    so an all-train check (`all(rank > len(_EVAL_SPLITS))`) misses a mix of
+    train and unlabelled, and the different-splits check filters None out
+    before counting. Neither fires, and an arm judged on training loss beats
+    one judged on an unlabelled number in silence -- the same backwards
+    ablation the split-awareness fix was written to prevent, one case over.
+    """
+    write(tmp_path / "ab" / "results" / "ab_lowlr.json", '{"train": {"loss": 0.01}}')
+    write(tmp_path / "ab" / "results" / "ab_highlr.json", '{"loss": 0.50}')
+
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, tmp_path)
+    out = ledger.compare(conn, "ab", metric="loss")
+
+    assert out["winner"] == "ab_lowlr"  # it does win; the point is being told why not to trust it
+    caveats = " ".join(out["caveats"])
+    assert "train" in caveats, f"a training-split arm won without a caveat: {out['caveats']}"
+    conn.close()
+
+
+def test_an_unrecognised_split_name_is_not_treated_as_unlabelled(tmp_path):
+    """`_split_rank` maps every unknown string to the same rank as None, so
+    `{"split": "holdout_b"}` and no split at all become one candidate pool and
+    `_best_step` picks the extreme across both."""
+    from attestation.ledger import _split_rank
+
+    assert _split_rank("test") < _split_rank(None)
+    assert _split_rank("train") > _split_rank(None)
+    assert _split_rank("some_unknown_name") == _split_rank("another_unknown"), (
+        "unknown splits should at least be consistent with each other"
+    )

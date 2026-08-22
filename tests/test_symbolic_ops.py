@@ -190,3 +190,25 @@ def test_units_conversion_keeps_its_coefficient():
     """The case the fallback exists for must keep working."""
     out = ops.op_evaluate({"expr": "5", "units": "meter/second -> kilometer/hour"})
     assert out["numeric"] == pytest.approx(18.0)
+
+
+def test_a_units_conversion_on_a_symbolic_expression_reports_no_number():
+    """The units branch kept the bug the rest of op_evaluate lost.
+
+    Scoping the coefficient fallback to `and units` fixed `x**2 + 1 -> 1.0`,
+    but inside that branch it still takes `expr.args[0]` without checking the
+    expression is free of symbols. Converting `x` from metres to kilometres
+    gives `kilometer*x/1000`, whose first arg is the CONVERSION FACTOR: the
+    tool reported numeric=0.001 for an expression it could not evaluate, and
+    the free-symbol note never ran because numeric was already set.
+    """
+    for expr in ("x", "2*x", "x+1", "v*t"):
+        out = ops.op_evaluate({"expr": expr, "units": "meter -> kilometer"})
+        assert out["numeric"] is None, f"{expr!r} reported numeric={out['numeric']}"
+        assert "free" in (out.get("message") or "").lower()
+
+
+def test_a_units_conversion_on_a_number_still_reports_its_value():
+    """The case the fallback exists for."""
+    out = ops.op_evaluate({"expr": "5", "units": "meter/second -> kilometer/hour"})
+    assert out["numeric"] == pytest.approx(18.0)

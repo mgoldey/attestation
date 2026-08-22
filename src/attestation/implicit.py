@@ -1,12 +1,16 @@
 """Feedback inferred from what a reader already did, not from what they said.
 
 Explicit feedback is a channel almost nobody uses. This project's own database
-holds 68 UI clicks and 2 agent clicks against 5,162 items, ever -- roughly one
+holds 68 UI clicks and 2 agent clicks against 5,167 items, ever -- roughly one
 opinion per seventy-five items, and all of them positive, which is why the
 click classifier has never fired for a real account.
 
-Meanwhile 99 explanation requests sit in `explanations`, 91 of them for items
-that were never rated. Asking "why is this here?" is engagement. It is weaker
+Meanwhile 99 explanation requests sit in `explanations`, and when this module
+was written 91 of them were for items that were never rated. Running `harvest`
+converted 34, so the live figure moves as the tool is used -- these counts say
+why the module exists, not what the database holds now.
+
+Asking "why is this here?" is engagement. It is weaker
 evidence than a stated opinion -- curiosity is not approval, and a reader may
 well have asked precisely because the item looked wrong -- but it is real, it
 is already collected, and counting it costs the reader nothing.

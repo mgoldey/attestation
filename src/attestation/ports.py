@@ -18,7 +18,7 @@ does not.
 
 Note what is NOT abstracted: reliability policy. `llm.py`'s docstring is
 explicit that retry-then-skip and cache fallback belong to callers, and
-`rank.py:170` depends on that -- it serves a stale cached profile vector when
+`rank.py:198` depends on that -- it serves a stale cached profile vector when
 the embedder is down and raises only when the cache is cold. A port that
 swallowed or retried would take that decision away from the one place with
 enough context to make it.

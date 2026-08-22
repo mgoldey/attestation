@@ -179,6 +179,28 @@ def op_verify(payload: dict) -> dict:
     return out
 
 
+def _apply_units(expr, units: str):
+    """Convert an expression between units, e.g. 'meter/second -> kilometer/hour'."""
+    if "->" not in units:
+        raise ValueError("units must look like 'meter/second -> kilometer/hour'")
+    source, target = (part.strip() for part in units.split("->", 1))
+    return convert_to(expr * _unit_expr(source), _unit_expr(target))
+
+
+def _units_coefficient(expr) -> float | None:
+    """The number in a converted quantity: the 18 in `18*kilometer/hour`.
+
+    Only meaningful when nothing symbolic remains. Converting `x` from metres
+    to kilometres leaves `kilometer*x/1000`, whose first arg is the CONVERSION
+    FACTOR -- returning it reported numeric=0.001 for an expression that has no
+    value. The caller checks free_symbols before asking.
+    """
+    try:
+        return float(cast(sp.Expr, expr.args[0])) if expr.args else float(expr)
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
 def op_evaluate(payload: dict) -> dict:
     expr = parse_safe(payload["expr"])
     subs = payload.get("subs")
@@ -187,25 +209,14 @@ def op_evaluate(payload: dict) -> dict:
 
     units = payload.get("units")
     if units:
-        if "->" not in units:
-            raise ValueError("units must look like 'meter/second -> kilometer/hour'")
-        source, target = (part.strip() for part in units.split("->", 1))
-        expr = convert_to(expr * _unit_expr(source), _unit_expr(target))
-    out = describe(sp.simplify(expr))
-    if out["numeric"] is None and units:
-        try:
-            # A units conversion leaves `18*kilometer/hour`, whose coefficient
-            # IS the answer. Scoped to the units path on purpose: the same
-            # fallback used to run for every symbolic result, so `x**2 + 1`
-            # reported numeric=1.0 and `2*x` reported 2.0 -- the coefficient of
-            # an arbitrary arg, handed back as though it were the value. A
-            # confidently wrong number is worse than no number.
-            out["numeric"] = float(cast(sp.Expr, expr.args[0])) if expr.args else float(expr)
-        except (TypeError, ValueError, IndexError):
-            out["numeric"] = None
+        expr = _apply_units(expr, units)
 
+    simplified = sp.simplify(expr)
+    out = describe(simplified)
+    if out["numeric"] is None and units and not simplified.free_symbols:
+        out["numeric"] = _units_coefficient(expr)
     if out["numeric"] is None:
-        out["message"] = _free_symbol_note(sp.simplify(expr))
+        out["message"] = _free_symbol_note(simplified)
     out["parsed_input"] = payload["expr"]
     return out
 

@@ -111,7 +111,7 @@ def test_a_missing_method_fails_the_port():
 
 @pytest.mark.parametrize("status", [401, 429, 500])
 def test_transport_failures_propagate_rather_than_being_swallowed(status):
-    """Reliability policy belongs to callers -- rank.py:170 serves a stale
+    """Reliability policy belongs to callers -- rank.py:198 serves a stale
     cached vector when this raises, and can only do that if it raises."""
     client = EmbeddingClient(
         base_url="https://vendor.example/v1",

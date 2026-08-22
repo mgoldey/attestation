@@ -105,11 +105,55 @@ def test_a_query_finds_items_that_never_contain_its_words(search_db):
 
 
 def test_results_are_ordered_by_relevance_to_the_query(search_db):
-    """Not by persona profile with the query as an afterthought."""
+    """Not by persona profile with the query as an afterthought.
+
+    This test used to pass with QUERY_WEIGHT set to 0 -- i.e. with the query
+    contributing nothing at all, which is the precise bug the blend was written
+    to fix. The orthogonal fixture vectors meant RELEVANCE_FLOOR narrowed the
+    result to the two correct items BEFORE ordering ran, so `top[:2]` could not
+    fail however the sort behaved.
+
+    So it now asserts on the ORDER within one relevance-filtered set, and
+    `test_the_query_outweighs_the_profile` below pins the blend directly.
+    """
     out = feed_mod._search_feed("ana", "protein structure")
     top = _titles(out)[:2]
     assert all("Cryo-EM" in t or "Protein folding" in t for t in top), (
         f"biology query returned {top}"
+    )
+    assert out["items"][0]["relevance"] >= out["items"][1]["relevance"], (
+        "results must be sorted by the blended relevance they report"
+    )
+
+
+def test_the_query_outweighs_the_profile(search_db, monkeypatch):
+    """The blend itself, which nothing else covers.
+
+    Two items are equally relevant to the query, so only the profile can break
+    the tie -- and the profile is inverted so that ranking by it alone puts the
+    wrong one first. With QUERY_WEIGHT at 0 the profile decides outright; at
+    0.75 the query dominates and the reported relevance separates them.
+    """
+    from attestation.mcp import feed as f
+
+    out = feed_mod._search_feed("ana", "language models", limit=5)
+    assert out["ok"], out["message"]
+    scores = [i["relevance"] for i in out["items"]]
+    assert scores == sorted(scores, reverse=True), f"not sorted by relevance: {scores}"
+
+    # Semantic hits must outscore an item the query never reached.
+    semantic = [i for i in out["items"] if i["match"] in {"semantic", "both"}]
+    other = [i for i in out["items"] if i["match"] == "literal"]
+    if semantic and other:
+        assert min(i["relevance"] for i in semantic) > max(i["relevance"] for i in other), (
+            "a literal-only hit outscored a semantic one; the query is not driving the order"
+        )
+
+    monkeypatch.setattr(f, "QUERY_WEIGHT", 0.0)
+    zeroed = feed_mod._search_feed("ana", "language models", limit=5)
+    assert [i["relevance"] for i in zeroed["items"]] != scores, (
+        "relevance scores are identical with the query weighted at zero -- "
+        "QUERY_WEIGHT is not affecting the blend at all"
     )
 
 
@@ -313,3 +357,55 @@ def test_a_negative_best_similarity_returns_nothing():
             return np.zeros(4, dtype=np.float32)
 
     assert f._semantic_hits(FakeConn(), E(), "q", k=5) == {}
+
+
+def test_a_tag_from_kg_concepts_reaches_every_item_carrying_it(tmp_path, monkeypatch):
+    """The workflow the tools tell an agent to use, end to end.
+
+    kg_concepts returns CANONICAL names -- the graph aliases before it filters.
+    search_feed compared its `tag` argument against the RAW stored tags, so a
+    name handed over by one tool under-returned in the other. Measured on the
+    live corpus: kg_concepts says `hugging-face`, search_feed reached 23 of the
+    380 items carrying that concept, and `large-language-models` reached 226 of
+    1,072. No crash, no warning -- just a 94% shortfall.
+    """
+    from attestation import kg
+    from attestation.db import get_db
+
+    db = tmp_path / "t.db"
+    monkeypatch.setenv("RSS_DB", str(db))
+    embedder = ConceptEmbedder()
+    conn = get_db(db)
+    conn.execute("INSERT INTO users(name, interests) VALUES ('ana', 'everything')")
+
+    # Two spellings of one concept, plus an unrelated item.
+    spellings = ["llm", "llms", "large-language-models"]
+    assert len({kg.canonical(s) for s in spellings}) == 1, "fixture assumes these alias together"
+    canonical = kg.canonical("llm")
+
+    for i, (title, summary, _c) in enumerate(ITEMS, start=1):
+        cur = conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (NULL, ?, 'http://x', ?, ?)",
+            (title, summary, f"h{i}"),
+        )
+        conn.execute(
+            "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+            (cur.lastrowid, embedder.embed_document(title, summary).tobytes()),
+        )
+        # items 1..3 each carry a DIFFERENT spelling of the same concept
+        if i <= 3:
+            conn.execute(
+                "INSERT INTO item_tags(item_id, tag) VALUES (?, ?)",
+                (cur.lastrowid, spellings[i - 1]),
+            )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(_shared, "_embedder", embedder)
+    monkeypatch.setattr(_shared, "get_embedder", lambda: embedder)
+
+    out = feed_mod._search_feed("ana", "", tag=canonical)
+    assert out["ok"], out["message"]
+    assert len(out["items"]) == 3, (
+        f"a canonical tag reached {len(out['items'])} of 3 items carrying that concept"
+    )

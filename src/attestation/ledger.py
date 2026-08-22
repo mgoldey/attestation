@@ -248,7 +248,10 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
                     consumed.add(rel.parts[0])
         _link_corpora(conn, records, manifest, assignments)
         _replace_project(conn, project_root.name, records)
-        conn.commit()
+        # NO commit here. Corpora rows and the runs whose corpus_id references
+        # them are written across this loop and committed once below, so a
+        # per-project commit tears that write: see
+        # test_a_scan_that_fails_partway_leaves_no_torn_write.
         scanned[project_root.name] = len(records)
 
     conn.commit()
@@ -612,6 +615,18 @@ def _caveats(scored: list[dict], metric: str) -> list[str]:
     out: list[str] = []
 
     splits = {a.get("split") for a in scored}
+    ranks_seen = {_split_rank(sp) for sp in splits}
+    if len(ranks_seen) > 1:
+        # Arms judged at different levels of trust. This fires for train
+        # against test AND for train against unlabelled -- an earlier version
+        # checked "all train" and "more than one named split" and fell through
+        # the gap between them, letting a training-loss arm beat an unlabelled
+        # one with no caveat at all.
+        named = ", ".join(sorted(sp if sp else "(unlabelled)" for sp in splits))
+        out.append(
+            f"arms are judged on different splits ({named}); the comparison is"
+            " only as sound as those splits are comparable"
+        )
     if splits and all(_split_rank(sp) > len(_EVAL_SPLITS) for sp in splits):
         # Every arm is being judged on training data. That may be all that was
         # recorded, but a training loss ranks how well an arm memorised, not
@@ -620,12 +635,6 @@ def _caveats(scored: list[dict], metric: str) -> list[str]:
         out.append(
             f"every arm's {metric} comes from a training split; this ranks fit, "
             "not generalisation -- record an eval/test split to compare properly"
-        )
-    elif len({sp for sp in splits if sp is not None}) > 1:
-        named = ", ".join(sorted(sp for sp in splits if sp is not None))
-        out.append(
-            f"arms are judged on different splits ({named}); "
-            "the comparison is only as sound as those splits are comparable"
         )
 
     if len(scored) == 1:

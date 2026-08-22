@@ -113,3 +113,71 @@ def test_connection_is_closed_even_when_the_body_raises(tmp_path, monkeypatch):
     f()
     with pytest.raises(Exception):
         seen[0].execute("SELECT 1")
+
+
+# --- the contract across the REAL surface ---------------------------------
+#
+# Everything above exercises the decorator with throwaway functions. That
+# proves the mechanism and nothing about the 37 registered tools, whose
+# `empty=` dicts are hand-written -- the same hand-maintenance the decorator
+# was built to remove, relocated to its argument. The sym_* tools do not use
+# the decorator at all and were dropping `numeric` and `parsed_input` on
+# failure until this test was written.
+
+
+def _user_tools():
+    """The tools that take a `user`, so an unknown persona forces the failure
+    branch without needing a differently-shaped bad input per tool."""
+    import inspect
+
+    from attestation import mcp_server
+    from attestation.mcp import DOMAINS
+
+    found = []
+    for module in DOMAINS:
+        for name in dir(module):
+            fn = getattr(module, name)
+            if not (name.startswith("_") and callable(fn) and hasattr(fn, "__wrapped__")):
+                continue
+            params = list(inspect.signature(fn.__wrapped__).parameters)
+            if len(params) >= 2 and params[0] == "conn" and params[1] == "user_row":
+                found.append((f"{module.__name__}.{name}", fn))
+    assert found, "no user-taking tools discovered"
+    assert mcp_server  # imported for its side effect of registering everything
+    return found
+
+
+def test_every_user_tool_answers_an_unknown_persona_with_a_full_envelope(tmp_path, monkeypatch):
+    """A caller must be able to read result["items"] without checking ok first.
+
+    That property was maintained by hand in 37 places before the decorator and
+    is maintained by hand in 37 `empty=` dicts after it. This is the test the
+    design spec asked for and the file above did not provide.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    offenders = []
+    for name, fn in _user_tools():
+        out = fn("definitely-not-a-persona")
+        if out.get("ok") is not False:
+            offenders.append(f"{name}: unknown user did not fail")
+        elif "unknown user" not in out.get("message", ""):
+            offenders.append(f"{name}: unhelpful message {out.get('message')!r}")
+    assert not offenders, "\n".join(offenders)
+
+
+def test_symbolic_tools_keep_their_shape_on_failure():
+    """The 7 sym_* tools build their own envelope rather than using @tool."""
+    from attestation.mcp import symbolic
+
+    checks = [
+        (symbolic._sym_simplify, "x+x", "@@@"),
+        (symbolic._sym_solve, "x-1", "@@@"),
+        (symbolic._sym_evaluate, "2+2", "@@@"),
+        (symbolic._sym_differentiate, "x**2", "@@@"),
+        (symbolic._sym_integrate, "x", "@@@"),
+    ]
+    for fn, good, bad in checks:
+        ok, err = fn(good), fn(bad)
+        assert ok["ok"] is True, f"{fn.__name__} failed on valid input: {ok}"
+        assert err["ok"] is False, f"{fn.__name__} succeeded on garbage: {err}"
+        assert set(ok) == set(err), f"{fn.__name__} drops {sorted(set(ok) - set(err))} on failure"

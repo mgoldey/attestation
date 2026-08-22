@@ -9,13 +9,28 @@ the contract.
 
 from attestation.symbolic import run_isolated
 
+# Every key any sym op can return, so a failure carries the same shape as a
+# success. These tools predate mcp/_tool.py's @tool decorator and build their
+# own envelope, which meant a failed sym_evaluate simply omitted `numeric` and
+# `parsed_input` -- a caller reading result["numeric"] to see whether an
+# expression evaluated got a KeyError instead of a None.
+_EMPTY = {
+    "result": None,
+    "latex": None,
+    "numeric": None,
+    "steps": None,
+    "equal": None,
+    "symbol": None,
+    "parsed_input": None,
+}
+
 
 def _call(op_name: str, payload: dict, timeout: int) -> dict:
     """Run an op in isolation and flatten it into the tool contract."""
     outcome = run_isolated(op_name, payload, timeout)
     if not outcome["ok"]:
-        return {"ok": False, "message": outcome["error"], "result": None, "latex": None}
-    return {"ok": True, "message": "", **outcome["value"]}
+        return {"ok": False, "message": outcome["error"], **_EMPTY}
+    return {"ok": True, "message": "", **_EMPTY, **outcome["value"]}
 
 
 def register(mcp) -> None:

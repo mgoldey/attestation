@@ -1,6 +1,6 @@
 """The ritual every MCP tool used to repeat, owned in one place.
 
-Before this module, each of the 34 tools opened its own connection, wrapped
+Before this module, each of the 37 tools opened its own connection, wrapped
 its body in `try`, resolved the user by hand, built a success envelope by hand,
 and built a failure envelope by hand -- 26 copies of `with open_db()`, 28 broad
 `except` blocks, and 10 unknown-user checks.
@@ -20,7 +20,7 @@ failure -- is added here.
 unexpected exception into `ok: False` so an MCP tool never returns a traceback.
 It is NOT a general error-swallowing mechanism. The four inline
 `# noqa: BLE001` sites in the codebase stay exactly where they are, because
-each implements a specific policy that needs local knowledge -- `rank.py:170`
+each implements a specific policy that needs local knowledge -- `rank.py:198`
 serves a stale cached profile vector when the embedder is down and raises only
 when the cache is cold, a decision this layer cannot make because it does not
 know a cache exists.

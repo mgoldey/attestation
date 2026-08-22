@@ -121,7 +121,7 @@ connection blocks, 28 excepts, and 10 user checks.
 
 **Scope limit, and it matters.** This consolidates the *presentation* envelope
 only. The four inline `# noqa: BLE001` sites stay exactly where they are.
-`rank.py:170` is not a generic swallow — it implements a specific documented
+`rank.py:198` is not a generic swallow — it implements a specific documented
 policy: embedder down with a warm cache serves a stale vector; a cold cache
 raises. A decorator does not know a cache exists. The superseded spec proposed
 hoisting these to a service layer, which would have been the behavior regression

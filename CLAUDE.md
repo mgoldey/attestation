@@ -2,7 +2,7 @@
 
 Auditable research provenance, fully local: experiment runs, verifiable claims,
 a reading knowledge graph, symbolic derivations, and a personalized science feed.
-Exposed as 36 MCP tools plus a small HTMX web UI and an `attest` CLI.
+Exposed as 37 MCP tools plus a small HTMX web UI and an `attest` CLI.
 
 ## Docs Index
 
@@ -16,9 +16,10 @@ IMPORTANT: Prefer retrieval-led reasoning over pre-training-led reasoning for an
 |evals:{run_tagging_eval.py,tagging_cases.json}|examples:{README.md,workspace/}
 |src/attestation/ledger_adapters:{__init__.py,generic.py}
 |src/attestation/skills/research-provenance:{SKILL.md,scripts/setup.sh}
-|tests:{conftest.py,test_cli.py,test_db.py,test_rank.py,test_rank_relevance.py,test_embed.py,test_llm.py,test_ingest.py,test_feeds.py,test_features.py,test_explain.py,test_server.py,test_mcp_server.py,test_digest.py,test_kg.py,test_kg_algorithms.py,test_kg_mcp.py,test_ledger.py,test_ledger_adapters.py,test_ledger_mcp.py,test_claims.py,test_symbolic.py,test_symbolic_ops.py,test_symbolic_mcp.py,test_install.py,test_install_e2e.py,test_skill_files.py}
+|tests:{conftest.py,test_architecture.py,test_claims.py,test_cli.py,test_db.py,test_digest.py,test_embed.py,test_examples.py,test_explain.py,test_features.py,test_feeds.py,test_implicit_feedback.py,test_ingest.py,test_install.py,test_install_e2e.py,test_kg.py,test_kg_algorithms.py,test_kg_mcp.py,test_ledger.py,test_ledger_adapters.py,test_ledger_mcp.py,test_llm.py,test_mcp_server.py,test_ports.py,test_rank.py,test_rank_relevance.py,test_search.py,test_server.py,test_simulate.py,test_skill_files.py,test_symbolic.py,test_symbolic_mcp.py,test_symbolic_ops.py,test_tool_envelope.py}
+|docs/architecture:{README.md,agent-flows.html}
 |docs:{recommendation-refinements.md,hermes-agent-plugin-research.md}
-|docs/superpowers/specs:{2026-08-04-hermes-rss-design.md,2026-08-05-feature-extraction-design.md,2026-08-05-hermes-install-design.md,2026-08-05-llm-client-extraction-design.md,2026-08-06-knowledge-graph-design.md,2026-08-06-persona-and-feed-mcp-tools-design.md,2026-08-06-sympy-mcp-tools-design.md,2026-08-06-web-ui-tidy-design.md,2026-08-12-claim-checker-design.md,2026-08-12-run-ledger-design.md,2026-08-13-digest-design.md,2026-08-20-corpus-ledger-design.md}
+|docs/superpowers/specs:{2026-08-04-hermes-rss-design.md,2026-08-05-feature-extraction-design.md,2026-08-05-hermes-install-design.md,2026-08-05-llm-client-extraction-design.md,2026-08-06-knowledge-graph-design.md,2026-08-06-persona-and-feed-mcp-tools-design.md,2026-08-06-sympy-mcp-tools-design.md,2026-08-06-web-ui-tidy-design.md,2026-08-12-claim-checker-design.md,2026-08-12-run-ledger-design.md,2026-08-13-digest-design.md,2026-08-20-corpus-ledger-design.md,2026-08-21-architecture-roadmap.md,2026-08-21-onion-refactor-design.md,2026-08-21-tool-surface-design.md}
 |docs/superpowers/plans:{2026-08-04-hermes-rss.md,2026-08-05-feature-extraction.md,2026-08-05-hermes-install.md,2026-08-05-llm-client-extraction.md,2026-08-06-knowledge-graph.md,2026-08-06-persona-and-feed-mcp-tools.md,2026-08-06-sympy-mcp-tools.md}
 ```
 
@@ -29,10 +30,10 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 
 ```
 |Entry points: cli.py:main()→`attest`|mcp_server.py:main()→`attest-mcp`|server.py:create_app()→FastAPI+HTMX @ 127.0.0.1:8899
-|MCP surface: 36 tools in mcp/{feed,knowledge,provenance,symbolic}.py; mcp_server.py is an 89-line entry point + one-release `_<name>_impl` aliases|mcp/_tool.py's @tool owns the ritual: connection, user lookup, and BOTH envelopes — a body returns only what it computed|expected refusals `raise ToolError(msg)` (verbatim to caller); anything else is a bug (logged, generic message)|`empty={...}` makes a failure envelope structurally match its success envelope
+|MCP surface: 37 tools in mcp/{feed,knowledge,provenance,symbolic}.py; mcp_server.py is an 89-line entry point + one-release `_<name>_impl` aliases|mcp/_tool.py's @tool owns the ritual: connection, user lookup, and BOTH envelopes — a body returns only what it computed|expected refusals `raise ToolError(msg)` (verbatim to caller); anything else is a bug (logged, generic message)|`empty={...}` makes a failure envelope structurally match its success envelope
 |Search: search_feed queries sqlite-vec with embed_query() then blends with profile rank (QUERY_WEIGHT=0.75)|RELEVANCE_FLOOR=0.90 is RELATIVE to the best hit for that query — absolute cutoffs fail because top similarity varies 0.44-0.62 by query|a literal hit is a BOOST not a floor: flooring made all 711 "llm" matches tie
 |Feedback: clicks.source = ui|agent|bootstrap|simulated|implicit, and provenance decides what a row may be used for|bootstrap labels are a linear threshold on the SAME embedding the classifier trains on → tautological, excluded by evaluate_user|simulated = a chat model reacting to TEXT as the persona, independent of the vector, so trainable
-|Signal scarcity is the core problem: 68 ui + 2 agent clicks across 5162 items, ALL positive → classifier never fired for a real account|implicit.py harvests explanation requests as weak positives (recovered 34 for matt, 8→42 clicks)|SKILL.md tells the agent to extract verdicts from ordinary discourse, since users never press buttons
+|Signal scarcity is the core problem: 68 ui + 2 agent clicks across 5167 items, ALL positive → classifier never fired for a real account|implicit.py harvests explanation requests as weak positives (recovered 34 for matt, 8→42 clicks)|SKILL.md tells the agent to extract verdicts from ordinary discourse, since users never press buttons
 |Only POSITIVES are inferred: no behaviour reliably means "not useful", and inferring rejection from silence poisons the class the ranker is starving for
 |simulate.py: Reaction asks for `confidence` (how sure), NOT `strength` — the first version asked "how strongly you feel" and a correct rejection came back at 1 and was filtered as indifference, discarding every negative
 |Ranking: rank_items(conn,embedder,user_id,since_days=14,*,exclude_clicked=True)→list[RankedItem]|blend_weight(n_clicks) mixes click_ranks vs profile_rank|classifier_probs() returns None on single-class history (guard) → order is embedding-only
@@ -47,7 +48,7 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 |Claims: claims.parse_file()→find_claims()→check_claim()→Verdict|coverage() lints numbers in prose no claim covers (negatives included)
 |Ports: ports.py ChatPort/EmbeddingPort/EmbedderPort are structural Protocols — NO repository protocol, deliberately (see superseded onion spec)|EmbedderPort is separate from EmbeddingPort because embed.py's doc/query prompts are asymmetric|LLM: llm.py ChatClient/EmbeddingClient→any OpenAI-compatible server (zero ollama refs in library code; LLM_BASE_URL points anywhere) @ DEFAULT_BASE_URL|DEFAULT_CHAT_MODEL=gemma4:e2b-it-q4_K_M, DEFAULT_EMBED_MODEL=embeddinggemma|hermes3 workaround is scoped to hermes3 only
 |Embeddings: embed.py DOC_PROMPT vs QUERY_PROMPT are asymmetric — index with doc, search with query|truncate_normalize() before storing
-|Reliability contract: 4 inline `# noqa: BLE001` sites (cli.py:244, install.py:292, symbolic.py:238, rank.py:170), each carrying its reason — there is NO per-file-ignores section in pyproject|rank.py:170 is a specific policy, not a swallow: embedder down + warm cache serves stale, cold cache raises|ranking never waits on explanations; a cold Ollama degrades to a cached vector, never a 500
+|Reliability contract: 4 inline `# noqa: BLE001` sites (cli.py:244, install.py:292, symbolic.py:238, rank.py:198), each carrying its reason — there is NO per-file-ignores section in pyproject|rank.py:198 is a specific policy, not a swallow: embedder down + warm cache serves stale, cold cache raises|ranking never waits on explanations; a cold Ollama degrades to a cached vector, never a 500
 |No LLM in composition tools: digest/runs_compare return structure, never prose — the caller is a model
 ```
 

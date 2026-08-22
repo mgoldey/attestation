@@ -1,7 +1,7 @@
 """Engagement that already happens, counted as the signal it is.
 
 Explicit feedback is a channel almost nobody uses: this database holds 68 UI
-clicks and 2 agent clicks against 5,162 items, ever. A ranker waiting to be
+clicks and 2 agent clicks against 5,167 items, ever. A ranker waiting to be
 told what is useful waits forever, and the classifier stays off.
 
 Meanwhile 99 explanation requests were logged, 91 of them for items that were
