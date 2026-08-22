@@ -119,3 +119,53 @@ def test_reacting_twice_replaces_rather_than_duplicates(seeded):
     rows = seeded.execute("SELECT useful FROM clicks").fetchall()
     assert len(rows) == 4
     assert all(r["useful"] == 0 for r in rows)
+
+
+def test_a_single_source_dominating_the_positives_is_caveated(tmp_path, monkeypatch):
+    """An AUC of 1.0 usually means the task was easy, not the model good.
+
+    Sampling round-robin across feeds is what finally produced negatives, but
+    it skews the classes by source: on the live database it left 93% of the
+    positives in one feed while negatives spread over nine others. A classifier
+    fit on that scores perfectly by learning "cs.LG means useful" -- which the
+    embedding encodes trivially -- and learns nothing about the reader.
+    """
+    from attestation.db import get_db
+    from attestation.mcp.feed import _source_skew_caveat
+    from attestation.rank import get_user, record_click
+
+    db = tmp_path / "t.db"
+    monkeypatch.setenv("RSS_DB", str(db))
+    conn = get_db(db)
+    conn.execute("INSERT INTO users(name, interests) VALUES ('ana', 'x')")
+    conn.execute("INSERT INTO feeds(url, title) VALUES ('http://a', 'A')")
+    conn.execute("INSERT INTO feeds(url, title) VALUES ('http://b', 'B')")
+    for i in range(1, 13):
+        conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (?, ?, 'u', 's', ?)",
+            (1 if i <= 9 else 2, f"t{i}", f"h{i}"),
+        )
+    conn.commit()
+    uid = get_user(conn, "ana")["id"]
+
+    # Nine positives, all from feed A; three negatives from feed B.
+    for i in range(1, 10):
+        record_click(conn, uid, i, True, source="simulated")
+    for i in range(10, 13):
+        record_click(conn, uid, i, False, source="simulated")
+    conn.commit()
+
+    caveat = _source_skew_caveat(conn, uid)
+    assert caveat is not None
+    assert "100%" in caveat or "one feed" in caveat
+
+    # Mixed sources: no warning.
+    conn.execute("DELETE FROM clicks WHERE user_id = ?", (uid,))
+    for i in range(1, 6):
+        record_click(conn, uid, i, True, source="simulated")
+    for i in range(10, 13):
+        record_click(conn, uid, i, True, source="simulated")
+    conn.commit()
+    assert _source_skew_caveat(conn, uid) is None, "a balanced history must not warn"
+    conn.close()
