@@ -16,9 +16,24 @@ says `runs_scan` precedes `runs_compare`, or that `sym_*` has nothing to do with
 the feed.
 
 **Coding-agent confusion.** `mcp_server.py` is 1454 lines holding 36 tools, 36
-`_impl` functions, 18 raw SQL strings, and 11 deferred
-`from attestation import ...` statements inside function bodies. Deferred
-imports are the module confessing to import cycles it routes around.
+`_impl` functions, and 18 raw SQL strings. `cli.py` (444) is tangled to a
+similar degree.
+
+**Correction, measured 2026-08-21.** An earlier draft of this spec claimed the
+deferred `from attestation import ...` statements inside function bodies were
+"the module confessing to import cycles it routes around," and proposed a test
+banning them. That was wrong, and the test would have been actively harmful.
+
+An AST probe found 58 such imports (not 11). Building the module graph from
+top-level imports and testing each deferred import for a would-be cycle found
+**exactly one real cycle** (`symbolic` <-> `symbolic_ops`). The other 29 edges
+are deliberate lazy-loading. `sklearn` costs 929ms to import, `mcp` 526ms,
+`fastapi` 280ms, `sympy` 252ms; `attest --help` currently returns in 0.22s.
+Promoting `cli -> rank` to top level would put a second onto every CLI
+invocation.
+
+The deferred imports are a load-bearing performance optimization. They stay.
+The only one worth removing is the genuine `symbolic` cycle.
 
 **No data layer.** Eleven modules speak `sqlite3` directly; 94 raw SQL strings
 are spread across the tree. `db.py` is connection management and migrations,
@@ -62,9 +77,14 @@ rather than a 500. That contract **moves up to the service layer**. Services own
 
 This is an improvement, not a relocation. Today the swallowing happens deep in
 domain code where it also hides real bugs. Concentrated in services, the
-degradation is deliberate and visible in one place per domain. The `BLE001`
-per-file-ignores in `pyproject.toml` move from `explain.py`/`rank.py` to
-`services/`.
+degradation is deliberate and visible in one place per domain.
+
+**Correction:** `CLAUDE.md` states `BLE001` is per-file-ignored in
+`pyproject.toml`. It is not — `pyproject.toml` has no `per-file-ignores` section
+at all. There are four inline `# noqa: BLE001` comments (`cli.py:244`,
+`install.py:292`, `symbolic.py:238`, `rank.py:170`), each carrying its own
+reason. That is the better arrangement: the suppression travels with the code
+when it moves. `CLAUDE.md` gets fixed as part of stage 1.
 
 ## Repositories
 
@@ -253,7 +273,9 @@ Stage 3's nine modules: `rank`, `kg`, `ledger`, `claims`, `corpus`, `features`,
 ## Success criteria
 
 - `import sqlite3` outside `infrastructure/` — zero occurrences, enforced by test
-- Deferred imports inside function bodies — zero, enforced by test
+- Module import graph acyclic — enforced by test (one cycle to fix:
+  `symbolic` <-> `symbolic_ops`)
+- `attest --help` under 0.5s — enforced by test, protecting the lazy imports
 - No module over ~400 lines (from 1454, 637, 614)
 - All 36 tools reachable under both namespaced and legacy names
 - Full gate green at every stage; no behavior change attributable to any
