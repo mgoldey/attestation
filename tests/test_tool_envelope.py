@@ -159,9 +159,20 @@ def test_every_user_tool_answers_an_unknown_persona_with_a_full_envelope(tmp_pat
     for name, fn in _user_tools():
         out = fn("definitely-not-a-persona")
         if out.get("ok") is not False:
-            offenders.append(f"{name}: unknown user did not fail")
-        elif "unknown user" not in out.get("message", ""):
-            offenders.append(f"{name}: unhelpful message {out.get('message')!r}")
+            # Read-side tools auto-create the reader rather than refusing --
+            # the refusal is what taught agents to call persona_create with
+            # whatever string they had. They must still return a full
+            # envelope, which succeed() guarantees, so there is nothing to
+            # check here beyond it not blowing up.
+            assert "message" in out and "ok" in out, f"{name}: {sorted(out)}"
+            continue
+        message = out.get("message", "")
+        # A refusal must say something the caller can act on: which persona is
+        # unknown, which argument is missing, or what the tool needs. The one
+        # thing it must never be is the generic bug message, which reads as a
+        # server fault for a mistake the caller could fix.
+        if "see server logs" in message or not message:
+            offenders.append(f"{name}: unhelpful message {message!r}")
     assert not offenders, "\n".join(offenders)
 
 
@@ -181,3 +192,22 @@ def test_symbolic_tools_keep_their_shape_on_failure():
         assert ok["ok"] is True, f"{fn.__name__} failed on valid input: {ok}"
         assert err["ok"] is False, f"{fn.__name__} succeeded on garbage: {err}"
         assert set(ok) == set(err), f"{fn.__name__} drops {sorted(set(ok) - set(err))} on failure"
+
+
+def test_a_missing_argument_names_itself(tmp_path, monkeypatch):
+    """`internal error; see server logs` is useless to an agent that can fix
+    the call itself.
+
+    Calling feed.read with a user but no item_id raised TypeError, which the
+    decorator turned into the generic bug message -- so a recoverable mistake
+    read as a server fault, and the agent had nothing to act on. A missing
+    argument is the caller's to supply.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    from attestation.mcp import feed as feed_mod
+
+    out = feed_mod._read_item("someone")
+
+    assert out["ok"] is False
+    assert "item_id" in out["message"], out["message"]
+    assert "see server logs" not in out["message"]

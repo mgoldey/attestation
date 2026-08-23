@@ -72,12 +72,46 @@ class ToolError(Exception):
     """
 
 
+# What a persona starts with before its reader says anything. Not empty: an
+# empty interests string embeds to nothing and ranks on nothing, so a new
+# reader would get an arbitrary order and no reason to trust it. The corpus's
+# own most-common topics are the honest default -- "here is what this feed is
+# about" -- and the first thing the agent does is ask what to change it to.
+STARTER_INTERESTS = "general science and technology research"
+
+
+def _autocreate_user(conn: sqlite3.Connection, name: str):
+    """Create a reader on first sight, seeded from what the corpus covers.
+
+    Refusing an unknown name and listing the valid ones taught agents to call
+    persona_create with whatever string they had: the live database grew a
+    duplicate persona with zero clicks that way, days after that reader had
+    been merged away. The refusal did not prevent the duplicate, it caused it.
+    """
+    from attestation.features import tag_vocabulary
+    from attestation.rank import create_user
+
+    try:
+        topics = tag_vocabulary(conn, limit=6)
+    except sqlite3.Error:
+        # A database without the tag tables yet is not a reason to refuse a
+        # reader; the starter string is a placeholder either way. Narrow to
+        # sqlite errors on purpose -- anything else here is a real bug and
+        # should reach the decorator's own handler.
+        topics = []
+    interests = ", ".join(topics) if topics else STARTER_INTERESTS
+    create_user(conn, name, interests)
+    conn.commit()
+    return _get_user(conn, name), interests
+
+
 def tool(
     *,
     empty: dict | None = None,
     needs_user: bool = False,
     needs_db: bool = True,
     label: str | None = None,
+    autocreate_user: bool = False,
 ) -> Callable:
     """Wrap a tool body in the connection, the user lookup, and the envelope.
 
@@ -114,11 +148,39 @@ def tool(
                     user = args[0] if args else kwargs.pop("user", None)
                     rest = args[1:] if args else ()
                     row = _get_user(conn, user)
+                    created_with = None
                     if row is None:
-                        return fail(unknown_user_message(conn, user))
-                    return succeed(fn(conn, row, *rest, **kwargs))
+                        if not (autocreate_user and user):
+                            return fail(unknown_user_message(conn, user))
+                        row, created_with = _autocreate_user(conn, user)
+                    result = succeed(fn(conn, row, *rest, **kwargs))
+                    if created_with is None:
+                        return result
+                    # Announce it. Creating a reader profile is a real side
+                    # effect, and doing it silently turns a typo into a
+                    # permanent persona nobody knows exists. Ask what they
+                    # want to follow rather than confirming a name: the name
+                    # is whatever was passed, and the interests text IS the
+                    # profile embedding.
+                    result["message"] = (
+                        f"created a new reader '{user}', starting from what this"
+                        f" feed mostly covers ({created_with}). What topics do you"
+                        " want to monitor? I will retune it to those. " + result.get("message", "")
+                    ).strip()
+                    return result
             except ToolError as exc:
                 return fail(str(exc))
+            except TypeError as exc:
+                # A missing or surplus argument is the CALLER's mistake and
+                # the caller can fix it -- but only if told which one. This
+                # reached the generic handler and came back as "internal
+                # error; see server logs", which reads as a server fault and
+                # gives an agent nothing to act on. Re-raised if it did not
+                # come from binding, since a TypeError inside a body is a bug.
+                message = str(exc)
+                if "argument" not in message:
+                    raise
+                return fail(f"{name}: {message.split('()', 1)[-1].strip()}")
             except Exception:
                 log.exception("%s failed args=%s kwargs=%s", name, args, kwargs)
                 return fail(f"internal error in {name}; see server logs")

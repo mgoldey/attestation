@@ -295,7 +295,7 @@ def _item_row(it, *, summary: bool = False) -> dict:
 FULL_SUMMARY_CHARS = 2000
 
 
-@tool(empty={"item": None}, needs_user=True, label="read_item")
+@tool(empty={"item": None}, needs_user=True, autocreate_user=True, label="read_item")
 def _read_item(conn, user_row, item_id: int) -> dict:
     """One item with its text, for an agent asked to summarise or judge it.
 
@@ -350,7 +350,12 @@ def _read_item(conn, user_row, item_id: int) -> dict:
     }
 
 
-@tool(empty={"items": [], "ranking_quality": {}}, needs_user=True, label="list_feed")
+@tool(
+    empty={"items": [], "ranking_quality": {}},
+    needs_user=True,
+    autocreate_user=True,
+    label="list_feed",
+)
 def _list_feed(conn, user_row, limit: int = 5, since_days: int | None = 14) -> dict:
     """`since_days` defaults to rank_items' own 14-day window so list_feed's
     behavior is unchanged; digest passes its `days` through here.
@@ -608,7 +613,12 @@ def _score_matches(kept: list, ranked: list, needle: str, similarity: dict) -> l
     return scored
 
 
-@tool(empty={"items": [], "ranking_quality": {}}, needs_user=True, label="search_feed")
+@tool(
+    empty={"items": [], "ranking_quality": {}},
+    needs_user=True,
+    autocreate_user=True,
+    label="search_feed",
+)
 def _search_feed(
     conn,
     user_row,
@@ -746,6 +756,7 @@ def _cluster(items: list, members: list, cached: dict) -> tuple[dict[str, list],
 @tool(
     empty={"topics": [], "unclustered": [], "ranking_quality": {}, "window_days": 0},
     needs_user=True,
+    autocreate_user=True,
     label="digest",
 )
 def _digest_body(conn, user_row, days: int = 7, per_topic: int = 3, limit: int = 30) -> dict:

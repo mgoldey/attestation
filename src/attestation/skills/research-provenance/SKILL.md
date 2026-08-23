@@ -17,6 +17,12 @@ Use this skill when the user asks about their science/research feed, wants
 today's recommended papers, or wants to give feedback on an item ("mark that
 useful", "not interested in that one", "why did this rank first?").
 
+**Also use it when they ask what you can do.** Answer by doing: call
+`feed.list`, name two papers, and offer the obvious next step. Do not recite
+the tool surface -- a list of capabilities is a menu, and nobody asked for a
+menu. If no persona exists yet, one is created on that first call, so there
+is nothing to set up first and nothing to ask.
+
 This skill talks to **attestation**, a local personalized RSS/arXiv ranking
 engine running at `http://127.0.0.1:8899`. The engine is deterministic
 (profile-embedding + click-trained classifier) with an LLM-generated
@@ -166,14 +172,44 @@ When running alongside hermes-agent, the rest of the toolset is exposed as
 native MCP tools (`src/attestation/mcp/`), not HTTP — call these
 directly rather than reaching for `curl`.
 
-**Personas** — `feed.persona_create(name, interests)` makes a new reader profile
-from a freeform interests string; `feed.persona_update(name, interests)` replaces
-that text and re-steers ranking immediately; `feed.persona_suggest_interests(limit)`
-returns the most common tags currently in the feed, useful for drafting an
-interests string before creating or updating a persona; `feed.persona_status(user)`
-reports click count, how much of the ranking is behavior-driven vs.
-text-driven, and top liked/disliked tags — good for "how well-trained is
-this persona?" questions.
+**Personas — never make the reader do bookkeeping.**
+
+You do not need a persona to exist before you use it. `feed.list`,
+`feed.search`, `feed.digest` and `feed.read` create one on first sight and
+answer the question in the same call. So:
+
+- **Never ask "which persona?" or "what should I call your profile?"** The
+  name is whatever you already have — the chat handle, the username, the name
+  they gave you. A reader asked to invent a profile name has been handed
+  admin work they did not come for.
+- **Do not call `feed.persona_create` to get started.** It exists for
+  deliberately building a *second* reader (a colleague's profile, a demo
+  persona), not for the person in front of you. Reaching for it on an unknown
+  name is what put a duplicate `Matthew Goldey` in this database days after
+  that reader had been merged into `matt`.
+- **Ask what they read about, once, after answering.** A new persona starts
+  from the corpus's own common topics and says so. That is the moment to ask
+  — and the only question worth asking, because the interests text IS the
+  profile embedding. "What do you actually work on?" beats any question about
+  names or profiles.
+- Then `feed.persona_update(name, interests)` with what they said. Ranking
+  re-steers immediately.
+
+**Growing the feed is your job, not theirs.** A reader who says "I want more
+on X" is asking you to widen their sources, not to hand them a URL. The path
+is `feed.source_suggest(user)` -> `feed.source_preview(url)` -> confirm ->
+`feed.source_add(url, title)`. Suggestions are scored against tags this
+reader already liked and come from a curated list -- never web-searched,
+never invented. Preview before subscribing: adding a feed sight-unseen is how
+a bad one gets in, and items are permanent once ingested.
+
+**Show, do not list.** When someone asks what you can do, do not recite the
+tool surface. Run something: pull their feed, name two papers in it, and say
+what you could do next with them. A list of capabilities is a menu; a real
+answer is a demonstration. `feed.persona_status(user)` is the same move for
+"how well is this trained?" — it reports click count and how much of the
+order is behaviour-driven versus text-driven, which is an answer rather than
+a claim.
 
 **Search** — `feed.search(user, query, tag, content_type, limit)` searches
 the *whole* archive (not just unread items) for a keyword, optionally

@@ -56,6 +56,120 @@ def _strip_topic(text: str) -> str:
     return cleaned.strip() or text.strip().rstrip("?")
 
 
+# The feed rule table, in order. First match wins, and the ORDER is the
+# design: "add arxiv cs.CL to my feeds" contains "my feeds" but is not a
+# request to see them, and "what feeds should I subscribe to" contains
+# "subscribe" but is a question rather than an instruction.
+#
+# Data rather than a chain of ifs because the chain reached 17 branches and
+# the ordering -- the part that actually matters -- was invisible in it.
+_FEED_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # Content before ranking: "what is that paper about" asks what it SAYS,
+    # "why is it here" asks why it RANKED.
+    (
+        "feed.read",
+        (
+            "summarize",
+            "summarise",
+            "abstract",
+            "what is that paper about",
+            "what is it about",
+            "what does it say",
+            "read me",
+            "tell me about item",
+        ),
+    ),
+    ("feed.explain", ("why did", "why is", "why was", "explain", "how come")),
+    (
+        "feed.rate",
+        (
+            "not relevant",
+            "isn't relevant",
+            "not interested",
+            "already read",
+            "not useful",
+            "useful",
+            "good find",
+            "not my area",
+            "wrong subfield",
+        ),
+    ),
+    (
+        "feed.digest",
+        (
+            "been reading",
+            "reading about lately",
+            "digest",
+            "by topic",
+            "grouped",
+            "themes",
+            "what have i read",
+        ),
+    ),
+    (
+        "feed.source_preview",
+        ("preview", "what's in that feed", "whats in that feed", "what it publishes"),
+    ),
+    ("feed.source_add", ("add ", "subscribe", "follow ")),
+    (
+        "feed.sources",
+        (
+            "my feeds",
+            "subscriptions",
+            "subscribed",
+            "which feeds",
+            "list feeds",
+            "show me my feeds",
+        ),
+    ),
+    ("feed.source_remove", ("unsubscribe", "remove feed", "drop feed")),
+    (
+        "feed.persona_status",
+        ("persona", "profile", "how well trained", "how trained", "my interests"),
+    ),
+    (
+        "feed.list",
+        (
+            "should i read",
+            "what's new",
+            "whats new",
+            "read today",
+            "recommend",
+            "my feed",
+            "anything for me",
+        ),
+    ),
+)
+
+# Advice beats action, but only when no URL is present: a reader who names a
+# feed is not asking for advice about it.
+_SUGGEST_PHRASES = (
+    "should i subscribe",
+    "should i follow",
+    "suggest",
+    "recommend feed",
+    "expand my source",
+    "more coverage",
+    "missing any source",
+    "what feeds",
+)
+
+# A search needs a subject AND a word that means searching. " about " is too
+# weak -- "tell me about machine learning" could mean the feed, the graph or
+# the archive, and guessing is what the catch-all finding warns against.
+_SEARCH_PHRASES = (
+    "anything new",
+    "anything on",
+    "papers on",
+    "papers about",
+    "articles on",
+    "work on",
+    "find",
+    "search",
+    "look for",
+)
+
+
 def route_feed(question: str) -> Decision:
     """Route a question about the reader's feed or persona."""
     q = question.lower().strip()
@@ -66,97 +180,18 @@ def route_feed(question: str) -> Decision:
             options=("feed.list", "feed.search", "feed.digest"),
         )
 
-    # Order matters: the more specific intents are tested first, because
-    # "why did that rank" also contains words that look like a search.
-    # Content before ranking. "what is that paper about" asks what it SAYS;
-    # "why is it here" asks why it RANKED. An agent that conflates them tells
-    # a reader about cosine similarity when they wanted the abstract.
-    if _has(
-        q,
-        "summarize",
-        "summarise",
-        "abstract",
-        "what is that paper about",
-        "what is it about",
-        "what does it say",
-        "read me",
-        "tell me about item",
-    ):
-        return Decision("feed.read", {})
-    if _has(q, "why did", "why is", "why was", "explain", "how come"):
-        return Decision("feed.explain", {})
-    if _has(
-        q,
-        "not relevant",
-        "isn't relevant",
-        "not interested",
-        "already read",
-        "not useful",
-        "useful",
-        "good find",
-        "not my area",
-        "wrong subfield",
-    ):
-        return Decision("feed.rate", {})
-    if _has(
-        q,
-        "been reading",
-        "reading about lately",
-        "digest",
-        "by topic",
-        "grouped",
-        "themes",
-        "what have i read",
-    ):
-        return Decision("feed.digest", {})
-    # Mutations before the listing they mention: "add arxiv cs.CL to my
-    # feeds" contains "my feeds" but is not a request to see them.
-    if _has(q, "add ", "subscribe"):
-        return Decision("feed.source_add", {})
-    if _has(
-        q,
-        "my feeds",
-        "subscriptions",
-        "subscribed",
-        "which feeds",
-        "list feeds",
-        "show me my feeds",
-    ):
-        return Decision("feed.sources", {})
-    if _has(q, "unsubscribe", "remove feed", "drop feed"):
-        return Decision("feed.source_remove", {})
-    if _has(q, "persona", "profile", "how well trained", "how trained", "my interests"):
-        return Decision("feed.persona_status", {})
-    if _has(
-        q,
-        "should i read",
-        "what's new",
-        "whats new",
-        "read today",
-        "recommend",
-        "my feed",
-        "anything for me",
-    ):
-        return Decision("feed.list", {})
-    # A search needs a subject AND a word that means searching. " about " is
-    # too weak: "tell me about machine learning" could mean the feed, the
-    # graph or the archive, and guessing between them is the behaviour the
-    # catch-all finding warns against.
-    if _has(
-        q,
-        "anything new",
-        "anything on",
-        "papers on",
-        "papers about",
-        "articles on",
-        "work on",
-        "find",
-        "search",
-        "look for",
-    ):
+    if "http" not in q and _has(q, *_SUGGEST_PHRASES):
+        return Decision("feed.source_suggest", {})
+
+    for tool_name, phrases in _FEED_RULES:
+        if _has(q, *phrases):
+            return Decision(tool_name, {})
+
+    if _has(q, *_SEARCH_PHRASES):
         topic = _strip_topic(question)
         if topic and len(topic.split()) >= 2:
             return Decision("feed.search", {"query": topic})
+
     return Decision(
         None,
         question="Did you mean your current feed, or a search of the whole archive?",
@@ -334,10 +369,14 @@ def _feed_ask(user: str, question: str) -> dict:
         out = feed_mod._search_feed(user, decision.kwargs.get("query", question))
     elif decision.tool == "feed.digest":
         out = feed_mod._digest(user)
-    elif decision.tool == "feed.sources":
+    elif decision.tool in {"feed.sources", "feed.source_suggest"}:
         from attestation.mcp import subscriptions as subs
 
-        out = subs._list_feeds()
+        out = (
+            subs._suggest_feeds(user)
+            if decision.tool == "feed.source_suggest"
+            else subs._list_feeds()
+        )
     elif decision.tool == "feed.persona_status":
         out = feed_mod._profile_status(user)
     elif decision.tool == "feed.read":
@@ -347,6 +386,15 @@ def _feed_ask(user: str, question: str) -> dict:
             "refs": [],
             "caveat": None,
             "options": ["feed.read"],
+            "tool_used": None,
+        }
+    elif decision.tool == "feed.source_preview":
+        return {
+            "ok": False,
+            "answer": "Which feed? Give me its URL and I will show recent entries.",
+            "refs": [],
+            "caveat": None,
+            "options": ["feed.source_preview", "feed.source_suggest"],
             "tool_used": None,
         }
     elif decision.tool in {"feed.rate", "feed.explain", "feed.source_add", "feed.source_remove"}:
@@ -387,7 +435,16 @@ def _compose(out: dict, tool: str) -> dict:
 # Where a tool puts its results. Different names for the same idea, and a
 # caller should not have to know which -- nor should _compose branch over all
 # of them inline.
-_RESULT_KEYS = ("items", "nodes", "concepts", "arms", "communities", "feeds", "runs")
+_RESULT_KEYS = (
+    "items",
+    "nodes",
+    "concepts",
+    "arms",
+    "communities",
+    "feeds",
+    "runs",
+    "suggestions",
+)
 
 
 def _summarise(out: dict) -> str:

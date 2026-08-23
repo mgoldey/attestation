@@ -145,13 +145,23 @@ def test_empty_feed_preserves_success_path_keys(db, monkeypatch):
     assert out["topics"] == [] and out["unclustered"] == []
 
 
-def test_unknown_user_is_reported(db):
-    seed(db)
+def test_unknown_user_is_reported(tmp_path, monkeypatch):
+    """An unknown reader is now CREATED, not refused.
 
-    out = mcp_server._digest_impl("nobody")
+    Refusing and listing the valid names taught agents to call
+    persona_create with whatever string they had -- the live database
+    grew a duplicate persona that way, days after that reader had been
+    merged away. The refusal caused the duplicate it was meant to
+    prevent, so read-side tools create on first sight and say so.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    out = mcp_server._list_feed_impl("nobody-yet", limit=2)
 
-    assert out["ok"] is False
-    assert "unknown user" in out["message"]
+    assert out["ok"] is True, out["message"]
+    assert "created" in out["message"].lower()
+    assert "nobody-yet" in out["message"]
+    # and it asks the one question only the reader can answer
+    assert "monitor" in out["message"].lower() or "topics" in out["message"].lower()
 
 
 def test_digest_is_deterministic(db, monkeypatch):

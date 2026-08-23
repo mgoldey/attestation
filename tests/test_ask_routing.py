@@ -194,3 +194,38 @@ def test_asking_to_summarise_a_paper_routes_to_read():
         "what does it say?",
     ):
         assert route_feed(turn).tool == "feed.read", turn
+
+
+def test_expanding_coverage_routes_to_suggestions_not_a_blind_add():
+    """ "What should I subscribe to" is a question, not an instruction.
+
+    It routed to feed.source_add, which needs a URL the reader does not have
+    -- so the agent either asked them for one or gave up. Suggestions come
+    first: feed.source_suggest scores a curated list against tags this reader
+    already liked, and the URL comes out of that.
+    """
+    for turn in (
+        "what feeds should I subscribe to?",
+        "suggest some feeds",
+        "expand my sources",
+        "I want more coverage of chemistry",
+        "recommend feeds",
+        "am I missing any sources?",
+    ):
+        assert route_feed(turn).tool == "feed.source_suggest", turn
+
+
+def test_an_explicit_url_still_adds_directly():
+    """A reader who names a feed is not asking for advice about it."""
+    for turn in (
+        "add https://rss.arxiv.org/rss/cs.CL",
+        "subscribe to https://example.com/feed.xml",
+    ):
+        assert route_feed(turn).tool == "feed.source_add", turn
+
+
+def test_previewing_before_subscribing_is_reachable():
+    """Adding a feed sight-unseen is how a bad feed gets in. Preview is the
+    step between suggestion and subscription."""
+    for turn in ("what's in that feed?", "preview that feed", "show me what it publishes"):
+        assert route_feed(turn).tool == "feed.source_preview", turn
