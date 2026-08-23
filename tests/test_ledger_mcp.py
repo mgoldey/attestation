@@ -201,7 +201,10 @@ def test_runs_list_does_not_bury_the_runs_under_a_family_dump(tmp_path, monkeypa
     assert "60" in out["message"], "the caller must be told how many exist"
     assert "project=" in out["message"], "and how to narrow them"
 
-    payload = len(json.dumps(out))
+    # indent=2, which is what FastMCP emits. Measured compact this read 2500
+    # while the model received 1.238x that; round 9 measured this tool at 5926
+    # chars emitted against the live database.
+    payload = len(json.dumps(out, indent=2))
     assert payload < 2500, f"runs.list is {payload} chars; families should not dominate"
 
 
@@ -256,3 +259,50 @@ def test_claims_check_says_nothing_uncited_when_the_key_resolves(workspace, tmp_
     out = mcp_server._claims_check_impl(str(doc))
 
     assert out["counts"] == {"supported": 1}
+
+
+def test_runs_list_does_not_paste_absolute_paths_for_every_run(tmp_path, monkeypatch):
+    """`source_path` is the most expensive field in a runs.list row and the
+    least useful there.
+
+    Measured against the live ledger: a DEFAULT runs.list emits 5926 chars,
+    of which 4655 is the runs array -- 20 rows each carrying a full absolute
+    path like /home/matt/qc/ablation/results/layer_importance.json. The tool's
+    own message already says "showing 20 of 858"; a caller narrowing that list
+    needs project, name and family, and `runs.detail` is the tool that returns
+    the path.
+
+    The fixture-based size assertion above passed the whole time, because a
+    tmp_path workspace has short paths. Same shape as every other budget this
+    review found: cheap fixture, expensive production.
+    """
+    import json
+
+    from attestation.mcp import provenance as pv
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    for i in range(20):
+        conn.execute(
+            "INSERT INTO runs(project, name, family, status, source_path)"
+            " VALUES (?, ?, ?, 'recorded', ?)",
+            (
+                "ablation",
+                f"sweep_arm_{i}",
+                "sweep",
+                # A realistic absolute path, like the live ledger's.
+                f"/home/matt/qc/ablation/results/layer_importance_variant_{i}.json",
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+    out = pv._list()
+    assert out["runs"], "fixture produced no runs"
+    for run in out["runs"]:
+        assert "source_path" not in run, "a list row carried a full absolute path"
+    # And the detail tool still gives it to anyone who asks.
+    first = out["runs"][0]
+    detail = pv._detail(first["project"], first["name"])
+    assert detail["run"]["source_path"], "runs.detail must still return the path"
+    assert len(json.dumps(out, indent=2)) < 2500

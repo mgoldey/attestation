@@ -16,6 +16,11 @@ from attestation import claims, ledger
 from attestation.mcp._shared import MAX_LIST_LIMIT, Limit
 from attestation.mcp._tool import ToolError, open_db, tool
 
+# Ten, not twenty. Even without source_path, 20 rows emitted 4576 chars against
+# the live ledger. The message already reports what was not shown, so a caller
+# who wants more asks for more.
+DEFAULT_RUNS_LIMIT = 10
+
 NO_ROOT = (
     "no workspace configured -- set RESEARCH_ROOT to the directory holding your"
     " projects, or pass root explicitly"
@@ -48,7 +53,7 @@ def register(mcp) -> None:
     def runs_list(
         project: str | None = None,
         family: str | None = None,
-        limit: Limit = 20,
+        limit: Limit = DEFAULT_RUNS_LIMIT,
     ) -> dict:
         """Experiment runs in the ledger, with the families they group into.
 
@@ -154,7 +159,9 @@ def _scan(root: str | None = None, project: str | None = None, confirm: bool = F
 
 
 @tool(empty={"runs": [], "families": [], "n_families": 0}, label="runs_list")
-def _list(conn, project: str | None = None, family: str | None = None, limit: int = 20) -> dict:
+def _list(
+    conn, project: str | None = None, family: str | None = None, limit: int = DEFAULT_RUNS_LIMIT
+) -> dict:
     found = ledger.list_runs(conn, project=project, family=family, limit=min(limit, MAX_LIST_LIMIT))
     if not found:
         raise ToolError("no runs recorded -- call runs.scan(confirm=true) first")
@@ -176,9 +183,16 @@ def _list(conn, project: str | None = None, family: str | None = None, limit: in
         message += (
             f"; showing {len(shown)} of {len(families)} families -- pass project= to narrow them"
         )
+    # source_path is dropped from a LIST row: it is the most expensive field
+    # and the least useful here. Measured on the live ledger, a default
+    # runs.list emitted 5926 chars of which 4655 was the runs array, each row
+    # carrying a full absolute path. A caller narrowing a list needs project,
+    # name and family; runs.detail is the tool that returns the path, and its
+    # own message already says how many runs were not shown.
+    rows = [{k: v for k, v in run.items() if k != "source_path"} for run in found]
     return {
         "message": message,
-        "runs": found,
+        "runs": rows,
         "families": shown,
         "n_families": len(families),
     }

@@ -259,7 +259,10 @@ def test_communities_returns_a_summary_not_a_dump(tmp_path, monkeypatch):
         assert "n_members" in group, "the true size must survive truncation"
         assert group["n_members"] >= len(group["members"])
 
-    payload = len(json.dumps(out))
+    # indent=2, which is what FastMCP emits. Measured compact this read 2500
+    # while the model received 1.238x that; round 9 measured this tool at 4039
+    # chars emitted against the live database.
+    payload = len(json.dumps(out, indent=2))
     assert payload < 2500, f"kg.communities is {payload} chars; a caller cannot read it"
 
 
