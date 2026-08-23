@@ -206,6 +206,17 @@ def _step_models_pull(missing: list[str], yes: bool) -> StepResult:
 def step_models(check: bool = False, yes: bool = False) -> StepResult:
     if not _is_ollama_backend():
         return StepResult("models", Status.SKIPPED, "non-Ollama LLM_BASE_URL")
+    # Guarded like step_uv, which was the only step doing this correctly. On a
+    # fresh box `ollama list` raised FileNotFoundError out of step 3 of 10 and
+    # aborted the run -- and results render only after every step completes, so
+    # the user got a traceback and no report at all.
+    if not shutil.which("ollama"):
+        return StepResult(
+            "models",
+            Status.BROKEN,
+            "ollama is not installed or not on PATH -- see https://ollama.com/download."
+            " The ledger and claim checking need no model; the feed does.",
+        )
     wanted = [chat_model(), embed_model()]
     installed = _installed_models(_run)
     missing = [m for m in wanted if _normalize_model(m) not in installed]
@@ -615,6 +626,8 @@ def _crontab_lines() -> list[str]:
     `crontab -l` exits nonzero when no crontab exists, which is a normal
     state and not an error worth surfacing.
     """
+    if not shutil.which("crontab"):
+        return []  # no cron on this box: nothing scheduled, not an error
     result = _run(["crontab", "-l"])
     if result.returncode != 0:
         return []

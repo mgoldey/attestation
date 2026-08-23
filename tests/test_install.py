@@ -1414,3 +1414,27 @@ def test_mcp_wiring_is_ok_with_a_complete_config(monkeypatch):
 
     result = install.step_mcp_wiring("hermes", check=True)
     assert result.status != install.Status.BROKEN, result.detail
+
+
+def test_a_box_without_ollama_gets_a_message_not_a_traceback(monkeypatch):
+    """The fresh-box case: install aborted at step 3 of 10 with a raw
+    FileNotFoundError, having printed nothing.
+
+    `_installed_models` shells out to `ollama list` with no `shutil.which`
+    guard, so a missing binary raises out of step_models. Results are only
+    rendered after every step completes, so the user sees a traceback and no
+    report at all. The asymmetry is the tell: sibling `step_uv` guards with
+    shutil.which and returns a clean BROKEN with a fix URL.
+    """
+    monkeypatch.setattr(install, "_is_ollama_backend", lambda: True)
+    monkeypatch.setattr(install.shutil, "which", lambda name: None)
+
+    def missing_binary(cmd, **kw):
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+
+    monkeypatch.setattr(install, "_run", missing_binary)
+
+    result = install.step_models(check=True)
+
+    assert result.status == install.Status.BROKEN
+    assert "ollama" in result.detail.lower()

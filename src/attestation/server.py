@@ -1,6 +1,7 @@
 """One-page FastAPI + htmx UI. List renders instantly; explanations stream in lazily."""
 
 import sqlite3
+import threading
 from pathlib import Path
 
 import jinja2
@@ -159,9 +160,27 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
     chat_fn = chat_fn or default_chat_fn
     app = FastAPI()
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-    conn = get_db(db_path)  # single writer connection for the whole app
+    # One connection PER THREAD, not one for the app. FastAPI runs sync routes
+    # in a threadpool and get_db passes check_same_thread=False, so a shared
+    # connection let concurrent requests interleave cursors: 11 of 200 threaded
+    # get_user calls returned None for a user that exists, and 11 of 12
+    # parallel /list requests 500'd -- one of them because that None reached
+    # autocreate_user and collided on the UNIQUE name.
+    #
+    # Not a stress case: the page fires up to 20 lazy /explanation requests per
+    # load, so a reload mid-load is enough. SQLite connections are cheap and
+    # WAL lets readers proceed during a write; sharing one bought nothing.
+    _local = threading.local()
+
+    def connection() -> sqlite3.Connection:
+        existing = getattr(_local, "conn", None)
+        if existing is None:
+            existing = get_db(db_path)
+            _local.conn = existing
+        return existing
 
     def require_user(user_name: str) -> sqlite3.Row:
+        conn = connection()
         """An existing reader, or 404. Used by the routes that WRITE.
 
         Recording a click or asking for an explanation under an unknown name
@@ -176,6 +195,7 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         return user
 
     def reader(user_name: str, request: Request) -> sqlite3.Row:
+        conn = connection()
         """An existing reader, created on first sight. Used by the routes that READ.
 
         Browsing used to 404. Two front doors onto one database disagreeing
@@ -206,6 +226,7 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         return user
 
     def render_list(user_name: str, request: Request) -> str:
+        conn = connection()
         user = reader(user_name, request)
         items = rank_items(conn, embedder, user["id"])[:LIST_LIMIT]
         return FRAGMENT.render(
@@ -219,7 +240,7 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
     def index(request: Request, user: str = Query("matt")):
         # creates the reader if new, and only from a same-origin page; see reader()
         feed_content = render_list(user, request)
-        users = [r["name"] for r in conn.execute("SELECT name FROM users ORDER BY name")]
+        users = [r["name"] for r in connection().execute("SELECT name FROM users ORDER BY name")]
         return PAGE.render(users=users, user=user, feed_content=feed_content)
 
     @app.get("/list", response_class=HTMLResponse)
@@ -234,7 +255,7 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         useful: int = Form(...),
     ):
         u = require_user(user)
-        record_click(conn, u["id"], item_id, bool(useful), source="ui")
+        record_click(connection(), u["id"], item_id, bool(useful), source="ui")
         # retrain + re-rank happens inside rank_items. require_user already
         # proved the persona exists, so reader() cannot reach its create path.
         return render_list(user, request)
@@ -242,6 +263,6 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
     @app.get("/explanation", response_class=PlainTextResponse)
     def explanation(user: str = Query(...), item_id: int = Query(...)):
         u = require_user(user)
-        return explain(conn, u["id"], item_id, chat_fn=chat_fn) or ""
+        return explain(connection(), u["id"], item_id, chat_fn=chat_fn) or ""
 
     return app

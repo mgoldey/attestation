@@ -316,3 +316,31 @@ def test_a_hash_in_a_reader_name_does_not_truncate_the_explanation_url(client):
         query = parse_qs(urlparse(raw.replace("&amp;", "&")).query)
         assert query.get("item_id"), f"item_id lost from {raw!r}"
         assert query.get("user") == ["a#b"], f"user mangled in {raw!r}"
+
+
+def test_concurrent_requests_do_not_share_one_connection(client):
+    """The web UI served 500s under ordinary concurrent use.
+
+    `create_app` opened one connection "for the whole app" and `get_db` passes
+    check_same_thread=False, but FastAPI runs sync routes in a threadpool -- so
+    concurrent requests interleave cursors on one connection. Measured: 11 of
+    200 threaded `get_user` calls returned None for a user that exists, and 11
+    of 12 parallel `/list` requests against a live server returned 500 with
+    four distinct tracebacks, including `get_user` returning None and that None
+    reaching autocreate_user.
+
+    This is a NORMAL path, not a stress case: the page fires up to 20 lazy
+    /explanation requests per load, so a reload mid-load hits it. Every
+    existing server test issues requests serially, which is why seventeen
+    rounds missed it.
+    """
+    import concurrent.futures
+
+    def fetch(_):
+        return client.get("/list", params={"user": "matt"}).status_code
+
+    with concurrent.futures.ThreadPoolExecutor(12) as pool:
+        codes = list(pool.map(fetch, range(24)))
+
+    bad = [c for c in codes if c != 200]
+    assert not bad, f"{len(bad)} of {len(codes)} concurrent requests failed: {sorted(set(bad))}"

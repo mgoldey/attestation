@@ -330,3 +330,26 @@ def test_rewriting_an_unmodified_file_is_not_an_error(tmp_path, monkeypatch):
     what would be generated is a no-op, not a refusal."""
     _emit(tmp_path, monkeypatch, write=True)
     assert _emit(tmp_path, monkeypatch, write=True) == 0
+
+
+def test_the_generated_header_names_a_real_command(root):
+    """The header stamped into every agent file told the reader to run a flag
+    that does not exist.
+
+    `attest emit --check` → "unrecognized arguments: --check", exit 2. The real
+    flag set is [--write]; bare `attest emit` does the reporting the header
+    describes. Self-inflicted: emit.py exists specifically so two copies of one
+    fact cannot drift, and its own header drifted from its own CLI.
+    """
+    from attestation.cli import build_parser
+
+    emit_parser = build_parser()._subparsers._group_actions[0].choices["emit"]  # type: ignore[union-attr]
+    flags = {opt for action in emit_parser._actions for opt in action.option_strings}
+
+    import re
+
+    for body in emit.claude_agents(root).values():
+        # Only tokens shaped like a real long flag: `--word` or `--two-words`.
+        # The frontmatter fence and the HTML comment close are not flags.
+        for flag in set(re.findall(r"--[a-z][a-z-]+\b", body)):
+            assert flag in flags, f"the generated header names {flag!r}, not in {sorted(flags)}"
