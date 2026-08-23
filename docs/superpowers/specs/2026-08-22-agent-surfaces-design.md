@@ -1,7 +1,7 @@
 # Agent surfaces — design
 
 **Date:** 2026-08-22
-**Status:** proposed
+**Status:** implemented 2026-08-22 in `783b4e9`. ATTEST_TOOLS / ATTEST_EXPAND live in `mcp/__init__.py`; the surface sizes move, so re-measure rather than quoting the numbers below.
 
 ## Problem
 

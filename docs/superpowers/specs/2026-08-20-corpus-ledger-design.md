@@ -1,7 +1,7 @@
 # Corpus ledger — design
 
 **Date:** 2026-08-20
-**Status:** proposed
+**Status:** implemented 2026-08-21 in `56ddba9`. The corpus is detected from driver-script syntax via AST, not from a model.
 
 ## Problem
 

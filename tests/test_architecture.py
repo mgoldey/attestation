@@ -664,3 +664,97 @@ def test_nothing_holds_a_sqlite_connection_across_requests():
         f"server.py binds a shared connection: {leaked}."
         " Use the per-thread accessor; a shared connection interleaves cursors."
     )
+
+
+def test_documented_response_limits_match_the_constants():
+    """README and CLAUDE.md both stated feed.list's limits, both wrong, in
+    opposite directions: README "capped at 50" against a real cap of 13, and
+    CLAUDE.md "defaults to limit=5" against a real default of 4.
+
+    The cap matters most. It is enforced as Field(le=MAX_SEARCH_LIMIT), so an
+    agent author budgeting from README's 50 plans a payload the schema rejects
+    -- and 13 was derived by measurement against a 7000-char ceiling, so it is
+    exactly the kind of number that moves.
+    """
+    import re
+    from pathlib import Path
+
+    from attestation.mcp.feed import DEFAULT_LIST_LIMIT, MAX_SEARCH_LIMIT
+
+    root = Path(__file__).resolve().parents[1]
+    readme = (root / "README.md").read_text()
+    claude = (root / "CLAUDE.md").read_text()
+
+    capped = re.search(r"capped at (\d+)", readme)
+    assert capped, "README no longer states feed.list's cap"
+    assert int(capped.group(1)) == MAX_SEARCH_LIMIT, (
+        f"README says capped at {capped.group(1)}, MAX_SEARCH_LIMIT is {MAX_SEARCH_LIMIT}"
+    )
+
+    default = re.search(r"feed\.list defaults to limit=(\d+)", claude)
+    assert default, "CLAUDE.md no longer states feed.list's default"
+    assert int(default.group(1)) == DEFAULT_LIST_LIMIT, (
+        f"CLAUDE.md says default {default.group(1)}, DEFAULT_LIST_LIMIT is {DEFAULT_LIST_LIMIT}"
+    )
+
+
+def test_claude_md_noqa_inventory_matches_the_tree():
+    """CLAUDE.md states the BLE001 count as a policy ("4 inline sites, each
+    carrying its reason") and then lists them with line numbers. Live count was
+    7 and three of the four line numbers had rotted.
+
+    The count is the part that matters -- it is a claim a reviewer would check
+    by counting, and it is how the repo asserts there is no blanket suppression.
+    Line numbers are deliberately NOT asserted here: they rot on every edit
+    above them, and citing them was the mistake.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "src" / "attestation"
+    # Real suppressions only: a noqa suppresses nothing unless it trails code,
+    # and _tool.py's module docstring DISCUSSES these sites (carrying its own
+    # copy of the stale count, which is how this rots in two places at once).
+    live = sum(
+        1
+        for path in root.rglob("*.py")
+        for line in path.read_text().splitlines()
+        if "# noqa: BLE001" in line and not line.lstrip().startswith(("#", "`", "*"))
+    )
+    claude = (Path(__file__).resolve().parents[1] / "CLAUDE.md").read_text()
+    stated = re.search(r"(\d+) inline `# noqa: BLE001` sites", claude)
+    assert stated, "CLAUDE.md no longer states the BLE001 site count"
+    assert int(stated.group(1)) == live, (
+        f"CLAUDE.md says {stated.group(1)} BLE001 sites; the tree has {live}."
+        " Each must carry its reason -- add it there and update the count."
+    )
+
+
+def test_the_docs_index_lists_every_source_and_test_file():
+    """CLAUDE.md's index is a contributor's map, and the file says to read the
+    listed docs before writing code. It had drifted 11 files behind -- including
+    BOTH personas.py files, right after the persona split, so a contributor
+    told to read first was pointed at feed.py where those tools no longer live.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    index = (root / "CLAUDE.md").read_text()
+    index_block = index[
+        index.index("[Project Docs Index]") : index.index(
+            "```", index.index("[Project Docs Index]")
+        )
+    ]
+    listed = set(re.findall(r"[\w.-]+\.(?:py|md|toml|yml|yaml|sample)", index_block))
+
+    actual: set[str] = set()
+    for pattern in ("src/attestation/**/*.py", "tests/*.py"):
+        for path in root.glob(pattern):
+            if "__pycache__" not in str(path):
+                actual.add(path.name)
+
+    missing = sorted(actual - listed)
+    assert not missing, (
+        f"CLAUDE.md's docs index is behind the tree by {len(missing)} file(s): {missing}"
+    )

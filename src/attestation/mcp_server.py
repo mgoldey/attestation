@@ -47,6 +47,7 @@ if __name__ == "__main__":
 
 from attestation.mcp import feed as _feed  # noqa: E402
 from attestation.mcp import knowledge as _kg  # noqa: E402
+from attestation.mcp import personas as _personas  # noqa: E402
 from attestation.mcp import provenance as _prov  # noqa: E402
 from attestation.mcp import subscriptions as _subs  # noqa: E402
 from attestation.mcp import symbolic as _sym  # noqa: E402
@@ -60,13 +61,13 @@ _list_feeds_impl = _subs._list_feeds
 _remove_feed_impl = _subs._remove_feed
 _preview_feed_impl = _subs._preview_feed
 _suggest_feeds_impl = _subs._suggest_feeds
-_create_persona_impl = _feed._create_persona
-_update_persona_impl = _feed._update_persona
-_propose_interests_impl = _feed._propose_interests
+_create_persona_impl = _personas._create_persona
+_update_persona_impl = _personas._update_persona
+_propose_interests_impl = _personas._propose_interests
 _profile_status_impl = _feed._profile_status
 _search_feed_impl = _feed._search_feed
-_delete_persona_impl = _feed._delete_persona
-_reset_feedback_impl = _feed._reset_feedback
+_delete_persona_impl = _personas._delete_persona
+_reset_feedback_impl = _personas._reset_feedback
 _digest_impl = _feed._digest
 
 _kg_neighbors_impl = _kg._neighbors

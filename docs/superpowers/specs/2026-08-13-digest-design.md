@@ -1,7 +1,7 @@
 # Digest — design
 
 **Date:** 2026-08-13
-**Status:** proposed
+**Status:** implemented as the `feed.digest` tool; moved into `mcp/feed.py` by the domain split in `0db570c`.
 
 ## Problem
 

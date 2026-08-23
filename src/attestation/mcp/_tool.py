@@ -18,9 +18,9 @@ failure -- is added here.
 
 **Scope limit.** This owns the *presentation* envelope only: turning an
 unexpected exception into `ok: False` so an MCP tool never returns a traceback.
-It is NOT a general error-swallowing mechanism. The four inline
+It is NOT a general error-swallowing mechanism. The inline
 `# noqa: BLE001` sites in the codebase stay exactly where they are, because
-each implements a specific policy that needs local knowledge -- `rank.py:198`
+each implements a specific policy that needs local knowledge -- `rank.py`
 serves a stale cached profile vector when the embedder is down and raises only
 when the cache is cold, a decision this layer cannot make because it does not
 know a cache exists.

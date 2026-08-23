@@ -1,7 +1,7 @@
 # Claim checker — design
 
 **Date:** 2026-08-12
-**Status:** proposed
+**Status:** implemented, in `claims.py` (present at the repo's first commit, `1d54107`, so there is no separate implementing sha).
 
 ## Problem
 

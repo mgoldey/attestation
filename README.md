@@ -151,7 +151,7 @@ OpenAI-compatible API (`LLM_BASE_URL`, default Ollama's
 `http://localhost:11434/v1`) — point it at vLLM, llama.cpp server, or
 OpenRouter (set `LLM_API_KEY`) to swap backends. See `.env.sample`
 for every variable, including the Ollama daemon settings
-(`OLLAMA_KEEP_ALIVE=-1`, `OLLAMA_CONTEXT_LENGTH=8192`) that replace the
+(`OLLAMA_KEEP_ALIVE=30m`, `OLLAMA_CONTEXT_LENGTH=32768`) that replace the
 per-request pinning the native API used to provide.
 
 #### No-checkout alternative (uvx-from-git)
@@ -231,7 +231,7 @@ m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
 | Tool | What it does | Speed |
 |---|---|---|
 | `feed.personas()` | List reader personas + interest profiles | instant |
-| `feed.list(user, limit)` | Ranked unread items, best first (capped at 50) | fast |
+| `feed.list(user, limit)` | Ranked unread items, best first (capped at 13) | fast |
 | `feed.search(user, query, tag, content_type, limit)` | Search the whole archive, ranked for this user; includes already-rated items | fast |
 | `feed.read(user, item_id)` | Read ONE item in full — title, source, abstract | fast |
 | `feed.rate(user, item_id, useful)` | Record a ✓/✗ click; retrains ranking | fast |
@@ -260,7 +260,7 @@ m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
 | `kg.path(source, target)` | Shortest chain of concepts linking two topics | instant |
 | `kg.central(metric, limit)` | Most-connected or most-bridging concepts | instant |
 | `kg.communities(min_size)` | Topic clusters, each labelled by its hub concept | instant |
-| `kg.concepts(prefix, limit)` | List the concept names the other `kg_*` tools accept | instant |
+| `kg.concepts(prefix, limit)` | List the concept names the other `kg.*` tools accept | instant |
 | `runs.scan(root, project, confirm)` | Read experiment runs from artifacts on disk into the ledger | fast |
 | `runs.list(project, family, limit)` | Recorded runs, and the families they group into | instant |
 | `runs.compare(family, metric)` | Rank the arms of a sweep, with provenance and caveats | instant |
@@ -553,7 +553,7 @@ document renders exactly as before:
 
 ```markdown
 The cut leaves WER essentially unchanged (**0.053 vs 0.043** baseline).
-<!-- claim: ablation/results/stack_4 metric=wer value=0.053 tol=0.001 -->
+<!-- claim: ablation/stack_4 metric=wer value=0.053 tol=0.001 -->
 ```
 
 ```bash
@@ -623,6 +623,9 @@ or it refuses to open the database at all — `attest browse` handles that.
     uv run attest browse                    # read-only Datasette UI over the ledger
     uv run attest bootstrap-persona bench-chemist   # optional persona pseudo-clicks
     uv run attest warmup
+    uv run attest reload                    # SIGTERM live attest-mcp servers so code edits take effect
+    uv run attest backup [--out PATH]       # consistent copy of the database (VACUUM INTO)
+    uv run attest emit                      # agent configs generated from the tool surfaces
     uv run attest-mcp                       # MCP stdio server (normally launched by hermes-agent)
 
 ## Tests
