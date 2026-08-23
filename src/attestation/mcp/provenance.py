@@ -21,6 +21,16 @@ from attestation.mcp._tool import ToolError, open_db, tool
 # who wants more asks for more.
 DEFAULT_RUNS_LIMIT = 10
 
+# Metric rows one runs.detail may return. It was uncapped, and its docstring
+# promised "every metric" -- so a 429-metric quantum-chemistry run emitted
+# 60,680 chars, 49,945 of it metrics, against a 7000 ceiling. 72 of 858 live
+# runs were over. The census had it filed as a status-returning tool, which is
+# how the largest response on the surface shipped unmeasured.
+#
+# A caller comparing arms uses runs.compare; a caller reading one run wants to
+# see its shape. n_metrics reports the true count either way.
+MAX_METRIC_ROWS = 40
+
 NO_ROOT = (
     "no workspace configured -- set RESEARCH_ROOT to the directory holding your"
     " projects, or pass root explicitly"
@@ -178,7 +188,15 @@ def _list(
     # the field advertised as the bridge to runs_compare was the one that blew
     # the caller's context. Truncation is reported, never silent.
     shown = families[:FAMILY_SAMPLE]
+    # Report the runs truncation too. The families truncation below has always
+    # been reported exactly, while 212 of 222 runs vanished silently -- and
+    # DEFAULT_RUNS_LIMIT was halved to 10 on the stated grounds that this
+    # message already said so. It did not. feed.list's wording is the house
+    # convention.
+    total_runs = ledger.count_runs(conn, project=project, family=family)
     message = f"{len(found)} run(s)"
+    if total_runs > len(found):
+        message += f" of {total_runs} -- raise limit (max {MAX_LIST_LIMIT})"
     if len(families) > len(shown):
         message += (
             f"; showing {len(shown)} of {len(families)} families -- pass project= to narrow them"
@@ -237,7 +255,14 @@ def _detail(conn, project: str, name: str) -> dict:
     found = ledger.detail(conn, project, name)
     if found is None:
         raise ToolError(f"no run {name!r} in project {project!r}")
-    return {"message": f"{len(found['metrics'])} metric row(s)", "run": found}
+
+    metrics = found["metrics"]
+    total = len(metrics)
+    found = {**found, "metrics": metrics[:MAX_METRIC_ROWS], "n_metrics": total}
+    message = f"{total} metric row(s)"
+    if total > MAX_METRIC_ROWS:
+        message += f"; showing {MAX_METRIC_ROWS} -- use runs.compare to rank a family"
+    return {"message": message, "run": found}
 
 
 def _target(path: str | None) -> Path:

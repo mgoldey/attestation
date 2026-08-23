@@ -326,3 +326,42 @@ def test_communities_caps_the_number_of_groups_not_just_their_members(tmp_path, 
     assert "n_communities" in out, "the true count must survive truncation"
     assert out["n_communities"] >= len(out["communities"])
     assert len(json.dumps(out, indent=2)) < 2500
+
+
+def test_members_shown_cannot_ratchet_either(tmp_path, monkeypatch):
+    """MAX_COMMUNITIES_SHOWN was guarded and MEMBERS_SHOWN, right beside it,
+    was not.
+
+    Raising it 8 -> 500 kept 38 tests green while the live kg.communities went
+    from 2556 to 17360 emitted, past the 7000 ceiling. The existing guard
+    asserts `len(members) <= 12` against a fixture whose biggest cluster has 12
+    tags, so the cap never binds -- the cheap-fixture shape again.
+
+    Anchored on a cluster far larger than any cap, so the assertion measures
+    the cap rather than the fixture.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    tags = [f"concept{i}" for i in range(80)]
+    for item in range(1, 6):
+        conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (NULL, ?, 'u', 's', ?)",
+            (f"i{item}", f"h{item}"),
+        )
+        for tag in tags:
+            conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (item, tag))
+    conn.commit()
+    conn.close()
+
+    from attestation.mcp import knowledge as kn
+
+    out = kn._communities()
+    for group in out["communities"]:
+        assert len(group["members"]) <= kn.MEMBERS_SHOWN, (
+            f"{len(group['members'])} members returned; MEMBERS_SHOWN is {kn.MEMBERS_SHOWN}"
+        )
+    assert kn.MEMBERS_SHOWN <= 20, (
+        f"MEMBERS_SHOWN is {kn.MEMBERS_SHOWN}; at 500 the live response reached 17360 chars"
+    )
+    assert len(json.dumps(out, indent=2)) < 2500

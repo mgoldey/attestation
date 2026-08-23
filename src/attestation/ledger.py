@@ -324,6 +324,30 @@ def _replace_project(conn: sqlite3.Connection, project: str, records: list[RunRe
             )
 
 
+def count_runs(
+    conn: sqlite3.Connection,
+    project: str | None = None,
+    family: str | None = None,
+) -> int:
+    """How many runs match, ignoring any limit.
+
+    `list_runs` truncates and the caller could not tell: 212 of 222 runs
+    vanished from a runs.list response whose message read "10 run(s)", while
+    the families truncation in the same response was reported exactly.
+    """
+    sql = "SELECT COUNT(*) FROM runs"
+    clauses, params = [], []
+    if project:
+        clauses.append("project = ?")
+        params.append(project)
+    if family:
+        clauses.append("family = ?")
+        params.append(family)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    return int(conn.execute(sql, params).fetchone()[0])
+
+
 def list_runs(
     conn: sqlite3.Connection,
     project: str | None = None,

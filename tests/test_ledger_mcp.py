@@ -306,3 +306,74 @@ def test_runs_list_does_not_paste_absolute_paths_for_every_run(tmp_path, monkeyp
     detail = pv._detail(first["project"], first["name"])
     assert detail["run"]["source_path"], "runs.detail must still return the path"
     assert len(json.dumps(out, indent=2)) < 2500
+
+
+def test_runs_detail_caps_its_metric_rows(tmp_path, monkeypatch):
+    """The largest response on the whole surface, filed under "returns a status".
+
+    The census listed runs.detail as a mutator or single-value tool. Its own
+    docstring says "One run in full: config shape, EVERY metric" -- and the
+    metrics array was uncapped. Measured across all 858 live runs: median 1070,
+    max 60680, and 72 runs over the 7000-char ceiling. The worst is 49945 chars
+    of metrics in one response whose message reads "429 metric row(s)".
+
+    That is 8.7x what a small model can hold, and it is the exact failure the
+    response-size module docstring describes. The census gates on NAME, so a
+    tool already on a list can grow without limit -- this is that blind spot
+    already realised.
+    """
+    import json
+
+    from attestation.mcp import provenance as pv
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    conn.execute(
+        "INSERT INTO runs(project, name, family, status, source_path)"
+        " VALUES ('p', 'r', 'f', 'recorded', '/tmp/r.json')"
+    )
+    for i in range(429):
+        conn.execute(
+            "INSERT INTO run_metrics(run_id, metric, value, step, split)"
+            " VALUES (1, ?, ?, ?, 'test')",
+            (f"conformer_energy_variant_{i}", float(i), i),
+        )
+    conn.commit()
+    conn.close()
+
+    out = pv._detail("p", "r")
+    assert len(out["run"]["metrics"]) <= pv.MAX_METRIC_ROWS, (
+        f"{len(out['run']['metrics'])} metric rows returned uncapped"
+    )
+    assert out["run"]["n_metrics"] == 429, "the true count must survive truncation"
+    assert "429" in out["message"], "the caller must be told what was not shown"
+    assert len(json.dumps(out, indent=2)) < 7000
+
+
+def test_runs_list_reports_what_it_did_not_show(tmp_path, monkeypatch):
+    """Halving the default limit was justified by a message that did not exist.
+
+    `DEFAULT_RUNS_LIMIT` went 20 -> 10 on the stated grounds that "the message
+    already reports what was not shown". It did not: `project=ablation` has 222
+    runs, the tool returns 10, and the message reads "10 run(s)". The families
+    truncation in the SAME response is reported exactly, and feed.list says
+    "more available -- raise limit (max 50)", so this broke the codebase's own
+    convention while halving the visible answer.
+    """
+    from attestation.mcp import provenance as pv
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    for i in range(40):
+        conn.execute(
+            "INSERT INTO runs(project, name, family, status, source_path)"
+            " VALUES ('p', ?, 'f', 'recorded', '/tmp/x.json')",
+            (f"run{i}",),
+        )
+    conn.commit()
+    conn.close()
+
+    out = pv._list()
+    assert len(out["runs"]) == pv.DEFAULT_RUNS_LIMIT
+    assert "40" in out["message"], f"40 runs exist, message says {out['message']!r}"
+    assert "limit" in out["message"], "the caller must be told how to see more"

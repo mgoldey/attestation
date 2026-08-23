@@ -581,10 +581,8 @@ COMPOSITION_TOOLS = {
     # structure, never prose -- the caller is a model." These are read by a
     # model that will select from them, not rendered verbatim to a person.
     "runs.compare": "one row per arm; size is a function of the family, not a choice",
-    "runs.list": "one row per run; the caller narrows with project=",
     "runs.claims_check": "one verdict per claim in the document",
     "runs.claims_coverage": "one row per uncovered number",
-    "kg.communities": "one cluster per topic in the graph",
     "kg.neighbors": "one row per adjacent concept",
     "kg.concepts": "the graph vocabulary, which is the answer",
     "feed.sources": "one row per subscribed feed",
@@ -614,7 +612,16 @@ def test_every_tool_is_either_budgeted_or_declared_a_composition_tool():
     names = {t.name for t in asyncio.run(server.list_tools())}
 
     # Tools with an explicit size assertion in this module.
-    budgeted = {"feed.list", "feed.search", "feed.read", "feed.digest"}
+    budgeted = {
+        "feed.list",
+        "feed.search",
+        "feed.read",
+        "feed.digest",
+        # Bounded in tests/test_ledger_mcp.py, not here.
+        "runs.detail",
+        "runs.list",
+        "kg.communities",
+    }
     # Routers bound their own answers via _summarise's label cap.
     routers = {n for n in names if n.endswith(".ask") or n.endswith(".tools")}
     # Mutators and single-value tools return a status, not a payload.
@@ -654,7 +661,10 @@ def test_every_tool_is_either_budgeted_or_declared_a_composition_tool():
         "feed.harvest_engagement",
         "feed.simulate_ratings",
         "runs.scan",
-        "runs.detail",
+        # runs.detail is NOT trivial -- it was filed here and emitted 60,680
+        # chars, the largest response on the surface. It is bounded at
+        # MAX_METRIC_ROWS now and tested in test_ledger_mcp.py, so it belongs
+        # with the budgeted tools rather than the status-returning ones.
         "kg.path",
         "kg.central",
     }
