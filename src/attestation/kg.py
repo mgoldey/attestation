@@ -279,6 +279,11 @@ def communities(
     either: at weight >= 3 the graph is still one component, just with 156 of
     347 nodes left.
 
+    (Those counts are from a 347-node graph; the corpus has since grown to
+    721 nodes over 5,222 items and the largest community is 28%. The
+    conclusion held on re-measurement -- the shape is the same -- but the
+    numbers are a snapshot, not a constant.)
+
     Modularity is what actually separates them, because its `- k_i * k_c / 2m`
     term penalises joining a community that is already large: a node only joins
     if its links there beat what random chance would predict. On the same graph

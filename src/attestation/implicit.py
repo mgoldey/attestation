@@ -1,7 +1,7 @@
 """Feedback inferred from what a reader already did, not from what they said.
 
 Explicit feedback is a channel almost nobody uses. This project's own database
-holds 68 UI clicks and 2 agent clicks against 5,167 items, ever -- roughly one
+held 68 UI clicks and 2 agent clicks against 5,167 items, ever -- roughly one
 opinion per seventy-five items, and all of them positive, which is why the
 click classifier has never fired for a real account.
 

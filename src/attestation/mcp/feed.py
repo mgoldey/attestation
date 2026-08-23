@@ -630,9 +630,12 @@ QUERY_WEIGHT = 0.75
 # other. Similarity also decays slowly -- 0.619 to 0.500 across 200 items --
 # so "everything above X" is never a clean answer.
 #
-# At 0.90 the same measurement gives 28 hits for a broad query, 12 for a
-# middling one, and 2 for "superconductivity", which has exactly two genuinely
-# superconducting papers in the corpus. The floor adapts to how well the
+# At 0.90 the same measurement gave 28 hits for a broad query, 12 for a
+# middling one, and 2 for "superconductivity" -- which had exactly two
+# genuinely superconducting papers when this was written. It has eight now, at
+# 5,222 items, which is what exposed the anchor problem below: a stated
+# measurement is a snapshot of a corpus, and this one aged into a wrong reason
+# for a right-looking number. The floor adapts to how well the
 # archive actually covers the question, which is the property that matters.
 RELEVANCE_FLOOR = 0.90
 
