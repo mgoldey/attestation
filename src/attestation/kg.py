@@ -176,6 +176,14 @@ def neighbors(conn: sqlite3.Connection, node: str, limit: int = 20) -> list[dict
     approximately and, as shipped, sometimes wrongly.
     """
     adjacency, weights = build_graph(tag_assignments(conn))
+    # canonical() FIRST. build_graph canonicalises on write, so the graph holds
+    # `large-language-models` and a caller asking for `llm` -- the most common
+    # tag in the live corpus, and an alias in kg_aliases.toml -- was told the
+    # concept does not exist while its canonical form has 163 neighbours. The
+    # suggested recovery made it worse: kg.concepts(prefix="llm") returns
+    # code-llm and llm-safety and NOT the hub, so the caller concludes their
+    # reading is absent. Measured on gemma4:e2b, the model did exactly that.
+    node = canonical(node)
     if node not in adjacency:
         return []
 
@@ -195,6 +203,11 @@ def shortest_path(conn: sqlite3.Connection, source: str, target: str) -> list[st
     from collections import deque
 
     adjacency, _ = build_graph(tag_assignments(conn))
+    # Both ends canonicalised, for the same reason as neighbors(): the graph is
+    # built from canonical names, so `llm` -> `large-language-models`. Without
+    # this, a path between two real concepts reported None whenever either was
+    # spelled the way people actually write it.
+    source, target = canonical(source), canonical(target)
     if source not in adjacency or target not in adjacency:
         return None
     if source == target:

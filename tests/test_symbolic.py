@@ -152,3 +152,43 @@ def test_truncate_caps_and_marks():
 
 def test_truncate_leaves_short_text_alone():
     assert symbolic.truncate("x**2") == "x**2"
+
+
+def test_caret_is_exponentiation_not_xor():
+    """`2^3` parsed to 1 and `2^10` to 8, returned as ok=True with no error.
+
+    Python's grammar makes `^` bitwise XOR, and both results are valid
+    expressions, so nothing raised -- the tool answered a different question
+    than the one asked and reported success. sym.verify then produced a real
+    FALSE DISPROOF for `2^3 == 8`, which its own docstring forbids, and
+    `parsed_input` showed `1 == 8`, which does not read as a misparse.
+
+    Caret is how a language model writes exponentiation more often than not.
+    Measured on gemma4:e2b: the model hit `x^2`, got a bare TypeError, then
+    abandoned the tool and did the calculus in its head.
+    """
+    from attestation.symbolic import parse_safe
+
+    assert parse_safe("2^3") == 8, "caret is being parsed as XOR"
+    assert parse_safe("2^10") == 1024
+    assert str(parse_safe("x^2")) == "x**2"
+    # The Python spelling must keep working; convert_xor only reinterprets `^`.
+    assert parse_safe("2**3") == 8
+    assert str(parse_safe("x**2 + 2*x")) == "x**2 + 2*x"
+
+
+def test_a_caret_power_tower_is_refused_by_the_sandbox_not_the_parser():
+    """Making `^` mean exponentiation makes `9^9^9` as expensive as `9**9**9`.
+
+    Both hang if parse_safe is called directly -- SymPy tries to build
+    9**387420489 -- and both are contained by run_isolated's subprocess
+    timeout, which is where every MCP tool actually goes. Asserted so a future
+    change that moves parsing outside that boundary fails here rather than
+    hanging a caller.
+    """
+    from attestation.symbolic import run_isolated
+
+    for expr in ("9**9**9", "9^9^9"):
+        out = run_isolated("op_simplify", {"expr": expr}, timeout=5)
+        assert out["ok"] is False, f"{expr} was not refused"
+        assert "exceeded" in (out["error"] or ""), out["error"]

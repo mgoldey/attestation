@@ -16,7 +16,7 @@ from typing import Annotated
 from pydantic import Field
 
 from attestation import claims, ledger
-from attestation.mcp._shared import Limit
+from attestation.mcp._shared import MAX_LIST_LIMIT, Limit
 from attestation.mcp._tool import ToolError, open_db, tool
 
 # Ten, not twenty. Even without source_path, 20 rows emitted 4576 chars against
@@ -34,7 +34,7 @@ DEFAULT_RUNS_LIMIT = 10
 # see its shape. n_metrics reports the true count either way.
 MAX_METRIC_ROWS = 40
 
-# Runs one listing may return. Distinct from _shared.MAX_LIST_LIMIT (50, a feed
+# Runs one listing may return. Distinct from _shared.MAX_LIST_LIMIT (16, a feed
 # row is cheaper): at 50 this emitted 9965 chars against a 7000 ceiling, and
 # its own message tells the caller to "raise limit (max 50)" -- round 11's
 # honesty fix advertised the limit that breaks it. Every size guard drove the
@@ -225,7 +225,14 @@ def _list(
     total_runs = ledger.count_runs(conn, project=project, family=family)
     message = f"{len(found)} run(s)"
     if total_runs > len(found):
-        message += f" of {total_runs} -- raise limit (max {MAX_RUNS_LISTED})"
+        # MAX_LIST_LIMIT, not MAX_RUNS_LISTED: the latter is this module's row
+        # cap, but the bound an agent must satisfy is Limit's le=16, so "raise
+        # limit (max 25)" named a value pydantic rejects -- a dead end, since
+        # the rejection is a validation dump. At the ceiling there is no larger
+        # limit to ask for, so the advice becomes narrowing instead.
+        room = min(MAX_LIST_LIMIT, MAX_RUNS_LISTED)
+        more = f"raise limit (max {room})" if len(found) < room else "pass project= to narrow"
+        message += f" of {total_runs} -- {more}"
     if len(families) > len(shown):
         message += (
             f"; showing {len(shown)} of {len(families)} families -- pass project= to narrow them"

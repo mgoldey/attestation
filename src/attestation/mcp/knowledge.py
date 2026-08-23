@@ -23,7 +23,7 @@ def register(mcp) -> None:
     """Attach every kg.* tool to the server."""
 
     @mcp.tool(name="kg.neighbors")
-    def kg_neighbors(node: str, limit: Limit = 20) -> dict:
+    def kg_neighbors(node: str, limit: Limit = MAX_LIST_LIMIT) -> dict:
         """Concepts directly adjacent to a given concept in the reading graph.
 
         The "what else should I read about this" query. Concepts come from the
@@ -81,7 +81,7 @@ def register(mcp) -> None:
         return _communities(min_size)
 
     @mcp.tool(name="kg.concepts")
-    def kg_concepts(prefix: str | None = None, limit: Limit = 50) -> dict:
+    def kg_concepts(prefix: str | None = None, limit: Limit = MAX_LIST_LIMIT) -> dict:
         """Concept names in the reading graph -- the vocabulary the other kg
         tools accept.
 
@@ -91,7 +91,7 @@ def register(mcp) -> None:
         co-occur, which is a fact about the reading, not a typo.
 
         `prefix` is a case-insensitive SUBSTRING match, so "learn" finds
-        `machine-learning`. Sorted, capped at `limit` (clamped to 50), with
+        `machine-learning`. Sorted, capped at `limit` (at most 16), with
         `n_concepts` giving how many matched so truncation is never silent.
 
         """
@@ -119,7 +119,13 @@ def _neighbors(conn, node: str, limit: int = 20) -> dict:
 
     message = f"{len(found)} neighbour(s)"
     if total > len(found):
-        message = f"{total} neighbour(s); showing {len(found)} -- raise limit to see more"
+        # NOT "raise limit": Limit is le=MAX_LIST_LIMIT, so a caller obeying
+        # that got a pydantic validation dump and no way forward. Measured on
+        # gemma4:e2b: the model read the message, sent limit=20, and gave up.
+        message = (
+            f"{total} neighbour(s); showing {len(found)}, the maximum"
+            f" ({MAX_LIST_LIMIT}) -- narrow with a more specific concept"
+        )
     return {"message": message, "neighbors": found, "n_neighbors": max(total, len(found))}
 
 
@@ -131,9 +137,13 @@ def _path(conn, source: str, target: str) -> dict:
     # name reaching that promise makes the tool assert, confidently, that two
     # topics never co-occur -- about a concept that does not exist.
     adjacency, _ = kg.build_graph(kg.tag_assignments(conn))
-    for name in (source, target):
-        if name not in adjacency:
-            raise ToolError(NOT_A_CONCEPT.format(name=name))
+    # Canonicalise before checking membership, or the check rejects an alias
+    # the graph does in fact contain -- `llm` is the most common tag in the
+    # live corpus and maps to a 163-neighbour hub. The refusal is right about
+    # unknown names and was wrong about known ones spelled differently.
+    for original in (source, target):
+        if kg.canonical(original) not in adjacency:
+            raise ToolError(NOT_A_CONCEPT.format(name=original))
     found = kg.shortest_path(conn, source, target)
     if found is None:
         raise ToolError(f"no path between {source!r} and {target!r}")

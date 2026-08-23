@@ -758,3 +758,56 @@ def test_the_docs_index_lists_every_source_and_test_file():
     assert not missing, (
         f"CLAUDE.md's docs index is behind the tree by {len(missing)} file(s): {missing}"
     )
+
+
+def test_no_tool_declares_a_default_its_own_schema_rejects():
+    """`kg.neighbors` declared `limit: Limit = 20` and `kg.concepts` `= 50`,
+    while Limit is `Field(le=16)`. An agent reading the schema sees
+    `default=50, maximum=16` -- a contradiction in the one artifact it has to
+    reason from. Checks every numeric bound on every tool, not just limit.
+    """
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.mcp import register_all
+
+    mcp = FastMCP("audit")
+    register_all(mcp)
+    bad: list[str] = []
+    for tool in asyncio.run(mcp.list_tools()):
+        for name, spec in (tool.inputSchema.get("properties") or {}).items():
+            default = spec.get("default")
+            if not isinstance(default, int | float) or isinstance(default, bool):
+                continue
+            low, high = spec.get("minimum"), spec.get("maximum")
+            if high is not None and default > high:
+                bad.append(f"{tool.name}.{name} default={default} > maximum={high}")
+            if low is not None and default < low:
+                bad.append(f"{tool.name}.{name} default={default} < minimum={low}")
+    assert not bad, "tools declare defaults their own schema rejects: " + "; ".join(bad)
+
+
+def test_truncation_messages_do_not_name_a_limit_the_schema_rejects():
+    """`kg.neighbors` said "raise limit to see more" and `runs.list` said
+    "raise limit (max 25)", while the schema caps limit at 16. A caller obeying
+    either got a pydantic validation dump -- measured on gemma4:e2b, the model
+    read the message, sent limit=20, and abandoned the task.
+
+    Scans the source for a message naming a numeric ceiling above the schema's.
+    """
+    import re
+    from pathlib import Path
+
+    from attestation.mcp._shared import MAX_LIST_LIMIT
+
+    root = Path(__file__).resolve().parents[1] / "src" / "attestation" / "mcp"
+    offenders: list[str] = []
+    for path in sorted(root.glob("*.py")):
+        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+            if line.lstrip().startswith("#"):
+                continue  # a comment explaining the bug is not the bug
+            for match in re.finditer(r"raise limit \(max (\d+)\)", line):
+                if int(match.group(1)) > MAX_LIST_LIMIT:
+                    offenders.append(f"{path.name}:{lineno} advertises max {match.group(1)}")
+    assert not offenders, f"messages name a limit above the schema's {MAX_LIST_LIMIT}: {offenders}"

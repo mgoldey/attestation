@@ -31,6 +31,7 @@ from typing import Any
 
 import sympy as sp
 from sympy.parsing.sympy_parser import (
+    convert_xor,
     implicit_multiplication_application,
     parse_expr,
     standard_transformations,
@@ -97,7 +98,20 @@ _SAFE_NAMES = (
 
 SAFE_NAMESPACE: dict[str, Any] = {name: getattr(sp, name) for name in _SAFE_NAMES}
 
-_TRANSFORMATIONS = standard_transformations + (implicit_multiplication_application,)
+# convert_xor is NOT optional here. Without it Python's grammar wins and `^`
+# is bitwise XOR, so `2^3` parsed to 1 and `2^10` to 8 -- returned as ok=True
+# with no error, because both are valid expressions. sym.verify then produced
+# an actual FALSE DISPROOF for `2^3 == 8`, which its own docstring forbids.
+#
+# Caret is how a language model writes exponentiation more often than not, and
+# a symbolic engine that quietly answers a different question than the one
+# asked is worse than one that refuses. Measured on gemma4:e2b: the model hit
+# `x^2`, got a bare TypeError, abandoned the tool and did the calculus in its
+# head -- which is the whole thing this tool exists to prevent.
+_TRANSFORMATIONS = standard_transformations + (
+    convert_xor,
+    implicit_multiplication_application,
+)
 
 
 def _check_literal_magnitude(text: str) -> None:

@@ -283,3 +283,40 @@ def test_folding_never_renames_a_tag_with_no_merge_partner():
     for tag in ("quantum-dots", "exoplanets", "microrobots", "wildfires"):
         assert tag not in kg.ALIASES
         assert kg.canonical(tag) == tag
+
+
+def test_an_aliased_concept_is_found_by_the_name_people_write():
+    """The graph is built from canonical names, and the lookups were not.
+
+    `llm` is the most common tag in the live corpus (642 uses) and an alias for
+    `large-language-models` in kg_aliases.toml. `kg.neighbors('llm')` reported
+    "not a concept" while the canonical form had 163 neighbours, and the
+    recovery it named made things worse -- kg.concepts(prefix="llm") returns
+    code-llm and llm-safety and NOT the hub, so a caller concludes their
+    reading is absent. Measured on gemma4:e2b, the model did exactly that and
+    told the user their LLM reading did not exist.
+    """
+    import sqlite3
+
+    from attestation import kg
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row  # tag_assignments indexes rows by name
+    conn.execute("CREATE TABLE item_tags(item_id INTEGER, tag TEXT)")
+    # Two items sharing both tags: enough for MIN_TAG_USES and MIN_EDGE_WEIGHT.
+    for item_id in (1, 2):
+        for tag in ("large-language-models", "transformers"):
+            conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (item_id, tag))
+    conn.commit()
+
+    canonical_hits = kg.neighbors(conn, "large-language-models")
+    assert canonical_hits, "fixture did not build a graph"
+    assert kg.neighbors(conn, "llm") == canonical_hits, (
+        "an alias returns different neighbours than its canonical form"
+    )
+    assert kg.shortest_path(conn, "llm", "transformers") is not None, (
+        "no path found from an aliased source"
+    )
+    # A genuinely unknown name must still be unknown.
+    assert kg.neighbors(conn, "no-such-concept-xyz") == []
+    assert kg.shortest_path(conn, "no-such-concept-xyz", "transformers") is None
