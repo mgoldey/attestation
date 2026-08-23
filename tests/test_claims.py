@@ -379,3 +379,72 @@ def test_coverage_captures_negative_numbers(tmp_path, minus):
     out = claims.coverage(doc)
 
     assert out["uncovered"] == [], f"both signed values should be covered, got {out['uncovered']}"
+
+
+# ---------------------------------------------------------------------------
+# Citation keys
+# ---------------------------------------------------------------------------
+
+
+def test_a_claim_can_name_a_citation_key(tmp_path):
+    doc = tmp_path / "d.md"
+    doc.write_text(
+        "WER improved.\n<!-- claim: p/run metric=wer value=0.1 cite=vaswani2017attention -->\n"
+    )
+    (found, problems) = claims.parse_file(doc)
+    assert problems == []
+    assert found[0].cite == "vaswani2017attention"
+
+
+def test_a_claim_without_a_citation_is_unchanged(tmp_path):
+    """`cite` is optional. Most claims are about the author's own run and have
+    nothing to cite; requiring one would make the field noise."""
+    doc = tmp_path / "d.md"
+    doc.write_text("<!-- claim: p/run metric=wer value=0.1 -->\n")
+    (found, _) = claims.parse_file(doc)
+    assert found[0].cite is None
+
+
+def test_an_uncited_key_is_reported(tmp_path):
+    """The lint: a claim naming a key no configured source has.
+
+    Deliberately NOT "this claim contradicts the cited paper" -- comparing a
+    prose assertion against a paper's contents needs a model, and every verdict
+    in this module is deterministic.
+    """
+    from attestation import citations
+
+    resolver = citations.Resolver([])
+    doc = tmp_path / "d.md"
+    doc.write_text("<!-- claim: p/run metric=wer value=0.1 cite=ghost2099nothing -->\n")
+
+    (claim,) = claims.parse_file(doc)[0]
+    uncited = claims.check_citations([claim], resolver)
+    assert [v.verdict for v in uncited] == [claims.VerdictKind.UNCITED]
+    assert "ghost2099nothing" in uncited[0].message
+
+
+def test_a_resolvable_key_produces_no_finding(tmp_path):
+    from attestation import citations
+
+    (tmp_path / "r.bib").write_text(
+        "@article{real2020thing,\n  title = {A Real Thing},\n  year = {2020},\n}\n"
+    )
+    resolver = citations.Resolver.from_env(bib_paths=[tmp_path / "r.bib"])
+    doc = tmp_path / "d.md"
+    doc.write_text("<!-- claim: p/run metric=wer value=0.1 cite=real2020thing -->\n")
+
+    (claim,) = claims.parse_file(doc)[0]
+    assert claims.check_citations([claim], resolver) == []
+
+
+def test_claims_without_a_cite_are_not_linted(tmp_path):
+    """Every existing claim has no `cite`. Reporting them all as UNCITED would
+    turn one new field into a document-wide false alarm."""
+    from attestation import citations
+
+    doc = tmp_path / "d.md"
+    doc.write_text("<!-- claim: p/run metric=wer value=0.1 -->\n")
+    (claim,) = claims.parse_file(doc)[0]
+
+    assert claims.check_citations([claim], citations.Resolver([])) == []

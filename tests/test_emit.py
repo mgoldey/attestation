@@ -50,9 +50,11 @@ def test_surfaces_are_disabled_by_default(root):
 
 def test_adding_a_surface_needs_no_edit_here(root, monkeypatch):
     """The point of generating: a new surface appears without hand editing."""
-    monkeypatch.setitem(AGENT_SURFACES, "citations", emit.Surface(
-        prefixes=frozenset({"cite"}), summary="s", rationale="r"
-    ))
+    monkeypatch.setitem(
+        AGENT_SURFACES,
+        "citations",
+        emit.Surface(prefixes=frozenset({"cite"}), summary="s", rationale="r"),
+    )
     assert "attestation-citations" in emit.hermes_servers(root)
 
 
@@ -119,9 +121,11 @@ def test_renaming_a_surface_reports_both_halves(root, monkeypatch):
     leaves the user with half a repair."""
     before = emit.hermes_servers(root)
     monkeypatch.delitem(AGENT_SURFACES, "symbolic")
-    monkeypatch.setitem(AGENT_SURFACES, "algebra", emit.Surface(
-        prefixes=frozenset({"sym"}), summary="s", rationale="r"
-    ))
+    monkeypatch.setitem(
+        AGENT_SURFACES,
+        "algebra",
+        emit.Surface(prefixes=frozenset({"sym"}), summary="s", rationale="r"),
+    )
 
     kinds = sorted(f.kind for f in emit.check_hermes(before, root))
     assert kinds == ["missing", "orphaned"]
@@ -173,7 +177,10 @@ def test_parses_the_agents_own_config_dump():
     servers = emit.parse_config_dump(CONFIG_DUMP)
     assert set(servers) == {"attestation", "attestation-feed"}
     assert servers["attestation-feed"]["args"] == [
-        "run", "--project", "/home/matt/attestation", "attest-mcp"
+        "run",
+        "--project",
+        "/home/matt/attestation",
+        "attest-mcp",
     ]
     assert servers["attestation-feed"]["env"] == {"ATTEST_TOOLS": "feed"}
     assert servers["attestation-feed"]["enabled"] is False

@@ -60,6 +60,10 @@ class Claim:
     as_of: str | None = None
     split: str | None = None
     step: int | None = None
+    # A citation key or DOI, when the claim rests on published work as well as
+    # on a run. Optional: most claims are about the author's own run and have
+    # nothing to cite, so requiring one would make the field noise.
+    cite: str | None = None
     raw: str = ""
 
 
@@ -77,6 +81,11 @@ class VerdictKind(StrEnum):
     UNSUPPORTED = "unsupported"
     AMBIGUOUS = "ambiguous"
     STALE = "stale"
+    # A claim naming a citation key no configured source has. A lint, in the
+    # same spirit as coverage() linting numbers no claim covers -- deliberately
+    # NOT "this claim contradicts the cited paper", which needs a model, and
+    # every verdict here is deterministic.
+    UNCITED = "uncited"
 
 
 @dataclass
@@ -137,6 +146,7 @@ def parse_file(path: Path) -> tuple[list[Claim], list[str]]:
                 as_of=fields.get("as_of"),
                 split=fields.get("split"),
                 step=step,
+                cite=fields.get("cite"),
                 raw=body,
             )
         )
@@ -401,6 +411,35 @@ def coverage(root: Path) -> dict:
         "covered": total_numbers - len(out),
         "files": len(files),
     }
+
+
+def check_citations(claims_: list[Claim], resolver) -> list[Verdict]:
+    """Claims whose citation key no configured source can resolve.
+
+    A lint, not a verification: it says the key is unknown here, never that the
+    cited work fails to support the claim. Claims with no `cite` are skipped --
+    every claim written before this field existed has none, and reporting them
+    all would turn one new field into a document-wide false alarm.
+    """
+    out: list[Verdict] = []
+    for claim in claims_:
+        if not claim.cite:
+            continue
+        if resolver.lookup(claim.cite) is not None:
+            continue
+        out.append(
+            Verdict(
+                claim=claim,
+                verdict=VerdictKind.UNCITED,
+                message=(
+                    f"no configured source has {claim.cite!r}"
+                    " (checked: " + ", ".join(s["name"] for s in resolver.sources()) + ")"
+                    if resolver.sources()
+                    else f"no configured source has {claim.cite!r} (no citation sources configured)"
+                ),
+            )
+        )
+    return out
 
 
 def check(conn: sqlite3.Connection, root: Path) -> dict:

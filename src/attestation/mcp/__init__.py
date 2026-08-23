@@ -17,9 +17,17 @@ instead of picking from 34 flat names where `runs_compare`, `kg_path`,
 import os
 from dataclasses import dataclass
 
-from attestation.mcp import ask, feed, knowledge, provenance, subscriptions, symbolic
+from attestation.mcp import (
+    ask,
+    citation,
+    feed,
+    knowledge,
+    provenance,
+    subscriptions,
+    symbolic,
+)
 
-DOMAINS = (ask, feed, knowledge, provenance, subscriptions, symbolic)
+DOMAINS = (ask, citation, feed, knowledge, provenance, subscriptions, symbolic)
 
 # Which namespaces (or individual tools) each agent may see.
 #
@@ -42,7 +50,11 @@ DOMAINS = (ask, feed, knowledge, provenance, subscriptions, symbolic)
 #
 #   Claims live with `runs`, not with the graph. `runs.claims_check` verifies
 #   numbers in Markdown AGAINST recorded runs; separating them would put a
-#   claim checker in a session that cannot see what it checks against.
+#   claim checker in a session that cannot see what it checks against. By the
+#   same rule `cite.check` -- a claim checker for citation keys -- is in
+#   `provenance` as well as `knowledge`: a session that can lint uncited claims
+#   but cannot see the runs the other claims are checked against would report
+#   half a document's problems and look complete.
 #
 # `summary` and `rationale` are data rather than comments because
 # `attestation.emit` generates agent configs from this table, and prose that
@@ -66,15 +78,18 @@ AGENT_SURFACES: dict[str, Surface] = {
         rationale="Conversational; a wrong guess costs a retry.",
     ),
     "provenance": Surface(
-        prefixes=frozenset({"runs"}),
+        prefixes=frozenset({"runs", "cite.check"}),
         summary="Scan experiment runs, compare arms, and check claims against them.",
         rationale=(
             "Verification: a wrong answer reaches a manuscript, and the caveats are the product."
         ),
     ),
     "knowledge": Surface(
-        prefixes=frozenset({"kg", "feed.search"}),
-        summary="Explore the reading knowledge graph and the items behind it.",
+        prefixes=frozenset({"kg", "feed.search", "cite"}),
+        summary=(
+            "Explore the reading knowledge graph, the items behind it, and the"
+            " references they cite."
+        ),
         rationale="Exploratory, read-only.",
     ),
     "symbolic": Surface(

@@ -24,9 +24,13 @@ swallowed or retried would take that decision away from the one place with
 enough context to make it.
 """
 
-from typing import Protocol, runtime_checkable
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from attestation.citations import Reference
 
 
 @runtime_checkable
@@ -86,4 +90,36 @@ class EmbedderPort(Protocol):
 
     def embed_query(self, text: str) -> np.ndarray:
         """Embed a search string or persona profile, using the query-side prompt."""
+        ...
+
+
+@runtime_checkable
+class CitationPort(Protocol):
+    """A source of bibliographic records, keyed by citation key or identifier.
+
+    This one earns its place under the rule in the module docstring -- three
+    implementations exist with genuinely different backends (a SQLite file, a
+    text format, an HTTP API), and the resolver must treat them uniformly while
+    recording which one answered. That recording is the point: it is what makes
+    the offline guarantee's exception inspectable rather than merely documented.
+    """
+
+    name: str
+    """Which reader this is. Stamped onto every Reference it returns."""
+
+    network: bool
+    """Whether answering can leave the machine. See `citations.Resolver`."""
+
+    def lookup(self, key: str) -> "Reference | None":
+        """One record by citation key or identifier, or None if absent here."""
+        ...
+
+    def all(self) -> "Iterator[Reference]":
+        """Every record this source can enumerate.
+
+        Network readers raise NotImplementedError: you cannot enumerate
+        CrossRef. Returns an iterator rather than a list because a Zotero
+        library of 8,000 items should not be materialised to answer "is this
+        key present".
+        """
         ...

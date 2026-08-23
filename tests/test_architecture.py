@@ -260,7 +260,9 @@ def test_every_tool_is_namespaced():
     assert not flat, f"tools with no namespace: {flat}"
 
     namespaces = {n.split(".", 1)[0] for n in names}
-    assert namespaces == {"feed", "kg", "runs", "sym"}, f"unexpected namespaces: {namespaces}"
+    assert namespaces == {"cite", "feed", "kg", "runs", "sym"}, (
+        f"unexpected namespaces: {namespaces}"
+    )
 
 
 def test_no_tool_repeats_its_own_namespace():
