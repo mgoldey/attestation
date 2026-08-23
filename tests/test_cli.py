@@ -304,3 +304,62 @@ def test_warmup_keep_alive_is_configurable(monkeypatch):
     )
     attest_cli.warmup()
     assert all(body.get("keep_alive") == "2h" for _, body in sent)
+
+
+def test_reload_finds_and_signals_running_servers(monkeypatch, capsys):
+    """`attest reload` restarts every live attest-mcp so edits take effect.
+
+    An MCP server is spawned once per session and never reloads. Both live
+    servers were found running code five commits stale -- the Hermes gateway
+    from 17:17 and a Claude Code session from 18:13, against a 20:03 commit --
+    so every fix landed that afternoon was invisible to the agent using them.
+
+    `hermes mcp test` does not catch this: it spawns a FRESH process, so it
+    reports the code on disk rather than what a session is serving.
+    """
+    signalled = []
+    monkeypatch.setattr(attest_cli, "_running_mcp_pids", lambda: [111, 222])
+    monkeypatch.setattr(attest_cli.os, "kill", lambda pid, sig: signalled.append((pid, sig)))
+
+    attest_cli.cmd_reload(Namespace())
+
+    assert [p for p, _ in signalled] == [111, 222]
+    out = capsys.readouterr().out
+    assert "111" in out and "222" in out, "each stopped server must be named"
+    assert "respawns" in out, (
+        "the respawn is lazy -- measured, nothing restarted for ten seconds "
+        "and only came back on the next tool call -- so the message must not "
+        "imply the server is already fresh"
+    )
+
+
+def test_reload_says_so_when_nothing_is_running(monkeypatch, capsys):
+    """Silence would read as success. Nothing running is a normal state --
+    no session is open -- and the caller should be told rather than guess."""
+    monkeypatch.setattr(attest_cli, "_running_mcp_pids", lambda: [])
+    attest_cli.cmd_reload(Namespace())
+    assert "no running" in capsys.readouterr().out.lower()
+
+
+def test_reload_survives_a_server_that_exits_first(monkeypatch, capsys):
+    """A watchdog may restart or reap one between listing and signalling.
+    That is a race, not an error, and must not abort the remaining kills."""
+    import os as _os
+
+    def flaky_kill(pid, sig):
+        if pid == 111:
+            raise ProcessLookupError
+        return None
+
+    monkeypatch.setattr(attest_cli, "_running_mcp_pids", lambda: [111, 222])
+    monkeypatch.setattr(attest_cli.os, "kill", flaky_kill)
+    attest_cli.cmd_reload(Namespace())
+    out = capsys.readouterr().out
+    assert "222" in out
+    assert _os  # imported for clarity about what is being faked
+
+
+def test_reload_is_a_real_subcommand():
+    parser = build_parser()
+    args = parser.parse_args(["reload"])
+    assert args.func is attest_cli.cmd_reload

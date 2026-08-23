@@ -71,6 +71,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("warmup", help="pin chat + embedding models in VRAM")
     sp.set_defaults(func=cmd_warmup)
 
+    sp = sub.add_parser("reload", help="restart running MCP servers so code edits take effect")
+    sp.set_defaults(func=cmd_reload)
+
     sp = sub.add_parser("kg-report", help="knowledge-graph health + topic clusters")
     add_db(sp)
     sp.add_argument("--min-size", type=int, default=3, help="smallest cluster to list")
@@ -167,6 +170,64 @@ def warmup() -> None:
         print("warmup is Ollama-only; skipping for this backend")
         return
     print(f"models loaded (chat={chat_model()}, keep_alive={keep_alive})")
+
+
+def _running_mcp_pids() -> list[int]:
+    """PIDs of live `attest-mcp` processes, excluding the `uv run` wrappers.
+
+    Matching the console script rather than the command line: a wrapper shares
+    the same argv, and signalling it kills the shim while the watchdog
+    respawns the pair, which looks like it worked and does not reload.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["pgrep", "-f", "bin/attest-mcp$"], capture_output=True, text=True, timeout=10
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [int(line) for line in out.split() if line.isdigit() and int(line) != os.getpid()]
+
+
+def cmd_reload(args: argparse.Namespace) -> int:
+    """Restart every running MCP server so edits to this checkout take effect.
+
+    An MCP server is spawned once per session and never reloads. Both live
+    servers here were once found running code five commits stale -- the Hermes
+    gateway and a Claude Code session, against commits made hours later -- so
+    every fix landed in between was invisible to the agent using them.
+
+    `hermes mcp test` does not catch that: it spawns a FRESH process, so it
+    reports the code on disk rather than what a session is serving.
+
+    Signalling is enough, but the respawn is LAZY: measured against a live
+    Hermes gateway, nothing restarted for at least ten seconds after the kill
+    and the new process appeared only when a tool was next called. So a reload
+    leaves the server down rather than instantly fresh, which is fine for a
+    chat session and worth saying rather than implying otherwise.
+    """
+    import signal
+
+    pids = _running_mcp_pids()
+    if not pids:
+        print("no running attest-mcp servers; nothing to reload")
+        return 0
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError) as exc:
+            # A watchdog may reap or restart one between listing and
+            # signalling. That is a race, not a failure, and must not stop
+            # the remaining servers from being reloaded.
+            print(f"  {pid}: already gone ({type(exc).__name__})")
+            continue
+        print(f"  {pid}: signalled")
+    print(
+        f"stopped {len(pids)} server(s). Each respawns on its client's next tool"
+        " call, so the first call after this is slower and picks up your edits."
+    )
+    return 0
 
 
 def cmd_warmup(args: argparse.Namespace) -> int:
