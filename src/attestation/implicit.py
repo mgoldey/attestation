@@ -38,13 +38,22 @@ def candidates(conn: sqlite3.Connection, user_id: int) -> list[int]:
     here rather than being overwritten later, so a stated "not useful" is never
     flipped to useful by the reader's own curiosity.
     """
+    # UNION of both engagement logs. `explanations` was the only source, and it
+    # records one action -- asking why an item ranked. Measured on the live
+    # database: 11 human clicks across 19 days, all of them from deliberately
+    # sitting down to rate, because every other thing the reader does left no
+    # trace. `engagement` records those other things.
     return [
         r["item_id"]
         for r in conn.execute(
-            "SELECT e.item_id FROM explanations e"
-            " LEFT JOIN clicks c ON c.user_id = e.user_id AND c.item_id = e.item_id"
-            " WHERE e.user_id = ? AND c.id IS NULL"
-            " ORDER BY e.item_id",
+            "SELECT a.item_id AS item_id FROM ("
+            "  SELECT user_id, item_id FROM explanations"
+            "  UNION"
+            "  SELECT user_id, item_id FROM engagement"
+            ") a"
+            " LEFT JOIN clicks c ON c.user_id = a.user_id AND c.item_id = a.item_id"
+            " WHERE a.user_id = ? AND c.id IS NULL"
+            " ORDER BY a.item_id",
             (user_id,),
         )
     ]

@@ -48,6 +48,24 @@ CREATE TABLE IF NOT EXISTS clicks(
   source TEXT NOT NULL DEFAULT 'ui',
   UNIQUE(user_id, item_id)
 );
+-- Things the reader DID, as opposed to things they judged. A read, a search
+-- result they opened, an explanation they asked for: each is weak evidence of
+-- interest, and implicit.harvest turns them into weak positive clicks tagged
+-- `implicit` so provenance decides what they may be used for.
+--
+-- Separate from `clicks` because it is not a verdict, and separate from
+-- `explanations` because that table holds generated TEXT and is deleted when a
+-- persona's interests change -- engagement is a fact about the reader and
+-- survives that. Measured before adding it: 11 human clicks across 19 days,
+-- all from deliberately sitting down to rate. Feedback that requires a
+-- gesture does not arrive.
+CREATE TABLE IF NOT EXISTS engagement(
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  item_id INTEGER NOT NULL REFERENCES items(id),
+  kind TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, item_id, kind)
+);
 CREATE TABLE IF NOT EXISTS explanations(
   -- REFERENCES on both, unlike the first version of this table. It accepted a
   -- row pointing at a nonexistent user and item, and stayed clean only because
@@ -251,6 +269,22 @@ def _migration_004_drop_dead_kg_tables(conn: sqlite3.Connection) -> None:
         conn.execute(f"DROP TABLE IF EXISTS {table}")
 
 
+def _migration_005_add_engagement(conn: sqlite3.Connection) -> None:
+    """Add the engagement table.
+
+    Purely additive. An existing database simply has no engagement recorded
+    yet, which is the correct value for "we were not watching before now".
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS engagement("
+        "  user_id INTEGER NOT NULL REFERENCES users(id),"
+        "  item_id INTEGER NOT NULL REFERENCES items(id),"
+        "  kind TEXT NOT NULL,"
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  PRIMARY KEY (user_id, item_id, kind))"
+    )
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -263,6 +297,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (2, _migration_002_add_corpora),
     (3, _migration_003_add_runs_adapter),
     (4, _migration_004_drop_dead_kg_tables),
+    (5, _migration_005_add_engagement),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]

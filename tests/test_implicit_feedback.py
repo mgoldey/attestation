@@ -188,3 +188,82 @@ def test_harvest_holds_the_write_lock_briefly(tmp_path):
 
     assert out["recorded"] == 600
     assert elapsed < 2.0, f"harvest of 600 rows took {elapsed:.1f}s; busy_timeout is 5s"
+
+
+def test_reading_an_item_becomes_harvestable_signal(tmp_path, monkeypatch):
+    """Signal arrived only when the reader pressed a button.
+
+    Measured on the live database: 11 human clicks across 19 days, on 3 days,
+    all from deliberately sitting down to rate -- while the corpus held 5,265
+    items. SKILL.md already predicts this ("users never press buttons"), and
+    implicit.py harvested one action only: asking why an item ranked.
+
+    Reading a paper in full is the strongest thing a reader does short of
+    rating it, and it required no gesture. It is recorded in `engagement` and
+    harvested as a weak positive tagged `implicit`, so provenance still decides
+    what it may be used for and `evaluate_user` still excludes it.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    from attestation.db import get_db
+    from attestation.implicit import candidates, harvest
+    from attestation.mcp.feed import _read_item
+
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO users(name, interests) VALUES ('reader', 'science')")
+    conn.execute("INSERT INTO feeds(title, url) VALUES ('f', 'http://f')")
+    for i in (1, 2):
+        conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (1, ?, 'http://x', 'body', ?)",
+            (f"paper {i}", f"h{i}"),
+        )
+    conn.commit()
+    user_id = conn.execute("SELECT id FROM users WHERE name='reader'").fetchone()["id"]
+
+    assert candidates(conn, user_id) == [], "nothing engaged with yet"
+
+    _read_item("reader", item_id=1)
+
+    fresh = get_db(tmp_path / "t.db")
+    assert candidates(fresh, user_id) == [1], "a read left no harvestable trace"
+    out = harvest(fresh, "reader")
+    assert out["recorded"] == 1, out
+    row = fresh.execute(
+        "SELECT useful, source FROM clicks WHERE user_id = ? AND item_id = 1", (user_id,)
+    ).fetchone()
+    assert row["useful"] == 1 and row["source"] == "implicit", dict(row)
+
+
+def test_reading_an_item_never_overturns_a_stated_verdict(tmp_path, monkeypatch):
+    """Only POSITIVES are inferred, and an explicit judgement outranks a read.
+
+    A reader who marked something "not useful" and later opened it to check
+    must not have that rejection flipped by their own curiosity -- the class
+    the ranker is starving for is the one this would poison.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    from attestation.db import get_db
+    from attestation.implicit import harvest
+    from attestation.mcp.feed import _read_item
+    from attestation.rank import record_click
+
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO users(name, interests) VALUES ('reader', 'science')")
+    conn.execute("INSERT INTO feeds(title, url) VALUES ('f', 'http://f')")
+    conn.execute(
+        "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+        " VALUES (1, 'rejected paper', 'http://x', 'body', 'h1')"
+    )
+    conn.commit()
+    user_id = conn.execute("SELECT id FROM users WHERE name='reader'").fetchone()["id"]
+    record_click(conn, user_id, 1, useful=False, source="ui")
+
+    _read_item("reader", item_id=1)
+    fresh = get_db(tmp_path / "t.db")
+    harvest(fresh, "reader")
+
+    row = fresh.execute(
+        "SELECT useful, source FROM clicks WHERE user_id = ? AND item_id = 1", (user_id,)
+    ).fetchone()
+    assert row["useful"] == 0, "a read overwrote a stated rejection"
+    assert row["source"] == "ui", f"provenance was downgraded to {row['source']!r}"

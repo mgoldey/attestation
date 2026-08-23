@@ -440,6 +440,14 @@ def _read_item(conn, user_row, item_id: ItemId) -> dict:
         "SELECT useful FROM clicks WHERE user_id = ? AND item_id = ?",
         (user_row["id"], item_id),
     ).fetchone()
+    # Reading a paper in full is the strongest thing a reader does short of
+    # rating it, and it required no gesture. INSERT OR IGNORE: re-reading is
+    # not a second signal, and the primary key makes that idempotent.
+    conn.execute(
+        "INSERT OR IGNORE INTO engagement(user_id, item_id, kind) VALUES (?, ?, 'read')",
+        (user_row["id"], item_id),
+    )
+    conn.commit()
     return {
         # A clipped echo, not a second copy. `message` is the envelope's
         # one-line status and the caller already has the full title in
