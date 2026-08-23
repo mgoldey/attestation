@@ -578,11 +578,28 @@ def _refuse_cross_project(family: str, rows: list[dict]) -> None:
     ranking across them is what produced a named winner over English and
     Mandarin ASR arms pooled together.
     """
-    projects = sorted({r["project"] for r in rows})
-    if len(projects) > 1:
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["project"]] = counts.get(row["project"], 0) + 1
+    if len(counts) > 1:
+        # Ordered by arm count, not alphabetically. On a real corpus this
+        # refusal listed 13 project names for one family and asked the reader
+        # to pick, giving them nothing to pick ON -- and alphabetical order put
+        # a dated backup directory second. Arm counts are the one signal
+        # already in hand that distinguishes the main line of work from a
+        # worktree that ran a subset.
+        #
+        # Collapsing git worktrees onto their main checkout was tried and
+        # reverted: 58 of 62 run names in those directories COLLIDE, because
+        # they are the same experiment re-run on different branches rather than
+        # arms of a sweep. Merging them would have presented twelve copies of
+        # one run as comparable arms, which is worse than refusing. The
+        # refusal is right; it was only uninformative.
+        ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        listed = ", ".join(f"{name} ({n})" for name, n in ranked)
         raise ValueError(
-            f"family {family!r} exists in {len(projects)} projects "
-            f"({', '.join(projects)}) -- pass project= to say which. "
+            f"family {family!r} exists in {len(counts)} projects, by arm count: "
+            f"{listed} -- pass project= to say which. "
             "Arms from different projects are not comparable."
         )
 
@@ -629,6 +646,18 @@ def _no_direction_message(family: str, counts: dict[str, int]) -> str:
     sibling refusal for a single named metric already pointed at the file to
     edit.
     """
+    if not counts:
+        # No metrics at all is a different problem from an undeclared
+        # direction, and telling this reader to edit metric_direction.toml
+        # sends them to a file where there is nothing to write. Reached on a
+        # real corpus by following this refusal's own advice: `runs compare
+        # water --project ferric` said "found none" and then advised declaring
+        # one of them.
+        return (
+            f"family {family!r} has no recorded metrics, so there is nothing to"
+            " rank. The runs were found but their artifacts carried no numeric"
+            " results -- check what `attest runs show` reports for one of them."
+        )
     suggestion = _likeliest_metric(counts)
     example = (
         f" -- `{suggestion}` looks like a result metric, so perhaps"

@@ -1338,3 +1338,76 @@ def test_the_refusal_declines_to_guess_when_no_metric_stands_out():
     # Nothing resembling a known metric.
     assert _likeliest_metric({"consecutive_detections": 9, "window": 9}) is None
     assert _likeliest_metric({}) is None
+
+
+def test_the_cross_project_refusal_ranks_the_projects_by_arm_count():
+    """This refusal listed 13 project names alphabetically for one family and
+    asked the reader to pick, giving them nothing to pick ON -- and alphabetical
+    order put a dated backup directory second.
+
+    Measured on a real corpus: family 'water' spans ferric plus twelve of its
+    git worktrees. Arm counts are the one signal already in hand that separates
+    the main line of work from a worktree that ran a subset, and ordering by
+    them puts `ferric (13)` first.
+
+    Collapsing worktrees onto their main checkout was tried and REVERTED: 58 of
+    62 run names in those directories collide, because they are the same
+    experiment re-run on different branches rather than arms of a sweep.
+    Merging would have presented twelve copies of one run as comparable arms.
+    """
+
+    from attestation.db import get_db
+    from attestation.ledger import compare
+
+    conn = get_db(":memory:")
+    for project, n in (("worktree-b", 2), ("main-line", 5), ("aaa-backup", 3)):
+        for i in range(n):
+            cur = conn.execute(
+                "INSERT INTO runs(project, name, family, status, source_path)"
+                " VALUES (?, ?, 'fam', 'recorded', ?)",
+                (project, f"arm{i}", f"/tmp/{project}/arm{i}.json"),
+            )
+            conn.execute(
+                "INSERT INTO run_metrics(run_id, metric, value) VALUES (?, 'accuracy', ?)",
+                (cur.lastrowid, 0.5 + i / 100),
+            )
+    conn.commit()
+
+    with pytest.raises(ValueError) as excinfo:
+        compare(conn, "fam")
+    message = str(excinfo.value)
+    assert "main-line (5)" in message, f"arm counts are not reported: {message}"
+    # Ordered by count: the busiest project leads, not the alphabetical first.
+    assert message.index("main-line") < message.index("aaa-backup") < message.index("worktree-b"), (
+        f"projects are not ordered by arm count: {message}"
+    )
+
+
+def test_a_family_with_no_metrics_is_not_told_to_declare_a_direction():
+    """ "No metrics at all" is a different problem from "direction undeclared",
+    and the second message sends the reader to a TOML file where there is
+    nothing for them to write.
+
+    Reached on a real corpus by following this tool's own advice: `runs compare
+    water --project ferric` reported `found none` and then advised declaring
+    one of them.
+    """
+    from attestation.db import get_db
+    from attestation.ledger import compare
+
+    conn = get_db(":memory:")
+    for i in range(3):
+        conn.execute(
+            "INSERT INTO runs(project, name, family, status, source_path)"
+            " VALUES ('p', ?, 'fam', 'recorded', ?)",
+            (f"arm{i}", f"/tmp/p/arm{i}.json"),
+        )
+    conn.commit()
+
+    with pytest.raises(ValueError) as excinfo:
+        compare(conn, "fam")
+    message = str(excinfo.value)
+    assert "no recorded metrics" in message, message
+    assert "metric_direction" not in message, (
+        f"a family with no metrics is pointed at the direction file: {message}"
+    )
