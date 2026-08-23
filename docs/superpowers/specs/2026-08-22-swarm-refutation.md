@@ -67,9 +67,15 @@ unrestricted. Without expansion each surface shows 2 — its `ask` router and on
 companion — which is the progressive-disclosure default, not the surface size.
 Four entries exist in `~/.hermes/config.yaml` today.
 
-(`CLAUDE.md` still says 37 tools and 19/7/7/8. Those were correct when written
-and are not now; the tool count moves whenever a namespace gains a tool, which
-is why this spec records the date and the command rather than the number alone.)
+(Note that a surface count is not a namespace count: `kg.*` is 7 tools, but the
+`knowledge` surface serves 8 because it also carries `feed.search`. `CLAUDE.md`
+said 37 and 19/7/7/8 when this was written -- correct once, silently wrong
+later, and quoted into a draft of this spec before anyone measured. It has since
+been corrected to 46 and is now pinned by
+`test_architecture.py::test_claude_md_tool_counts_match_the_live_surface`, which
+asserts the per-namespace split as well as the total: a total can stay right
+while two namespaces drift in opposite directions. Re-measure rather than
+quoting either number.)
 
 Note what the second one is: **the roadmap's deliverable, by a different
 mechanism.** Spec 4 wanted per-domain agents. There are four per-domain agents.

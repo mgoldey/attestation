@@ -364,3 +364,41 @@ def test_tool_schemas_constrain_their_arguments():
             if arg == "metric" and name == "kg.central" and "enum" not in flat:
                 problems.append(f"{name}.{arg}: not an enum")
     assert not problems, "unconstrained tool arguments: " + ", ".join(problems)
+
+
+def test_claude_md_tool_counts_match_the_live_surface():
+    """A count in the always-loaded doc must not drift from the code.
+
+    CLAUDE.md is read into context every session, so a stale number there is
+    repeated with confidence for as long as it survives. It said "37 tools
+    NAMESPACED as feed.*(19) kg.*(5) runs.*(6) sym.*(7)" and "serves all 41"
+    on 2026-08-22, when the live surface was 46 as 22/9/8/7 -- both written
+    when they were true, neither noticed going wrong, and both were quoted
+    into a design spec before being measured.
+
+    This asserts the per-namespace counts rather than only the total: a total
+    can stay right while two namespaces drift in opposite directions.
+    """
+    import asyncio
+    import re
+    from collections import Counter
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.mcp import register_all
+
+    server = FastMCP("count-check")
+    register_all(server)
+    names = [t.name for t in asyncio.run(server.list_tools())]
+    live = Counter(n.split(".", 1)[0] for n in names)
+
+    text = (SRC.parent.parent / "CLAUDE.md").read_text()
+    line = next(ln for ln in text.splitlines() if "MCP surface:" in ln)
+
+    total = int(re.search(r"MCP surface: (\d+) tools", line).group(1))
+    assert total == len(names), (
+        f"CLAUDE.md says {total} tools, live surface has {len(names)}. Update the line."
+    )
+
+    claimed = {m.group(1): int(m.group(2)) for m in re.finditer(r"(\w+)\.\*\((\d+)\)", line)}
+    assert claimed == dict(live), f"CLAUDE.md claims {claimed}, live surface is {dict(live)}"
