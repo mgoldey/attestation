@@ -344,17 +344,23 @@ def sample_runs(
     if project or family:
         return list_runs(conn, project=project, family=family, limit=limit)
 
-    pool = list_runs(conn, limit=max(limit * 20, 200))
-    by_project: dict[str, list] = {}
-    for run in pool:
-        by_project.setdefault(run["project"], []).append(run)
-
-    out: list[dict] = []
-    while len(out) < limit and any(by_project.values()):
-        for runs in by_project.values():
-            if runs and len(out) < limit:
-                out.append(runs.pop(0))
-    return out
+    # Rank within each project in SQL rather than paging a prefix into memory.
+    # A pool taken with list_runs is ordered by project, so on the live ledger
+    # a 320-row pool held 4 of 18 projects and the round-robin still returned
+    # one -- a bigger pool is a fragile fix for the wrong shape.
+    rows = conn.execute(
+        """
+        SELECT id, project, name, family, status, started, source_path
+          FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY project ORDER BY family, name) AS rn
+              FROM runs
+          )
+         ORDER BY rn, project
+         LIMIT ?
+        """,
+        (limit,),
+    )
+    return [dict(r) for r in rows]
 
 
 def count_runs(
