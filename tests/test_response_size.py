@@ -69,7 +69,10 @@ def _row_budget(extra: int = 0) -> int:
     )
 
     fields = MAX_TITLE_CHARS + MAX_URL_CHARS + MAX_SOURCE_CHARS + MAX_TAGS_SHOWN * MAX_TAG_CHARS
-    return fields + 150 + extra  # 150 = JSON keys, quotes, commas, item_id, n_tags
+    # 200 covers the JSON scaffolding AS EMITTED: keys, quotes, commas, plus
+    # indent=2's newlines and leading spaces, which cost ~50 more per row than
+    # the compact form these budgets were originally derived against.
+    return fields + 200 + extra
 
 
 MAX_ITEM_CHARS = _row_budget()
@@ -91,6 +94,27 @@ def _response_budget() -> int:
 
 
 MAX_DEFAULT_RESPONSE_CHARS = _response_budget()
+
+
+# feed.read carries one full abstract, so it is deliberately the largest
+# single-item response. Derived from the abstract cap plus the row, rather than
+# the round 2600 that was chosen when nobody had measured an emitted payload.
+def _read_budget() -> int:
+    from attestation.mcp.feed import FULL_SUMMARY_CHARS
+
+    return FULL_SUMMARY_CHARS + _row_budget() + 400
+
+
+MAX_READ_RESPONSE_CHARS = _read_budget()
+
+
+def _digest_budget() -> int:
+    from attestation.mcp.feed import MAX_DIGEST_ITEMS
+
+    return MAX_DIGEST_ITEMS * MAX_ITEM_CHARS + 900  # + topic labels and envelope
+
+
+MAX_DIGEST_RESPONSE_CHARS = _digest_budget()
 
 
 @pytest.fixture
@@ -183,7 +207,7 @@ def test_the_default_feed_fits_with_the_worst_case_caveat(stocked):
 def test_each_item_stays_cheap(stocked):
     """The per-row cost, which is what makes a large explicit limit tolerable."""
     for item in feed_mod._list_feed("ana", limit=10)["items"]:
-        size = len(json.dumps(item))
+        size = emitted(item)
         assert size <= MAX_ITEM_CHARS, f"{size} chars for one item: {item}"
 
 
@@ -191,7 +215,7 @@ def test_each_search_item_stays_cheap(stocked):
     """Search rows carry three fields a list row does not, so they get their
     own budget rather than being measured against the list one."""
     for item in feed_mod._search_feed("ana", "topic", limit=10)["items"]:
-        size = len(json.dumps(item))
+        size = emitted(item)
         assert size <= MAX_SEARCH_ITEM_CHARS, f"{size} chars for one search item: {item}"
 
 
@@ -339,11 +363,13 @@ def test_a_long_abstract_is_truncated_visibly(stocked):
 def test_reading_stays_cheap_enough_to_render(stocked):
     """A single item, not a payload. The list is 5 items at ~1.5KB; one item
     read in full should not dwarf it."""
-    import json
 
     from attestation.mcp import feed as f
 
-    assert len(json.dumps(f._read_item("ana", 1))) <= 2600
+    # emitted(), not compact -- this assertion sat in the same file that added
+    # emitted() and kept the old units, and 9 of the 40 longest real items
+    # breach 2600 as actually sent while it stays green.
+    assert emitted(f._read_item("ana", 1)) <= MAX_READ_RESPONSE_CHARS
 
 
 def test_router_answers_are_bounded_by_title_length(stocked):
@@ -437,7 +463,7 @@ def test_the_item_budget_is_at_least_what_the_field_caps_permit(stocked):
         assert len(item["title"]) <= MAX_TITLE_CHARS + 1
         for tag in item["tags"]:
             assert len(tag) <= MAX_TAG_CHARS + 1, tag
-        assert len(json.dumps(item)) <= MAX_ITEM_CHARS
+        assert emitted(item) <= MAX_ITEM_CHARS
 
 
 def test_emitted_size_is_what_is_measured(stocked):
@@ -476,3 +502,53 @@ def test_the_digest_has_a_stated_budget_too(stocked):
     size = emitted(out)
     ceiling = DEFAULT_DIGEST_LIMIT * MAX_ITEM_CHARS + 900  # + topic labels, envelope
     assert size <= ceiling, f"digest is {size} chars, ceiling {ceiling}"
+
+
+def test_read_does_not_pay_for_the_title_twice(stocked):
+    """`message` repeated the full title that `item.title` already carries.
+
+    On the live corpus's longest titles that is ~220 wasted chars on the one
+    response deliberately allowed to be large, and it is the field a caller
+    never reads for content -- `message` is the envelope's one-line status,
+    not a second copy of the payload.
+    """
+    conn = get_db(stocked)
+    conn.execute("UPDATE items SET title = ?", ("T" * 400,))
+    conn.commit()
+    conn.close()
+
+    out = feed_mod._read_item("ana", 1)
+    assert out["item"]["title"].startswith("T"), "the full title must still be in item.title"
+    assert len(out["message"]) < 200, f"message is {len(out['message'])} chars of duplicate title"
+    assert emitted(out) <= MAX_READ_RESPONSE_CHARS
+
+
+def test_the_digest_is_bounded_by_total_items_not_by_topic_count(stocked):
+    """A cap on topics alone does not bound the digest.
+
+    Measured on the live database: ml-engineer and structural-biologist each
+    emit ~6900 from 6 topics, but materials-scientist emits 5031 from only 3 --
+    because 5 `unclustered` items sit OUTSIDE the topic list and no cap covered
+    them. Capping topics would have left the one persona with a messy profile
+    over budget, which is the persona most likely to be real.
+
+    So the bound is on total items across topics AND unclustered, which is what
+    the reader actually has to render.
+    """
+    conn = get_db(stocked)
+    user_id = conn.execute("SELECT id FROM users WHERE name = 'ana'").fetchone()[0]
+    # Spread items across many distinct tags so clustering produces both
+    # several topics and an unclustered remainder.
+    for i in range(1, 41):
+        conn.execute("DELETE FROM item_tags WHERE item_id = ?", (i,))
+        conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (i, f"topic-{i % 9}"))
+    conn.commit()
+    conn.close()
+    assert user_id
+
+    out = feed_mod._digest("ana")
+    shown = sum(len(t.get("items", [])) for t in out.get("topics", [])) + len(
+        out.get("unclustered", [])
+    )
+    assert shown <= feed_mod.MAX_DIGEST_ITEMS, f"digest rendered {shown} items"
+    assert emitted(out) <= MAX_DIGEST_RESPONSE_CHARS, f"digest is {emitted(out)} chars"

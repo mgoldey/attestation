@@ -281,6 +281,19 @@ DEFAULT_LIST_LIMIT = 4
 # it rather than being asserted beside it.
 DEFAULT_DIGEST_LIMIT = 30
 
+# Items the digest may RENDER, across topics and unclustered together. The
+# digest emitted 6905 chars against feed.list's 1835 and had no bound at all.
+#
+# Bounding topics alone was measured and rejected: materials-scientist shows
+# only 3 topics yet cost 5031, because 5 unclustered items sit outside the
+# topic list -- so a topic cap left the one persona with a messy profile over
+# budget, which is the persona most likely to be real.
+#
+# Topics are already sorted largest-first, so this drops the singleton tail
+# first -- the 440-char groups that exist to say "one paper on biology" -- and
+# n_total keeps every omission reportable.
+MAX_DIGEST_ITEMS = 12
+
 MAX_TITLE_CHARS = 90
 
 # url and source were the fields round 6's property test forgot. `url` reaches
@@ -396,9 +409,15 @@ def _read_item(conn, user_row, item_id: ItemId) -> dict:
         (user_row["id"], item_id),
     ).fetchone()
     return {
-        "message": row["title"],
+        # A clipped echo, not a second copy. `message` is the envelope's
+        # one-line status and the caller already has the full title in
+        # item.title; repeating it verbatim cost ~220 chars on the corpus's
+        # longest titles, on the one response deliberately allowed to be large.
+        "message": _clip_title(row["title"]),
         "item": {
             "item_id": row["id"],
+            # The FULL title here -- unclipped, unlike a list row. That
+            # asymmetry is what makes clipping the list acceptable.
             "title": row["title"],
             "url": row["url"],
             "source": row["source"],
@@ -857,19 +876,25 @@ def _digest_body(conn, user_row, days: int = 7, per_topic: int = 3, limit: int =
 
     grouped, unclustered = _cluster(items, members, cached)
 
-    topics = [
-        {
-            "label": label,
-            # n_total vs the shown slice: truncation must be visible
-            "n_total": len(group),
-            "items": group[: max(1, int(per_topic))],
-        }
-        for label, group in sorted(grouped.items(), key=lambda kv: (-len(kv[1]), kv[0]))
-    ]
+    topics = []
+    budget = MAX_DIGEST_ITEMS
+    for label, group in sorted(grouped.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if budget <= 0:
+            break
+        shown = group[: max(1, min(int(per_topic), budget))]
+        budget -= len(shown)
+        topics.append({"label": label, "n_total": len(group), "items": shown})
+
+    # Unclustered draws from the SAME budget, after topics: they are the
+    # leftovers, and a digest that spent its whole allowance on them would bury
+    # the grouping that is the point of the tool.
+    shown_unclustered = unclustered[: max(0, budget)]
+    dropped = (len(grouped) - len(topics)) + (len(unclustered) - len(shown_unclustered))
+    note = f"; {dropped} more group(s)/item(s) not shown" if dropped else ""
     return {
-        "message": f"{len(items)} item(s) in {len(topics)} topic(s)",
+        "message": f"{len(items)} item(s) in {len(grouped)} topic(s){note}",
         "topics": topics,
-        "unclustered": unclustered,
+        "unclustered": shown_unclustered,
         "ranking_quality": ranking_quality(conn, row["id"]),
         "window_days": days,
     }
