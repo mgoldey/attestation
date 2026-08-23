@@ -516,3 +516,71 @@ def test_runs_compare_fits_at_its_widest_family(tmp_path, monkeypatch):
     size = len(json.dumps(out, indent=2))
     assert size <= 7000, f"runs.compare on an 80-arm family emits {size} chars"
     assert out["n_arms"] >= 80, "the true arm count must survive truncation"
+
+
+def test_a_refusal_never_discards_the_message_the_domain_layer_built(tmp_path, monkeypatch):
+    """The structural defect behind three separate findings.
+
+    `ledger.scan` sets `message` when the root does not exist; `_list` returns
+    "no runs recorded -- call runs.scan(confirm=true) first". Both are correct
+    where they are written, and both were thrown away by a wrapper that
+    rebuilt its own: `runs.scan` reported ok=true / "0 run(s) across 0
+    project(s)" for a typo'd path, and `runs.ask` answered "Which family?
+    Comparable families include: " -- a sentence stopping mid-list.
+
+    The @tool decorator fixed the envelope's SHAPE; nothing made a body relay
+    the content it was handed.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    from attestation.mcp.ask import _runs_ask
+    from attestation.mcp.provenance import _scan
+
+    missing = _scan(root=str(tmp_path / "definitely-absent"), confirm=True)
+    assert missing["ok"] is False, "a nonexistent root reported success"
+    assert "no such directory" in missing["message"], missing["message"]
+
+    answer = _runs_ask("which arm won my sweep")["answer"]
+    assert answer.strip(), "the disambiguation prompt is empty"
+    assert not answer.rstrip().endswith(":"), (
+        f"the answer stops mid-list, asking the caller to choose from nothing: {answer!r}"
+    )
+    assert "runs.scan" in answer, f"an empty ledger must name the call that fills it: {answer!r}"
+
+
+def test_a_filter_that_matches_nothing_is_not_an_empty_ledger(tmp_path, monkeypatch):
+    """`runs.list(project="nosuch")` said "no runs recorded -- call
+    runs.scan(confirm=true) first" against a ledger holding nine runs.
+    Following that advice re-scans a database that is already correct."""
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    import pathlib
+
+    from attestation.mcp.provenance import _list, _scan
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "examples" / "workspace"
+    _scan(root=str(root), confirm=True)
+
+    miss = _list(project="nosuch")
+    assert miss["ok"] is False
+    assert "no runs recorded" not in miss["message"], (
+        f"a filter miss is reported as an empty ledger: {miss['message']!r}"
+    )
+    assert "though the ledger holds" in miss["message"], miss["message"]
+
+
+def test_a_family_in_another_project_says_which(tmp_path, monkeypatch):
+    """It denied the family and listed it as available in the same sentence,
+    never mentioning the `project` argument that actually excluded it."""
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    import pathlib
+
+    from attestation.mcp.provenance import _compare, _scan
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "examples" / "workspace"
+    _scan(root=str(root), confirm=True)
+
+    out = _compare(family="kdsweep", project="retrieval-ablation")
+    assert out["ok"] is False
+    assert "exists, but not in project" in out["message"], out["message"]
+    assert "speech-distill" in out["message"], (
+        f"the refusal does not say where the family actually is: {out['message']!r}"
+    )

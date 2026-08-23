@@ -217,7 +217,20 @@ def _which_family(listed: dict) -> str:
     reads a complete-looking list, does not find their sweep on it, and
     concludes it was never scanned. `n_families` was already in hand.
     """
+    # Relay the refusal rather than rebuilding one. `_list` already says "no
+    # runs recorded -- call runs.scan(confirm=true) first", and reading only
+    # `families` threw it away: on an empty ledger this answered "Which family?
+    # Comparable families include: " -- a sentence stopping mid-list, asking
+    # the caller to choose from nothing.
+    if not listed.get("ok"):
+        return listed.get("message") or "No runs in the ledger."
     shown = list(listed.get("families") or [])
+    if not shown:
+        return (
+            "No comparable families in the ledger. Runs are recorded but none"
+            " share a filename prefix, so there are no arms to rank; call"
+            " runs.list to see what was found."
+        )
     names = ", ".join(f["family"] for f in shown)
     total = listed.get("n_families") or len(shown)
     answer = f"Which family? Comparable families include: {names}"

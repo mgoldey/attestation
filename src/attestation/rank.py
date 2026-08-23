@@ -108,6 +108,14 @@ def create_user(conn, name: str, interests: str) -> int:
     id, and `feed.persona_create` still refuses a name that already existed
     when it looked -- that refusal is a UX decision, made above this line.
     """
+    # An empty or whitespace name is not a persona. personas.py's own comment
+    # says "a duplicate or empty name is the caller's to fix", and only the
+    # duplicate half was enforced -- by the UNIQUE constraint, not by code. A
+    # persona named '   ' persists and then appears in every "Valid users:"
+    # list, corrupting the one message the rest of this surface relies on to
+    # be actionable.
+    if not name.strip():
+        raise ValueError("persona name must not be empty")
     existing = get_user(conn, name)
     if existing is not None:
         raise ValueError(f"user already exists: {name!r}")

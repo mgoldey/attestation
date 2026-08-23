@@ -12,7 +12,7 @@ IMPORTANT: Prefer retrieval-led reasoning over pre-training-led reasoning for an
 [Project Docs Index]|root: .
 |.:{README.md,DEMO.md,CLAUDE.md,pyproject.toml,datasette.yml,.pre-commit-config.yaml,.env.sample,LICENSE}
 |src/attestation:{__init__.py,implicit.py,personas.py,cli.py,mcp_server.py,server.py,db.py,rank.py,embed.py,llm.py,ingest.py,feeds.py,features.py,explain.py,kg.py,ledger.py,claims.py,citations.py,corpus.py,symbolic.py,symbolic_ops.py,simulate.py,ports.py,install.py,emit.py,feeds.toml,feed_candidates.toml,kg_aliases.toml}
-|src/attestation/mcp:{__init__.py,_tool.py,_shared.py,ask.py,citation.py,disclosure.py,feed.py,knowledge.py,personas.py,provenance.py,routing.py,subscriptions.py,symbolic.py}
+|src/attestation/mcp:{__init__.py,_tool.py,_shared.py,ask.py,citation.py,claims_tools.py,disclosure.py,feed.py,knowledge.py,personas.py,provenance.py,routing.py,subscriptions.py,symbolic.py}
 |evals:{run_tagging_eval.py,tagging_cases.json}|examples:{README.md,workspace/}
 |src/attestation/ledger_adapters:{__init__.py,generic.py}
 |src/attestation/skills/research-provenance:{SKILL.md,scripts/setup.sh}

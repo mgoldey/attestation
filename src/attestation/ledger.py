@@ -798,7 +798,24 @@ def compare(
                 f" filename prefix, not by project"
             )
         elif available:
-            message = f"no family {family!r}"
+            # A project filter that excluded it, not a missing family. The old
+            # message denied the family and then listed it as available in the
+            # same sentence, never mentioning the argument that actually
+            # failed, which reads as the tool being broken.
+            elsewhere = [
+                r["project"]
+                for r in conn.execute(
+                    "SELECT DISTINCT project FROM runs WHERE family = ? ORDER BY project",
+                    (family,),
+                )
+            ]
+            if project and elsewhere:
+                message = (
+                    f"family {family!r} exists, but not in project {project!r}."
+                    f" It is in: {', '.join(elsewhere)}"
+                )
+            else:
+                message = f"no family {family!r}"
         elif not conn.execute("SELECT 1 FROM runs LIMIT 1").fetchone():
             # An EMPTY ledger, not a naming problem. This branch fired for both
             # and described only the second, so the first thing a caller sees

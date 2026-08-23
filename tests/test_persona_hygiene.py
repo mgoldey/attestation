@@ -219,3 +219,21 @@ def test_merging_does_not_mangle_words(seeded):
     # A dangling conjunction from a merged tail is noise in an embedded string.
     assert "and photovoltaics" not in out["interests"]
     assert "photovoltaics" in out["interests"]
+
+
+def test_a_persona_name_that_is_only_whitespace_is_refused(tmp_path, monkeypatch):
+    """personas.py's comment says "a duplicate or empty name is the caller's to
+    fix", and only the duplicate half was enforced -- by the UNIQUE constraint,
+    not by code. A persona named '   ' persisted and then appeared in every
+    "unknown user ... Valid users:" list, corrupting the one message the rest
+    of this surface relies on to be actionable.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    from attestation.mcp.personas import _create_persona
+
+    for bad in ("", "   ", "\t\n"):
+        out = _create_persona(name=bad, interests="science")
+        assert out["ok"] is False, f"{bad!r} was accepted as a persona name"
+        assert "must not be empty" in out["message"], out["message"]
+
+    assert _create_persona(name="real-reader", interests="science")["ok"] is True
