@@ -336,11 +336,19 @@ def test_router_answers_are_bounded_by_title_length(stocked):
     conn.commit()
     conn.close()
 
-    from attestation.mcp.ask import _feed_ask
+    from attestation.mcp.ask import MAX_LABEL_CHARS, _feed_ask, _label
 
     out = _feed_ask("ana", "what should I read today")
     assert len(out["answer"]) <= 600, f"answer is {len(out['answer'])} chars"
     assert len(json.dumps(out)) <= MAX_DEFAULT_RESPONSE_CHARS
+
+    # _label directly, not only through the router: _item_row now clips the
+    # title first, so a long title never reaches _label via the feed path and
+    # removing _label's own clip left this test green. A router also labels
+    # graph nodes, run arms and feed names, which no other clip touches.
+    assert len(_label({"title": "T" * 900})) <= MAX_LABEL_CHARS + 1
+    assert len(_label({"name": "N" * 900, "project": "p"})) <= MAX_LABEL_CHARS + 20
+    assert len(_label("S" * 900)) <= MAX_LABEL_CHARS + 1
 
 
 def test_the_item_budget_is_at_least_what_the_field_caps_permit(stocked):
