@@ -16,9 +16,9 @@ instead of picking from 34 flat names where `runs_compare`, `kg_path`,
 
 import os
 
-from attestation.mcp import ask, feed, knowledge, provenance, symbolic
+from attestation.mcp import ask, feed, knowledge, provenance, subscriptions, symbolic
 
-DOMAINS = (ask, feed, knowledge, provenance, symbolic)
+DOMAINS = (ask, feed, knowledge, provenance, subscriptions, symbolic)
 
 # Which namespaces (or individual tools) each agent may see.
 #

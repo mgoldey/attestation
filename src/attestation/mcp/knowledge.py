@@ -15,15 +15,8 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from attestation import kg
-from attestation.mcp._shared import MAX_LIST_LIMIT
+from attestation.mcp._shared import MAX_LIST_LIMIT, Limit
 from attestation.mcp._tool import ToolError, tool
-
-# Argument constraints live in the SCHEMA, not just in runtime checks, so an
-# MCP client rejects a bad call before it is made. limit=0 and since_days=-30
-# both reached the tools and had to be refused with a message the model then
-# had to read and act on -- a round trip and a failed call more expensive than
-# a bound the client already knows about.
-Limit = Annotated[int, Field(ge=1, le=50)]
 
 
 def register(mcp) -> None:

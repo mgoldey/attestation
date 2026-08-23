@@ -165,7 +165,16 @@ def test_mcp_domain_modules_stay_small():
     # argument is annotation, not behaviour, and it buys a client-side reject
     # instead of a failed call. The seam note below still stands for the next
     # genuine tool.
-    limits = {"feed.py": 650, "provenance.py": 225, "knowledge.py": 140, "symbolic.py": 117}
+    limits = {
+        # feed.py shed the five subscription tools to subscriptions.py -- the
+        # seam the code drew itself, since every one of them imported
+        # attestation.feeds and nothing else in the domain did.
+        "feed.py": 650,
+        "subscriptions.py": 150,
+        "provenance.py": 225,
+        "knowledge.py": 140,
+        "symbolic.py": 117,
+    }
     oversized = []
     for path in (SRC / "mcp").glob("*.py"):
         if path.name not in limits:

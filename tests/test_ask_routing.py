@@ -181,3 +181,16 @@ def test_not_cited_phrasings_all_reach_coverage():
         "what is uncovered in my draft?",
     ):
         assert route_runs(turn).tool == "runs.claims_coverage", turn
+
+
+def test_asking_to_summarise_a_paper_routes_to_read():
+    """The turn that exposed the gap. An agent asked to summarise a paper
+    answered that it had no tool for the job -- correctly, at the time."""
+    for turn in (
+        "summarize that paper",
+        "what is that paper about?",
+        "tell me about item 4043",
+        "read me the abstract",
+        "what does it say?",
+    ):
+        assert route_feed(turn).tool == "feed.read", turn

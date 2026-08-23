@@ -68,6 +68,21 @@ def route_feed(question: str) -> Decision:
 
     # Order matters: the more specific intents are tested first, because
     # "why did that rank" also contains words that look like a search.
+    # Content before ranking. "what is that paper about" asks what it SAYS;
+    # "why is it here" asks why it RANKED. An agent that conflates them tells
+    # a reader about cosine similarity when they wanted the abstract.
+    if _has(
+        q,
+        "summarize",
+        "summarise",
+        "abstract",
+        "what is that paper about",
+        "what is it about",
+        "what does it say",
+        "read me",
+        "tell me about item",
+    ):
+        return Decision("feed.read", {})
     if _has(q, "why did", "why is", "why was", "explain", "how come"):
         return Decision("feed.explain", {})
     if _has(
@@ -320,9 +335,20 @@ def _feed_ask(user: str, question: str) -> dict:
     elif decision.tool == "feed.digest":
         out = feed_mod._digest(user)
     elif decision.tool == "feed.sources":
-        out = feed_mod._list_feeds()
+        from attestation.mcp import subscriptions as subs
+
+        out = subs._list_feeds()
     elif decision.tool == "feed.persona_status":
         out = feed_mod._profile_status(user)
+    elif decision.tool == "feed.read":
+        return {
+            "ok": False,
+            "answer": "Which item? Pass the item_id and I will read it in full.",
+            "refs": [],
+            "caveat": None,
+            "options": ["feed.read"],
+            "tool_used": None,
+        }
     elif decision.tool in {"feed.rate", "feed.explain", "feed.source_add", "feed.source_remove"}:
         # These need an item or a url the question does not carry. Naming the
         # tool is the answer: the caller supplies the argument it already has.

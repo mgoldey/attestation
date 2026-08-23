@@ -32,7 +32,7 @@ BASELINE = {
     # route_feed is a rule table: each intent is one branch, and flattening it
     # into data would hide the ordering that the tests pin (a mutation like
     # "add X to my feeds" must be tested before the listing it mentions).
-    "src/attestation/mcp/ask.py": 13,
+    "src/attestation/mcp/ask.py": 14,  # route_feed: +1 for the read/summarise rule
 }
 
 # Anything not listed must stay at or below this. New code starts strict.

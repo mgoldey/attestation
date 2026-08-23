@@ -48,17 +48,18 @@ if __name__ == "__main__":
 from attestation.mcp import feed as _feed  # noqa: E402
 from attestation.mcp import knowledge as _kg  # noqa: E402
 from attestation.mcp import provenance as _prov  # noqa: E402
+from attestation.mcp import subscriptions as _subs  # noqa: E402
 from attestation.mcp import symbolic as _sym  # noqa: E402
 
 _list_feed_impl = _feed._list_feed
 _record_feedback_impl = _feed._record_feedback
 _explain_item_impl = _feed._explain_item
 _list_users_impl = _feed._list_users
-_add_feed_impl = _feed._add_feed
-_list_feeds_impl = _feed._list_feeds
-_remove_feed_impl = _feed._remove_feed
-_preview_feed_impl = _feed._preview_feed
-_suggest_feeds_impl = _feed._suggest_feeds
+_add_feed_impl = _subs._add_feed
+_list_feeds_impl = _subs._list_feeds
+_remove_feed_impl = _subs._remove_feed
+_preview_feed_impl = _subs._preview_feed
+_suggest_feeds_impl = _subs._suggest_feeds
 _create_persona_impl = _feed._create_persona
 _update_persona_impl = _feed._update_persona
 _propose_interests_impl = _feed._propose_interests
@@ -90,3 +91,5 @@ _sym_verify_impl = _sym._sym_verify
 _sym_evaluate_impl = _sym._sym_evaluate
 _simulate_feedback_impl = _feed._simulate_feedback
 _harvest_engagement_impl = _feed._harvest_engagement
+
+_read_item_impl = _feed._read_item

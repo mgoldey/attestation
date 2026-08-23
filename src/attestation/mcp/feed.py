@@ -19,6 +19,7 @@ from attestation.explain import explain as explain_item_fn
 from attestation.llm import default_chat_fn
 from attestation.mcp._shared import (
     MAX_LIST_LIMIT,
+    Limit,
     clamp_limit,
     get_embedder,
     ranked_items,
@@ -27,13 +28,6 @@ from attestation.mcp._shared import (
 )
 from attestation.mcp._tool import ToolError, tool
 from attestation.rank import forget_profile_vector, record_click
-
-# Argument constraints live in the SCHEMA, not just in runtime checks, so an
-# MCP client rejects a bad call before it is made. limit=0 and since_days=-30
-# both reached the tools and had to be refused with a message the model then
-# had to read and act on -- a round trip and a failed call more expensive than
-# a bound the client already knows about.
-Limit = Annotated[int, Field(ge=1, le=50)]
 
 
 def register(mcp) -> None:
@@ -76,6 +70,19 @@ def register(mcp) -> None:
         """
         return _record_feedback(user, item_id, useful)
 
+    @mcp.tool(name="feed.read")
+    def read_item(user: str, item_id: int) -> dict:
+        """Read ONE item in full -- title, source, and its abstract.
+
+        Use this when asked to summarise, explain or judge a specific paper.
+        The list tools deliberately omit the abstract so that ten items stay
+        renderable; this is where the text lives.
+
+        Returns one item, not a list. Pass the `item_id` from a previous
+        feed.list, feed.search or feed.digest result.
+        """
+        return _read_item(user, item_id)
+
     @mcp.tool(name="feed.explain")
     def explain_item(user: str, item_id: int) -> dict:
         """Explain in one sentence why a specific feed item was ranked for this user.
@@ -96,40 +103,6 @@ def register(mcp) -> None:
         feed.rate, and feed.explain before calling them.
         """
         return _list_users()
-
-    @mcp.tool(name="feed.source_add")
-    def add_feed(url: str, title: str | None = None) -> dict:
-        """Subscribe to an RSS/Atom feed.
-
-        Validates that the URL parses as a feed, then registers it. Does NOT fetch
-        its articles: items appear after the next ingest (hourly cron, or
-        `attest ingest`). Use preview_feed first to check a feed's content.
-        """
-        return _add_feed(url, title)
-
-    @mcp.tool(name="feed.sources")
-    def list_feeds() -> dict:
-        """List subscribed feeds with item counts and when each was last fetched."""
-        return _list_feeds()
-
-    @mcp.tool(name="feed.source_remove")
-    def remove_feed(feed_id: int, confirm: bool = False) -> dict:
-        """Unsubscribe from a feed. Requires confirm=true.
-
-        Existing items and all feedback on them are KEPT -- only the subscription
-        is removed, so no ranking history is lost.
-        """
-        return _remove_feed(feed_id, confirm)
-
-    @mcp.tool(name="feed.source_preview")
-    def preview_feed(url: str, limit: Limit = 5) -> dict:
-        """Show recent entries from a feed WITHOUT subscribing to it."""
-        return _preview_feed(url, limit)
-
-    @mcp.tool(name="feed.source_suggest")
-    def suggest_feeds(user: str, limit: Limit = 5) -> dict:
-        """Suggest feeds from a curated list, scored against tags this user liked."""
-        return _suggest_feeds(user, limit)
 
     @mcp.tool(name="feed.persona_create")
     def create_persona(name: str, interests: str) -> dict:
@@ -316,6 +289,67 @@ def _item_row(it, *, summary: bool = False) -> dict:
     return row
 
 
+# How much abstract one item carries. The list tools cap at SUMMARY_CHARS
+# because ten of them must fit together; a single item can afford more, and an
+# abstract cut mid-sentence gets quoted as though it were the finding.
+FULL_SUMMARY_CHARS = 2000
+
+
+@tool(empty={"item": None}, needs_user=True, label="read_item")
+def _read_item(conn, user_row, item_id: int) -> dict:
+    """One item with its text, for an agent asked to summarise or judge it.
+
+    Trimming `summary` from the list shape is what stopped a ten-item payload
+    from truncating, and it left an agent with a title and a url and nothing
+    to read. Watched live: asked to summarise a paper, the model correctly
+    answered that it had no tool for the job and told the reader to open the
+    link. The answer is not to put abstracts back in the list; it is one tool
+    that returns one item.
+    """
+    row = conn.execute(
+        "SELECT i.id, i.title, i.url, i.summary, i.published, f.title AS source"
+        "  FROM items i LEFT JOIN feeds f ON f.id = i.feed_id"
+        " WHERE i.id = ?",
+        (item_id,),
+    ).fetchone()
+    if row is None:
+        raise ToolError(f"unknown item_id: {item_id}")
+
+    text = (row["summary"] or "").strip()
+    truncated = len(text) > FULL_SUMMARY_CHARS
+    if truncated:
+        text = text[:FULL_SUMMARY_CHARS].rstrip() + "\u2026"
+
+    tags = [
+        r["tag"]
+        for r in conn.execute(
+            "SELECT tag FROM item_tags WHERE item_id = ? ORDER BY tag", (item_id,)
+        )
+    ]
+    rated = conn.execute(
+        "SELECT useful FROM clicks WHERE user_id = ? AND item_id = ?",
+        (user_row["id"], item_id),
+    ).fetchone()
+    return {
+        "message": row["title"],
+        "item": {
+            "item_id": row["id"],
+            "title": row["title"],
+            "url": row["url"],
+            "source": row["source"],
+            "published": row["published"],
+            "summary": text,
+            "truncated": truncated,
+            "tags": tags[:MAX_TAGS_SHOWN],
+            "n_tags": len(tags),
+            # So the agent knows a verdict already exists rather than asking
+            # the reader to repeat one.
+            "already_rated": rated is not None,
+            "rated_useful": bool(rated["useful"]) if rated else None,
+        },
+    }
+
+
 @tool(empty={"items": [], "ranking_quality": {}}, needs_user=True, label="list_feed")
 def _list_feed(conn, user_row, limit: int = 5, since_days: int | None = 14) -> dict:
     """`since_days` defaults to rank_items' own 14-day window so list_feed's
@@ -370,62 +404,6 @@ def _list_users(conn) -> dict:
     return {
         "message": f"{len(rows)} user(s)",
         "users": [{"name": r["name"], "interests": r["interests"]} for r in rows],
-    }
-
-
-@tool(empty={"feed_id": None}, label="add_feed")
-def _add_feed(conn, url: str, title: str | None = None) -> dict:
-    from attestation import feeds as feeds_mod
-
-    out = feeds_mod.add_feed(conn, url, title)
-    # feeds.add_feed returns its own envelope; a URL that does not parse is a
-    # caller-fixable refusal, not a bug, so its message is passed through verbatim
-    if not out["ok"]:
-        raise ToolError(out["message"])
-    return {"message": out["message"], "feed_id": out["feed_id"]}
-
-
-@tool(empty={"feeds": []}, label="list_feeds")
-def _list_feeds(conn) -> dict:
-    from attestation import feeds as feeds_mod
-
-    feeds = feeds_mod.list_feeds(conn)
-    return {"message": f"{len(feeds)} feed(s)", "feeds": feeds}
-
-
-@tool(empty={"orphaned_items": 0}, label="remove_feed")
-def _remove_feed(conn, feed_id: int, confirm: bool = False) -> dict:
-    from attestation import feeds as feeds_mod
-
-    if not confirm:
-        raise ToolError(
-            f"refusing to remove feed {feed_id} without confirm=true. This "
-            "unsubscribes the feed; its existing items and your feedback on "
-            "them are kept."
-        )
-    out = feeds_mod.remove_feed(conn, feed_id)
-    if not out["ok"]:
-        raise ToolError(out["message"])
-    return {"message": out["message"], "orphaned_items": out["orphaned_items"]}
-
-
-@tool(empty={"title": None, "entries": []}, needs_db=False, label="preview_feed")
-def _preview_feed(url: str, limit: int = 5) -> dict:
-    from attestation import feeds as feeds_mod
-
-    out = feeds_mod.preview_feed(url, limit=min(limit, MAX_LIST_LIMIT))
-    if not out["ok"]:
-        raise ToolError(out["message"])
-    return {"message": out["message"], "title": out["title"], "entries": out["entries"]}
-
-
-@tool(empty={"suggestions": []}, needs_user=True, label="suggest_feeds")
-def _suggest_feeds(conn, user_row, limit: int = 5) -> dict:
-    from attestation import feeds as feeds_mod
-
-    return {
-        "message": "scored against tags you marked useful",
-        "suggestions": feeds_mod.suggest_feeds(conn, user_row["id"], limit=limit),
     }
 
 

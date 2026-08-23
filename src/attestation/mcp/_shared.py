@@ -6,6 +6,9 @@ after a split.
 """
 
 import logging
+from typing import Annotated
+
+from pydantic import Field
 
 from attestation.mcp._tool import ToolError
 from attestation.ports import EmbedderPort
@@ -14,6 +17,11 @@ from attestation.rank import rank_items
 log = logging.getLogger(__name__)
 
 MAX_LIST_LIMIT = 50
+
+# Argument constraints live in the SCHEMA, not just in runtime checks, so an
+# MCP client rejects a bad call before it is made. Shared here because three
+# domain modules declare bounded arguments.
+Limit = Annotated[int, Field(ge=1, le=MAX_LIST_LIMIT)]
 
 
 def clamp_limit(limit: int) -> int:

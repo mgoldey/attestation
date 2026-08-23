@@ -126,3 +126,60 @@ def test_a_truncated_summary_says_so(stocked):
     for item in out["items"]:
         if "summary" in item and item["summary"]:
             assert item["summary"].endswith("…") or len(item["summary"]) < 300
+
+
+# --- reading one item -----------------------------------------------------
+
+
+def test_an_item_can_be_read_in_full(stocked):
+    """The gap that made an agent tell a reader to go open the link.
+
+    Watched live: asked to summarise a paper, the model answered "I do not
+    have a direct tool available to read and summarize the full abstract...
+    I recommend visiting the link directly". It was right -- the compact item
+    shape carries a title and a url and nothing to summarise, because trimming
+    `summary` is what stopped ten-item payloads from truncating.
+
+    The fix is not to put abstracts back in the list. It is one tool that
+    returns ONE item in full, so the list stays cheap and reading stays
+    possible.
+    """
+    from attestation.mcp import feed as f
+
+    listed = f._list_feed("ana", limit=1)["items"][0]
+    out = f._read_item("ana", listed["item_id"])
+
+    assert out["ok"] is True
+    assert out["item"]["summary"], "the abstract is in the database and must come back"
+    assert out["item"]["title"] == listed["title"]
+    assert out["item"]["url"] == listed["url"]
+
+
+def test_reading_an_unknown_item_says_so(stocked):
+    from attestation.mcp import feed as f
+
+    out = f._read_item("ana", 999999)
+    assert out["ok"] is False
+    assert "999999" in out["message"]
+
+
+def test_a_long_abstract_is_truncated_visibly(stocked):
+    """One full item must still fit a small model. Silent truncation would
+    have it quote half a sentence as though it were the whole finding."""
+    from attestation.mcp import feed as f
+
+    out = f._read_item("ana", 1)
+    summary = out["item"]["summary"]
+    assert len(summary) <= 2100
+    if out["item"].get("truncated"):
+        assert summary.endswith("…"), "truncation must be visible in the text"
+
+
+def test_reading_stays_cheap_enough_to_render(stocked):
+    """A single item, not a payload. The list is 5 items at ~1.5KB; one item
+    read in full should not dwarf it."""
+    import json
+
+    from attestation.mcp import feed as f
+
+    assert len(json.dumps(f._read_item("ana", 1))) <= 2600
