@@ -147,3 +147,44 @@ def test_a_persona_with_no_interests_still_gets_a_synthesized_profile(tmp_path):
     assert len(calls) == 2, "synthesis must still run when there is no interests text"
     assert any("Summarize this reader" in c for c in calls)
     conn.close()
+
+
+def test_changing_interests_drops_the_cached_explanations(tmp_path, monkeypatch):
+    """An explanation cached under one persona outlived the persona.
+
+    The cache key is (user_id, item_id) -- the interests text is not in it. Both
+    sites that change interests call `forget_profile_vector` for the vector
+    cache and leave this one alone, so `update_persona` promises "ranking
+    re-embeds on next use", the ranking does, and the explanations then
+    contradict it indefinitely.
+
+    Structurally the same omission `forget_profile_vector`'s own docstring
+    describes ("which is why update_persona was missed"), recurring for the
+    second cache. delete_persona and reset_feedback both clear this table with
+    a comment saying why; the update path was the gap.
+    """
+    from attestation.db import get_db
+    from attestation.mcp.feed import _update_persona
+    from attestation.rank import create_user
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    user_id = create_user(conn, "ana", "protein structure, cryo-EM")
+    conn.execute(
+        "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+        " VALUES (NULL, 't', 'u', 's', 'h')"
+    )
+    conn.execute(
+        "INSERT INTO explanations(user_id, item_id, text) VALUES (?, 1, 'about protein folding')",
+        (user_id,),
+    )
+    conn.commit()
+    conn.close()
+
+    _update_persona("ana", "medieval poetry and 14th century manuscripts")
+
+    conn = get_db(tmp_path / "t.db")
+    left = conn.execute(
+        "SELECT COUNT(*) FROM explanations WHERE user_id = ?", (user_id,)
+    ).fetchone()[0]
+    assert left == 0, f"{left} explanation(s) survived a change of interests"

@@ -230,6 +230,10 @@ def merge(conn: sqlite3.Connection, *, into: str, drop: list[str]) -> dict:
     conn.execute("UPDATE users SET interests = ? WHERE id = ?", (merged_interests, keeper["id"]))
     # The keeper's cached profile vector was computed from the old text.
     forget_profile_vector(conn, keeper["id"])
+    # And the explanation cache, for the same reason: its key carries no
+    # interests, so a merged persona inherits sentences written about the
+    # profile it no longer has.
+    conn.execute("DELETE FROM explanations WHERE user_id = ?", (keeper["id"],))
     conn.commit()
     return {
         "into": into,

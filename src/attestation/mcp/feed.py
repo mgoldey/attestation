@@ -535,7 +535,15 @@ def _update_persona(conn, user_row, interests: str) -> dict:
     # serve a vector computed from the interests text just replaced -- it
     # returns a cached entry without comparing hashes, by design.
     forget_profile_vector(conn, user_row["id"])
-    return {"message": f"updated interests for {name!r}; ranking re-embeds on next use"}
+    # Explanations too. Their cache key is (user_id, item_id) with no interests
+    # in it, so they outlive the persona that produced them: this message
+    # promises the ranking re-embeds, it does, and the cached explanations then
+    # contradict it indefinitely. delete_persona and reset_feedback both clear
+    # this table; the update path was the gap.
+    dropped = conn.execute("DELETE FROM explanations WHERE user_id = ?", (user_row["id"],)).rowcount
+    conn.commit()
+    note = f"; dropped {dropped} stale explanation(s)" if dropped else ""
+    return {"message": f"updated interests for {name!r}; ranking re-embeds on next use{note}"}
 
 
 @tool(empty={"prevalent_tags": []}, label="propose_interests")

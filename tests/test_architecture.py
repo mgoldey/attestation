@@ -169,7 +169,7 @@ def test_mcp_domain_modules_stay_small():
         # feed.py shed the five subscription tools to subscriptions.py -- the
         # seam the code drew itself, since every one of them imported
         # attestation.feeds and nothing else in the domain did.
-        "feed.py": 745,
+        "feed.py": 760,
         "subscriptions.py": 150,
         "knowledge.py": 165,
         "symbolic.py": 130,

@@ -148,7 +148,7 @@ def test_evaluate_user_excludes_bootstrap_leakage(tmp_path, fake_embedder):
     assert evaluate_user(conn, user_id) is None
 
 
-def test_evaluate_user_mixed_real_clicks_returns_float(tmp_path, fake_embedder):
+def test_evaluate_user_mixed_real_clicks_returns_a_labelled_score(tmp_path, fake_embedder):
     """A persona with genuinely mixed non-bootstrap clicks (interleaved labels,
     not a label-sorted run) yields a real AUC instead of tripping the
     single-class-tail guard that leave-last-N-out was vulnerable to."""
@@ -162,8 +162,10 @@ def test_evaluate_user_mixed_real_clicks_returns_float(tmp_path, fake_embedder):
         record_click(conn, user_id, item_id, useful=bool(i % 2), source="ui")
     result = evaluate_user(conn, user_id)
     assert result is not None
-    assert isinstance(result, float)
-    assert 0.0 <= result <= 1.0
+    # A labelled dict, not a bare float: the AUC covers the click classifier
+    # only, and returning it unlabelled invited being read as "the ranking
+    # scores 0.96" when changing a persona's interests does not move it.
+    assert 0.0 <= result["auc"] <= 1.0
 
 
 class SpyEmbedder:
@@ -916,3 +918,42 @@ def test_a_wholly_synthetic_history_is_flagged_as_untrusted_not_merely_noted(
     assert "untrained" in caveat.lower(), (
         f"a wholly synthetic history reads as merely noted: {caveat!r}"
     )
+
+
+def test_eval_reports_what_it_actually_measured(tmp_path, fake_embedder):
+    """The one number offered as "is the ranking good" is blind to the ranking.
+
+    `evaluate_user` fits a LogisticRegression on click embeddings -- the
+    classifier term only. It never touches the profile-similarity term or the
+    feature-preference term, which together are most of what `rank_items`
+    orders by.
+
+    Measured on the live database: replacing matt's interests with "medieval
+    poetry and 14th century manuscripts" changed the top five to 1-of-5 overlap
+    and left the AUC BIT-IDENTICAL at 0.9643. A persona ranking LLM papers
+    while claiming to want medieval poetry scored 0.964, and the printed caveat
+    warned about sample size -- the wrong thing entirely.
+
+    The fix is not a better estimator; it is saying which term was scored, so a
+    reader does not take it for the whole.
+    """
+    from attestation.db import get_db
+    from attestation.rank import create_user, evaluate_user
+
+    conn = get_db(tmp_path / "t.db")
+    user_id = create_user(conn, "ana", "machine learning")
+    for i in range(1, 25):
+        item = add_item(conn, fake_embedder, f"item {i}")
+        conn.execute(
+            "INSERT INTO clicks(user_id, item_id, useful, source) VALUES (?,?,?,'ui')",
+            (user_id, item, i % 2),
+        )
+    conn.commit()
+
+    result = evaluate_user(conn, user_id)
+    assert result is not None
+    # A bare float invites being read as "the ranking scores 0.96". The caller
+    # must be told which of the three terms this covers.
+    assert isinstance(result, dict), f"evaluate_user returned a bare {type(result).__name__}"
+    assert "auc" in result and "measures" in result
+    assert "classifier" in result["measures"].lower()

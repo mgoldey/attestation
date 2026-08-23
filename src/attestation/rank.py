@@ -402,7 +402,7 @@ def bootstrap_persona(conn, embedder, user_name: str, k: int = 30) -> int:
     return len(chosen)
 
 
-def evaluate_user(conn, user_id: int, n_holdout: int = 5) -> float | None:
+def evaluate_user(conn, user_id: int, n_holdout: int = 5) -> dict | None:
     """Stratified-holdout AUC over real (non-bootstrap) clicks only.
 
     Honest noise at small n -- never present as evidence.
@@ -448,7 +448,24 @@ def evaluate_user(conn, user_id: int, n_holdout: int = 5) -> float | None:
         aucs.append(roc_auc_score(y_test, clf.predict_proba(X[test_idx])[:, 1]))
     if not aucs:
         return None
-    return float(np.mean(aucs))
+    # A dict, not a bare float. The number covers the CLICK CLASSIFIER only --
+    # this fits LogisticRegression on click embeddings and never touches the
+    # profile-similarity term or the feature-preference term, which together
+    # are most of what rank_items orders by. Measured: replacing a persona's
+    # interests with unrelated text changed its top five to 1-of-5 overlap and
+    # left this AUC bit-identical, so a reader taking it for "the ranking is
+    # good" is taking it for something it cannot see.
+    return {
+        "auc": float(np.mean(aucs)),
+        "n_clicks": len(rows),
+        "n_splits": len(aucs),
+        "measures": (
+            "the click classifier alone, on stored embeddings."
+            " NOT the profile-similarity or feature-preference terms, which"
+            " also order the feed -- changing a persona's interests does not"
+            " move this number"
+        ),
+    }
 
 
 def ranking_quality(conn, user_id: int) -> dict:

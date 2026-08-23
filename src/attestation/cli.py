@@ -631,18 +631,32 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
     with open_db(args.db) as conn:
         user = get_user(conn, args.user)
-        auc = evaluate_user(conn, user["id"]) if user else None
-    if auc is None:
+        result = evaluate_user(conn, user["id"]) if user else None
+    if result is None:
         # Nonzero, like every other failure path here. "I could not measure
         # this" is not the answer the command exists to produce, and a script
         # gating on `attest eval` read the old exit 0 as a pass. Both causes
         # land here -- an unknown persona and a real one with too few mixed
         # clicks -- and both are told what would fix them.
-        print("insufficient click data for a meaningful holdout (need 10+ mixed clicks)")
+        message = "insufficient click data for a meaningful holdout (need 10+ mixed clicks)"
         if user is None:
-            print(f"  (no persona named {args.user!r} -- `attest personas` lists them)")
-        return 1
-    print(f"leave-last-5-out AUC: {auc:.3f}  (noise at small n -- not evidence)")
+            message += f"\n  (no persona named {args.user!r} -- `attest personas` lists them)"
+        return fail(message)
+
+    # "leave-last-5-out" named an approach evaluate_user's own docstring says
+    # it abandoned -- it is a shuffled StratifiedKFold, and for a 22-click
+    # persona that is 2 folds, neither "last" nor "5".
+    #
+    # And the caveat warned about the wrong thing. Sample size is real, but the
+    # larger limit is WHAT is measured: replacing a persona's interests with
+    # unrelated text changed its top five to 1-of-5 overlap and left this
+    # number bit-identical, because it scores the click classifier and not the
+    # two terms that moved.
+    print(
+        f"click-classifier AUC: {result['auc']:.3f}"
+        f"  ({result['n_splits']}-fold over {result['n_clicks']} clicks)"
+    )
+    print(f"  measures {result['measures']}")
     return 0
 
 

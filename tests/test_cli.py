@@ -24,7 +24,7 @@ def test_eval_insufficient_data_message(tmp_path, capsys):
     get_db(db).close()
     rc = main(["eval", "--db", str(db), "--user", "matt"])
     assert rc == 1
-    assert "insufficient" in capsys.readouterr().out.lower()
+    assert "insufficient" in capsys.readouterr().err.lower()
 
 
 def test_parser_tag_subcommand():
@@ -223,7 +223,7 @@ def test_cmd_eval_directly_with_plain_namespace(tmp_path, capsys):
     rc = cmd_eval(Namespace(db=str(db), user="matt"))
 
     assert rc == 1
-    assert "insufficient" in capsys.readouterr().out.lower()
+    assert "insufficient" in capsys.readouterr().err.lower()
 
 
 def test_cmd_bootstrap_persona_directly_with_plain_namespace(tmp_path, capsys, monkeypatch):
@@ -388,7 +388,7 @@ def test_eval_for_an_unknown_user_exits_nonzero(tmp_path, capsys):
     rc = main(["eval", "--db", str(db), "--user", "definitely-not-a-persona"])
 
     assert rc == 1
-    assert "insufficient" in capsys.readouterr().out.lower()
+    assert "insufficient" in capsys.readouterr().err.lower()
 
 
 def test_eval_with_a_real_measurement_still_exits_zero(tmp_path, capsys, monkeypatch):
@@ -397,7 +397,18 @@ def test_eval_with_a_real_measurement_still_exits_zero(tmp_path, capsys, monkeyp
 
     db = tmp_path / "t.db"
     get_db(db).close()
-    monkeypatch.setattr(attestation.rank, "evaluate_user", lambda conn, uid: 0.75)
+    # evaluate_user returns a labelled dict now, not a bare float: the number
+    # covers the click classifier only, and saying so is the point.
+    monkeypatch.setattr(
+        attestation.rank,
+        "evaluate_user",
+        lambda conn, uid: {
+            "auc": 0.75,
+            "n_clicks": 20,
+            "n_splits": 4,
+            "measures": "the click classifier alone",
+        },
+    )
 
     rc = main(["eval", "--db", str(db), "--user", "matt"])
 
