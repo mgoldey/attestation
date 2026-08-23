@@ -474,6 +474,13 @@ def diagnose_empty(root: Path) -> str:
 # the layout differs, but only a real library proves what it actually does.
 TRACKER_DIRS = ("wandb", "mlruns")
 
+# Recorded on every RunRecord this module's convention-based reader produces,
+# so `runs.detail` can tell a hand-written results/ tree apart from a tracker
+# directory. The tracker readers below label themselves "wandb" and "mlflow"
+# instead, which is what lets ledger.ADAPTER_CAVEATS attach their limitations
+# to exactly the runs they apply to.
+ADAPTER_NAME = "generic"
+
 
 def _yaml_scalars(path: Path) -> dict[str, str]:
     """Top-level `key: value` pairs from a small machine-written YAML file.
@@ -590,6 +597,7 @@ def _wandb_runs(root: Path, seen: set[str]) -> list[RunRecord]:
                 started=meta.get("startedAt"),
                 config=_wandb_config(config_path) if config_path.is_file() else None,
                 metrics=metrics,
+                adapter="wandb",
             )
         )
     return records
@@ -691,6 +699,7 @@ def _mlflow_runs(root: Path, seen: set[str]) -> list[RunRecord]:
                     status="recorded",
                     config=config or None,
                     metrics=metrics,
+                    adapter="mlflow",
                 )
             )
     return records
@@ -720,6 +729,7 @@ def discover(root: Path) -> list[RunRecord]:
                     status="spec",
                     config=_config_shape(cfg),
                     notes=_header_comment(cfg),
+                    adapter=ADAPTER_NAME,
                 )
             )
 
@@ -753,6 +763,7 @@ def discover(root: Path) -> list[RunRecord]:
                         status="recorded",
                         config={k: v for k, v in row.items() if isinstance(v, (str, int, float))},
                         metrics=metrics,
+                        adapter=ADAPTER_NAME,
                     )
                 )
 
@@ -783,6 +794,7 @@ def discover(root: Path) -> list[RunRecord]:
                     corpus=corpus.from_payload(
                         payload[0] if isinstance(payload, list) and payload else payload
                     ),
+                    adapter=ADAPTER_NAME,
                 )
             )
 

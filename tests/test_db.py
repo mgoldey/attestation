@@ -453,3 +453,104 @@ def test_backup_result_is_a_readable_database(tmp_path):
 
     restored = sqlite3.connect(dest)
     assert restored.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+
+# ---------------------------------------------------------------------------
+# File permissions
+# ---------------------------------------------------------------------------
+
+
+def test_new_database_is_not_readable_by_group_or_other(tmp_path):
+    """The database holds persona interests and every click a reader made.
+
+    On a shared box, the default 0644 that SQLite creates means any local
+    account can read the whole reading history. Nothing about this file is
+    meant to be shared, so it is created 0600.
+    """
+    import stat
+
+    from attestation.db import get_db
+
+    path = tmp_path / "perm.db"
+    conn = get_db(path)
+    conn.close()
+
+    mode = stat.S_IMODE(path.stat().st_mode)
+    assert not mode & (stat.S_IRGRP | stat.S_IROTH | stat.S_IWGRP | stat.S_IWOTH), oct(mode)
+
+
+def test_wal_and_shm_sidecars_are_locked_down_too(tmp_path):
+    """A 0600 main file with a world-readable -wal leaks the newest rows.
+
+    journal_mode=WAL means recent commits live in `hermes.db-wal` until a
+    checkpoint. Tightening only the main file would protect the history and
+    publish today's clicks.
+    """
+    import stat
+
+    from attestation.db import get_db
+
+    path = tmp_path / "sidecar.db"
+    conn = get_db(path)
+    conn.execute("INSERT INTO users(name, interests) VALUES ('wal-writer', 'x')")
+    conn.commit()
+
+    for sidecar in (path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+        if not sidecar.exists():
+            continue
+        mode = stat.S_IMODE(sidecar.stat().st_mode)
+        assert not mode & (stat.S_IRGRP | stat.S_IROTH), f"{sidecar.name} is {oct(mode)}"
+    conn.close()
+
+
+def test_reopening_does_not_reclaim_permissions_the_user_widened(tmp_path):
+    """Only creation sets the mode.
+
+    Someone who deliberately `chmod g+r`s their database to share it with a
+    labmate's account must not have that undone by the next tool call. The
+    tightening is a safe default, not a policy this enforces.
+    """
+    import stat
+
+    from attestation.db import get_db
+
+    path = tmp_path / "widened.db"
+    get_db(path).close()
+    path.chmod(0o640)
+
+    get_db(path).close()
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+
+
+def test_fresh_db_has_the_runs_adapter_column(tmp_path):
+    """A run must be able to say which reader produced it."""
+    conn = get_db(str(tmp_path / "adapter.db"))
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
+    assert "adapter" in cols, sorted(cols)
+
+    conn.execute("INSERT INTO runs(project, name, source_path) VALUES ('p', 'r', '/tmp/r.json')")
+    row = conn.execute("SELECT adapter FROM runs WHERE name = 'r'").fetchone()
+    # NULL means "recorded before this column existed", not "the generic
+    # reader" -- the same discipline corpus_id follows.
+    assert row["adapter"] is None
+
+
+def test_existing_db_migrates_to_runs_adapter(tmp_path):
+    """An old database gains the column without losing its runs."""
+    path = tmp_path / "h.db"
+    conn = get_db(str(path))
+    conn.execute("INSERT INTO runs(project, name, source_path) VALUES ('p', 'old', '/tmp/o.json')")
+    conn.commit()
+    # Rewind to before the adapter migration and drop what it adds.
+    conn.execute("ALTER TABLE runs DROP COLUMN adapter")
+    conn.execute("PRAGMA user_version = 2")
+    conn.commit()
+    conn.close()
+
+    conn = get_db(str(path))
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
+    assert "adapter" in cols
+    row = conn.execute("SELECT name, adapter FROM runs").fetchone()
+    assert row["name"] == "old"
+    assert row["adapter"] is None, "a pre-existing run must not be labelled with a guess"

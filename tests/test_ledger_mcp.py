@@ -203,3 +203,56 @@ def test_runs_list_does_not_bury_the_runs_under_a_family_dump(tmp_path, monkeypa
 
     payload = len(json.dumps(out))
     assert payload < 2500, f"runs.list is {payload} chars; families should not dominate"
+
+
+def test_claims_check_surfaces_an_unresolvable_citation(workspace, tmp_path, monkeypatch):
+    """The tool whose name says it checks claims must check the whole claim.
+
+    `check_citations` existed but was reachable only from `cite.check`, so a
+    claim resting on a key no source has read as plain `supported` here -- the
+    number agreed, and nothing said the citation did not.
+    """
+    monkeypatch.chdir(tmp_path)  # no .bib on the path: nothing resolves
+    mcp_server._runs_scan_impl(confirm=True)
+    doc = tmp_path / "R.md"
+    doc.write_text(
+        "<!-- claim: proj/eval_step_100 metric=wer value=0.4 cite=ghost2099nothing -->\n"
+    )
+
+    out = mcp_server._claims_check_impl(str(doc))
+
+    verdicts = {c["verdict"] for c in out["claims"]}
+    assert "supported" in verdicts, "the number still agrees"
+    assert "uncited" in verdicts, "the unresolvable key was not surfaced"
+    uncited = next(c for c in out["claims"] if c["verdict"] == "uncited")
+    assert uncited["cite"] == "ghost2099nothing"
+    assert out["counts"]["uncited"] == 1
+
+
+def test_claims_check_leaves_uncited_claims_alone_when_they_cite_nothing(
+    workspace, tmp_path, monkeypatch
+):
+    """Every claim written so far has no `cite=`. Linting them all would be a
+    document-wide false alarm, so the lint must skip them entirely."""
+    monkeypatch.chdir(tmp_path)
+    mcp_server._runs_scan_impl(confirm=True)
+    doc = tmp_path / "R.md"
+    doc.write_text("<!-- claim: proj/eval_step_100 metric=wer value=0.4 -->\n")
+
+    out = mcp_server._claims_check_impl(str(doc))
+
+    assert out["counts"] == {"supported": 1}
+
+
+def test_claims_check_says_nothing_uncited_when_the_key_resolves(workspace, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "refs.bib").write_text(
+        "@article{real2020thing,\n  title = {A Real Thing},\n  year = {2020},\n}\n"
+    )
+    mcp_server._runs_scan_impl(confirm=True)
+    doc = tmp_path / "R.md"
+    doc.write_text("<!-- claim: proj/eval_step_100 metric=wer value=0.4 cite=real2020thing -->\n")
+
+    out = mcp_server._claims_check_impl(str(doc))
+
+    assert out["counts"] == {"supported": 1}

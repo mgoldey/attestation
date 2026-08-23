@@ -80,6 +80,14 @@ CREATE TABLE IF NOT EXISTS runs(
   -- default corpus". Most artifacts record nothing about data, so unknown is
   -- the common case, and treating it as agreement is the bug this guards.
   corpus_id INTEGER REFERENCES corpora(id) ON DELETE SET NULL,
+  -- Which reader produced this run: 'generic', 'wandb', 'mlflow', or a named
+  -- adapter. NULL means "recorded before this column existed" -- never
+  -- "generic", which is a guess the reader would have no way to challenge.
+  -- The point is not bookkeeping: the tracker readers carry caveats the
+  -- generic one does not (never run against a real directory; final metric
+  -- values, not curves), and without this a wandb-derived run is
+  -- indistinguishable in `runs.list` from a hand-written JSON one.
+  adapter TEXT,
   UNIQUE (project, name)
 );
 -- long format, not wide: projects report entirely different metrics, and a
@@ -180,6 +188,18 @@ def _migration_002_add_corpora(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE runs ADD COLUMN corpus_id INTEGER")
 
 
+def _migration_003_add_runs_adapter(conn: sqlite3.Connection) -> None:
+    """Add runs.adapter.
+
+    Purely additive and idempotent. Existing runs get NULL, which is correct:
+    they were recorded before anything tracked which reader produced them, and
+    backfilling them to 'generic' would state as fact something nobody checked.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
+    if "adapter" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN adapter TEXT")
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -190,6 +210,7 @@ def _migration_002_add_corpora(conn: sqlite3.Connection) -> None:
 _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (1, _migration_001_add_clicks_source),
     (2, _migration_002_add_corpora),
+    (3, _migration_003_add_runs_adapter),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]
@@ -313,6 +334,44 @@ def seed_demo_users(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# 0600. The database holds every persona's interests text and the full click
+# history behind their ranking -- a reading log, in other words. SQLite creates
+# it with the process umask, which on an ordinary box is 0644, so on a shared
+# machine any local account can read all of it.
+#
+# Applied at CREATION ONLY. Someone who deliberately widens the mode to share a
+# database with a labmate's account must not have that quietly undone by the
+# next tool call: this is a safe default, not a policy enforced on every open.
+DB_FILE_MODE = 0o600
+
+
+def _restrict(path: Path) -> None:
+    """chmod DB_FILE_MODE, tolerating a filesystem that cannot express it.
+
+    Windows and most network filesystems ignore or reject POSIX modes, and a
+    failure to tighten permissions must not stop the database from opening --
+    the caller loses a hardening measure, not their data.
+    """
+    try:
+        path.chmod(DB_FILE_MODE)
+    except OSError:
+        pass
+
+
+def _restrict_db_files(path: Path) -> None:
+    """The main file and its WAL sidecars.
+
+    Tightening only `hermes.db` would protect the history and publish today's
+    writes: journal_mode=WAL keeps recent commits in `hermes.db-wal` until a
+    checkpoint, and `-shm` is the shared index into it. The sidecars may not
+    exist yet at open time, which is why this runs again after the first
+    commit rather than once.
+    """
+    for candidate in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+        if candidate.exists():
+            _restrict(candidate)
+
+
 def get_db(path: str | Path) -> sqlite3.Connection:
     """Open (creating if absent) the SQLite store at `path`.
 
@@ -323,8 +382,13 @@ def get_db(path: str | Path) -> sqlite3.Connection:
     seed data exists (installer, demo setup) should call seed_demo_users()
     explicitly.
     """
-    is_new = not Path(path).exists()
+    path = Path(path)
+    is_new = not path.exists()
     conn = sqlite3.connect(str(path), check_same_thread=False)
+    if is_new:
+        # Before any schema is written, so the file is never readable with
+        # content in it -- not even for the width of executescript().
+        _restrict_db_files(path)
     conn.row_factory = sqlite3.Row
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
@@ -349,4 +413,7 @@ def get_db(path: str | Path) -> sqlite3.Connection:
     conn.commit()
     if is_new:
         seed_demo_users(conn)
+        # Again after the first commit: WAL mode creates -wal and -shm lazily,
+        # so they did not exist for the pass above.
+        _restrict_db_files(path)
     return conn

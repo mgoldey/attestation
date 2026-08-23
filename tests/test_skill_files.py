@@ -90,3 +90,60 @@ def test_skill_md_has_no_hermes_install_invocation():
     skill_md = (_skill_dir() / "SKILL.md").read_text()
 
     assert "hermes install" not in skill_md
+
+
+def _live_tool_names() -> set[str]:
+    """Every tool name the MCP server actually registers.
+
+    Derived from the live surface rather than a literal list. A literal list
+    is exactly what let SKILL.md drift: it documented the tools someone
+    remembered, and `cite.*` -- four tools, a whole namespace -- was never
+    written down at all.
+    """
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.mcp import register_all
+
+    server = FastMCP("skill-surface-check")
+    register_all(server)
+    return {t.name for t in asyncio.run(server.list_tools())}
+
+
+def test_skill_md_documents_every_live_namespace():
+    """SKILL.md is what the agent reads; a namespace missing from it is invisible.
+
+    Four reviewers found this file describing a world that no longer existed:
+    `cite.*` was undocumented entirely, and the `.ask` routers -- the measured
+    entry point, 13/15 against 8/15 for the flat surface -- appeared nowhere.
+    Both were live when the file was last edited.
+
+    Asserting on `<ns>.` catches the namespace being named as a tool prefix
+    rather than merely as a word: "citations" in prose must not satisfy a
+    check for `cite.*`.
+    """
+    skill_md = (_skill_dir() / "SKILL.md").read_text()
+    namespaces = {name.split(".", 1)[0] for name in _live_tool_names()}
+
+    missing = sorted(ns for ns in namespaces if f"{ns}." not in skill_md)
+
+    assert not missing, (
+        f"SKILL.md documents no {missing} tools, but the live MCP surface "
+        f"registers that namespace. Add a section, or the agent reading this "
+        f"skill will never know those tools exist."
+    )
+
+
+def test_skill_md_teaches_every_ask_router():
+    """Each router, by name.
+
+    Separate from the namespace check because a namespace can be documented
+    thoroughly while its router is not: the flat tools are what an agent
+    reaches for by default, and they measured worse.
+    """
+    skill_md = (_skill_dir() / "SKILL.md").read_text()
+
+    missing = sorted(n for n in _live_tool_names() if n.endswith(".ask") and n not in skill_md)
+
+    assert not missing, f"SKILL.md never mentions {missing}; agents will pick flat tools instead"

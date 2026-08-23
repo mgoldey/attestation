@@ -166,6 +166,11 @@ class RunRecord:
     corpus: dict | None = None
     # Resolved at scan time by _link_corpora; NULL until then.
     corpus_id: int | None = None
+    # Which reader produced this record: "generic", "wandb", "mlflow", or a
+    # named adapter. Set by the adapter, never inferred here. NULL/None means
+    # "recorded before anything tracked this", which is not the same as
+    # "generic" -- see ADAPTER_CAVEATS for why the distinction earns a column.
+    adapter: str | None = None
 
 
 def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> dict:
@@ -291,7 +296,7 @@ def _replace_project(conn: sqlite3.Connection, project: str, records: list[RunRe
     for r in records:
         cur = conn.execute(
             "INSERT INTO runs(project, name, family, status, started, source_path,"
-            " config_json, notes, corpus_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " config_json, notes, corpus_id, adapter) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 r.project,
                 r.name,
@@ -302,6 +307,7 @@ def _replace_project(conn: sqlite3.Connection, project: str, records: list[RunRe
                 json.dumps(r.config) if r.config is not None else None,
                 r.notes,
                 r.corpus_id,
+                r.adapter,
             ),
         )
         run_id = cur.lastrowid
@@ -339,6 +345,51 @@ def list_runs(
     return [dict(r) for r in conn.execute(sql, params)]
 
 
+# What each reader cannot do, stated where a reader of the run will see it.
+#
+# These are not new facts: both were written down in
+# `ledger_adapters/generic.py` when the readers were built, in source comments
+# no user of the tool ever reads. A wandb-derived run looked identical in
+# `runs.list` and `runs.detail` to a hand-written JSON one, so the reader had
+# no way to know that the number in front of them is the FINAL logged value
+# rather than the best step, or that the reader that produced it has never been
+# exercised against a real directory.
+#
+# Keyed by adapter name, so a reader with no caveats (the generic one) attaches
+# none. A caveat on every run is boilerplate, and boilerplate is what teaches a
+# reader to skip the caveats that matter.
+ADAPTER_CAVEATS: dict[str, str] = {
+    "wandb": (
+        "read by the wandb adapter: values come from wandb-summary.json, which"
+        " holds each metric's final logged value rather than its curve or its"
+        " best step. The adapter has never been run against a real wandb"
+        " directory -- it is built from the published layout and fixtures"
+    ),
+    "mlflow": (
+        "read by the mlflow adapter: each metric is the FINAL line of its"
+        " metrics file, not the curve and not the best step. The adapter has"
+        " never been run against a real mlruns directory -- it is built from the"
+        " published layout and fixtures"
+    ),
+}
+
+
+def adapter_caveats(adapters) -> list[str]:
+    """Caveats for the readers that produced a set of runs, deduplicated.
+
+    Takes adapter names rather than rows so it is callable from anywhere and
+    testable without a database. Unknown and NULL adapters contribute nothing:
+    NULL means "recorded before this was tracked", and inventing a caveat for
+    a reader we cannot name would be worse than saying nothing.
+    """
+    out: list[str] = []
+    for adapter in sorted({a for a in adapters if a}):
+        note = ADAPTER_CAVEATS.get(adapter)
+        if note and note not in out:
+            out.append(note)
+    return out
+
+
 def detail(conn: sqlite3.Connection, project: str, name: str) -> dict | None:
     row = conn.execute(
         "SELECT * FROM runs WHERE project = ? AND name = ?", (project, name)
@@ -359,6 +410,9 @@ def detail(conn: sqlite3.Connection, project: str, name: str) -> dict | None:
             (row["id"],),
         )
     ]
+    # Empty for an ordinary run; the caveat is attached only when the reader
+    # that produced this one has a limitation the number does not show.
+    out["caveats"] = adapter_caveats([out.get("adapter")])
     return out
 
 
@@ -414,7 +468,8 @@ def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) ->
     runs = [
         dict(r)
         for r in conn.execute(
-            "SELECT r.id, r.project, r.name, r.status, r.source_path, c.name AS corpus"
+            "SELECT r.id, r.project, r.name, r.status, r.source_path, r.adapter,"
+            " c.name AS corpus"
             " FROM runs r LEFT JOIN corpora c ON c.id = r.corpus_id"
             " WHERE r.family = ? ORDER BY r.name",
             (family,),
@@ -550,7 +605,10 @@ def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) ->
         "winner": scored[0]["name"] if scored else None,
         "without_metric": [a["name"] for a in missing],
         "corpus": shared,
-        "caveats": _caveats(scored, metric) + corpus_caveats,
+        # Reader caveats last: they qualify how every number here was
+        # obtained, which is context for the ranking rather than a reason to
+        # distrust one arm over another.
+        "caveats": _all_caveats(scored, metric, corpus_caveats, runs),
     }
 
 
@@ -602,6 +660,24 @@ def _corpus_agreement(runs: list[dict], metric: str) -> tuple[str | None, list[s
         ]
 
     return (next(iter(known)) if known else None), []
+
+
+def _all_caveats(
+    scored: list[dict], metric: str, corpus_caveats: list[str], runs: list[dict]
+) -> list[str]:
+    """Every reason to qualify a comparison, in order of how directly it bears
+    on the ranking: the ranking's own caveats, then the corpus ones, then the
+    limitations of the readers that produced the numbers.
+
+    Reader caveats come last because they qualify how EVERY number here was
+    obtained -- context for the whole comparison rather than a reason to
+    distrust one arm over another.
+    """
+    return (
+        _caveats(scored, metric)
+        + corpus_caveats
+        + adapter_caveats([r.get("adapter") for r in runs])
+    )
 
 
 def _caveats(scored: list[dict], metric: str) -> list[str]:

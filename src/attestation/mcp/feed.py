@@ -19,7 +19,9 @@ from attestation.explain import explain as explain_item_fn
 from attestation.llm import default_chat_fn
 from attestation.mcp._shared import (
     MAX_LIST_LIMIT,
+    ItemId,
     Limit,
+    SinceDays,
     clamp_limit,
     get_embedder,
     ranked_items,
@@ -34,7 +36,7 @@ def register(mcp) -> None:
     """Attach every feed.* tool to the server."""
 
     @mcp.tool(name="feed.list")
-    def list_feed(user: str, limit: Limit = 5, since_days: int | None = 14) -> dict:
+    def list_feed(user: str, limit: Limit = 5, since_days: SinceDays = 14) -> dict:
         """List this user's currently ranked, unread feed items (best first).
 
         Returns each item's id, title, url, source feed name, and its blended rank
@@ -60,7 +62,7 @@ def register(mcp) -> None:
         return _list_feed(user, limit, since_days)
 
     @mcp.tool(name="feed.rate")
-    def record_feedback(user: str, item_id: int, useful: bool) -> dict:
+    def record_feedback(user: str, item_id: ItemId, useful: bool) -> dict:
         """Record whether a feed item was useful for this user, retraining their ranking.
 
         This writes (or overwrites) a single click record for (user, item_id) --
@@ -71,7 +73,7 @@ def register(mcp) -> None:
         return _record_feedback(user, item_id, useful)
 
     @mcp.tool(name="feed.read")
-    def read_item(user: str, item_id: int) -> dict:
+    def read_item(user: str, item_id: ItemId) -> dict:
         """Read ONE item in full -- title, source, and its abstract.
 
         Use this when asked to summarise, explain or judge a specific paper.
@@ -84,7 +86,7 @@ def register(mcp) -> None:
         return _read_item(user, item_id)
 
     @mcp.tool(name="feed.explain")
-    def explain_item(user: str, item_id: int) -> dict:
+    def explain_item(user: str, item_id: ItemId) -> dict:
         """Explain in one sentence why a specific feed item was ranked for this user.
 
         SLOW: this calls a local LLM (via the configured OpenAI-compatible backend)
@@ -296,7 +298,7 @@ FULL_SUMMARY_CHARS = 2000
 
 
 @tool(empty={"item": None}, needs_user=True, autocreate_user=True, label="read_item")
-def _read_item(conn, user_row, item_id: int) -> dict:
+def _read_item(conn, user_row, item_id: ItemId) -> dict:
     """One item with its text, for an agent asked to summarise or judge it.
 
     Trimming `summary` from the list shape is what stopped a ten-item payload
@@ -356,7 +358,7 @@ def _read_item(conn, user_row, item_id: int) -> dict:
     autocreate_user=True,
     label="list_feed",
 )
-def _list_feed(conn, user_row, limit: int = 5, since_days: int | None = 14) -> dict:
+def _list_feed(conn, user_row, limit: int = 5, since_days: SinceDays = 14) -> dict:
     """`since_days` defaults to rank_items' own 14-day window so list_feed's
     behavior is unchanged; digest passes its `days` through here.
 
@@ -383,7 +385,7 @@ def _list_feed(conn, user_row, limit: int = 5, since_days: int | None = 14) -> d
 
 
 @tool(needs_user=True, label="record_feedback")
-def _record_feedback(conn, user_row, item_id: int, useful: bool) -> dict:
+def _record_feedback(conn, user_row, item_id: ItemId, useful: bool) -> dict:
     item = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
     if item is None:
         raise ToolError(f"unknown item_id: {item_id}")
@@ -395,7 +397,7 @@ def _record_feedback(conn, user_row, item_id: int, useful: bool) -> dict:
 
 
 @tool(empty={"explanation": None}, needs_user=True, label="explain_item")
-def _explain_item(conn, user_row, item_id: int) -> dict:
+def _explain_item(conn, user_row, item_id: ItemId) -> dict:
     item = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
     if item is None:
         raise ToolError(f"unknown item_id: {item_id}")

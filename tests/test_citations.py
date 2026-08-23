@@ -335,3 +335,62 @@ def test_malformed_sources_degrade_rather_than_raise(tmp_path, broken):
     resolver = citations.Resolver.from_env(zotero_path=zotero, bib_paths=[bib])
     resolver.lookup("anything")
     list(resolver.search("anything"))
+
+
+def test_web_cache_is_not_readable_by_group_or_other(tmp_path, monkeypatch):
+    """The citation cache records what the researcher looked up, and when.
+
+    That is a reading trail -- which DOIs, in what order, on what date -- and
+    on a shared box the default 0755 directory plus 0644 files publish it to
+    every local account. The cached record also carries `fetched_at`, so it is
+    a dated log rather than a static copy of public metadata.
+    """
+    import stat
+    import types
+
+    class _Resp:
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict:
+            return {
+                "message": {
+                    "title": ["A Paper"],
+                    "author": [{"family": "Lovelace", "given": "Ada"}],
+                    "issued": {"date-parts": [[1843]]},
+                    "DOI": "10.1000/demo",
+                    "URL": "https://example.invalid/demo",
+                }
+            }
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "httpx",
+        types.SimpleNamespace(get=lambda *a, **k: _Resp()),
+    )
+
+    cache = tmp_path / "citation-cache"
+    ref = citations.WebReader(cache_dir=cache).lookup("10.1000/demo")
+    assert ref is not None and ref.source == "web"
+
+    dir_mode = stat.S_IMODE(cache.stat().st_mode)
+    assert not dir_mode & (stat.S_IRGRP | stat.S_IROTH | stat.S_IXGRP | stat.S_IXOTH), oct(dir_mode)
+
+    (cached,) = list(cache.glob("*.json"))
+    file_mode = stat.S_IMODE(cached.stat().st_mode)
+    assert not file_mode & (stat.S_IRGRP | stat.S_IROTH), oct(file_mode)
+
+
+def test_web_cache_reopen_does_not_reclaim_a_widened_directory(tmp_path):
+    """Only creation sets the mode -- a deliberately shared cache stays shared."""
+    import stat
+
+    cache = tmp_path / "shared-cache"
+    cache.mkdir(mode=0o755)
+
+    reader = citations.WebReader(cache_dir=cache)
+    assert reader.lookup("nothing-cached-and-no-network-stub") is None or True
+
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o755

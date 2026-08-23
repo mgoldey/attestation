@@ -14,7 +14,7 @@ namespace is the agent's map, and moving a tool between files must not move
 it between namespaces.
 """
 
-from attestation.mcp._shared import MAX_LIST_LIMIT, Limit
+from attestation.mcp._shared import MAX_LIST_LIMIT, ItemId, Limit
 from attestation.mcp._tool import ToolError, tool
 
 
@@ -37,7 +37,7 @@ def register(mcp) -> None:
         return _list_feeds()
 
     @mcp.tool(name="feed.source_remove")
-    def remove_feed(feed_id: int, confirm: bool = False) -> dict:
+    def remove_feed(feed_id: ItemId, confirm: bool = False) -> dict:
         """Unsubscribe from a feed. Requires confirm=true.
 
         Existing items and all feedback on them are KEPT -- only the subscription
@@ -77,7 +77,7 @@ def _list_feeds(conn) -> dict:
 
 
 @tool(empty={"orphaned_items": 0}, label="remove_feed")
-def _remove_feed(conn, feed_id: int, confirm: bool = False) -> dict:
+def _remove_feed(conn, feed_id: ItemId, confirm: bool = False) -> dict:
     from attestation import feeds as feeds_mod
 
     if not confirm:

@@ -18,10 +18,12 @@ def test_parser_subcommands():
 
 
 def test_eval_insufficient_data_message(tmp_path, capsys):
+    """Nonzero: "I could not measure this" is a failure to produce the answer
+    the command exists for, and every other CLI failure path exits 1."""
     db = tmp_path / "t.db"
     get_db(db).close()
     rc = main(["eval", "--db", str(db), "--user", "matt"])
-    assert rc == 0
+    assert rc == 1
     assert "insufficient" in capsys.readouterr().out.lower()
 
 
@@ -211,7 +213,7 @@ def test_cmd_eval_directly_with_plain_namespace(tmp_path, capsys):
 
     rc = cmd_eval(Namespace(db=str(db), user="matt"))
 
-    assert rc == 0
+    assert rc == 1
     assert "insufficient" in capsys.readouterr().out.lower()
 
 
@@ -363,3 +365,52 @@ def test_reload_is_a_real_subcommand():
     parser = build_parser()
     args = parser.parse_args(["reload"])
     assert args.func is attest_cli.cmd_reload
+
+
+def test_eval_for_an_unknown_user_exits_nonzero(tmp_path, capsys):
+    """`--user nobody` produced no measurement and exited 0.
+
+    A script that runs `attest eval` to gate something read that as a pass. It
+    is the only failure path in this CLI that did.
+    """
+    db = tmp_path / "t.db"
+    get_db(db).close()
+
+    rc = main(["eval", "--db", str(db), "--user", "definitely-not-a-persona"])
+
+    assert rc == 1
+    assert "insufficient" in capsys.readouterr().out.lower()
+
+
+def test_eval_with_a_real_measurement_still_exits_zero(tmp_path, capsys, monkeypatch):
+    """Only the no-answer path changed."""
+    import attestation.rank
+
+    db = tmp_path / "t.db"
+    get_db(db).close()
+    monkeypatch.setattr(attestation.rank, "evaluate_user", lambda conn, uid: 0.75)
+
+    rc = main(["eval", "--db", str(db), "--user", "matt"])
+
+    assert rc == 0
+    assert "0.750" in capsys.readouterr().out
+
+
+def test_bootstrap_persona_for_an_unknown_name_does_not_traceback(tmp_path, capsys):
+    """rank.bootstrap_persona raises ValueError and cli.py did not catch it.
+
+    It was the only user-triggerable traceback in this CLI, on a command the
+    README recommends by name. Neighbouring commands print one line naming the
+    fix and return 1.
+    """
+    db = tmp_path / "t.db"
+    get_db(db).close()
+
+    rc = main(["bootstrap-persona", "--db", str(db), "no-such-persona"])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "no-such-persona" in out
+    assert "Traceback" not in out
+    # names the fix, not just the problem
+    assert "persona" in out.lower()

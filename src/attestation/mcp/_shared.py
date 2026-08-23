@@ -82,3 +82,11 @@ def ranked_items(conn, user_row, limit: int, since_days: int | None) -> list:
 # ranking_quality now lives in rank.py -- the web UI needs it too, and
 # importing an mcp/ module from server.py would invert the layering.
 __all__ = ["ranking_quality"]
+
+
+# Bounded numeric arguments, declared once so a new tool inherits the bound.
+# A schema constraint is a client-side reject: the caller is told the argument
+# is wrong instead of the tool failing on it. `limit=0` and `since_days=-30`
+# both reached a tool body before these existed.
+ItemId = Annotated[int, Field(ge=1, description="row id from a previous result")]
+SinceDays = Annotated[int | None, Field(ge=1, le=3650, description="lookback window in days")]

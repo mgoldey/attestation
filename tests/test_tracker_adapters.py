@@ -363,3 +363,116 @@ def test_a_non_finite_wandb_config_value_stays_a_string(tmp_path):
 
     (run,) = generic.discover(proj)
     assert run.config["threshold"] == "nan"
+
+
+# --------------------------------------------------------------------------
+# Which reader produced a run, and the caveat that comes with it
+# --------------------------------------------------------------------------
+
+
+def test_each_reader_labels_the_runs_it_produced(tmp_path):
+    """A wandb-derived run must be distinguishable from a hand-written one.
+
+    The caveats on these two readers are documented in this module's source
+    and reached no user: they have never been run against a real directory,
+    and they record final metric values rather than curves. A run carrying no
+    trace of which reader produced it cannot surface either.
+    """
+    proj = tmp_path / "proj"
+    (proj / "results").mkdir(parents=True)
+    (proj / "results" / "eval.json").write_text(json.dumps({"wer": 0.3}))
+    _wandb_run(proj, "run-20260814_101133-a1b2c3d4", {"wer": 0.12})
+    _mlflow_run(proj, "0", "b" * 32, name="mlflow-arm", metrics={"wer": [(1, 0.2, 0)]})
+
+    by_name = {r.name: r.adapter for r in generic.discover(proj)}
+
+    assert by_name["eval"] == "generic"
+    assert by_name["run-20260814_101133-a1b2c3d4"] == "wandb"
+    assert by_name["mlflow-arm/" + "b" * 8] == "mlflow"
+
+
+def test_the_adapter_label_survives_a_scan(tmp_path, monkeypatch):
+    """The label is only useful if it reaches the ledger."""
+    from attestation import ledger
+    from attestation.db import get_db
+
+    ws = tmp_path / "ws"
+    proj = ws / "proj"
+    (proj / "results").mkdir(parents=True)
+    (proj / "results" / "eval.json").write_text(json.dumps({"wer": 0.3}))
+    _wandb_run(proj, "run-1-abc", {"wer": 0.12})
+
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, ws)
+
+    rows = {r["name"]: r["adapter"] for r in conn.execute("SELECT name, adapter FROM runs")}
+    assert rows == {"eval": "generic", "run-1-abc": "wandb"}
+    conn.close()
+
+
+def test_detail_attaches_the_tracker_caveat(tmp_path):
+    """`runs.detail` on a tracker-derived run says what the reader cannot do.
+
+    Two things a reader would otherwise assume wrongly: the value is the final
+    logged one rather than the curve or the best step, and neither reader has
+    been exercised against a real directory.
+    """
+    from attestation import ledger
+    from attestation.db import get_db
+
+    ws = tmp_path / "ws"
+    proj = ws / "proj"
+    proj.mkdir(parents=True)
+    _wandb_run(proj, "run-1-abc", {"wer": 0.12})
+
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, ws)
+    found = ledger.detail(conn, "proj", "run-1-abc")
+
+    assert found["adapter"] == "wandb"
+    caveats = " ".join(found["caveats"])
+    assert "wandb" in caveats
+    assert "final" in caveats.lower()
+    conn.close()
+
+
+def test_detail_of_an_ordinary_run_carries_no_tracker_caveat(tmp_path):
+    """A caveat on every run is boilerplate, which is what trains a reader to
+    skip them. The generic reader has no such limitation to report."""
+    from attestation import ledger
+    from attestation.db import get_db
+
+    ws = tmp_path / "ws"
+    (ws / "proj" / "results").mkdir(parents=True)
+    (ws / "proj" / "results" / "eval.json").write_text(json.dumps({"wer": 0.3}))
+
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, ws)
+    found = ledger.detail(conn, "proj", "eval")
+
+    assert found["adapter"] == "generic"
+    assert found["caveats"] == []
+    conn.close()
+
+
+def test_compare_warns_when_an_arm_came_from_a_tracker(tmp_path):
+    """Ranking a tracker-derived final value against a hand-recorded best
+    value compares two different things, and the ranking should say so."""
+    from attestation import ledger
+    from attestation.db import get_db
+
+    ws = tmp_path / "ws"
+    proj = ws / "proj"
+    proj.mkdir(parents=True)
+    _wandb_run(proj, "sweep-1-aaa", {"wer": 0.12}, metadata={"program": "sweep.py"})
+    _wandb_run(proj, "sweep-2-bbb", {"wer": 0.30}, metadata={"program": "sweep.py"})
+
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, ws)
+    out = ledger.compare(conn, "sweep", metric="wer")
+
+    assert out["winner"] == "sweep/aaa"
+    joined = " ".join(out["caveats"])
+    assert "wandb" in joined, out["caveats"]
+    assert "final" in joined.lower()
+    conn.close()

@@ -171,14 +171,32 @@ def test_mcp_domain_modules_stay_small():
         # attestation.feeds and nothing else in the domain did.
         "feed.py": 650,
         "subscriptions.py": 150,
-        "provenance.py": 225,
         "knowledge.py": 140,
-        "symbolic.py": 117,
+        "symbolic.py": 130,
+        # ask.py was 540 code lines and entirely unguarded until the default
+        # below existed. Split at the seam it already had: routing.py holds the
+        # rule tables (pure functions over a string, no model, no database --
+        # the regression guard for the measured 13/15), ask.py holds the four
+        # tools that call them and touch the rest of the system.
+        "ask.py": 305,
+        "routing.py": 265,
+        "provenance.py": 250,
     }
+    # Anything not named above still gets a cap. `if name not in limits:
+    # continue` meant a module was exempt until someone remembered to enrol it
+    # -- so a NEW domain module started life unguarded, and ask.py reached 662
+    # code lines (the second-largest in mcp/, serving the four routers CLAUDE.md
+    # calls the primary entry points) without this test ever looking at it.
+    # Verified: appending ~1200 junk lines to ask.py left this test green.
+    #
+    # Same asymmetry as the .env.sample allowlist: enrolling a file that later
+    # shrinks is harmless, failing to enrol one that grows is the costly
+    # direction, and only that one was unguarded.
+    default_limit = 250
+
     oversized = []
     for path in (SRC / "mcp").glob("*.py"):
-        if path.name not in limits:
-            continue
+        limit = limits.get(path.name, default_limit)
         tree = ast.parse(path.read_text())
         doc_lines = 0
         for node in ast.walk(tree):
@@ -187,8 +205,8 @@ def test_mcp_domain_modules_stay_small():
                 if doc:
                     doc_lines += len(doc.splitlines()) + 2
         code = len(path.read_text().splitlines()) - doc_lines
-        if code > limits[path.name]:
-            oversized.append(f"{path.name}={code} code lines (max {limits[path.name]})")
+        if code > limit:
+            oversized.append(f"{path.name}={code} code lines (max {limit})")
     assert not oversized, "mcp domain modules grew: " + ", ".join(oversized)
 
 
@@ -214,19 +232,56 @@ def test_every_tool_body_is_reachable_without_fastmcp():
     served = {t.name for t in asyncio.run(mcp_server.mcp.list_tools())}
     assert served, "no tools registered"
 
-    # Every tool's body must be a module-level callable somewhere in DOMAINS.
-    # Counting them is enough: tool names are namespaced and the wrappers are
-    # closures inside register(), so matching names to impls would just re-
-    # encode the naming convention rather than check anything.
-    impls = {
-        f"{module.__name__}.{attr}"
+    # Every tool's body must be a module-level callable in the module that
+    # serves it. Counted PER MODULE, not in total: the global count carries 16
+    # slack (66 module-level underscore callables against 50 tools, the surplus
+    # being helpers like _has/_label/_item_row), so up to 16 real tool bodies
+    # could become closures before the total even dipped. Demonstrated: making
+    # all five kg.* bodies unreachable left the total check green.
+    #
+    # Names are not matched to tools -- that would re-encode the naming
+    # convention rather than check anything. Per-module counting needs no
+    # convention and localises the failure to the module that broke.
+    served_by_module: dict[str, int] = {}
+    impls_by_module = {
+        module.__name__: {
+            attr
+            for attr in dir(module)
+            if attr.startswith("_")
+            and not attr.startswith("__")
+            and callable(getattr(module, attr))
+        }
         for module in DOMAINS
-        for attr in dir(module)
-        if attr.startswith("_") and not attr.startswith("__") and callable(getattr(module, attr))
     }
+    # Attribute each served tool to the module whose register() created it, by
+    # re-registering against a recording stub. That is the only mapping that
+    # does not assume a name shape.
+    for module in DOMAINS:
+        recorded: list[str] = []
+
+        class _Recorder:
+            @staticmethod
+            def tool(*a, name=None, **kw):
+                def deco(fn):
+                    recorded.append(name or fn.__name__)
+                    return fn
+
+                return deco
+
+        try:
+            module.register(_Recorder())
+        except Exception:  # noqa: BLE001 -- a module that cannot register
+            # against a stub is a separate failure, caught by the tool-listing
+            # tests; here it simply contributes no expectations.
+            continue
+        served_by_module[module.__name__] = len(recorded)
+
     unreachable = []
-    if len(impls) < len(served):
-        unreachable = [f"only {len(impls)} module-level impls for {len(served)} tools"]
+    for name, count in served_by_module.items():
+        if len(impls_by_module.get(name, ())) < count:
+            unreachable.append(
+                f"{name}: {len(impls_by_module.get(name, ()))} module-level impls for {count} tools"
+            )
 
     assert not unreachable, (
         "these tools have no module-level implementation to call directly: "
@@ -337,6 +392,12 @@ def test_no_message_or_docstring_names_a_tool_that_does_not_exist():
     assert not offenders, "these name tools that no longer exist: " + ", ".join(offenders)
 
 
+# Numeric arguments that are deliberately unbounded, with the reason. Anything
+# not listed here must declare a minimum -- the default is guarded, so a new
+# argument is safe until someone argues otherwise.
+UNBOUNDED_BY_DESIGN: set[str] = set()
+
+
 def test_tool_schemas_constrain_their_arguments():
     """A weak schema is how a small model sends garbage.
 
@@ -359,7 +420,15 @@ def test_tool_schemas_constrain_their_arguments():
     for name, schema in tools.items():
         for arg, spec in (schema.get("properties") or {}).items():
             flat = str(spec)
-            if arg in {"limit", "per_topic", "days", "min_size"} and "minimum" not in flat:
+            # Derived, not enumerated. The old version checked four hardcoded
+            # names and so missed `since_days` -- the argument this docstring
+            # cites as its own motivating example -- plus every `timeout` and
+            # `sym.differentiate.order`, which feeds a CAS subprocess where an
+            # unbounded order is a resource question, not just a bad input.
+            types = [spec.get("type"), *(o.get("type") for o in spec.get("anyOf", []))]
+            numeric = "integer" in types or "number" in types
+            bounded = "minimum" in spec or any("minimum" in o for o in spec.get("anyOf", []))
+            if numeric and not bounded and arg not in UNBOUNDED_BY_DESIGN:
                 problems.append(f"{name}.{arg}: no minimum")
             if arg == "content_type" and "enum" not in flat:
                 problems.append(f"{name}.{arg}: not an enum")

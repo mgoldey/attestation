@@ -220,6 +220,36 @@ class ZoteroReader:
         return None
 
 
+def _chmod(path: Path, mode: int) -> None:
+    """Best-effort chmod. A filesystem that cannot express POSIX modes
+    (Windows, most network mounts) loses the hardening, not the data."""
+    try:
+        path.chmod(mode)
+    except OSError:
+        pass
+
+
+def _write_cached(cache_dir: Path, cached: Path, ref) -> None:
+    """Write one cached record, 0700 dir / 0600 file.
+
+    What is cached here is not the paper -- it is the record that this machine
+    looked this key up, and the date it did. A directory listing of it is a
+    reading trail, so the default 0755/0644 publishes to every local account
+    something the researcher never chose to share.
+
+    Applied at CREATION only: `mode=` on mkdir is ignored for a directory that
+    already exists, so a cache someone deliberately opened up stays open.
+    """
+    import json
+
+    existed = cache_dir.is_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not existed:
+        _chmod(cache_dir, 0o700)
+    cached.write_text(json.dumps(ref.__dict__))
+    _chmod(cached, 0o600)
+
+
 class WebReader:
     """Metadata by DOI or arXiv id, from CrossRef and arXiv.
 
@@ -281,8 +311,7 @@ class WebReader:
             source=self.name,
             fetched_at=datetime.now(UTC).date().isoformat(),
         )
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        cached.write_text(json.dumps(ref.__dict__))
+        _write_cached(self.cache_dir, cached, ref)
         return ref
 
 

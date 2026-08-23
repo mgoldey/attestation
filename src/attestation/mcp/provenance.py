@@ -112,12 +112,15 @@ def register(mcp) -> None:
 
         <!-- claim: project/run metric=wer value=0.053 tol=0.001 as_of=2026-05-28 -->
 
-        Five verdicts, and the differences matter. `supported`: a run agrees.
+        Six verdicts, and the differences matter. `supported`: a run agrees.
         `contradicted`: a run disagrees — the document or the run is wrong.
         `unsupported`: no run matches, so the claim may still be true but nothing
         backs it. `ambiguous`: a wildcard matched several runs, so which is meant is
         undecidable. `stale`: the value matches but the artifact changed after
-        `as_of`, so it is worth re-verifying.
+        `as_of`, so it is worth re-verifying. `uncited`: the claim named a `cite=`
+        key no configured bibliographic source has — a lint on the citation, never
+        a judgement about what the cited work says. A claim with no `cite=` is
+        never linted, and a claim can be both contradicted and uncited.
 
         Filter with `verdict` to answer "what in my documentation is unsupported".
         Read-only: it reports, it never edits a document.
@@ -237,10 +240,35 @@ def _target(path: str | None) -> Path:
     return target
 
 
+def _citation_resolver():
+    """The configured bibliographic sources, or None if they cannot be built.
+
+    Imported here rather than at module scope: `claims.check` takes the
+    resolver as an argument precisely so the ledger does not depend on the
+    citation readers, and this wiring should not undo that at import time.
+
+    A resolver that cannot be constructed means the lint does not run --
+    the numeric verdicts, which are what this tool is chiefly for, still do.
+    """
+    try:
+        from attestation import citations
+
+        return citations.Resolver.from_env()
+    except Exception:  # noqa: BLE001 -- an unbuildable resolver is an absent
+        # lint, exactly as an absent Zotero is an absent source. Anything from
+        # a missing optional dependency to an unreadable library means the same
+        # thing here, and none of them should fail a claim check.
+        return None
+
+
 @tool(empty={"claims": [], "counts": {}, "malformed": []}, label="claims_check")
 def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
     target = _target(path)
-    out = claims.check(conn, target)
+    # The citation lint runs alongside the numeric check: a claim whose number
+    # agrees but whose `cite=` key no source has is not `supported`, and this
+    # is the tool whose name says it checks claims. Claims with no `cite=` are
+    # untouched -- see claims.check_citations.
+    out = claims.check(conn, target, resolver=_citation_resolver())
     rows = [
         {
             "verdict": v.verdict,
@@ -250,6 +278,9 @@ def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
             "metric": v.claim.metric,
             "claimed": v.claim.value,
             "actual": v.actual,
+            # Present on every row so the shape does not change between
+            # verdicts; it is the whole subject of an `uncited` one.
+            "cite": v.claim.cite,
             "message": v.message,
             "source_path": v.source_path,
         }

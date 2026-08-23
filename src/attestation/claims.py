@@ -442,10 +442,31 @@ def check_citations(claims_: list[Claim], resolver) -> list[Verdict]:
     return out
 
 
-def check(conn: sqlite3.Connection, root: Path) -> dict:
-    """Verify every claim under `root`. Read-only; never edits a document."""
+def check(conn: sqlite3.Connection, root: Path, *, resolver=None) -> dict:
+    """Verify every claim under `root`. Read-only; never edits a document.
+
+    `resolver` is optional and INJECTED. When one is passed, the citation lint
+    runs too, so a claim naming a key no configured source has is reported here
+    rather than only from `cite.check` -- a claim whose number agrees but whose
+    citation does not resolve was reading as plain `supported` from the tool
+    whose name says it checks claims.
+
+    Injected rather than imported: this module verifies numbers against the
+    ledger and must not grow an import-time dependency on the bibliographic
+    readers, which are an optional surface. No resolver means no lint, which is
+    exactly the behaviour every caller had before.
+
+    The two concerns stay separate verdicts. A claim can be `contradicted` on
+    its number AND `uncited` on its key, and folding one into the other would
+    hide something the author has to fix.
+    """
     claims, problems = find_claims(root)
     verdicts = [check_claim(conn, c) for c in claims]
+    if resolver is not None:
+        # Claims with no `cite=` are skipped inside check_citations -- that is
+        # every claim written before the field existed, and linting them all
+        # would be a document-wide false alarm.
+        verdicts.extend(check_citations(claims, resolver))
     counts = Counter(v.verdict for v in verdicts)
     return {
         "claims": len(claims),

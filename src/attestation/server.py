@@ -154,7 +154,7 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"unknown user: {user_name}")
         return user
 
-    def reader(user_name: str) -> sqlite3.Row:
+    def reader(user_name: str, request: Request) -> sqlite3.Row:
         """An existing reader, created on first sight. Used by the routes that READ.
 
         Browsing used to 404. Two front doors onto one database disagreeing
@@ -165,16 +165,27 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         why -- an unknown-name refusal taught agents to invent personas, so
         the refusal caused the duplicates it was meant to prevent. The web UI
         just never got the same treatment.
+
+        The origin check guards CREATION only, not the read. Creating a
+        persona is a write, and a write reachable by GET is reachable from
+        any page the reader visits -- `<img src="http://127.0.0.1:8899/?
+        user=typo">` is enough, since the victim's browser is the request
+        origin. Guarding the whole route instead would make this a general
+        browsing restriction and would break reading an EXISTING feed
+        cross-origin, which discloses nothing the reader could not see by
+        visiting the URL themselves. So: reads are always allowed; the
+        INSERT is not.
         """
         if not user_name.strip():
             raise HTTPException(status_code=400, detail="user name required")
         user = get_user(conn, user_name)
         if user is None:
+            require_same_origin(request)
             user, _ = autocreate_user(conn, user_name)
         return user
 
-    def render_list(user_name: str) -> str:
-        user = reader(user_name)
+    def render_list(user_name: str, request: Request) -> str:
+        user = reader(user_name, request)
         items = rank_items(conn, embedder, user["id"])[:LIST_LIMIT]
         return FRAGMENT.render(
             items=items,
@@ -184,20 +195,28 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         )
 
     @app.get("/", response_class=HTMLResponse)
-    def index(user: str = Query("matt")):
-        feed_content = render_list(user)  # creates the reader if new; see reader()
+    def index(request: Request, user: str = Query("matt")):
+        # creates the reader if new, and only from a same-origin page; see reader()
+        feed_content = render_list(user, request)
         users = [r["name"] for r in conn.execute("SELECT name FROM users ORDER BY name")]
         return PAGE.render(users=users, user=user, feed_content=feed_content)
 
     @app.get("/list", response_class=HTMLResponse)
-    def list_view(user: str = Query("matt")):
-        return render_list(user)
+    def list_view(request: Request, user: str = Query("matt")):
+        return render_list(user, request)
 
     @app.post("/clicks", response_class=HTMLResponse, dependencies=[Depends(require_same_origin)])
-    def click(user: str = Form(...), item_id: int = Form(...), useful: int = Form(...)):
+    def click(
+        request: Request,
+        user: str = Form(...),
+        item_id: int = Form(...),
+        useful: int = Form(...),
+    ):
         u = require_user(user)
         record_click(conn, u["id"], item_id, bool(useful), source="ui")
-        return render_list(user)  # retrain + re-rank happens inside rank_items
+        # retrain + re-rank happens inside rank_items. require_user already
+        # proved the persona exists, so reader() cannot reach its create path.
+        return render_list(user, request)
 
     @app.get("/explanation", response_class=PlainTextResponse)
     def explanation(user: str = Query(...), item_id: int = Query(...)):

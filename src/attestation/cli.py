@@ -576,9 +576,16 @@ def cmd_eval(args: argparse.Namespace) -> int:
         user = get_user(conn, args.user)
         auc = evaluate_user(conn, user["id"]) if user else None
     if auc is None:
+        # Nonzero, like every other failure path here. "I could not measure
+        # this" is not the answer the command exists to produce, and a script
+        # gating on `attest eval` read the old exit 0 as a pass. Both causes
+        # land here -- an unknown persona and a real one with too few mixed
+        # clicks -- and both are told what would fix them.
         print("insufficient click data for a meaningful holdout (need 10+ mixed clicks)")
-    else:
-        print(f"leave-last-5-out AUC: {auc:.3f}  (noise at small n -- not evidence)")
+        if user is None:
+            print(f"  (no persona named {args.user!r} -- `attest personas` lists them)")
+        return 1
+    print(f"leave-last-5-out AUC: {auc:.3f}  (noise at small n -- not evidence)")
     return 0
 
 
@@ -587,7 +594,21 @@ def cmd_bootstrap_persona(args: argparse.Namespace) -> int:
     from attestation.rank import bootstrap_persona
 
     with open_db(args.db) as conn:
-        n = bootstrap_persona(conn, Embedder(), args.name, k=args.k)
+        try:
+            n = bootstrap_persona(conn, Embedder(), args.name, k=args.k)
+        except ValueError as exc:
+            # bootstrap_persona raises on an unknown name, and this was the one
+            # user-triggerable traceback in the CLI -- on a command the README
+            # recommends verbatim. Print the reason and the fix, like
+            # cmd_runs_compare does with its own ValueError.
+            print(exc)
+            names = [r["name"] for r in conn.execute("SELECT name FROM users ORDER BY name")]
+            print(
+                f"  known personas: {', '.join(names)}"
+                if names
+                else "  no personas exist yet -- `attest install` seeds the demo ones"
+            )
+            return 1
     print(f"wrote {n} pseudo-clicks for {args.name}")
     return 0
 

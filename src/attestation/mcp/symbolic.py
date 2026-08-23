@@ -7,6 +7,10 @@ database, no user, and no envelope decorator: `run_isolated` already returns
 the contract.
 """
 
+from typing import Annotated
+
+from pydantic import Field
+
 from attestation.symbolic import run_isolated
 
 # Every key any sym op can return, so a failure carries the same shape as a
@@ -25,6 +29,15 @@ _EMPTY = {
 }
 
 
+# The sandbox subprocess is killed at this wall clock. Unbounded, a caller
+# could hold a CAS process open indefinitely; at 0 or negative it would be
+# killed before it started, which reads as "sympy is broken".
+Timeout = Annotated[int, Field(ge=1, le=120, description="seconds before the sandbox is killed")]
+# Differentiation order feeds the same subprocess: order=10**9 is a resource
+# question, not merely a bad input.
+Order = Annotated[int, Field(ge=1, le=10, description="how many times to differentiate")]
+
+
 def _call(op_name: str, payload: dict, timeout: int) -> dict:
     """Run an op in isolation and flatten it into the tool contract."""
     outcome = run_isolated(op_name, payload, timeout)
@@ -37,7 +50,7 @@ def register(mcp) -> None:
     """Attach every sym.* tool to the server."""
 
     @mcp.tool(name="sym.simplify")
-    def sym_simplify(expr: str, timeout: int = 10) -> dict:
+    def sym_simplify(expr: str, timeout: Timeout = 10) -> dict:
         """Simplify a mathematical expression to canonical form.
 
         Example: "(x**2 - 1)/(x - 1)" -> "x + 1". Returns the result as text and
@@ -47,7 +60,7 @@ def register(mcp) -> None:
         return _sym_simplify(expr, timeout)
 
     @mcp.tool(name="sym.solve")
-    def sym_solve(expr: str, symbol: str | None = None, timeout: int = 10) -> dict:
+    def sym_solve(expr: str, symbol: str | None = None, timeout: Timeout = 10) -> dict:
         """Solve expr = 0 for a symbol. Example: "x**2 - 4" -> [-2, 2].
 
         The symbol is auto-detected when the expression has exactly one; pass
@@ -59,14 +72,14 @@ def register(mcp) -> None:
 
     @mcp.tool(name="sym.differentiate")
     def sym_differentiate(
-        expr: str, symbol: str | None = None, order: int = 1, timeout: int = 10
+        expr: str, symbol: str | None = None, order: Order = 1, timeout: Timeout = 10
     ) -> dict:
         """Differentiate an expression. Example: "x**3" -> "3*x**2"."""
         return _sym_differentiate(expr, symbol, order, timeout)
 
     @mcp.tool(name="sym.integrate")
     def sym_integrate(
-        expr: str, symbol: str | None = None, bounds: list | None = None, timeout: int = 10
+        expr: str, symbol: str | None = None, bounds: list | None = None, timeout: Timeout = 10
     ) -> dict:
         """Integrate an expression, indefinitely or over `bounds` as [low, high].
 
@@ -77,7 +90,7 @@ def register(mcp) -> None:
 
     @mcp.tool(name="sym.derivation")
     def sym_derivation(
-        expr: str, operation: str = "integrate", symbol: str | None = None, timeout: int = 10
+        expr: str, operation: str = "integrate", symbol: str | None = None, timeout: Timeout = 10
     ) -> dict:
         """Show the steps of a derivation.
 
@@ -89,7 +102,7 @@ def register(mcp) -> None:
         return _sym_derivation(expr, operation, symbol, timeout)
 
     @mcp.tool(name="sym.verify")
-    def sym_verify(lhs: str, rhs: str, timeout: int = 10) -> dict:
+    def sym_verify(lhs: str, rhs: str, timeout: Timeout = 10) -> dict:
         """Check whether two expressions are mathematically equal.
 
         Returns verdict "equal" (proven), "unequal" (a numeric counterexample was
@@ -101,7 +114,7 @@ def register(mcp) -> None:
 
     @mcp.tool(name="sym.evaluate")
     def sym_evaluate(
-        expr: str, subs: dict | None = None, units: str | None = None, timeout: int = 10
+        expr: str, subs: dict | None = None, units: str | None = None, timeout: Timeout = 10
     ) -> dict:
         """Evaluate an expression numerically, optionally substituting values or
         converting units.
@@ -113,37 +126,37 @@ def register(mcp) -> None:
         return _sym_evaluate(expr, subs, units, timeout)
 
 
-def _sym_simplify(expr: str, timeout: int = 10) -> dict:
+def _sym_simplify(expr: str, timeout: Timeout = 10) -> dict:
     return _call("op_simplify", {"expr": expr}, timeout)
 
 
-def _sym_solve(expr: str, symbol: str | None = None, timeout: int = 10) -> dict:
+def _sym_solve(expr: str, symbol: str | None = None, timeout: Timeout = 10) -> dict:
     return _call("op_solve", {"expr": expr, "symbol": symbol}, timeout)
 
 
 def _sym_differentiate(
-    expr: str, symbol: str | None = None, order: int = 1, timeout: int = 10
+    expr: str, symbol: str | None = None, order: Order = 1, timeout: Timeout = 10
 ) -> dict:
     return _call("op_differentiate", {"expr": expr, "symbol": symbol, "order": order}, timeout)
 
 
 def _sym_integrate(
-    expr: str, symbol: str | None = None, bounds: list | None = None, timeout: int = 10
+    expr: str, symbol: str | None = None, bounds: list | None = None, timeout: Timeout = 10
 ) -> dict:
     return _call("op_integrate", {"expr": expr, "symbol": symbol, "bounds": bounds}, timeout)
 
 
 def _sym_derivation(
-    expr: str, operation: str = "integrate", symbol: str | None = None, timeout: int = 10
+    expr: str, operation: str = "integrate", symbol: str | None = None, timeout: Timeout = 10
 ) -> dict:
     return _call("op_derivation", {"expr": expr, "operation": operation, "symbol": symbol}, timeout)
 
 
-def _sym_verify(lhs: str, rhs: str, timeout: int = 10) -> dict:
+def _sym_verify(lhs: str, rhs: str, timeout: Timeout = 10) -> dict:
     return _call("op_verify", {"lhs": lhs, "rhs": rhs}, timeout)
 
 
 def _sym_evaluate(
-    expr: str, subs: dict | None = None, units: str | None = None, timeout: int = 10
+    expr: str, subs: dict | None = None, units: str | None = None, timeout: Timeout = 10
 ) -> dict:
     return _call("op_evaluate", {"expr": expr, "subs": subs, "units": units}, timeout)

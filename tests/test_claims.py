@@ -448,3 +448,82 @@ def test_claims_without_a_cite_are_not_linted(tmp_path):
     (claim,) = claims.parse_file(doc)[0]
 
     assert claims.check_citations([claim], citations.Resolver([])) == []
+
+
+# ---------------------------------------------------------------------------
+# The citation lint reaching check() -- and runs.claims_check
+# ---------------------------------------------------------------------------
+
+
+def test_check_surfaces_uncited_alongside_the_numeric_verdicts(ledgered):
+    """A claim whose citation key does not resolve must not read `supported`.
+
+    `check_citations` existed but was wired only into `cite.check`, so the tool
+    whose NAME says it checks claims reported "supported" for a claim resting
+    on a paper no configured source has. The number agreeing is not the whole
+    claim.
+    """
+    from attestation import citations
+
+    conn, ws = ledgered
+    write(
+        ws / "doc.md",
+        "WER is 0.053.\n<!-- claim: proj/eval_a metric=wer value=0.053 cite=ghost2099nothing -->\n",
+    )
+
+    out = claims.check(conn, ws, resolver=citations.Resolver([]))
+
+    kinds = [v.verdict for v in out["verdicts"]]
+    assert claims.VerdictKind.SUPPORTED in kinds, "the number still agrees"
+    assert claims.VerdictKind.UNCITED in kinds, "the unresolvable key was not surfaced"
+    assert out["counts"][claims.VerdictKind.UNCITED] == 1
+
+
+def test_check_without_a_resolver_runs_no_citation_lint(ledgered):
+    """Optional and injected: claims.py must not reach for citations.py itself.
+
+    Passing no resolver is the pre-existing behaviour, unchanged.
+    """
+    conn, ws = ledgered
+    write(
+        ws / "doc.md",
+        "<!-- claim: proj/eval_a metric=wer value=0.053 cite=ghost2099nothing -->\n",
+    )
+
+    out = claims.check(conn, ws)
+
+    assert claims.VerdictKind.UNCITED not in [v.verdict for v in out["verdicts"]]
+
+
+def test_check_leaves_claims_with_no_cite_field_alone(ledgered):
+    """Every claim written before `cite` existed has none. Linting them all
+    would turn one new field into a document-wide false alarm."""
+    from attestation import citations
+
+    conn, ws = ledgered
+    write(ws / "doc.md", "<!-- claim: proj/eval_a metric=wer value=0.053 -->\n")
+
+    out = claims.check(conn, ws, resolver=citations.Resolver([]))
+
+    assert [v.verdict for v in out["verdicts"]] == [claims.VerdictKind.SUPPORTED]
+
+
+def test_check_counts_a_cited_claim_once_per_concern(ledgered):
+    """The numeric verdict and the citation lint are separate findings.
+
+    A claim can be `contradicted` on its number AND `uncited` on its key, and
+    collapsing either into the other loses a thing the author has to fix.
+    """
+    from attestation import citations
+
+    conn, ws = ledgered
+    write(
+        ws / "doc.md",
+        "<!-- claim: proj/eval_a metric=wer value=0.999 cite=ghost2099nothing -->\n",
+    )
+
+    out = claims.check(conn, ws, resolver=citations.Resolver([]))
+
+    assert sorted(v.verdict for v in out["verdicts"]) == sorted(
+        [claims.VerdictKind.CONTRADICTED, claims.VerdictKind.UNCITED]
+    )

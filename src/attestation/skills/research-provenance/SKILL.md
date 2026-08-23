@@ -1,6 +1,6 @@
 ---
 name: research-provenance
-description: "Research provenance tools over a local SQLite ledger: verify claims written in Markdown against recorded experiment runs, compare the arms of a sweep, query a knowledge graph of your reading, run symbolic derivations, and rank a personalized science/arXiv feed."
+description: "Research provenance tools over a local SQLite ledger: verify claims written in Markdown against recorded experiment runs, compare the arms of a sweep, resolve citation keys against a local Zotero library and .bib files, query a knowledge graph of your reading, run symbolic derivations, and rank a personalized science/arXiv feed."
 version: 1.0.0
 author: attestation project
 license: MIT
@@ -18,10 +18,11 @@ today's recommended papers, or wants to give feedback on an item ("mark that
 useful", "not interested in that one", "why did this rank first?").
 
 **Also use it when they ask what you can do.** Answer by doing: call
-`feed.list`, name two papers, and offer the obvious next step. Do not recite
-the tool surface -- a list of capabilities is a menu, and nobody asked for a
-menu. If no persona exists yet, one is created on that first call, so there
-is nothing to set up first and nothing to ask.
+`feed.ask(user, question="what should I read?")`, name two papers, and offer
+the obvious next step. Do not recite the tool surface -- a list of
+capabilities is a menu, and nobody asked for a menu. If no persona exists yet,
+one is created on that first call, so there is nothing to set up first and
+nothing to ask.
 
 This skill talks to **attestation**, a local personalized RSS/arXiv ranking
 engine running at `http://127.0.0.1:8899`. The engine is deterministic
@@ -32,11 +33,12 @@ explanation layer that fills in lazily and never blocks the feed.
 
 - The user wants general web search or news outside the configured feeds —
   this skill only knows about items already ingested into `hermes.db`.
-- The user wants to change what feeds are tracked, manage a persona, or
-  search the archive — use the MCP tools instead (no checkout needed; call
-  them directly from the agent). This skill's HTTP endpoints below only
-  cover the list/click/explain path; everything else is MCP-only. See
-  **MCP tools** below for the full set.
+- The user wants to change what feeds are tracked, manage a persona, search
+  the archive, check a manuscript, or resolve a citation key — use the MCP
+  tools instead (no checkout needed; call them directly from the agent). This
+  skill's HTTP endpoints below only cover the list/click/explain path;
+  everything else is MCP-only, and the `.ask` routers are the entry point.
+  See **MCP tools** below for the full set.
 
 ## Setup
 
@@ -122,6 +124,40 @@ Where each piece of attestation config lives, and who writes it:
 | `agent.reasoning_overrides.<model>` | `~/.hermes/config.yaml` | `hermes config set` (install step 8) |
 | live DB | `~/.hermes/skills/research-provenance/data/hermes.db` | engine (resolve_db_path default) |
 | refresh schedule | `~/.hermes` cron store + `~/.hermes/scripts/attestation-refresh.sh` | install step 9 |
+| `ATTEST_TOOLS`, `ATTEST_EXPAND`, `ATTEST_CITATION_WEB` | server environment (`<checkout>/.env` or the MCP entry's `env:`) | user edit |
+
+### Agent surfaces (`ATTEST_TOOLS`)
+
+A session sees one surface, not the whole toolset. `ATTEST_TOOLS` names it,
+and it is read once when the server registers its tools:
+
+| Surface | Sees | Why it is its own session |
+|---|---|---|
+| `feed` | `feed.*` | Conversational; a wrong guess costs a retry. |
+| `provenance` | `runs.*`, `cite.check` | Verification: a wrong answer reaches a manuscript, and the caveats are the product. |
+| `knowledge` | `kg.*`, `feed.search`, `cite.*` | Exploratory, read-only. |
+| `symbolic` | `sym.*` | Sandboxed subprocess, touches no database. |
+
+Unset serves all 50 tools. An unknown value **raises** rather than falling
+back — a restriction that quietly stopped restricting is the failure worth
+preventing, so a typo takes the server down loudly.
+
+Two boundaries look like duplication and are not. `feed.search` is in
+`knowledge` because "how does X connect to Y, and what did I read about it"
+is one question. `cite.check` is in `provenance` as well, because a session
+that lints uncited claims but cannot see the runs the numeric claims check
+against reports half a document's problems and looks complete.
+
+**A person picks the surface at launch; you never pick one at runtime.** That
+is measured, not stylistic: letting a model choose the namespace and then the
+tool scored 7.3/15 against 13/15 for routing inside a fixed surface, at twice
+the latency. If a question falls outside your surface, say which agent
+answers it rather than trying.
+
+`attest emit` generates the config for these — four `attestation-<surface>`
+entries in `~/.hermes/config.yaml` (disabled by default) and matching
+`.claude/agents/attestation-<surface>.md` files. It reports drift by default
+and writes only with `--write`, and it never overwrites a file you edited.
 
 ## Setup notes
 
@@ -171,6 +207,51 @@ the user doesn't say which profile, default to `matt` and ask if unsure.
 When running alongside hermes-agent, the rest of the toolset is exposed as
 native MCP tools (`src/attestation/mcp/`), not HTTP — call these
 directly rather than reaching for `curl`.
+
+**Ask the router first.** Four tools take a question in the reader's own
+words and route it to the right specific tool by rule — `feed.ask(user,
+question)`, `runs.ask(question, family, path)`, `kg.ask(question, source,
+target)`, `sym.ask(expr, question)`. There is no extra model call: the routing
+is a table of phrases in `mcp/ask.py`, so it costs nothing and a wrong route
+is a bug someone can fix rather than a sampling accident.
+
+Use them because they are measured better than choosing yourself. On
+gemma4:e2b over 15 realistic turns, three runs, no variance: routing scored
+13/15, picking from the flat tool surface scored 8/15. A second arm where one
+model picked the namespace and another picked the tool scored 7.3/15 at twice
+the latency — a second call is a second chance to be wrong.
+
+```
+feed.ask(user="matt", question="anything new on retrieval augmented generation?")
+runs.ask(question="which arm won the kd sweep?", family="kdsweep")
+kg.ask(question="how do protein folding and diffusion models connect?",
+       source="protein-folding", target="diffusion-models")
+sym.ask(expr="x**2 - 4", question="solve")
+```
+
+Every router returns the same shape: `answer` (relay it VERBATIM, do not
+reformat), `refs` (item ids for your next call), `caveat` (ranking honesty and
+comparison caveats, unabridged), `options`, and `tool_used`.
+
+**A router never guesses.** When the rules do not claim a question
+confidently it returns `ok=false` with a question in `answer` and the
+alternatives in `options` — "Did you mean your current feed, or a search of
+the whole archive?". Ask the reader that question; do not pick from `options`
+yourself. There is deliberately no catch-all destination: an early `doctor`
+tool absorbed three of the four remaining misses, so ambiguity now comes back
+as a question instead of a default.
+
+Fall through to a specific tool in two cases: the router declined and the
+reader has now told you which, or the call needs an argument the question
+does not carry (an `item_id` to rate, a URL to add, a path to check — the
+router says so and names the tool).
+
+**Your session may only see the routers.** Specific tools are hidden by
+default, because a visible tool gets called: measured over 26 turns, a model
+picked the `ask` router 1 time in 26 with the specifics listed beside it, and
+26 in 26 with them absent. `<surface>.tools` explains this and says how to
+reveal them (`ATTEST_EXPAND=1` on the server). If a tool named below is not
+in your list, that is the reason — use the router.
 
 **Personas — never make the reader do bookkeeping.**
 
@@ -297,6 +378,23 @@ needs `confirm=true` since it replaces each scanned project's rows.
 Directories with nothing recognisable are reported in `empty` rather than
 omitted — "found nothing" must never look like "nothing was there".
 
+`runs.scan` also reads experiment-tracker trees: `wandb/` (each
+`run-<timestamp>-<id>/files/wandb-summary.json`) and `mlruns/` (each
+`<experiment_id>/<run_id>/metrics/`). A run already found in `results/` is not
+recorded twice. Two caveats, and say them rather than implying more coverage
+than there is:
+
+- **Neither reader has been run against a real directory.** Both are built
+  from the tools' published layouts and tested against transcribed fixtures,
+  so they are plausible, not verified. If a scan of a real `wandb/` or
+  `mlruns/` returns nothing or looks wrong, that is the likely reason — report
+  it as such rather than telling the reader their runs are not there.
+- **They read final metric values, not curves.** MLflow logs one line per
+  step; only the last is recorded, because one row per step would put 200 rows
+  per metric into a 200-epoch run's ledger. A diverged run whose last value is
+  `nan` records nothing rather than a mid-training number. A reader who wants
+  training curves is not served by this ledger — say so.
+
 `runs.list(project, family, limit)` shows what exists plus the *families* runs
 group into; a family is the arms of a sweep or one run's checkpoints over
 training. `runs.compare(family, metric)` ranks those arms — the question a
@@ -332,6 +430,43 @@ an HTML comment are excluded.
 
 Both are read-only. They report; they never edit a document.
 
+**Citations** — references read from disk: a Zotero library at
+`~/Zotero/zotero.sqlite` and any `.bib` files in the working directory.
+`cite.lookup(key)` returns one record by citation key, DOI or arXiv id, and
+every record carries `source` (which reader answered) and `fetched_at`.
+`cite.search(query, limit)` finds references by words from a title or an
+author's name.
+
+`cite.check(path)` is the citation half of checking a manuscript. A claim
+annotation may name a reference:
+
+    <!-- claim: project/run metric=wer value=0.053 cite=vaswani2017 -->
+
+and `cite.check` reports the keys **no configured source can resolve**. It is
+a lint: it says the key is unknown here, never that the cited work fails to
+support the claim — that needs a model and is not what this does. Claims with
+no `cite` are skipped rather than flagged.
+
+**A reader checking a manuscript wants both linters.** `cite.check` lints
+citations, `runs.claims_check` lints numbers, and a document can pass either
+one while failing the other. Run both and report them together:
+
+```
+runs.claims_check(path="paper.md")   # do the numbers match the runs?
+runs.claims_coverage(path="paper.md") # which numbers nothing covers
+cite.check(path="paper.md")           # which citation keys resolve to nothing
+```
+
+**Everything above is local.** The one exception is `ATTEST_CITATION_WEB`,
+which is off by default and adds a CrossRef reader when set. It is read when
+the resolver is *built*, so a disabled reader cannot be coaxed into one
+request by an unusual code path, and `cite.search` never touches the network
+even when it is enabled. `cite.sources()` answers "did anything leave my
+machine" from the same surface that would have done the leaving: it lists
+each configured reader with a `network` flag, and `offline: true` means every
+one of them is on disk. Call it before telling a reader their bibliography
+stayed local, rather than asserting it.
+
 ## Working patterns
 
 Sequences that work, and the mistakes that look reasonable but do not. Every
@@ -340,8 +475,12 @@ one below was run against a live database before being written down.
 ### "What should I read?"
 
 ```
-feed.list(user="matt")
+feed.ask(user="matt", question="what should I read today?")   # routes to feed.list
 ```
+
+`feed.list(user="matt")` is the same answer if your session has the specific
+tools; the router is the reliable path when the question is phrased in the
+reader's own words rather than yours.
 
 **Present each item as one line: a linked title, then source and topic.**
 
@@ -376,7 +515,16 @@ personalised. A caveat is absent only when it has been earned.
 
 ### "Find me papers about X"
 
-Do NOT guess a tag. Ask what vocabulary exists first:
+```
+feed.ask(user="matt", question="anything on protein folding?")   # routes to feed.search
+```
+
+The router strips the asking from the question and searches for the topic, so
+"is there anything new on retrieval augmented generation?" searches for the
+topic and not the sentence.
+
+If you are filtering by a tag rather than describing a topic, do NOT guess the
+tag. Ask what vocabulary exists first:
 
 ```
 kg.concepts(prefix="protein")     -> ["protein", "protein-engineering", ...]
@@ -395,6 +543,15 @@ Every result carries `match` (`semantic`, `literal`, `both`) and a
 usually the relevance floor doing its job, not a failure.
 
 ### "Which arm won?"
+
+```
+runs.ask(question="which arm won?")                  # names the comparable families
+runs.ask(question="which arm won?", family="kdsweep")
+```
+
+`runs.ask` without a `family` does not guess one: it lists what is comparable
+and asks. Pass the name back and it compares. The specific sequence is the
+same three calls:
 
 ```
 runs.scan(confirm=true)        # only if runs.list says the ledger is empty
@@ -423,8 +580,16 @@ the tool working.
 ### "Is this number in my draft right?"
 
 ```
+runs.ask(question="are the numbers in my draft right?", path="paper.md")
+```
+
+All three linters when they are asking about the whole manuscript, because
+each catches what the others cannot:
+
+```
 runs.claims_check(path="paper.md")
 runs.claims_coverage(path="paper.md")
+cite.check(path="paper.md")
 ```
 
 Four verdicts, and they mean different things. `contradicted` is the
@@ -457,6 +622,8 @@ Two tools exist because real feedback is scarce:
 
 | Instead of | Do |
 |---|---|
+| Picking a specific tool from the whole surface | Ask the router: 13/15 against 8/15 |
+| Picking one of the `options` a router returned | Ask the reader which; the router declined on purpose |
 | Guessing a tag name | `kg.concepts(prefix=...)` first |
 | `runs.compare(family="<project>")` | `runs.list()` and use a name from `families` |
 | Presenting a winner alone | Include every caveat verbatim |
@@ -464,6 +631,9 @@ Two tools exist because real feedback is scarce:
 | Only recording what the reader liked | Record the negatives; the classifier needs both |
 | Retrying a failed call with different arguments | Read the message -- it names the fix |
 | Treating an empty search as broken | The relevance floor cuts weak matches on purpose |
+| Checking a manuscript with `runs.claims_check` alone | Add `cite.check`; they lint different things |
+| Reading `cite.check` as "the paper does not support this" | It says the key does not resolve, nothing more |
+| Concluding a missing tool is broken | `attest reload` -- your server may be serving stale code |
 
 
 ## Procedure
@@ -523,3 +693,25 @@ Two tools exist because real feedback is scarce:
   presenting the feed or confirming a click — those two are independent of it.
 - If any call fails to connect, the engine server is probably not running:
   rerun `scripts/setup.sh` or `cd /home/matt/attestation && uv run attest serve &`.
+
+### When the tools change under you
+
+**An MCP server never reloads.** One is spawned per session and holds that
+code until it dies, so edits to the checkout are invisible to a session that
+started before them. Both live servers here were once found running code five
+commits stale — the Hermes gateway and a Claude Code session, against commits
+made hours later.
+
+```bash
+uv run attest reload   # SIGTERMs every running attest-mcp
+```
+
+Respawn is **lazy**: measured against a live gateway, nothing restarted for at
+least ten seconds and the new process appeared only when a tool was next
+called. So the first call after a reload is slower, and a reload followed by
+no call leaves the server down. That is fine; do not read it as a failure.
+
+`hermes mcp test` does not catch staleness — it spawns a fresh process, so it
+reports the code on disk rather than what your session is serving. If a tool
+documented here is missing, or behaves as an older version of itself, reload
+before concluding it is broken.

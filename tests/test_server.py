@@ -217,3 +217,57 @@ def test_unknown_user_is_created_not_404ed(client):
     # Seeded with something, not left blank: the interests text IS the profile
     # embedding, and an empty one ranks nothing.
     assert row["interests"].strip()
+
+
+def test_cross_origin_get_does_not_create_a_persona(client):
+    """Creation is a write, even when it happens on a GET.
+
+    `<img src="http://127.0.0.1:8899/?user=typo">` on any page a reader visits
+    is enough to reach `reader()`, and `reader()` INSERTs. The blast radius is
+    one junk persona row, but that is exactly the "a typo becomes a permanent
+    persona nobody knows exists" failure POST /clicks is guarded against --
+    and here nothing announces it either.
+    """
+    resp = client.get(
+        "/list",
+        params={"user": "drive-by-reader"},
+        headers={"Origin": "https://evil.example"},
+    )
+    assert resp.status_code == 403, resp.text
+
+    from attestation.rank import get_user
+
+    conn = get_db(client.db_path)
+    assert get_user(conn, "drive-by-reader") is None, "a cross-origin GET created a persona"
+
+
+def test_cross_origin_get_for_an_existing_user_still_reads(client):
+    """Only creation is guarded. Reading must keep working cross-origin.
+
+    A reader whose persona already exists must not be broken by the guard --
+    embedding the feed in another page reads nothing that page could not read
+    by asking the reader to visit the URL, and refusing it would make the
+    origin check a general browsing restriction rather than a create guard.
+    """
+    resp = client.get(
+        "/list",
+        params={"user": "matt"},
+        headers={"Origin": "https://evil.example"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert "item 0" in resp.text
+
+
+def test_same_origin_get_still_creates_a_persona(client):
+    """The ordinary path -- a reader typing their own name into the UI."""
+    resp = client.get(
+        "/list",
+        params={"user": "same-origin-newcomer"},
+        headers={"Origin": "http://127.0.0.1:8899"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    from attestation.rank import get_user
+
+    conn = get_db(client.db_path)
+    assert get_user(conn, "same-origin-newcomer") is not None

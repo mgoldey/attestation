@@ -229,3 +229,37 @@ def test_previewing_before_subscribing_is_reachable():
     step between suggestion and subscription."""
     for turn in ("what's in that feed?", "preview that feed", "show me what it publishes"):
         assert route_feed(turn).tool == "feed.source_preview", turn
+
+
+def test_the_which_family_prompt_reports_how_many_it_left_out(tmp_path, monkeypatch):
+    """Every other truncation in this repo says it truncated.
+
+    `runs.list` reports "showing 8 of 40 families -- pass project= to narrow
+    them". The disambiguation prompt interpolated at most eight names and said
+    nothing about the rest, so a caller whose family was the ninth read the
+    list as complete and concluded their sweep was not in the ledger.
+    `n_families` was already in hand.
+    """
+    import json
+
+    from attestation.db import get_db
+    from attestation.mcp import ask
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    get_db(tmp_path / "t.db").close()
+
+    ws = tmp_path / "ws" / "proj" / "results"
+    ws.mkdir(parents=True)
+    for i in range(20):
+        (ws / f"sweep{i}_a.json").write_text(json.dumps({"wer": 0.1 + i / 100}))
+    monkeypatch.setenv("RESEARCH_ROOT", str(tmp_path / "ws"))
+
+    from attestation.mcp import provenance as prov
+
+    prov._scan(confirm=True)
+
+    out = ask._runs_ask("which arm won?")
+
+    assert out["ok"] is False
+    assert "20" in out["answer"], out["answer"]
+    assert "of" in out["answer"]
