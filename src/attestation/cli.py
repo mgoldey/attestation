@@ -137,6 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
     rp = runs_sub.add_parser("compare", help="rank the arms of an experiment family")
     rp.add_argument("family")
     rp.add_argument("--metric", help="default: the metric most arms share")
+    rp.add_argument("--project", help="required when the family exists in more than one project")
     rp.set_defaults(func=cmd_runs_compare)
 
     rp = runs_sub.add_parser("show", help="one run in full")
@@ -505,10 +506,9 @@ def cmd_runs_compare(args: argparse.Namespace) -> int:
 
     with open_db(args.db) as conn:
         try:
-            result = ledger.compare(conn, args.family, metric=args.metric)
+            result = ledger.compare(conn, args.family, metric=args.metric, project=args.project)
         except ValueError as exc:
-            print(exc)
-            return 1
+            return fail(str(exc))
         if not result["arms"]:
             # say which families exist rather than dead-ending: `compare
             # <project>` is the intuitive first guess and is not a family

@@ -11,6 +11,9 @@ ToolError with the reason spelled out, because it is caller-fixable.
 """
 
 from pathlib import Path
+from typing import Annotated
+
+from pydantic import Field
 
 from attestation import claims, ledger
 from attestation.mcp._shared import Limit
@@ -89,7 +92,14 @@ def register(mcp) -> None:
         return _list(project, family, limit)
 
     @mcp.tool(name="runs.compare")
-    def runs_compare(family: str, metric: str | None = None) -> dict:
+    def runs_compare(
+        family: str,
+        metric: str | None = None,
+        project: Annotated[
+            str | None,
+            Field(description="Required when the family name exists in more than one project."),
+        ] = None,
+    ) -> dict:
         """Rank the arms of an experiment family by a metric.
 
         The question a sweep exists to answer and that usually lives only in
@@ -101,8 +111,12 @@ def register(mcp) -> None:
         winner. Arms with no value for the metric are listed in `without_metric`
         rather than dropped: an arm that was never evaluated is a finding.
 
+        A family name is unique per project, not globally. If the same name exists
+        in two projects this refuses and names them: arms from different projects
+        are not comparable, and picking one silently would be a guess.
+
         """
-        return _compare(family, metric)
+        return _compare(family, metric, project)
 
     @mcp.tool(name="runs.detail")
     def runs_detail(project: str, name: str) -> dict:
@@ -248,9 +262,9 @@ def _list(
     },
     label="runs_compare",
 )
-def _compare(conn, family: str, metric: str | None = None) -> dict:
+def _compare(conn, family: str, metric: str | None = None, project: str | None = None) -> dict:
     try:
-        result = ledger.compare(conn, family, metric=metric)
+        result = ledger.compare(conn, family, metric=metric, project=project)
     except ValueError as exc:
         # an undeclared metric direction is a caller-fixable problem, so the
         # reason is surfaced rather than flattened to "internal error"

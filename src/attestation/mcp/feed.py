@@ -803,9 +803,21 @@ def _reset_feedback(conn, user_row, confirm: bool = False) -> dict:
             f"refusing to reset {name!r} without confirm=true. This would erase "
             f"{n} click(s); the persona and its interests text would be kept."
         )
+    explained = conn.execute(
+        "SELECT COUNT(*) c FROM explanations WHERE user_id = ?", (user_row["id"],)
+    ).fetchone()["c"]
     conn.execute("DELETE FROM clicks WHERE user_id = ?", (user_row["id"],))
+    # Explanations go too. implicit.harvest reads an explanation with no click
+    # as a weak positive, and its docstring promises "a stated 'not useful' is
+    # never flipped to useful by the reader's own curiosity" -- a promise the
+    # LEFT JOIN keeps only while the click exists. Clearing clicks alone
+    # removed the guard's evidence and not its subject, so the next harvest
+    # resurrected every cleared rating as useful=1. Negatives are the class
+    # this ranker is starving for, so that is the worst available direction.
+    conn.execute("DELETE FROM explanations WHERE user_id = ?", (user_row["id"],))
     conn.commit()
-    return {"message": f"cleared {n} click(s) for {name!r}"}
+    forget_profile_vector(conn, user_row["id"])
+    return {"message": f"cleared {n} click(s) and {explained} explanation(s) for {name!r}"}
 
 
 def _digest(

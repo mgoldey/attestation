@@ -520,24 +520,61 @@ def _best_step(values: list[dict], direction: str) -> dict | None:
     return pick(candidates, key=lambda v: v["value"])
 
 
-def compare(conn: sqlite3.Connection, family: str, metric: str | None = None) -> dict:
-    """Rank every arm of an ablation family by a metric.
+def _family_rows(conn: sqlite3.Connection, family: str, project: str | None) -> list[dict]:
+    """The runs of one family, optionally narrowed to a project."""
+    sql = (
+        "SELECT r.id, r.project, r.name, r.status, r.source_path, r.adapter,"
+        " c.name AS corpus"
+        " FROM runs r LEFT JOIN corpora c ON c.id = r.corpus_id"
+        " WHERE r.family = ?"
+    )
+    params: tuple = (family,)
+    if project:
+        sql += " AND r.project = ?"
+        params = (family, project)
+    return [dict(r) for r in conn.execute(sql + " ORDER BY r.name", params)]
+
+
+def _refuse_cross_project(family: str, rows: list[dict]) -> None:
+    """Refuse rather than pick when a family name spans projects.
+
+    Silently choosing one would be the same guess in a quieter voice, and
+    ranking across them is what produced a named winner over English and
+    Mandarin ASR arms pooled together.
+    """
+    projects = sorted({r["project"] for r in rows})
+    if len(projects) > 1:
+        raise ValueError(
+            f"family {family!r} exists in {len(projects)} projects "
+            f"({', '.join(projects)}) -- pass project= to say which. "
+            "Arms from different projects are not comparable."
+        )
+
+
+def compare(
+    conn: sqlite3.Connection,
+    family: str,
+    metric: str | None = None,
+    project: str | None = None,
+) -> dict:
+    """Rank every arm of an ablation family by a metric, within ONE project.
 
     The question this exists for: a sweep of N named config variants is a
     designed experiment, and which arm won usually lives only in filenames and
     memory. Arms with no value for the metric are listed in `without_metric`
     rather than dropped -- an arm that was never evaluated is a finding.
+
+    A family name is unique per PROJECT, not globally: `families()` and
+    runs.list both present (project, family) as the unit. This selected
+    `WHERE family = ?` alone, so an English-ASR sweep and a Mandarin-ASR sweep
+    that both called their arms `asr_baseline`/`asr_biglm` were pooled into one
+    ranking with a named winner -- and, worse, _corpus_agreement keys on run
+    name, so the collision ERASED the disagreement and the tool reported "all
+    arms on aishell-1" for arms half of which ran on librispeech.
     """
-    runs = [
-        dict(r)
-        for r in conn.execute(
-            "SELECT r.id, r.project, r.name, r.status, r.source_path, r.adapter,"
-            " c.name AS corpus"
-            " FROM runs r LEFT JOIN corpora c ON c.id = r.corpus_id"
-            " WHERE r.family = ? ORDER BY r.name",
-            (family,),
-        )
-    ]
+    rows = _family_rows(conn, family, project)
+    _refuse_cross_project(family, rows)
+    runs = rows
     if not runs:
         # A dead end here is the same failure as an unexplained empty scan.
         # `compare <project>` is the intuitive first guess and finds nothing,

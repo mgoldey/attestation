@@ -1102,3 +1102,87 @@ def test_an_unrecognised_split_name_is_not_treated_as_unlabelled(tmp_path):
     assert _split_rank("some_unknown_name") == _split_rank("another_unknown"), (
         "unknown splits should at least be consistent with each other"
     )
+
+
+def _two_projects_one_family(tmp_path):
+    """Two unrelated projects whose runs happen to share family and arm names.
+
+    English and Mandarin ASR: different task, different data, no relationship.
+    The names collide because `asr_baseline` is what everyone calls a baseline.
+    """
+    import json
+
+    for project, corpus_name, base, big in (
+        ("asr-english", "librispeech-100h", 2.4, 2.1),
+        ("asr-mandarin", "aishell-1", 9.9, 9.1),
+    ):
+        results = tmp_path / project / "results"
+        results.mkdir(parents=True)
+        for tag, wer in (("asr_baseline", base), ("asr_biglm", big)):
+            (results / f"{tag}.json").write_text(
+                json.dumps({"tag": tag, "wer": wer, "corpus": corpus_name})
+            )
+    return tmp_path
+
+
+def test_compare_does_not_pool_a_family_across_projects(tmp_path):
+    """`compare` selected WHERE family = ? with no project filter.
+
+    `families()` and `runs.list` both present (project, family) as the unit,
+    and `compare` had no project parameter at all -- so a caller could not ask
+    the question correctly. Two unrelated projects with a shared family name
+    were pooled into one ranking and a winner was named across them.
+
+    `claims.py` scopes by project AND run and has an `ambiguous` verdict for
+    exactly this. `compare` is the one consumer that dropped project scope, and
+    it is the one that produces a verdict.
+    """
+    from attestation import ledger
+    from attestation.db import get_db
+
+    root = _two_projects_one_family(tmp_path)
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, root)
+
+    import pytest
+
+    with pytest.raises(ValueError, match="2 projects"):
+        ledger.compare(conn, "asr", metric="wer")
+
+    # Naming the project is the way to ask the question, and it answers.
+    scoped = ledger.compare(conn, "asr", metric="wer", project="asr-english")
+    roots = {a["source_path"].split("/results/")[0].rsplit("/", 1)[-1] for a in scoped["arms"]}
+    assert roots == {"asr-english"}
+    assert scoped["winner"] == "asr_biglm"
+
+
+def test_corpus_agreement_is_not_erased_by_a_name_collision(tmp_path):
+    """`_corpus_agreement` keyed on run NAME, so a collision overwrote it.
+
+    `named = {r["name"]: r.get("corpus") for r in runs}` -- when two projects
+    share an arm name, the later row wins and the disagreement disappears. The
+    four-arm ASR case reported `corpus: aishell-1`, and the CLI printed "all
+    arms on aishell-1", which is false for half of them.
+
+    That sentence is the one the docstring says earns a reader's trust: "All
+    arms agree: name it, so the reader learns the comparison was checked rather
+    than assumed." The guard failed CLOSED to a confident false positive rather
+    than open to unknown.
+    """
+    from attestation import ledger
+    from attestation.db import get_db
+
+    root = _two_projects_one_family(tmp_path)
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, root)
+
+    # Scoped to one project, the corpus claim is true and worth making.
+    scoped = ledger.compare(conn, "asr", metric="wer", project="asr-english")
+    assert scoped.get("corpus") == "librispeech-100h"
+
+    # And a name collision WITHIN one project can no longer erase disagreement,
+    # because two projects can no longer be pooled in the first place.
+    import pytest
+
+    with pytest.raises(ValueError):
+        ledger.compare(conn, "asr", metric="wer")

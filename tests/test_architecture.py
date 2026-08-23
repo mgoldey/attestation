@@ -169,7 +169,7 @@ def test_mcp_domain_modules_stay_small():
         # feed.py shed the five subscription tools to subscriptions.py -- the
         # seam the code drew itself, since every one of them imported
         # attestation.feeds and nothing else in the domain did.
-        "feed.py": 730,
+        "feed.py": 745,
         "subscriptions.py": 150,
         "knowledge.py": 140,
         "symbolic.py": 130,
@@ -180,7 +180,7 @@ def test_mcp_domain_modules_stay_small():
         # tools that call them and touch the rest of the system.
         "ask.py": 325,
         "routing.py": 265,
-        "provenance.py": 295,
+        "provenance.py": 305,
     }
     # Anything not named above still gets a cap. `if name not in limits:
     # continue` meant a module was exempt until someone remembered to enrol it

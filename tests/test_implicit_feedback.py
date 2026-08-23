@@ -100,3 +100,51 @@ def test_nothing_to_harvest_is_reported_not_an_error(seeded):
 def test_unknown_user_is_refused(seeded):
     with pytest.raises(ValueError, match="unknown user"):
         implicit.harvest(seeded, "nobody")
+
+
+def test_reset_does_not_let_harvest_resurrect_a_rejection_as_a_positive(tmp_path, monkeypatch):
+    """`persona_reset` cleared clicks and left explanations, so the next
+    harvest turned a stated "not useful" into "useful".
+
+    implicit.py's docstring states the invariant: "an item already carrying a
+    click is excluded here rather than being overwritten later, so a stated
+    'not useful' is never flipped to useful by the reader's own curiosity."
+    The LEFT JOIN enforces that only while the click exists. Reset removed the
+    guard's evidence and not its subject.
+
+    Direction matters: CLAUDE.md records that negatives are the class the
+    ranker is starving for, and only positives are ever inferred. Converting
+    the scarce class into the abundant one is the worst available error.
+    """
+    from attestation import implicit
+    from attestation.db import get_db
+    from attestation.mcp.feed import _reset_feedback
+    from attestation.rank import create_user
+
+    # RSS_DB, or _reset_feedback opens a DIFFERENT database via
+    # resolve_db_path and the test passes while proving nothing.
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    user_id = create_user(conn, "ana", "machine learning")
+    conn.execute(
+        "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+        " VALUES (NULL, 't', 'u', 's', 'h')"
+    )
+    conn.execute(
+        "INSERT INTO clicks(user_id, item_id, useful, source) VALUES (?, 1, 0, 'agent')",
+        (user_id,),
+    )
+    conn.execute(
+        "INSERT INTO explanations(user_id, item_id, text) VALUES (?, 1, 'why')", (user_id,)
+    )
+    conn.commit()
+    conn.close()
+
+    _reset_feedback("ana", confirm=True)
+
+    conn = get_db(tmp_path / "t.db")
+    implicit.harvest(conn, "ana")
+    rows = list(conn.execute("SELECT useful, source FROM clicks WHERE user_id = ?", (user_id,)))
+    assert not any(r["useful"] for r in rows), (
+        f"reset then harvest recreated the cleared rating as a positive: {[dict(r) for r in rows]}"
+    )
