@@ -87,12 +87,35 @@ def get_user(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
 
 
 def create_user(conn, name: str, interests: str) -> int:
-    """Insert a persona. Ranking starts from the interests embedding alone."""
-    if get_user(conn, name) is not None:
+    """Insert a persona. Ranking starts from the interests embedding alone.
+
+    The INSERT is authoritative, not the preceding read. Check-then-insert has
+    no transaction around the pair, so concurrent first sight of one reader had
+    15 of 16 callers raise -- and that escapes /list as a 500 on the FIRST page
+    load for a new reader, which is what autocreate exists to serve. The
+    database was never wrong (UNIQUE held, one row); only the losers were told
+    something false.
+
+    Losing the race is not an error: the persona the caller asked for exists.
+    A caller that genuinely needs "did I create this" can compare the returned
+    id, and `feed.persona_create` still refuses a name that already existed
+    when it looked -- that refusal is a UX decision, made above this line.
+    """
+    existing = get_user(conn, name)
+    if existing is not None:
         raise ValueError(f"user already exists: {name!r}")
-    cur = conn.execute("INSERT INTO users(name, interests) VALUES (?, ?)", (name, interests))
-    conn.commit()
-    return cur.lastrowid
+    try:
+        cur = conn.execute("INSERT INTO users(name, interests) VALUES (?, ?)", (name, interests))
+        conn.commit()
+        return cur.lastrowid
+    except sqlite3.IntegrityError:
+        # Someone inserted it between the read and the write. The row exists,
+        # which is all the caller wanted.
+        conn.rollback()
+        raced = get_user(conn, name)
+        if raced is None:
+            raise
+        return raced["id"]
 
 
 # Where a click came from, kept distinguishable forever because provenance

@@ -52,11 +52,27 @@ def add_feed(
         }
 
     resolved_title = title or (getattr(parsed, "feed", None) or {}).get("title") or url
-    cur = conn.execute("INSERT INTO feeds(url, title) VALUES (?, ?)", (url, resolved_title))
-    conn.commit()
+    try:
+        cur = conn.execute("INSERT INTO feeds(url, title) VALUES (?, ?)", (url, resolved_title))
+        conn.commit()
+        feed_id = cur.lastrowid
+    except sqlite3.IntegrityError:
+        # Someone subscribed between the check above and this write -- and the
+        # window is a whole network round trip, since parse() sits inside it.
+        # The subscription the caller asked for exists, which is the outcome
+        # the serial path already calls success.
+        conn.rollback()
+        raced = conn.execute("SELECT id FROM feeds WHERE url = ?", (url,)).fetchone()
+        if raced is None:
+            raise
+        return {
+            "ok": True,
+            "feed_id": raced["id"],
+            "message": f"already subscribed to {url}",
+        }
     return {
         "ok": True,
-        "feed_id": cur.lastrowid,
+        "feed_id": feed_id,
         "message": (
             f"subscribed to {resolved_title!r}. Items appear after the next ingest "
             "(run `attest ingest`, or wait for the hourly refresh)."

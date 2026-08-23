@@ -840,3 +840,42 @@ def test_creating_a_persona_that_differs_only_in_case_is_refused(tmp_path):
 
     with pytest.raises(ValueError):
         create_user(conn, "Ada", "quantum chemistry")
+
+
+def test_two_threads_creating_one_persona_do_not_both_raise(tmp_path):
+    """Check-then-insert against a UNIQUE constraint, with no transaction.
+
+    `create_user` reads with get_user and then INSERTs, so concurrent first
+    sight of a new reader means one wins and the rest raise. Measured: 15 of 16
+    concurrent autocreates raised ValueError, which escapes /list as a 500 --
+    on the FIRST page load for a new reader, which is exactly what autocreate
+    exists to serve. Self-healing on refresh, which is why it hides.
+
+    Round 17's per-thread connections fixed the interleaved-cursor half and not
+    this one, and the regression test I wrote used the one username that
+    already existed -- the single case that passes.
+
+    The database was never wrong: `users.name UNIQUE` held, one row was
+    created. Only the losers' error handling was.
+    """
+    import concurrent.futures
+
+    from attestation.db import get_db
+    from attestation.rank import autocreate_user
+
+    db = tmp_path / "t.db"
+    get_db(db).commit()
+
+    def create(_):
+        try:
+            autocreate_user(get_db(db), "freshreader")
+            return None
+        except Exception as exc:  # noqa: BLE001 -- the point is what leaks out
+            return f"{type(exc).__name__}: {exc}"
+
+    with concurrent.futures.ThreadPoolExecutor(12) as pool:
+        errors = [e for e in pool.map(create, range(12)) if e]
+
+    assert not errors, f"{len(errors)} of 12 concurrent autocreates raised: {errors[0]}"
+    rows = get_db(db).execute("SELECT COUNT(*) FROM users WHERE name = 'freshreader'").fetchone()[0]
+    assert rows == 1, f"{rows} personas created for one name"

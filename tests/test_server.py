@@ -336,8 +336,13 @@ def test_concurrent_requests_do_not_share_one_connection(client):
     """
     import concurrent.futures
 
-    def fetch(_):
-        return client.get("/list", params={"user": "matt"}).status_code
+    def fetch(i):
+        # A NEW reader, not an existing one. This test originally used "matt",
+        # the single case that passes: autocreate never fires, so it exercised
+        # the interleaved-cursor half and missed the check-then-insert half
+        # entirely -- on the first page load for a new reader, which is what
+        # autocreate exists to serve.
+        return client.get("/list", params={"user": f"fresh{i % 3}"}).status_code
 
     with concurrent.futures.ThreadPoolExecutor(12) as pool:
         codes = list(pool.map(fetch, range(24)))

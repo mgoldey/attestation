@@ -148,3 +148,43 @@ def test_reset_does_not_let_harvest_resurrect_a_rejection_as_a_positive(tmp_path
     assert not any(r["useful"] for r in rows), (
         f"reset then harvest recreated the cleared rating as a positive: {[dict(r) for r in rows]}"
     )
+
+
+def test_harvest_holds_the_write_lock_briefly(tmp_path):
+    """A long harvest refused a reader's rating.
+
+    `record_click` commits on every call and harvest calls it per candidate, so
+    the run is N commits, not one. Measured: 800 rows took 6.1s -- past
+    busy_timeout=5000, which makes a concurrent write GUARANTEED to be refused
+    rather than merely unlucky, and the candidate set has no upper bound.
+
+    The user-visible failure is a reader's explicit "not useful" coming back as
+    "the database is busy" while a background harvest runs -- rejecting the
+    scarce class to record the abundant one.
+    """
+    import time
+
+    from attestation.db import get_db
+    from attestation.rank import create_user
+
+    conn = get_db(tmp_path / "t.db")
+    user_id = create_user(conn, "bulk", "machine learning")
+    for i in range(1, 601):
+        conn.execute(
+            "INSERT INTO items(id, feed_id, title, url, summary, content_hash)"
+            " VALUES (?, NULL, 't', 'u', 's', ?)",
+            (i, f"h{i}"),
+        )
+        conn.execute(
+            "INSERT INTO explanations(user_id, item_id, text) VALUES (?, ?, 'w')", (user_id, i)
+        )
+    conn.commit()
+
+    from attestation import implicit
+
+    started = time.perf_counter()
+    out = implicit.harvest(conn, "bulk")
+    elapsed = time.perf_counter() - started
+
+    assert out["recorded"] == 600
+    assert elapsed < 2.0, f"harvest of 600 rows took {elapsed:.1f}s; busy_timeout is 5s"

@@ -56,7 +56,7 @@ def harvest(conn: sqlite3.Connection, user_name: str) -> dict:
     Idempotent: an item is a candidate only while it has no click, so a second
     run over the same history records nothing.
     """
-    from attestation.rank import get_user, record_click
+    from attestation.rank import get_user
 
     user = get_user(conn, user_name)
     if user is None:
@@ -67,8 +67,23 @@ def harvest(conn: sqlite3.Connection, user_name: str) -> dict:
     ).fetchone()["n"]
     fresh = candidates(conn, user["id"])
 
-    for item_id in fresh:
-        record_click(conn, user["id"], item_id, True, source=SOURCE)
+    # One transaction, not one per row. record_click commits on every call, so
+    # this was N commits: 600 rows took 4.8s against a busy_timeout of 5s,
+    # which makes a concurrent write GUARANTEED to be refused rather than
+    # merely unlucky -- and the user-visible failure is a reader's explicit
+    # "not useful" coming back as "the database is busy" while a background
+    # harvest runs. The candidate set has no upper bound.
+    #
+    # The source enum is still enforced: SOURCE is a module constant checked
+    # against CLICK_SOURCES at import, not caller input.
+    from attestation.rank import CLICK_SOURCES
+
+    if SOURCE not in CLICK_SOURCES:  # pragma: no cover - guards a typo here
+        raise ValueError(f"invalid click source: {SOURCE!r}")
+    conn.executemany(
+        "INSERT OR REPLACE INTO clicks(user_id, item_id, useful, source) VALUES (?, ?, 1, ?)",
+        [(user["id"], item_id, SOURCE) for item_id in fresh],
+    )
     conn.commit()
 
     return {

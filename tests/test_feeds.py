@@ -109,3 +109,45 @@ def test_preview_feed_does_not_subscribe(conn):
     assert out["ok"] is True
     assert len(out["entries"]) == 1
     assert conn.execute("SELECT COUNT(*) n FROM feeds").fetchone()["n"] == 0
+
+
+def test_two_subscriptions_to_one_url_do_not_both_error(tmp_path):
+    """Check-then-insert with a NETWORK FETCH in the window.
+
+    add_feed reads `SELECT id FROM feeds WHERE url = ?`, then parses the feed
+    over the network, then inserts -- so the gap between check and write is a
+    whole HTTP round trip, the widest of the four sites sharing this shape.
+    Measured: 8 concurrent calls gave 7 IntegrityErrors and 1 success, where
+    the serial path returns an idempotent "already subscribed to ...".
+
+    Losing the race means the subscription the caller asked for exists, which
+    is the same outcome the serial path calls success.
+    """
+    import concurrent.futures
+    from types import SimpleNamespace
+
+    from attestation.db import get_db
+    from attestation.feeds import add_feed
+
+    db = tmp_path / "t.db"
+    get_db(db).commit()
+
+    def parse(_url):
+        return SimpleNamespace(
+            entries=[{"title": "t", "summary": "s", "id": "g1", "link": "u"}],
+            feed={"title": "A Feed"},
+        )
+
+    def subscribe(_):
+        try:
+            return add_feed(get_db(db), "http://example.invalid/feed", parse=parse)
+        except Exception as exc:  # noqa: BLE001 -- the point is what leaks out
+            return {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
+
+    with concurrent.futures.ThreadPoolExecutor(8) as pool:
+        results = list(pool.map(subscribe, range(8)))
+
+    failed = [r["message"] for r in results if not r["ok"]]
+    assert not failed, f"{len(failed)} of 8 concurrent subscribes failed: {failed[0]}"
+    rows = get_db(db).execute("SELECT COUNT(*) FROM feeds").fetchone()[0]
+    assert rows == 1, f"{rows} feed rows for one url"
