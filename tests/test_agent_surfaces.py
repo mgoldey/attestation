@@ -147,3 +147,37 @@ def test_expanding_never_crosses_the_agent_boundary(monkeypatch, tmp_path):
     names = {t.name for t in asyncio.run(mcp.list_tools())}
     assert "runs.compare" in names
     assert not any(n.startswith("feed.") or n.startswith("sym.") for n in names)
+
+
+@pytest.mark.parametrize("surface", sorted(AGENT_SURFACES))
+def test_expansion_widens_visibility_and_never_the_boundary(surface, monkeypatch):
+    """`ATTEST_EXPAND` is a disclosure control, not an access control.
+
+    mcp/__init__.py states it: "disclosure widens what you can see, never what
+    you are allowed to touch." That is the kind of prose promise this review
+    keeps finding has quietly stopped being true -- twice in round 15 alone --
+    so it gets a test rather than a comment.
+
+    Both directions matter. Expanding must not HIDE a tool that was visible
+    collapsed, and must not REVEAL one from another surface.
+    """
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    def registered(expand: bool) -> set[str]:
+        monkeypatch.setenv("ATTEST_TOOLS", surface)
+        monkeypatch.setenv("ATTEST_EXPAND", "1" if expand else "0")
+        server = FastMCP("expand-check")
+        register_all(server)
+        return {t.name for t in asyncio.run(server.list_tools())}
+
+    collapsed = registered(False)
+    expanded = registered(True)
+
+    assert collapsed <= expanded, f"expanding hid {sorted(collapsed - expanded)}"
+    assert len(expanded) > len(collapsed), "expanding revealed nothing"
+
+    allowed = AGENT_SURFACES[surface].prefixes
+    outside = [n for n in expanded if not (n in allowed or n.split(".", 1)[0] in allowed)]
+    assert not outside, f"expanding crossed the surface boundary: {outside}"
