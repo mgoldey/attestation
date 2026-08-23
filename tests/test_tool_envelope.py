@@ -211,3 +211,47 @@ def test_a_missing_argument_names_itself(tmp_path, monkeypatch):
     assert out["ok"] is False
     assert "item_id" in out["message"], out["message"]
     assert "see server logs" not in out["message"]
+
+
+def test_a_locked_database_is_reported_as_busy_not_as_an_internal_error():
+    """Lock contention is transient and retryable; an internal error is not.
+
+    `sqlite3.OperationalError: database is locked` fell into the generic
+    handler, so a caller got "internal error in record_feedback; see server
+    logs" -- indistinguishable from a crash, with no hint that retrying works.
+    It is live-reachable: the hourly cron ingest writes while the web UI holds
+    its long-lived connection and every MCP call opens its own.
+
+    The module already draws this distinction for TypeError, whose comment says
+    a caller mistake "reads as a server fault and gives an agent nothing to act
+    on". A busy database is the same shape.
+    """
+    import sqlite3
+
+    from attestation.mcp._tool import tool
+
+    @tool(empty={"value": None}, needs_db=False, label="locked_probe")
+    def _probe() -> dict:
+        raise sqlite3.OperationalError("database is locked")
+
+    out = _probe()
+    assert out["ok"] is False
+    assert "busy" in out["message"].lower() or "locked" in out["message"].lower(), out["message"]
+    assert "internal error" not in out["message"].lower()
+    assert "value" in out, "the failure envelope must still match the success shape"
+
+
+def test_a_real_sqlite_error_is_still_a_bug():
+    """Only contention is excused. A malformed query is a bug and must not be
+    dressed up as a transient condition a caller should retry."""
+    import sqlite3
+
+    from attestation.mcp._tool import tool
+
+    @tool(empty={"value": None}, needs_db=False, label="broken_probe")
+    def _probe() -> dict:
+        raise sqlite3.OperationalError("no such column: nope")
+
+    out = _probe()
+    assert out["ok"] is False
+    assert "internal error" in out["message"].lower(), out["message"]

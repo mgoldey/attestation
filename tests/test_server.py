@@ -271,3 +271,25 @@ def test_same_origin_get_still_creates_a_persona(client):
 
     conn = get_db(client.db_path)
     assert get_user(conn, "same-origin-newcomer") is not None
+
+
+def test_a_backslash_in_a_reader_name_does_not_break_the_vote_buttons(client):
+    """`hx-vals` builds JSON by string interpolation under HTML autoescape.
+
+    Jinja neutralises < > & ' " and NOT backslash, so a reader named `ann\\`
+    produces `{"user":"ann\\","item_id":23,...}` -- which htmx cannot parse, so
+    both vote buttons silently stop working for that persona. Reachable without
+    setup: `reader()` auto-creates a persona from `/?user=`, so a typo is
+    enough.
+
+    `| tojson` is the fix: it escapes for the language the value is being
+    embedded in, which is JSON, not HTML.
+    """
+    import json
+    import re
+
+    html = client.get("/list", params={"user": "ann\\"}).text
+    values = re.findall(r"hx-vals='([^']*)'", html)
+    assert values, "no vote buttons rendered"
+    for raw in values:
+        json.loads(raw.replace("&#34;", '"').replace("&quot;", '"'))

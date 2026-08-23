@@ -341,3 +341,48 @@ def test_one_broken_feed_still_reports_per_feed(tmp_path, caplog, fake_embedder)
         "a malformed feed dumped a stack trace instead of naming the problem"
     )
     assert "malformed feed document" in caplog.text, "the reason was not reported"
+
+
+def test_one_unencodable_entry_does_not_discard_the_whole_feed(tmp_path, fake_embedder, caplog):
+    """The blast-radius bug this module already fixed once, in a second place.
+
+    `_new_entries`' docstring records it: "two entries sharing a GUID both
+    passed, the second hit the UNIQUE constraint during the write, and the
+    rollback discarded every good item alongside it -- a whole feed lost to one
+    republished post." The per-entry guard was added for duplicates and not for
+    encoding failures.
+
+    `content_hash` calls .encode() on title+summary, so a lone surrogate raises
+    UnicodeEncodeError, unwinds past every good entry to the per-feed handler,
+    and rolls the batch back. Reachable from ordinary feed data: a bare
+    `&#xD800;` character reference is enough.
+    """
+    import logging
+
+    conn = get_db(tmp_path / "t.db")
+    feeds = tmp_path / "feeds.toml"
+    feeds.write_text('[[feeds]]\nurl = "http://a.example/f"\ntitle = "A"\n')
+
+    def parse(url):
+        entries = [
+            {"title": f"Post {i}", "summary": f"body {i}", "id": f"g{i}", "link": f"http://x/{i}"}
+            for i in range(9)
+        ]
+        entries.insert(
+            4,
+            {
+                "title": "bad \ud800 entry",
+                "summary": "s",
+                "id": "gbad",
+                "link": "http://x/bad",
+            },
+        )
+        return SimpleNamespace(entries=entries, feed=SimpleNamespace(title="A"))
+
+    with caplog.at_level(logging.WARNING):
+        stats = run_ingest(conn, fake_embedder, feeds, parse=parse)
+
+    stored = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+    assert stored == 9, f"one bad entry cost {9 - stored} good ones"
+    assert stats["added"] == 9
+    assert stats["failed_feeds"] == 0, "a per-entry problem was reported as a feed failure"

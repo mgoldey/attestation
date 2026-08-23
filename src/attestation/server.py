@@ -69,6 +69,12 @@ PAGE = env.from_string("""<!doctype html>
 # with outerHTML, so anything outside it survives the swap unchanged -- a
 # caveat rendered as a sibling would still be claiming "0 clicks recorded"
 # after the click that fixed it.
+# `| tojson` on the user, not bare interpolation. hx-vals is JSON inside an
+# HTML attribute, and Jinja's autoescape handles the HTML layer only -- it
+# neutralises < > & ' " and not backslash. A reader named `ann\` produced
+# `{"user":"ann\",...}`, which htmx cannot parse, so both vote buttons
+# silently stopped working for that persona. `reader()` auto-creates a persona
+# from /?user=, so a typo reaches it with no setup.
 FRAGMENT = env.from_string("""<div id="feed">
 {% if quality and quality.caveat %}
 <p class="caveat">{{ quality.caveat }}</p>
@@ -81,10 +87,10 @@ FRAGMENT = env.from_string("""<div id="feed">
   {% if it.content_type %}<span class="tag type">{{ it.content_type }}</span>{% endif %}
   {% for t in it.tags %}<span class="tag">{{ t }}</span>{% endfor %}
   <button class="yn" hx-post="/clicks"
-      hx-vals='{"user":"{{ user }}","item_id":{{ it.item_id }},"useful":1}'
+      hx-vals='{"user":{{ user | tojson }},"item_id":{{ it.item_id }},"useful":1}'
       hx-target="#feed" hx-swap="outerHTML">✓</button>
   <button class="yn" hx-post="/clicks"
-      hx-vals='{"user":"{{ user }}","item_id":{{ it.item_id }},"useful":0}'
+      hx-vals='{"user":{{ user | tojson }},"item_id":{{ it.item_id }},"useful":0}'
       hx-target="#feed" hx-swap="outerHTML">✗</button>
   {% if loop.index <= explain_limit %}
   <div class="why" hx-get="/explanation?user={{ user }}&item_id={{ it.item_id }}"

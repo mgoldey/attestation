@@ -87,7 +87,18 @@ def _new_entries(conn, feed_id: int, entries) -> tuple[list, int]:
         title = (entry.get("title") or "").strip()
         summary = strip_boilerplate(entry.get("summary", ""))
         guid = entry.get("id")
-        chash = content_hash(title, summary)
+        try:
+            chash = content_hash(title, summary)
+        except UnicodeEncodeError:
+            # A lone surrogate -- reachable from a bare `&#xD800;` character
+            # reference in ordinary feed XML -- used to raise past every good
+            # entry to the per-feed handler, which rolled the whole batch back.
+            # That is the blast radius this function's docstring says was
+            # already fixed for duplicate GUIDs; the guard just never covered
+            # encoding. One bad post costs itself, not the feed.
+            log.warning("skipping an entry with unencodable text: %s", (title or guid)[:60])
+            skipped += 1
+            continue
         duplicate_in_batch = chash in seen_hashes or (guid is not None and guid in seen_guids)
         if duplicate_in_batch or _exists(conn, feed_id, guid, chash):
             skipped += 1

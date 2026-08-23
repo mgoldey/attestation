@@ -144,6 +144,27 @@ def tool(
                     return result
             except ToolError as exc:
                 return fail(str(exc))
+            except sqlite3.OperationalError as exc:
+                # Contention is transient and the caller can act on it; a bug
+                # is neither. Both arrived as "internal error; see server
+                # logs", so a click lost to an hourly cron ingest holding the
+                # write lock was indistinguishable from a crash -- and the web
+                # UI's long-lived connection plus per-call MCP connections make
+                # that a live configuration, not a hypothetical.
+                #
+                # Only "locked"/"busy" is excused. `no such column` is a bug
+                # and must not be dressed up as something to retry.
+                if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+                    return fail(
+                        f"{name}: the database is busy (another write is in progress)."
+                        " Retry in a moment."
+                    )
+                # Anything else is a bug and takes the bug path -- logged with
+                # a traceback, reported generically. A bare `raise` would
+                # escape the whole wrapper, since the generic handler below is
+                # a sibling of this clause, not an outer one.
+                log.exception("%s failed args=%s kwargs=%s", name, args, kwargs)
+                return fail(f"internal error in {name}; see server logs")
             except TypeError as exc:
                 # A missing or surplus argument is the CALLER's mistake and
                 # the caller can fix it -- but only if told which one. This
