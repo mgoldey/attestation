@@ -15,11 +15,26 @@ def _hermetic_env(tmp_path, monkeypatch):
     The tmp_path gets a pyproject.toml marker so it looks like a real
     checkout to install._checkout_root(); tests that need the packaged-install
     behavior repoint _REPO_ROOT at a markerless directory themselves.
+
+    The two per-user TOML ladders are pointed at paths inside tmp_path that do
+    not exist. Both fall back to ~/.hermes/, so a contributor who followed the
+    advice in ledger.py's own "no known direction" error -- declare it under
+    [metric_direction] -- then watched an unrelated test fail:
+    test_examples.py asserts ndcg_at_10 has NO declared direction, which was
+    true only of a machine where nobody had declared one. CI passes because
+    its runners have no ~/.hermes. Repointing rather than deleting the env var
+    is deliberate: an unset variable falls back to $HOME, which is the bug.
     """
+    import attestation.corpus
+    import attestation.ledger
     import attestation.llm
 
     for var in (*attestation.llm.ENV_VARS, "EMBED_DIMS", "RSS_DB"):
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv(
+        attestation.ledger.METRIC_DIRECTION_PATH_ENV, str(tmp_path / "absent-metric_direction.toml")
+    )
+    monkeypatch.setenv(attestation.corpus.CORPUS_FILE_ENV, str(tmp_path / "absent-corpus.toml"))
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "attestation"\n')
     monkeypatch.setattr(attestation.llm, "_REPO_ROOT", tmp_path)
 

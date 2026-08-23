@@ -633,6 +633,27 @@ def autocreate_user(conn: sqlite3.Connection, name: str):
         # should reach the decorator's own handler.
         topics = []
     interests = ", ".join(topics) if topics else STARTER_INTERESTS
-    create_user(conn, name, interests)
+    try:
+        create_user(conn, name, interests)
+    except ValueError:
+        # Lost the race for a name nobody had a moment ago. create_user's own
+        # IntegrityError handler covers only the window between ITS pre-check
+        # and ITS insert -- microseconds. The wider and far likelier window is
+        # two autocreates both passing that pre-check, one inserting, and the
+        # other's pre-check then finding the row: that path raises before any
+        # INSERT is attempted, so the handler below it never runs.
+        #
+        # Measured: idle, 0/30 trials raised; with the box loaded to nproc,
+        # 7 of 8 runs raised. The test written for this in round 17 therefore
+        # passed here and failed on a fresh clone, which is how it survived
+        # 21 review rounds.
+        #
+        # Refusing here would be wrong on its own terms: autocreate exists to
+        # make the reader exist, and it does exist. `feed.persona_create` keeps
+        # its refusal -- that is a UX decision made above this line.
+        existing = get_user(conn, name)
+        if existing is None:
+            raise
+        return existing, existing["interests"]
     conn.commit()
     return get_user(conn, name), interests

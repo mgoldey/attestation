@@ -217,6 +217,20 @@ def step_models(check: bool = False, yes: bool = False) -> StepResult:
             "ollama is not installed or not on PATH -- see https://ollama.com/download."
             " The ledger and claim checking need no model; the feed does.",
         )
+    if not _ollama_native_root_reachable():
+        # `ollama list` talks to the daemon on the DEFAULT port, not to
+        # base_url(). Pointing LLM_BASE_URL at a second Ollama, an llama.cpp or
+        # a vLLM server on another local port therefore produced two adjacent
+        # and contradictory lines: "[BROKEN] cannot reach http://127.0.0.1:9"
+        # directly above "[ok] models: ... present" -- the models of a daemon
+        # the feed will never call. Reporting nothing is better than reporting
+        # a different machine's inventory as if it were this one's.
+        return StepResult(
+            "models",
+            Status.SKIPPED,
+            f"cannot inventory models while {_native_root()} is unreachable"
+            " (`ollama list` queries the default port, not LLM_BASE_URL)",
+        )
     wanted = [chat_model(), embed_model()]
     installed = _installed_models(_run)
     missing = [m for m in wanted if _normalize_model(m) not in installed]

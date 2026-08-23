@@ -80,3 +80,24 @@ def test_coverage_finds_prose_numbers_no_claim_backs(scanned):
     out = claims.coverage(FINDINGS)
     assert out["numbers"] > out["covered"]
     assert out["uncovered"], "the example deliberately leaves numbers uncovered"
+
+
+def test_the_suite_does_not_read_the_developers_own_metric_directions(tmp_path, monkeypatch):
+    """metric_directions() overlays ~/.hermes/metric_direction.toml, which is
+    the extension point ledger.py's own "unknown direction" error tells users
+    to create. A contributor who followed that advice then watched an unrelated
+    test fail: this file asserts ndcg_at_10 has NO declared direction, true only
+    of a machine where nobody had declared one. CI passed because its runners
+    have no ~/.hermes. conftest's _hermetic_env now repoints the ladder."""
+    import os
+
+    from attestation.ledger import METRIC_DIRECTION_PATH_ENV, _metric_direction_path
+
+    configured = os.environ.get(METRIC_DIRECTION_PATH_ENV)
+    assert configured, "the hermetic fixture must pin the metric-direction ladder"
+    assert not _metric_direction_path().exists(), (
+        "tests must run against an absent override file, not the developer's own"
+    )
+    assert str(pathlib.Path.home()) not in configured, (
+        f"the ladder still resolves inside $HOME: {configured}"
+    )

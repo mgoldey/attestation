@@ -633,3 +633,36 @@ def test_a_subcommand_help_describes_what_it_prints():
     assert "leave-last" not in eval_help.lower(), (
         f"eval's help names an approach the command abandoned: {eval_help!r}"
     )
+
+
+def test_an_unusable_database_path_is_a_sentence_not_a_traceback(tmp_path, capsys, monkeypatch):
+    """`RSS_DB=/nonexistent/deep/x.db attest runs list` printed 18 lines of
+    traceback ending in "unable to open database file" -- which does not name
+    the file, and so does not name the typo. It fired in open_db, before any
+    command body ran, which is why it escaped every command's own error
+    handling. A directory that does not exist YET is an ordinary first run and
+    must still succeed."""
+    import sqlite3
+
+    from attestation.cli import main
+
+    unwritable = tmp_path / "ro"
+    unwritable.mkdir()
+    unwritable.chmod(0o500)
+    try:
+        monkeypatch.setenv("RSS_DB", str(unwritable / "deep" / "x.db"))
+        code = main(["runs", "list"])
+    finally:
+        unwritable.chmod(0o700)
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "Traceback" not in err
+    assert "cannot open database at" in err, err
+    assert str(unwritable) in err, "the message must name the path that failed"
+
+    # The ordinary first run: parents are created rather than refused.
+    fresh = tmp_path / "brand" / "new" / "h.db"
+    monkeypatch.setenv("RSS_DB", str(fresh))
+    main(["runs", "list"])
+    assert fresh.exists(), "a not-yet-existing directory is a first run, not an error"
+    assert sqlite3.connect(str(fresh)) is not None

@@ -1438,3 +1438,25 @@ def test_a_box_without_ollama_gets_a_message_not_a_traceback(monkeypatch):
 
     assert result.status == install.Status.BROKEN
     assert "ollama" in result.detail.lower()
+
+
+def test_the_doctor_does_not_inventory_models_it_cannot_reach(monkeypatch):
+    """`ollama list` queries the daemon's DEFAULT port; base_url() may point
+    somewhere else entirely. With LLM_BASE_URL on an unreachable local port the
+    report printed two adjacent contradictory lines -- "[BROKEN] cannot reach
+    http://127.0.0.1:9" directly above "[ok] models: ... present", the models
+    of a daemon the feed will never call."""
+    from attestation import install
+
+    monkeypatch.setenv("LLM_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: False)
+    monkeypatch.setattr(install.shutil, "which", lambda _: "/usr/bin/ollama")
+    monkeypatch.setattr(
+        install, "_installed_models", lambda _run: {"gemma4:e2b-it-q4_k_m", "embeddinggemma"}
+    )
+
+    result = install.step_models(check=True)
+    assert result.status is install.Status.SKIPPED, (
+        f"models reported {result.status} against an unreachable backend: {result.detail}"
+    )
+    assert "present" not in (result.detail or "")

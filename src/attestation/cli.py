@@ -30,9 +30,27 @@ def open_db(db_arg: str | None):
     lifetime, so a plain `with get_db(...)` would leave the handle open --
     this wraps it in `contextlib.closing` around the resolved path.
     """
+    import sqlite3
+
     from attestation.db import get_db, resolve_db_path
 
-    with contextlib.closing(get_db(resolve_db_path(db_arg))) as conn:
+    path = resolve_db_path(db_arg)
+    try:
+        # A path whose directory does not exist yet is an ordinary first run,
+        # not an error -- but a path under a directory that cannot be created
+        # is a typo, and it should read as one.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = get_db(path)
+    except (OSError, sqlite3.Error) as exc:
+        # A typo in RSS_DB, or a cwd the user cannot write, printed 18 lines of
+        # traceback ending in "unable to open database file" -- which does not
+        # say WHICH file, and so does not say which typo. Every other failure
+        # in this CLI is a sentence; this one was the exception because it fired
+        # before any command body ran, outside every command's own error
+        # handling. Both arms are needed: mkdir raises OSError, sqlite3 raises
+        # OperationalError, and OperationalError is not an OSError.
+        raise SystemExit(fail(f"cannot open database at {path}: {exc}")) from exc
+    with contextlib.closing(conn):
         yield conn
 
 
@@ -702,4 +720,12 @@ def main(argv: list[str] | None = None) -> int:
 
     load_env()
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except SystemExit as exc:
+        # open_db reports an unusable database path and exits. It is a context
+        # manager wrapping ten command bodies, so it cannot return an exit code
+        # the way a command body does -- it raises one. Converting it back here
+        # keeps main()'s contract ("returns an int") true for callers that are
+        # not the console script: the tests, and anything embedding the CLI.
+        return exc.code if isinstance(exc.code, int) else 1
