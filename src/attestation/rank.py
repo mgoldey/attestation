@@ -5,6 +5,7 @@ import hashlib
 import itertools
 import logging
 import sqlite3
+from collections.abc import Sequence
 
 import numpy as np
 from pydantic import BaseModel
@@ -64,6 +65,12 @@ class RankedItem(BaseModel):
     url: str | None
     source: str | None
     score: float  # blended rank; lower = better
+    # Cosine of the item against the reader's profile vector: ABSOLUTE, unlike
+    # `score`, which is a rank within whatever candidate set was ranked. Search
+    # needs an absolute profile term because it ranks a few hundred candidates
+    # rather than the archive, and a rank-percentile silently renumbers when
+    # the set narrows -- an item at archive position 5227 becomes position 6.
+    profile_similarity: float = 0.0
     explanation: str | None = None
     tags: list[str] = []
     content_type: str | None = None
@@ -247,11 +254,56 @@ def classifier_probs(conn, user_id: int, X: np.ndarray) -> np.ndarray | None:
     return clf.predict_proba(X)[:, 1]
 
 
-def _candidate_items(conn, user_id: int, since_days: int | None, *, exclude_clicked: bool = True):
+# How many items search ranks. The old path ranked the whole archive and
+# filtered afterwards, so this number did not exist and the work grew without
+# bound. 300 keeps every measured query's result set identical to that path's
+# while bounding the cost: on the live corpus the deepest hit any of the eight
+# probe queries actually returned sat at candidate 41.
+SEARCH_CANDIDATES = 300
+
+
+def literal_candidates(conn, query: str, limit: int) -> set[int]:
+    """Item ids whose title or summary contains the query as a substring.
+
+    Search blends a literal match with a semantic one, and a literal hit is not
+    always a semantic hit -- "CRISPR" in a title the embedding places elsewhere
+    is still the item the reader asked for. The old path got these free by
+    ranking every row; restricting to sqlite-vec's top-k would have silently
+    dropped them, which is a behaviour change rather than an optimisation.
+    """
+    needle = query.lower().strip()
+    if not needle:
+        return set()
+    rows = conn.execute(
+        "SELECT id FROM items"
+        " WHERE lower(title) LIKE ? OR lower(summary) LIKE ?"
+        " ORDER BY published DESC LIMIT ?",
+        (f"%{needle}%", f"%{needle}%", limit),
+    )
+    return {r["id"] for r in rows}
+
+
+def _candidate_items(
+    conn,
+    user_id: int,
+    since_days: int | None,
+    *,
+    exclude_clicked: bool = True,
+    only_ids: Sequence[int] | None = None,
+):
     """Rankable items. Defaults reproduce feed behavior: recent and unclicked.
 
     search_feed passes since_days=None / exclude_clicked=False, since finding
     an older or already-rated item is a legitimate search result.
+
+    `only_ids` restricts to a caller-supplied set. That combination -- no
+    window, nothing excluded -- means no WHERE clause at all, so search read
+    every row of items JOIN item_vectors, stacked it into one array, and built
+    a RankedItem for each, in order to return four. Measured by growing a copy
+    of the live database with its own rows: 5243 items 0.25s/161MB, 60k
+    1.94s/421MB, 150k 4.93s/849MB. sqlite-vec had already found the answer in
+    87ms; the archive scan was the caller ranking everything and filtering
+    afterwards.
     """
     sql = (
         "SELECT i.id, i.title, i.url, i.summary, f.title AS source, v.embedding"
@@ -260,6 +312,12 @@ def _candidate_items(conn, user_id: int, since_days: int | None, *, exclude_clic
         " WHERE 1=1"
     )
     params: list = []
+    if only_ids is not None:
+        ids = list(only_ids)
+        if not ids:
+            return []
+        sql += f" AND i.id IN ({','.join('?' * len(ids))})"
+        params.extend(ids)
     if since_days is not None:
         # replace(published,'T',' '), not a bare comparison. `published` is
         # stored ISO-8601 with a T separator -- all 5222 items in the live
@@ -311,15 +369,24 @@ def _profile_vector(conn, embedder, user_id: int, interests_text: str) -> np.nda
 
 
 def rank_items(
-    conn, embedder, user_id: int, since_days: int | None = 14, *, exclude_clicked: bool = True
+    conn,
+    embedder,
+    user_id: int,
+    since_days: int | None = 14,
+    *,
+    exclude_clicked: bool = True,
+    only_ids: Sequence[int] | None = None,
 ) -> list[RankedItem]:
-    rows = _candidate_items(conn, user_id, since_days, exclude_clicked=exclude_clicked)
+    rows = _candidate_items(
+        conn, user_id, since_days, exclude_clicked=exclude_clicked, only_ids=only_ids
+    )
     if not rows:
         return []
     X = np.stack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])
     user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     profile_vec = _profile_vector(conn, embedder, user_id, user["interests"] or user["name"])
-    profile_rank = ranks(X @ profile_vec)
+    profile_sims = X @ profile_vec
+    profile_rank = ranks(profile_sims)
 
     probs = classifier_probs(conn, user_id, X)
     n_clicks = conn.execute(
@@ -365,6 +432,7 @@ def rank_items(
             url=rows[i]["url"],
             source=rows[i]["source"],
             score=float(final[i]),
+            profile_similarity=float(profile_sims[i]),
             tags=tags_by.get(rows[i]["id"], []),
             content_type=ctype.get(rows[i]["id"]),
             summary=rows[i]["summary"],

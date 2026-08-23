@@ -149,9 +149,28 @@ def test_the_query_outweighs_the_profile(search_db, monkeypatch):
             "a literal-only hit outscored a semantic one; the query is not driving the order"
         )
 
+    # 'ana' is interested in "everything", so every item's profile cosine is
+    # near-identical and the profile cannot express a preference. Give her a
+    # real one, or QUERY_WEIGHT=0 leaves nothing to reorder. On the live corpus
+    # this is not a concern -- 5240 of 5243 items have a DISTINCT profile
+    # cosine at full precision -- but the fixture's concept embedder ties.
+    import sqlite3
+
+    conn = sqlite3.connect(str(search_db))
+    conn.execute("UPDATE users SET interests = 'protein crystallography' WHERE name = 'ana'")
+    conn.commit()
+    conn.close()
+    from attestation import rank as rank_mod
+
+    rank_mod._PROFILE_VEC_CACHE.clear()
+
+    biased = feed_mod._search_feed("ana", "language models", limit=5)
+    biased_scores = [i["relevance"] for i in biased["items"]]
+
     monkeypatch.setattr(f, "QUERY_WEIGHT", 0.0)
+    rank_mod._PROFILE_VEC_CACHE.clear()
     zeroed = feed_mod._search_feed("ana", "language models", limit=5)
-    assert [i["relevance"] for i in zeroed["items"]] != scores, (
+    assert [i["relevance"] for i in zeroed["items"]] != biased_scores, (
         "relevance scores are identical with the query weighted at zero -- "
         "QUERY_WEIGHT is not affecting the blend at all"
     )
@@ -481,4 +500,75 @@ def test_the_relevance_floor_is_not_anchored_on_one_item():
     assert len(kept) >= 6, (
         f"one modest outlier starved the query: {len(kept)} of 8 kept."
         " The floor is anchored on a single item."
+    )
+
+
+def test_search_ranks_a_bounded_candidate_set_not_the_whole_archive(search_db, monkeypatch):
+    """search built a RankedItem for every row in the archive to return four.
+
+    Measured by growing a copy of the live database with its own rows: 5243
+    items 0.25s/161MB, 60k 1.94s/421MB, 150k 4.93s/849MB -- while sqlite-vec
+    had the answer in 87ms the whole time. The archive scan was the caller
+    ranking everything and filtering afterwards.
+
+    Asserts the seam rather than a timing, which would be flaky: rank_items
+    must be called with a bounded `only_ids`, never with None.
+    """
+    from attestation import rank as rank_mod
+    from attestation.rank import SEARCH_CANDIDATES
+
+    seen: list = []
+    real = rank_mod.rank_items
+
+    def spy(conn, embedder, user_id, since_days=14, **kw):
+        seen.append(kw.get("only_ids"))
+        return real(conn, embedder, user_id, since_days, **kw)
+
+    monkeypatch.setattr(rank_mod, "rank_items", spy)
+    out = feed_mod._search_feed("ana", "language models", limit=5)
+    assert out["ok"], out["message"]
+    assert seen, "rank_items was never called"
+    assert all(ids is not None for ids in seen), (
+        "search ranked the whole archive: rank_items got only_ids=None, which"
+        " means no WHERE clause at all on items JOIN item_vectors"
+    )
+    assert all(len(ids) <= max(5 * 10, SEARCH_CANDIDATES) for ids in seen), (
+        f"candidate set is not bounded by SEARCH_CANDIDATES: {[len(i) for i in seen]}"
+    )
+
+
+def test_a_literal_hit_survives_the_candidate_bound(search_db, monkeypatch):
+    """Bounding the candidates to sqlite-vec's top-k would silently drop items
+    whose title contains the query but whose embedding places them elsewhere.
+    The old path found those free by scanning every row, so losing them would
+    be a behaviour change wearing an optimisation's clothes.
+
+    The needle is deliberately a term the concept embedder does NOT model, so
+    the item is reachable ONLY as a literal match. Asserting on an ordinary
+    query cannot catch this: those items are semantic hits too, so removing
+    _literal_candidates leaves the whole suite green.
+    """
+
+    conn = get_db(search_db)
+    cur = conn.execute(
+        "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+        " VALUES (NULL, 'Zylonite fabrication at scale', 'http://z', 'unrelated text', 'hz')",
+    )
+    item_id = cur.lastrowid
+    # An embedding orthogonal to everything the fixture models, so sqlite-vec
+    # ranks it last and only the literal path can reach it.
+    import numpy as np
+
+    v = np.zeros(feed_mod.get_embedder().dims, dtype="float32")
+    v[-1] = 1.0
+    conn.execute("INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)", (item_id, v.tobytes()))
+    conn.commit()
+    conn.close()
+
+    out = feed_mod._search_feed("ana", "zylonite", limit=5)
+    assert out["ok"], out["message"]
+    urls = [i["url"] for i in out["items"]]
+    assert "http://z" in urls, (
+        "an item reachable only as a literal match was dropped by the candidate"
+        f" bound -- got {urls}"
     )
