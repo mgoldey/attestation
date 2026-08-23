@@ -1292,3 +1292,33 @@ def test_concurrent_first_scans_do_not_lose_the_corpus(tmp_path):
     assert not errors, f"{len(errors)} of 8 concurrent upserts failed: {errors[0]}"
     rows = get_db(db).execute("SELECT COUNT(*) FROM corpora").fetchone()[0]
     assert rows == 1, f"{rows} corpora rows for one name"
+
+
+def test_the_family_refusal_names_the_fix_and_suggests_a_real_metric():
+    """`runs compare` on the shipped example data refuses -- correctly, since
+    it will not guess metric direction -- and that refusal is the flagship
+    capability's first impression on a new user.
+
+    It listed what it found and stopped, while its sibling refusal for a single
+    named metric already pointed at the file to edit. An error stating a rule
+    without its remedy reads as a dead end rather than a step.
+
+    The suggested metric must be a RESULT, not bookkeeping: alphabetical order
+    picked `n_records` out of the example workspace, and a user pasting that
+    would rank their ablation by dataset size and get a confident, meaningless
+    winner. The refusal exists to prevent exactly that class of answer.
+    """
+    from attestation.ledger import _likeliest_metric
+
+    # Shape of the shipped example: a row count shared by every arm, and the
+    # actual result metric.
+    counts = {"n_records": 4, "ndcg_at_10": 4}
+    assert _likeliest_metric(counts) == "ndcg_at_10", (
+        "the refusal suggests declaring a direction for a bookkeeping field"
+    )
+
+    # Ties among real metrics fall back to the most-shared, then alphabetical.
+    assert _likeliest_metric({"wer": 2, "accuracy": 5}) == "accuracy"
+    # All-bookkeeping is still better answered than not at all.
+    assert _likeliest_metric({"n_params": 3}) == "n_params"
+    assert _likeliest_metric({}) == "accuracy"

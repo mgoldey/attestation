@@ -554,6 +554,29 @@ def _refuse_cross_project(family: str, rows: list[dict]) -> None:
         )
 
 
+# Counts and sizes, not results. Suggesting one as the metric to rank by is
+# worse than suggesting nothing: it is a plausible-looking wrong answer, and
+# the refusal exists precisely to stop plausible-looking wrong answers.
+_BOOKKEEPING_METRICS = frozenset(
+    {"n_records", "n_params", "n_layers", "d_model", "epochs", "seed", "steps", "batch_size"}
+)
+
+
+def _likeliest_metric(counts: dict[str, int]) -> str:
+    """The metric the refusal should suggest declaring a direction for.
+
+    Same signal `compare` itself uses -- the metric the most arms share, since
+    that is the one a comparison would cover -- with bookkeeping fields set
+    aside. Alphabetical order picked `n_records` out of the example workspace,
+    which is a row count: a user who pasted that suggestion would rank their
+    ablation by dataset size and get a confident, meaningless winner.
+    """
+    if not counts:
+        return "accuracy"
+    real = {k: v for k, v in counts.items() if k not in _BOOKKEEPING_METRICS}
+    return sorted((real or counts).items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+
+
 def compare(
     conn: sqlite3.Connection,
     family: str,
@@ -635,9 +658,20 @@ def compare(
         # the metric the most arms share, so the comparison covers the family
         known = {k: v for k, v in counts.items() if _metric_direction(k, directions)}
         if not known:
+            # Names the fix, not just the problem. Its sibling refusal below
+            # (single named metric) already pointed at the file to edit; this
+            # one listed what it found and stopped, and it is the one a new
+            # user hits FIRST -- `runs compare` on the shipped example data
+            # refuses this way, which is the flagship capability's first
+            # impression. An error that states a rule without stating the
+            # remedy reads as a dead end rather than a step.
             raise ValueError(
                 f"no metric with a known direction in family {family!r};"
-                f" found {sorted(counts) or 'none'}"
+                f" found {sorted(counts) or 'none'}."
+                f" Declare one under [metric_direction] in"
+                f" {_metric_direction_path()},"
+                f' e.g. `{_likeliest_metric(counts)} = "higher_is_better"`;'
+                " guessing would rank ablation arms backwards."
             )
         metric = sorted(known.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
 
