@@ -583,3 +583,53 @@ def test_kg_report_on_an_empty_graph_fails_like_its_siblings(tmp_path, capsys, m
     assert rc == 1, "an empty graph reported success"
     assert "attest tag" in captured.err, f"guidance went to stdout: {captured.out!r}"
     assert not captured.out.strip()
+
+
+def test_no_message_recommends_a_subcommand_that_does_not_exist():
+    """`attest eval` on an unknown persona advised `attest personas`.
+
+    There is no `personas` subcommand and never has been -- the advice exits 2
+    with "invalid choice". A recovery message naming a command that does not
+    exist is worse than none: it sends a stuck user somewhere that fails again.
+
+    Guards the class rather than the instance: any `attest <word>` in a
+    user-facing string in cli.py must be a real subcommand.
+    """
+    import ast
+    import re
+    from pathlib import Path
+
+    from attestation.cli import build_parser
+
+    parser = build_parser()
+    real = set(parser._subparsers._group_actions[0].choices)  # type: ignore[union-attr]
+    # Read STRING LITERALS only, not comments -- the comment recording that
+    # `attest personas` was a phantom names it, and a source-wide regex counts
+    # that as a fresh recommendation. Multi-word forms like `attest runs scan`
+    # name a subcommand plus its own subcommand; only the first word is checked.
+    source = (Path(__file__).resolve().parents[1] / "src" / "attestation" / "cli.py").read_text()
+    tree = ast.parse(source)
+    named: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            named |= set(re.findall(r"attest ([a-z][a-z-]+)", node.value))
+    phantom = sorted(named - real - {"mcp"})
+    assert not phantom, f"cli.py recommends commands that do not exist: {phantom}"
+
+
+def test_a_subcommand_help_describes_what_it_prints():
+    """`eval --help` promised "leave-last-N-out AUC", which the command stopped
+    printing when its scope was corrected -- it reports a click-classifier AUC
+    over a shuffled StratifiedKFold. The output and the docstring were fixed
+    and `add_parser`'s help string was missed."""
+    from attestation.cli import build_parser
+
+    parser = build_parser()
+    choices = parser._subparsers._group_actions[0].choices  # type: ignore[union-attr]
+    eval_help = choices["eval"].description or ""
+    for action in parser._subparsers._group_actions[0]._choices_actions:  # type: ignore[union-attr]
+        if action.dest == "eval":
+            eval_help += " " + (action.help or "")
+    assert "leave-last" not in eval_help.lower(), (
+        f"eval's help names an approach the command abandoned: {eval_help!r}"
+    )

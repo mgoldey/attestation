@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", type=int, default=8899)
     sp.set_defaults(func=cmd_serve)
 
-    sp = sub.add_parser("eval", help="leave-last-N-out AUC for a user")
+    sp = sub.add_parser("eval", help="cross-validated AUC for a persona's click classifier")
     add_db(sp)
     sp.add_argument("--user", required=True)
     sp.set_defaults(func=cmd_eval)
@@ -640,7 +640,14 @@ def cmd_eval(args: argparse.Namespace) -> int:
         # clicks -- and both are told what would fix them.
         message = "insufficient click data for a meaningful holdout (need 10+ mixed clicks)"
         if user is None:
-            message += f"\n  (no persona named {args.user!r} -- `attest personas` lists them)"
+            # There is no `attest personas`: an earlier version of this line
+            # advised one, and it exits 2 with "invalid choice". Personas are
+            # listed by the `feed.personas` MCP tool and by the web UI, so
+            # name something that exists rather than something that reads well.
+            message += (
+                f"\n  (no persona named {args.user!r} -- the `feed.personas`"
+                " MCP tool lists them, as does `attest serve`)"
+            )
         return fail(message)
 
     # "leave-last-5-out" named an approach evaluate_user's own docstring says
