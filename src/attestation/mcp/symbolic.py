@@ -11,7 +11,7 @@ from typing import Annotated
 
 from pydantic import Field
 
-from attestation.symbolic import run_isolated
+from attestation.symbolic import MAX_TIMEOUT, run_isolated
 
 # Every key any sym op can return, so a failure carries the same shape as a
 # success. These tools predate mcp/_tool.py's @tool decorator and build their
@@ -32,7 +32,18 @@ _EMPTY = {
 # The sandbox subprocess is killed at this wall clock. Unbounded, a caller
 # could hold a CAS process open indefinitely; at 0 or negative it would be
 # killed before it started, which reads as "sympy is broken".
-Timeout = Annotated[int, Field(ge=1, le=120, description="seconds before the sandbox is killed")]
+# le=MAX_TIMEOUT, not a number picked here. The schema said 120 while
+# symbolic.py clamps to 30, so a caller asking for 120 was told it was
+# accepted and silently got 30 -- a schema advertising what the code will not
+# honour is worse than no bound, because a client validates against it.
+Timeout = Annotated[
+    int,
+    Field(
+        ge=1,
+        le=MAX_TIMEOUT,
+        description=f"seconds before the sandbox is killed (max {MAX_TIMEOUT})",
+    ),
+]
 # Differentiation order feeds the same subprocess: order=10**9 is a resource
 # question, not merely a bad input.
 Order = Annotated[int, Field(ge=1, le=10, description="how many times to differentiate")]

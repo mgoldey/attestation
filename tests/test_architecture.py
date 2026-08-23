@@ -600,3 +600,34 @@ def test_readme_tool_count_and_table_match_the_live_surface():
     documented = set(re.findall(r"`([a-z_]+\.[a-z_]+)\(", text))
     missing = sorted(names - documented)
     assert not missing, f"live tools with no README row: {missing}"
+
+
+def test_a_schema_bound_is_never_looser_than_the_code_enforces():
+    """A schema that advertises what the code will not honour is worse than
+    no bound, because a client validates against it and is told yes.
+
+    `sym.*` declared `timeout` up to 120 while symbolic.py clamps to
+    MAX_TIMEOUT=30, so a caller asking for 120 got 30 and was never told.
+    Stricter-than-enforced is fine (cite.search caps at 25 under a global 50);
+    looser is the bug.
+    """
+    import asyncio
+    import os
+    import tempfile
+
+    os.environ.setdefault("RSS_DB", tempfile.mkdtemp() + "/t.db")
+    from attestation import mcp_server
+    from attestation.mcp._shared import MAX_LIST_LIMIT
+    from attestation.symbolic import MAX_TIMEOUT
+
+    ceilings = {"timeout": MAX_TIMEOUT, "limit": MAX_LIST_LIMIT}
+
+    looser = []
+    for tool in asyncio.run(mcp_server.mcp.list_tools()):
+        for arg, spec in (tool.inputSchema.get("properties") or {}).items():
+            ceiling = ceilings.get(arg)
+            declared = spec.get("maximum")
+            if ceiling and declared and declared > ceiling:
+                looser.append(f"{tool.name}.{arg}: schema says {declared}, code enforces {ceiling}")
+
+    assert not looser, "schema bounds looser than the code: " + ", ".join(looser)
