@@ -27,6 +27,7 @@ from attestation.db import get_db
 from attestation.mcp import _shared
 from attestation.mcp import feed as feed_mod
 
+
 # The invariant is PER ITEM, not per response: a caller who explicitly asks
 # for fifty items has asked for a big answer and should get one. What must
 # stay small is the cost of each row, and the DEFAULT response an agent gets
@@ -37,8 +38,27 @@ from attestation.mcp import feed as feed_mod
 # list row does not. 28 of 40 live rows violated the single 300 limit while
 # every test passed -- a guard set below what production produces is a guard
 # that lies. Two constants, because the two shapes are genuinely different.
-MAX_ITEM_CHARS = 320
-MAX_SEARCH_ITEM_CHARS = 380
+# DERIVED from the field caps, not measured from a sample. Both were sized
+# from observed rows twice -- 300 from a fixture, then 320/380 from live data --
+# and both times the caps permitted more than the budget allowed, because a
+# sample is not a bound. Importing the caps makes the two impossible to
+# disagree: tightening a budget now requires tightening a cap.
+def _row_budget(extra: int = 0) -> int:
+    from attestation.mcp.feed import (
+        MAX_SOURCE_CHARS,
+        MAX_TAG_CHARS,
+        MAX_TAGS_SHOWN,
+        MAX_TITLE_CHARS,
+        MAX_URL_CHARS,
+    )
+
+    fields = MAX_TITLE_CHARS + MAX_URL_CHARS + MAX_SOURCE_CHARS + MAX_TAGS_SHOWN * MAX_TAG_CHARS
+    return fields + 150 + extra  # 150 = JSON keys, quotes, commas, item_id, n_tags
+
+
+MAX_ITEM_CHARS = _row_budget()
+# A search row adds already_rated, match and relevance.
+MAX_SEARCH_ITEM_CHARS = _row_budget(60)
 MAX_DEFAULT_RESPONSE_CHARS = 2000
 
 
@@ -321,3 +341,61 @@ def test_router_answers_are_bounded_by_title_length(stocked):
     out = _feed_ask("ana", "what should I read today")
     assert len(out["answer"]) <= 600, f"answer is {len(out['answer'])} chars"
     assert len(json.dumps(out)) <= MAX_DEFAULT_RESPONSE_CHARS
+
+
+def test_the_item_budget_is_at_least_what_the_field_caps_permit(stocked):
+    """The budget must be derivable from the caps, not measured from a sample.
+
+    Round 6 bounded the title and asserted "every variable-length field has a
+    stated cap" -- but only title and tags were checked. `url` and `source`
+    were uncapped, so the caps permitted 439 chars of field text against a
+    320-char budget, and 350 of 5222 real search rows breached it. Five of five
+    ordinary queries against the live database produced an over-budget row.
+
+    Both numbers had been set from OBSERVED rows, which is the same mistake as
+    sizing them from a fixture: a sample is not a bound. Asserting the budget
+    against the caps makes the two impossible to disagree.
+    """
+    from attestation.mcp.feed import (
+        MAX_SOURCE_CHARS,
+        MAX_TAG_CHARS,
+        MAX_TAGS_SHOWN,
+        MAX_TITLE_CHARS,
+        MAX_URL_CHARS,
+    )
+
+    # Field text the caps allow, plus JSON keys/quotes/commas for the fixed
+    # scaffolding (item_id, n_tags, content_type and the punctuation).
+    scaffolding = 150
+    worst_list = (
+        MAX_TITLE_CHARS + MAX_URL_CHARS + MAX_SOURCE_CHARS + MAX_TAGS_SHOWN * MAX_TAG_CHARS
+    ) + scaffolding
+    assert worst_list <= MAX_ITEM_CHARS, (
+        f"the field caps permit a {worst_list}-char row against a {MAX_ITEM_CHARS} budget"
+    )
+    # A search row adds already_rated, match and relevance.
+    assert worst_list + 60 <= MAX_SEARCH_ITEM_CHARS, (
+        f"the caps permit {worst_list + 60} against {MAX_SEARCH_ITEM_CHARS}"
+    )
+
+    # And the caps must be ENFORCED, not merely declared. Comparing constants
+    # to each other is self-consistent and toothless: with `url` left uncapped
+    # in _item_row the arithmetic above still passed, because both sides came
+    # from the same numbers. Drive a row whose every field exceeds its cap.
+    conn = get_db(stocked)
+    conn.execute(
+        "UPDATE items SET title = ?, url = ?",
+        ("T" * 500, "https://example.com/" + "p" * 500),
+    )
+    conn.execute("UPDATE feeds SET title = ?", ("S" * 500,))
+    conn.execute("UPDATE item_tags SET tag = tag || ?", ("g" * 200,))
+    conn.commit()
+    conn.close()
+
+    for item in feed_mod._list_feed("ana", limit=5)["items"]:
+        assert len(item["url"]) <= MAX_URL_CHARS + 1, item["url"]
+        assert len(item["source"]) <= MAX_SOURCE_CHARS + 1, item["source"]
+        assert len(item["title"]) <= MAX_TITLE_CHARS + 1
+        for tag in item["tags"]:
+            assert len(tag) <= MAX_TAG_CHARS + 1, tag
+        assert len(json.dumps(item)) <= MAX_ITEM_CHARS

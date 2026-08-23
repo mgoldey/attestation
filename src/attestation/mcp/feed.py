@@ -275,6 +275,26 @@ SUMMARY_CHARS = 240
 # applied to the other axis.
 MAX_TITLE_CHARS = 90
 
+# url and source were the fields round 6's property test forgot. `url` reaches
+# 226 chars in the live corpus and `source` 27, so the caps PERMITTED a 439-char
+# row against a 320-char budget -- and 350 of 5222 real search rows breached it,
+# with five of five ordinary queries producing one. Both budgets had been sized
+# from observed rows, which is the same error as sizing them from a fixture: a
+# sample is not a bound.
+#
+# A clipped url is not clickable, so it is a real cost -- but an unrenderable
+# payload costs the whole answer, and `feed.read` returns the full record.
+MAX_URL_CHARS = 120
+MAX_SOURCE_CHARS = 40
+# The tagging vocabulary is not controlled here, so cap what a row shows.
+MAX_TAG_CHARS = 32
+
+
+def _clip_field(text: str | None, limit: int) -> str:
+    """Any row field, trimmed to fit, with the cut made visible."""
+    value = " ".join((text or "").split())
+    return value if len(value) <= limit else value[:limit].rstrip() + "…"
+
 
 def _clip_title(title: str | None) -> str:
     """A title trimmed to fit, with the cut made visible.
@@ -308,9 +328,9 @@ def _item_row(it, *, summary: bool = False) -> dict:
     row = {
         "item_id": it.item_id,
         "title": _clip_title(it.title),
-        "url": it.url,
-        "source": it.source,
-        "tags": (it.tags or [])[:MAX_TAGS_SHOWN],
+        "url": _clip_field(it.url, MAX_URL_CHARS),
+        "source": _clip_field(it.source, MAX_SOURCE_CHARS),
+        "tags": [_clip_field(t, MAX_TAG_CHARS) for t in (it.tags or [])[:MAX_TAGS_SHOWN]],
     }
     # Always present, even as null. Omitting it saved ~25 chars a row and broke
     # a stated key contract (tests/test_mcp_server.py asserts the key set), so
