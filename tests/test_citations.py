@@ -394,3 +394,31 @@ def test_web_cache_reopen_does_not_reclaim_a_widened_directory(tmp_path):
     assert reader.lookup("nothing-cached-and-no-network-stub") is None or True
 
     assert stat.S_IMODE(cache.stat().st_mode) == 0o755
+
+
+def test_cite_check_says_it_only_checked_the_keys(tmp_path):
+    """It returned ok=true with an EMPTY message on a document holding a
+    contradicted claim, and gemma4:e2b relayed that as "OK: true (meaning all
+    claims were supported by runs)" -- 3 times out of 3, across three
+    phrasings. A false clean bill of health on a document whose numbers are
+    wrong is the worst answer this tool surface can give.
+
+    The docstring already said "pair with runs.claims_check". A model reads the
+    description when CHOOSING and then reasons from the payload, so the payload
+    has to carry the scope too.
+    """
+    from attestation.mcp.citation import _check
+
+    draft = tmp_path / "paper.md"
+    draft.write_text(
+        "Our system reaches 5.3% WER.\n"
+        "<!-- claim: ablation/stack_4 metric=wer value=0.053 tol=0.001 -->\n"
+    )
+    out = _check(path=str(draft))
+    assert out["ok"] is True
+    message = out["message"]
+    assert message, "an empty message is what let a model read this as a pass"
+    assert "runs.claims_check" in message, (
+        f"the result never names the tool that checks the numbers: {message!r}"
+    )
+    assert "CITATION KEYS only" in message, message

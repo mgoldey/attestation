@@ -1463,3 +1463,37 @@ def test_nested_splits_become_separate_arms_not_one_run_scored_by_its_best():
     assert baseline["value"] == 0.10, (
         "the baseline arm reports the oracle's value; siblings are still collapsed"
     )
+
+
+def test_an_empty_ledger_says_so_rather_than_blaming_the_filenames():
+    """`runs.compare` on a fresh install said "no run has one: families are
+    derived from a shared filename prefix, so arms need names like
+    `asr_baseline`" -- describing a naming problem when the real one is that
+    nothing has been scanned.
+
+    `runs.list` gets this right, but `runs.compare` is where a model lands
+    first: both gemma4:e2b and gemma4:e4b dead-ended here, asking the user for
+    a family name that already existed on disk. Patching only this message made
+    e2b scan and complete the task.
+    """
+    from attestation.db import get_db
+    from attestation.ledger import compare
+
+    empty = get_db(":memory:")
+    out = compare(empty, "kdsweep")
+    assert "EMPTY" in out["message"], out["message"]
+    assert "runs.scan" in out["message"], (
+        f"the refusal does not name the call that fixes it: {out['message']!r}"
+    )
+
+    # A populated ledger whose runs genuinely have no families keeps the
+    # naming explanation, which is correct THERE.
+    populated = get_db(":memory:")
+    populated.execute(
+        "INSERT INTO runs(project, name, status, source_path)"
+        " VALUES ('p', 'lonely', 'recorded', '/tmp/lonely.json')"
+    )
+    populated.commit()
+    named = compare(populated, "kdsweep")
+    assert "EMPTY" not in named["message"], named["message"]
+    assert "filename prefix" in named["message"], named["message"]

@@ -70,7 +70,27 @@ def _check(path: str) -> dict:
 
     found, problems = claims.find_claims(root)
     uncited = claims.check_citations(found, _resolver())
+    # The message states this tool's SCOPE, not just its result. It returned
+    # ok=true with an empty message on a document holding a contradicted claim,
+    # and gemma4:e2b reported that verbatim as "OK: true (meaning all claims
+    # were supported by runs)" -- 3 times out of 3, across three phrasings. A
+    # false clean bill of health on a document whose numbers are wrong is the
+    # worst answer this repo can give.
+    #
+    # The docstring already says "pair with runs.claims_check". A model reads
+    # that when CHOOSING and then reasons from the payload, so the payload has
+    # to carry it too.
+    verdict = (
+        f"{len(uncited)} claim(s) cite a key no source can resolve"
+        if uncited
+        else "every cited key resolves"
+    )
     return {
+        "message": (
+            f"{len(found)} claim(s) scanned for CITATION KEYS only -- {verdict}."
+            " This says nothing about whether the numbers are right:"
+            " call runs.claims_check for that."
+        ),
         "n_claims": len(found),
         "malformed": problems[:5],
         "uncited": [

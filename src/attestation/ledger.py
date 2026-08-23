@@ -799,6 +799,19 @@ def compare(
             )
         elif available:
             message = f"no family {family!r}"
+        elif not conn.execute("SELECT 1 FROM runs LIMIT 1").fetchone():
+            # An EMPTY ledger, not a naming problem. This branch fired for both
+            # and described only the second, so the first thing a caller sees
+            # after a fresh install blamed their filenames for a database with
+            # nothing in it. runs.list gets this right; runs.compare is where a
+            # model naturally lands first, and both gemma models dead-ended
+            # here -- asking the user for a family name that already existed on
+            # disk. Patching only this text made gemma4:e2b scan and succeed.
+            message = (
+                "the ledger is EMPTY -- no runs have been read yet."
+                " Call runs.scan(confirm=true) to read the artifacts already on"
+                " disk, then runs.list to see the families it found"
+            )
         else:
             message = (
                 f"no family {family!r}, and no run has one: families are derived"
