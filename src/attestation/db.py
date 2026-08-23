@@ -49,8 +49,12 @@ CREATE TABLE IF NOT EXISTS clicks(
   UNIQUE(user_id, item_id)
 );
 CREATE TABLE IF NOT EXISTS explanations(
-  user_id INTEGER NOT NULL,
-  item_id INTEGER NOT NULL,
+  -- REFERENCES on both, unlike the first version of this table. It accepted a
+  -- row pointing at a nonexistent user and item, and stayed clean only because
+  -- delete_persona and reset_feedback clean it by hand -- an invariant upheld
+  -- by application code that implicit.harvest then reads as weak positives.
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  item_id INTEGER NOT NULL REFERENCES items(id),
   text TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (user_id, item_id)
@@ -160,6 +164,17 @@ CREATE TABLE IF NOT EXISTS corpus_splits(
 SCHEMA = SCHEMA.format(corpus_schema=_CORPUS_SCHEMA.strip())
 
 
+def _split_statements(script: str) -> list[str]:
+    """SQL statements from a schema literal, with '--' comment lines removed.
+
+    Comments are stripped BEFORE splitting on ';'. The other order splits
+    inside a CREATE TABLE whose column list contains a '--' note, which these
+    schemas do, and yields fragments sqlite rejects as "incomplete input".
+    """
+    clean = "\n".join(line for line in script.splitlines() if not line.strip().startswith("--"))
+    return [statement.strip() for statement in clean.split(";") if statement.strip()]
+
+
 def _migration_001_add_clicks_source(conn: sqlite3.Connection) -> None:
     """Pre-existing clicks backfill to 'ui': they came from the web UI and
     bootstrap_persona, which are not retroactively distinguishable, and 'ui'
@@ -178,7 +193,28 @@ def _migration_002_add_corpora(conn: sqlite3.Connection) -> None:
     Purely additive and idempotent: existing runs get corpus_id NULL, which is
     the correct value for "the artifact did not say what data this saw".
     """
-    conn.executescript(_CORPUS_SCHEMA)
+    # NOT executescript: it issues an implicit COMMIT before running, which
+    # ends the transaction _migrate opened and leaves earlier migrations
+    # committed while user_version still reads 0. Verified: a failure injected
+    # into migration 003 left corpora and clicks.source in place at
+    # user_version 0, so the next open re-ran 001 and 002 against a database
+    # that already had them. Every migration is individually idempotent today,
+    # so that re-run is a no-op -- but the ladder's atomicity is what makes
+    # that discipline optional rather than load-bearing, and the first
+    # migration to backfill data would be applied twice.
+    # NOT executescript: it issues an implicit COMMIT before running, which
+    # ends whatever _migrate opened. Verified by injecting a failure into
+    # migration 003: corpora and clicks.source stayed committed while
+    # user_version still read 0, so the next open re-ran 001 and 002 against a
+    # database that already had them. A SAVEPOINT does not help -- executescript
+    # destroys that too ("no such savepoint"). Nothing transactional survives
+    # it, so the fix is to not call it.
+    #
+    # Order matters here: strip '--' lines FIRST, then split on ';'. Splitting
+    # first lands mid-CREATE TABLE, because these schemas carry comments inside
+    # their column lists.
+    for statement in _split_statements(_CORPUS_SCHEMA):
+        conn.execute(statement)
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
     if "corpus_id" not in cols:
         # No inline REFERENCES: SQLite's ALTER TABLE ADD COLUMN rejects a
@@ -200,6 +236,21 @@ def _migration_003_add_runs_adapter(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE runs ADD COLUMN adapter TEXT")
 
 
+def _migration_004_drop_dead_kg_tables(conn: sqlite3.Connection) -> None:
+    """Drop kg_nodes / kg_edges / kg_meta.
+
+    They were removed from SCHEMA on 2026-08-21 when the knowledge graph moved
+    to being computed from item_tags -- nothing reads them, and the eight kg
+    tool answers were byte-identical before and after. But removing a table
+    from SCHEMA does not remove it from a database that already has it, so
+    every DB created before that date still carries them: the live one holds
+    701 + 2091 + 1 rows of state that nothing has updated since. Small on disk;
+    the cost is a future reader mistaking them for live data.
+    """
+    for table in ("kg_nodes", "kg_edges", "kg_meta"):
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -211,6 +262,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (1, _migration_001_add_clicks_source),
     (2, _migration_002_add_corpora),
     (3, _migration_003_add_runs_adapter),
+    (4, _migration_004_drop_dead_kg_tables),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]
@@ -232,11 +284,39 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
     if current == SCHEMA_VERSION:
         return
-    with conn:
-        for version, fn in _MIGRATIONS:
-            if version > current:
-                fn(conn)
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    # An explicit BEGIN, not `with conn:`. Two separate things defeated the
+    # context manager, and fixing only one leaves the ladder just as partial:
+    #
+    #   1. Migration 002 called executescript, which issues an implicit COMMIT
+    #      before running and ends whatever transaction is open. A SAVEPOINT
+    #      does not survive it either ("no such savepoint").
+    #   2. At sqlite3's default isolation_level, DDL does not open a
+    #      transaction at all -- a CREATE TABLE inside a failed `with conn:`
+    #      block stays committed. Every migration here is DDL.
+    #
+    # Verified against a real v0 database with a failure injected into
+    # migration 003: before, corpora and clicks.source were both left behind at
+    # user_version 0, so the next open re-ran 001 and 002 against a database
+    # that already had them. After, the ladder rolls back whole.
+    #
+    # The migrations are each idempotent, so that re-run was a no-op today.
+    # Atomicity is what keeps that discipline optional rather than
+    # load-bearing: the first migration to backfill data would apply twice.
+    previous_isolation = conn.isolation_level
+    conn.isolation_level = None
+    try:
+        conn.execute("BEGIN")
+        try:
+            for version, fn in _MIGRATIONS:
+                if version > current:
+                    fn(conn)
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
+    finally:
+        conn.isolation_level = previous_isolation
 
 
 def embed_dims() -> int:

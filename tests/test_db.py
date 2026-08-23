@@ -554,3 +554,93 @@ def test_existing_db_migrates_to_runs_adapter(tmp_path):
     row = conn.execute("SELECT name, adapter FROM runs").fetchone()
     assert row["name"] == "old"
     assert row["adapter"] is None, "a pre-existing run must not be labelled with a guess"
+
+
+def test_a_failed_migration_leaves_nothing_behind(tmp_path, monkeypatch):
+    """The ladder ran under `with conn:` and was not atomic, for two separate
+    reasons -- fixing either alone leaves it just as partial:
+
+    1. Migration 002 called executescript, whose implicit COMMIT ends whatever
+       transaction is open. A SAVEPOINT does not survive it either.
+    2. At sqlite3's default isolation_level, DDL opens no transaction at all,
+       so a CREATE TABLE inside a failed `with conn:` block stays committed.
+
+    Measured before the fix: a failure injected into migration 003 left both
+    `corpora` and `clicks.source` behind at user_version 0, so the next open
+    re-ran 001 and 002 against a database that already had them.
+    """
+    import sqlite3
+
+    from attestation import db as db_mod
+
+    path = tmp_path / "v0.db"
+    seed = sqlite3.connect(path)
+    seed.executescript(db_mod.SCHEMA)
+    # Roll the shape back to v0: SCHEMA already reflects every migration, so a
+    # seed built from it would let migration 001 look like a no-op and the
+    # assertion below could not fail.
+    seed.executescript(
+        "DROP TABLE IF EXISTS corpus_splits;"
+        " DROP TABLE IF EXISTS corpora;"
+        # Recreated rather than ALTER ... DROP COLUMN, which re-validates every
+        # trigger and trips over trg_items_delete_vector: item_vectors is a
+        # vec0 virtual table and this seed connection has no extension loaded.
+        " DROP TABLE clicks;"
+        " CREATE TABLE clicks(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,"
+        "   item_id INTEGER NOT NULL, useful INTEGER NOT NULL,"
+        "   clicked_at TEXT NOT NULL DEFAULT (datetime('now')),"
+        "   UNIQUE(user_id, item_id));"
+        " PRAGMA user_version = 0;"
+    )
+    seed.commit()
+    seed.close()
+
+    def boom(conn):
+        raise RuntimeError("simulated failure in migration 003")
+
+    ladder = list(db_mod._MIGRATIONS)
+    ladder[2] = (3, boom)
+    monkeypatch.setattr(db_mod, "_MIGRATIONS", ladder)
+
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    with pytest.raises(RuntimeError, match="simulated failure"):
+        db_mod._migrate(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "corpora" not in tables, "migration 002 committed despite the ladder failing"
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(clicks)")}
+    assert "source" not in cols, "migration 001 committed despite the ladder failing"
+    conn.close()
+
+
+def test_the_dead_kg_tables_are_dropped_from_an_existing_database(tmp_path):
+    """kg_nodes / kg_edges / kg_meta left SCHEMA on 2026-08-21 when the graph
+    became computed from item_tags. Removing a table from SCHEMA does not
+    remove it from a database that already has one, so every DB created before
+    that date still carried them -- the live one held 701 + 2091 + 1 rows that
+    nothing had updated since. The cost is a reader mistaking them for live."""
+    import sqlite3
+
+    from attestation.db import SCHEMA, get_db
+
+    path = tmp_path / "old.db"
+    seed = sqlite3.connect(path)
+    seed.executescript(SCHEMA)
+    seed.executescript(
+        "CREATE TABLE kg_nodes(id INTEGER PRIMARY KEY, label TEXT);"
+        " CREATE TABLE kg_edges(a INTEGER, b INTEGER, w INTEGER);"
+        " CREATE TABLE kg_meta(k TEXT, v TEXT);"
+        " INSERT INTO kg_nodes(label) VALUES ('stale');"
+        " PRAGMA user_version = 3;"
+    )
+    seed.commit()
+    seed.close()
+
+    conn = get_db(path)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert not {"kg_nodes", "kg_edges", "kg_meta"} & tables, (
+        f"dead knowledge-graph tables survived the migration: {sorted(tables)}"
+    )
+    conn.close()
