@@ -21,7 +21,7 @@ import sys
 # file -> highest cyclomatic complexity permitted, measured 2026-08-21.
 # Lower these when the tree improves. Raising one requires a reason.
 BASELINE = {
-    "src/attestation/ledger.py": 30,  # compare -- +1 for the split-preference guard
+    "src/attestation/ledger.py": 29,  # compare -- +1 for the split-preference guard
     "src/attestation/ledger_adapters/generic.py": 29,  # discover
     "src/attestation/kg.py": 20,  # communities
     "src/attestation/mcp/feed.py": 11,  # _score_matches: relevance blend

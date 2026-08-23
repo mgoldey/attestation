@@ -21,6 +21,7 @@ module reads syntax and never asks a model.
 """
 
 import ast
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,6 +53,9 @@ class DetectedCorpus:
 
     def is_empty(self) -> bool:
         return not any((self.source, self.config, self.tokenizer, self.seq_len))
+
+
+log = logging.getLogger(__name__)
 
 
 def _literal(node: ast.AST) -> str | int | None:
@@ -217,6 +221,31 @@ def upsert(conn, entry: dict) -> int | None:
             (str(name), *(entry.get(c) for c in columns)),
         )
     else:
+        # A CONFLICT is not a gap. The docstring below promises a declaration
+        # is never silently replaced by a weaker value; a different value was
+        # simply ignored, which is worse -- two arms declaring `internal-eval`
+        # with different dataset_source collapsed into one row, and compare
+        # then vouched for agreement between runs on different data. Mark the
+        # name as contested so _corpus_agreement can refuse rather than
+        # confirm; inventing a second name would be a guess about which
+        # declaration is authoritative.
+        conflicts = [
+            c
+            for c in columns
+            if row[c] is not None and entry.get(c) is not None and row[c] != entry.get(c)
+        ]
+        if conflicts:
+            log.warning(
+                "corpus %r declared with conflicting %s (%s vs %s); marking it contested",
+                name,
+                ", ".join(conflicts),
+                row[conflicts[0]],
+                entry.get(conflicts[0]),
+            )
+            conn.execute(
+                "UPDATE corpora SET source = ? WHERE name = ?",
+                (f"CONTESTED: {row['source']} vs {entry.get('source')}", str(name)),
+            )
         missing = {c: entry.get(c) for c in columns if row[c] is None and entry.get(c) is not None}
         if missing:
             sets = ", ".join(f"{c} = ?" for c in missing)

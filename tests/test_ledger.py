@@ -1207,3 +1207,53 @@ def test_corpus_agreement_is_safe_called_directly_with_colliding_names():
 
     assert corpus is None, f"reported agreement on {corpus!r} across two corpora"
     assert caveats, "two corpora and no caveat"
+
+
+def test_two_corpora_sharing_a_name_do_not_silently_merge(tmp_path):
+    """`corpora.name` is globally unique, so round-15's defect survives one
+    scope down -- inside a single project.
+
+    Two arms each declared corpus `internal-eval` with different
+    dataset_source (librispeech-clean vs librispeech-other). upsert keys on the
+    name, keeps the first source, discards the second, and hands
+    _corpus_agreement two identical strings -- which then reports checked
+    agreement between arms that ran on different data. Round 15 fixed that
+    function's key; the disagreement is erased UPSTREAM of it.
+
+    upsert's docstring says "a declaration must never be silently replaced by a
+    weaker value". A CONFLICTING value is the worse case and was ignored
+    entirely.
+    """
+    from attestation import corpus, ledger
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    corpus.upsert(conn, {"name": "internal-eval", "source": "librispeech-clean"})
+    corpus.upsert(conn, {"name": "internal-eval", "source": "librispeech-other"})
+    conn.commit()
+
+    rows = list(conn.execute("SELECT name, source FROM corpora"))
+    assert any("CONTESTED" in (r["source"] or "") for r in rows), (
+        f"two different corpora collapsed silently into {[dict(r) for r in rows]}"
+    )
+
+    # And the marker must reach a READER, not just the database: compare
+    # cannot claim agreement on a corpus whose own definition is disputed.
+    conn.execute(
+        "INSERT INTO runs(project, name, family, status, source_path, corpus_id)"
+        " VALUES ('p', 'a', 'f', 'recorded', '/tmp/a.json', 1)"
+    )
+    conn.execute(
+        "INSERT INTO runs(project, name, family, status, source_path, corpus_id)"
+        " VALUES ('p', 'b', 'f', 'recorded', '/tmp/b.json', 1)"
+    )
+    for run_id, value in ((1, 0.05), (2, 0.09)):
+        conn.execute(
+            "INSERT INTO run_metrics(run_id, metric, value) VALUES (?, 'wer', ?)",
+            (run_id, value),
+        )
+    conn.commit()
+
+    result = ledger.compare(conn, "f", metric="wer")
+    assert result.get("corpus") is None, "vouched for a corpus whose definition is disputed"
+    assert any("disputed" in c for c in result["caveats"]), result["caveats"]

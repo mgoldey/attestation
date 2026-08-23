@@ -497,3 +497,51 @@ def test_wandb_bookkeeping_keys_are_not_metrics(tmp_path):
 
     (run,) = generic.discover(proj)
     assert [m.metric for m in run.metrics] == ["accuracy"], [m.metric for m in run.metrics]
+
+
+def test_a_config_does_not_shadow_a_result_of_the_same_name(tmp_path):
+    """A spec claimed a run's name and the measured result was dropped --
+    naming the wrong winner.
+
+    `discover` walks CONFIG_DIRS before RESULT_DIRS sharing one `seen` set of
+    bare stems, so `configs/asr_biglm.yaml` claimed `asr_biglm` and
+    `results/asr_biglm.json` was skipped. compare then reported the real winner
+    (WER 0.05) in `without_metric` -- "an arm that was never evaluated", the
+    phrase the docstring uses to justify surfacing it as a finding -- and named
+    the loser (0.09) the winner.
+
+    A config is a SPEC and a result is a MEASUREMENT. When both exist for one
+    name the measurement is the run; the spec is what it was going to be.
+    """
+    proj = tmp_path / "asr"
+    (proj / "configs").mkdir(parents=True)
+    (proj / "results").mkdir()
+    (proj / "configs" / "asr_biglm.yaml").write_text("lr: 0.001\n")
+    (proj / "results" / "asr_biglm.json").write_text(json.dumps({"tag": "asr_biglm", "wer": 0.05}))
+
+    runs = {r.name: r for r in generic.discover(proj)}
+    assert "asr_biglm" in runs
+    assert runs["asr_biglm"].status == "recorded", (
+        f"the config shadowed the result: status={runs['asr_biglm'].status}, "
+        f"source={runs['asr_biglm'].source_path}"
+    )
+    assert runs["asr_biglm"].metrics, "the measured value was dropped"
+
+
+def test_two_result_directories_do_not_collide_on_a_bare_stem(tmp_path):
+    """`results/baseline.json` and `eval/baseline.json` recorded one run.
+
+    Both are RESULT_DIRS and the `seen` set holds bare stems, so the second was
+    silently skipped with no diagnostic -- in a sweep where final numbers moved
+    to eval/, that discards the real scores and ranks against stale ones, with
+    no caveat because the tool cannot see what it dropped.
+    """
+    proj = tmp_path / "asr"
+    (proj / "results").mkdir(parents=True)
+    (proj / "eval").mkdir()
+    (proj / "results" / "baseline.json").write_text(json.dumps({"tag": "baseline", "wer": 0.30}))
+    (proj / "eval" / "baseline.json").write_text(json.dumps({"tag": "baseline", "wer": 0.05}))
+
+    runs = generic.discover(proj)
+    assert len(runs) == 2, f"two files became {len(runs)} run(s): {[r.name for r in runs]}"
+    assert len({r.name for r in runs}) == 2, "the two runs must be distinguishable by name"

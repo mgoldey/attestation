@@ -713,34 +713,32 @@ def _mlflow_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     return records
 
 
+def _result_name(stem: str, result: Path, base: Path, dirname: str, seen: set[str]) -> str:
+    """A run name that does not collide with one already recorded.
+
+    Qualified by its directory when the bare stem is taken:
+    `results/baseline.json` and `eval/baseline.json` are two runs, and
+    recording only one silently discarded the other's numbers -- in a sweep
+    where final scores moved to eval/, that ranks against stale ones with no
+    caveat, because the tool cannot see what it dropped.
+    """
+    if result.parent != base:
+        return f"{result.parent.name}/{stem}"
+    return f"{dirname}/{stem}" if stem in seen else stem
+
+
 def discover(root: Path) -> list[RunRecord]:
     project = root.name
     records: list[RunRecord] = []
     seen: set[str] = set()
 
-    for dirname in CONFIG_DIRS:
-        for cfg in sorted((root / dirname).glob("*")):
-            if cfg.suffix.lower() not in CONFIG_SUFFIXES or not cfg.is_file():
-                continue
-            if cfg.suffix == ".json" and _load(cfg) is not None:
-                continue  # a JSON config that parses as data is handled as a result
-            name = cfg.stem
-            if name in seen:
-                continue
-            seen.add(name)
-            records.append(
-                RunRecord(
-                    project=project,
-                    name=name,
-                    source_path=str(cfg),
-                    family=family_of(name),
-                    status="spec",
-                    config=_config_shape(cfg),
-                    notes=_header_comment(cfg),
-                    adapter=ADAPTER_NAME,
-                )
-            )
-
+    # RESULTS FIRST, then configs. Both share `seen`, and walking configs
+    # first let `configs/asr_biglm.yaml` claim the name `asr_biglm` so
+    # `results/asr_biglm.json` was skipped -- compare then reported the real
+    # winner (WER 0.05) as "an arm that was never evaluated" and named the
+    # loser. A config is a SPEC and a result is a MEASUREMENT; when both exist
+    # for one name the measurement is the run, and the spec is what it was
+    # going to be.
     for dirname in RESULT_DIRS:
         base = root / dirname
         if not base.is_dir():
@@ -786,7 +784,7 @@ def discover(root: Path) -> list[RunRecord]:
             metrics = metrics_from_payload(payload, _step_from(stem), _split_from(stem))
             if not metrics:
                 continue
-            name = stem if result.parent == base else f"{result.parent.name}/{stem}"
+            name = _result_name(stem, result, base, dirname, seen)
             if name in seen:
                 continue
             seen.add(name)
@@ -808,6 +806,29 @@ def discover(root: Path) -> list[RunRecord]:
 
     # Tracker directories last, sharing `seen`: a project may have both a
     # results/ tree and a wandb/ one, and the same run must not appear twice.
+    for dirname in CONFIG_DIRS:
+        for cfg in sorted((root / dirname).glob("*")):
+            if cfg.suffix.lower() not in CONFIG_SUFFIXES or not cfg.is_file():
+                continue
+            if cfg.suffix == ".json" and _load(cfg) is not None:
+                continue  # a JSON config that parses as data is handled as a result
+            name = cfg.stem
+            if name in seen:
+                continue
+            seen.add(name)
+            records.append(
+                RunRecord(
+                    project=project,
+                    name=name,
+                    source_path=str(cfg),
+                    family=family_of(name),
+                    status="spec",
+                    config=_config_shape(cfg),
+                    notes=_header_comment(cfg),
+                    adapter=ADAPTER_NAME,
+                )
+            )
+
     records.extend(_wandb_runs(root, seen))
     records.extend(_mlflow_runs(root, seen))
     return records

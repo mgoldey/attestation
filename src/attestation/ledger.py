@@ -524,7 +524,10 @@ def _family_rows(conn: sqlite3.Connection, family: str, project: str | None) -> 
     """The runs of one family, optionally narrowed to a project."""
     sql = (
         "SELECT r.id, r.project, r.name, r.status, r.source_path, r.adapter,"
-        " c.name AS corpus"
+        # c.source too: upsert records a CONTESTED marker there when one
+        # corpus name carries two conflicting declarations, and a comparison
+        # must not vouch for a corpus whose own definition is disputed.
+        " c.name AS corpus, c.source AS corpus_source"
         " FROM runs r LEFT JOIN corpora c ON c.id = r.corpus_id"
         " WHERE r.family = ?"
     )
@@ -742,6 +745,23 @@ def _corpus_agreement(runs: list[dict], metric: str) -> tuple[str | None, list[s
     named = {(r["project"], r["name"]): r.get("corpus") for r in runs}
     known = {c for c in named.values() if c}
     unknown = sorted(name for (_project, name), c in named.items() if not c)
+
+    # A corpus whose own definition is disputed cannot ground an agreement
+    # claim. corpus.upsert marks the row CONTESTED when two declarations of one
+    # name disagree; naming it here would be the same false confidence the
+    # name-collision bug produced, one layer down.
+    contested = sorted(
+        {
+            str(source)
+            for r in runs
+            if (source := r.get("corpus_source")) and str(source).startswith("CONTESTED")
+        }
+    )
+    if contested:
+        return None, [
+            "arms name the same corpus but its definition is disputed"
+            f" ({'; '.join(contested)}) -- the comparison is unverified"
+        ]
 
     if len(known) > 1:
         sensitive = _metric_stem(metric) in _CORPUS_SENSITIVE
