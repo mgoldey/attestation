@@ -502,6 +502,13 @@ def test_step_warmup_ok_on_success(monkeypatch):
 
 
 def test_mcp_wiring_present_in_list_no_add_recorded(monkeypatch):
+    """An already-registered server is not re-added.
+
+    This once also asserted OK on the bare presence of the name. It no longer
+    can: the step now checks the per-surface entries too, and a config with
+    only the full server is genuinely incomplete. The no-double-add property
+    is what this test was for and it is unchanged.
+    """
     fake = _patch_run(
         monkeypatch,
         responses={
@@ -509,10 +516,11 @@ def test_mcp_wiring_present_in_list_no_add_recorded(monkeypatch):
         },
     )
 
-    result = install.step_mcp_wiring("agenthermes", check=False)
+    install.step_mcp_wiring("agenthermes", check=False)
 
-    assert result.status == "OK"
-    assert not any("add" in c for c in fake.calls)
+    assert not any(c[:4] == ["agenthermes", "mcp", "add", "attestation"] for c in fake.calls), (
+        "re-registered a server that `mcp list` already showed"
+    )
 
 
 def _registers(name, verb, before=""):
@@ -535,9 +543,11 @@ def test_mcp_wiring_absent_exact_add_argv_recorded(monkeypatch, tmp_path):
     stub = _registers("attestation", "mcp", before="other-server\n")
     fake = _patch_run(monkeypatch, default=stub)
 
-    result = install.step_mcp_wiring("agenthermes", check=False)
+    install.step_mcp_wiring("agenthermes", check=False)
 
-    assert result.status == "FIXED"
+    # The argv is what this pins. The step's status now also depends on the
+    # per-surface entries, which this stub does not model -- asserting it here
+    # would be asserting the stub.
     expected = [
         "agenthermes",
         "mcp",
@@ -1307,3 +1317,100 @@ def test_crontab_lines_survives_no_crontab(monkeypatch):
         lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr="no crontab"),
     )
     assert install._crontab_lines() == []
+
+
+def test_mcp_wiring_reports_a_missing_surface(monkeypatch):
+    """A substring match cannot see a missing surface.
+
+    `step_mcp_wiring` returned ok on finding the string "attestation" in
+    `hermes mcp list`, so a config holding the full server and none of the
+    four per-surface entries reported clean. Those four were typed by hand and
+    nothing in the repo knew they existed.
+    """
+    monkeypatch.setattr(install, "_checkout_root", lambda: Path("/repo"))
+
+    def fake_run(cmd, **kw):
+        joined = " ".join(cmd)
+        if "mcp" in joined and "list" in joined:
+            return SimpleNamespace(returncode=0, stdout="attestation", stderr="")
+        if "config" in joined and "get" in joined:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "attestation:\n  args:\n  - run\n  - --project\n  - /repo\n"
+                    "  - attest-mcp\n  command: uv\n  enabled: true\n"
+                ),
+                stderr="",
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(install, "_run", fake_run)
+
+    result = install.step_mcp_wiring("hermes", check=True)
+    assert result.status == install.Status.BROKEN
+    assert "surface" in result.detail.lower()
+
+
+def test_mcp_wiring_reports_an_orphaned_surface(monkeypatch):
+    """The finding a substring check can never make: an entry naming a surface
+    that no longer exists. It still launches, and `register_all` raises on it
+    -- loudly, but at the user's next tool call rather than at install time."""
+    from attestation import emit
+
+    monkeypatch.setattr(install, "_checkout_root", lambda: Path("/repo"))
+
+    dump = [
+        "attestation:\n  args:\n  - run\n  - --project\n  - /repo\n  - attest-mcp\n"
+        "  command: uv\n  enabled: true\n"
+    ]
+    for name in list(emit.AGENT_SURFACES) + ["citations"]:
+        dump.append(
+            f"attestation-{name}:\n  args:\n  - run\n  - --project\n  - /repo\n"
+            f"  - attest-mcp\n  command: uv\n  enabled: false\n"
+            f"  env:\n    ATTEST_TOOLS: {name}\n"
+        )
+
+    def fake_run(cmd, **kw):
+        joined = " ".join(cmd)
+        if "mcp" in joined and "list" in joined:
+            return SimpleNamespace(returncode=0, stdout="attestation", stderr="")
+        if "config" in joined and "get" in joined:
+            return SimpleNamespace(returncode=0, stdout="".join(dump), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(install, "_run", fake_run)
+
+    result = install.step_mcp_wiring("hermes", check=True)
+    assert result.status == install.Status.BROKEN
+    assert "citations" in result.detail
+
+
+def test_mcp_wiring_is_ok_with_a_complete_config(monkeypatch):
+    """One scheduler, all four surfaces: the correct state, not a fault."""
+    from attestation import emit
+
+    monkeypatch.setattr(install, "_checkout_root", lambda: Path("/repo"))
+
+    dump = [
+        "attestation:\n  args:\n  - run\n  - --project\n  - /repo\n  - attest-mcp\n"
+        "  command: uv\n  enabled: true\n"
+    ]
+    for name in emit.AGENT_SURFACES:
+        dump.append(
+            f"attestation-{name}:\n  args:\n  - run\n  - --project\n  - /repo\n"
+            f"  - attest-mcp\n  command: uv\n  enabled: false\n"
+            f"  env:\n    ATTEST_TOOLS: {name}\n"
+        )
+
+    def fake_run(cmd, **kw):
+        joined = " ".join(cmd)
+        if "mcp" in joined and "list" in joined:
+            return SimpleNamespace(returncode=0, stdout="attestation", stderr="")
+        if "config" in joined and "get" in joined:
+            return SimpleNamespace(returncode=0, stdout="".join(dump), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(install, "_run", fake_run)
+
+    result = install.step_mcp_wiring("hermes", check=True)
+    assert result.status != install.Status.BROKEN, result.detail

@@ -74,6 +74,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("reload", help="restart running MCP servers so code edits take effect")
     sp.set_defaults(func=cmd_reload)
 
+    sp = sub.add_parser("emit", help="agent configs generated from the tool surfaces")
+    sp.add_argument(
+        "--write", action="store_true", help="write the Claude agent files (default: report only)"
+    )
+    sp.set_defaults(func=cmd_emit)
+
     sp = sub.add_parser("kg-report", help="knowledge-graph health + topic clusters")
     add_db(sp)
     sp.add_argument("--min-size", type=int, default=3, help="smallest cluster to list")
@@ -188,6 +194,61 @@ def _running_mcp_pids() -> list[int]:
     except (OSError, subprocess.SubprocessError):
         return []
     return [int(line) for line in out.split() if line.isdigit() and int(line) != os.getpid()]
+
+
+def cmd_emit(args: argparse.Namespace) -> int:
+    """Report -- or with --write, produce -- the per-surface agent configs.
+
+    Reporting is the default because nothing here overwrites: a difference
+    between generated and on-disk is a fact the user acts on, not one this
+    command resolves for them. See emit.py's module docstring.
+    """
+    import subprocess
+
+    from attestation import emit
+    from attestation.install import _checkout_root, _find_agent_binary
+
+    root = _checkout_root()
+    if root is None:
+        print("not running from a checkout; nothing to point a config at")
+        return 1
+
+    agent = _find_agent_binary()
+    if agent:
+        proc = subprocess.run(
+            [agent, "config", "get", "mcp_servers"], capture_output=True, text=True, timeout=60
+        )
+        findings = emit.check_hermes(emit.parse_config_dump(proc.stdout), root)
+        if findings:
+            print(f"{len(findings)} config problem(s):")
+            for f in findings:
+                print(f"  [{f.kind}] {f.detail}")
+        else:
+            print(f"mcp surfaces: all {len(emit.hermes_servers(root))} present and current")
+    else:
+        print("no agent binary found; skipping the MCP config check")
+
+    agents_dir = root / ".claude" / "agents"
+    generated = emit.claude_agents(root)
+    if args.write:
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        for name, body in generated.items():
+            (agents_dir / f"attestation-{name}.md").write_text(body)
+        print(f"wrote {len(generated)} agent file(s) to {agents_dir}")
+        return 0
+
+    stale = []
+    for name, body in generated.items():
+        path = agents_dir / f"attestation-{name}.md"
+        if not path.is_file() or path.read_text() != body:
+            stale.append(name)
+    if stale:
+        print(f"{len(stale)} agent file(s) missing or differing: {', '.join(sorted(stale))}")
+        print("  run `attest emit --write` to regenerate (existing files are never overwritten")
+        print("  without it -- a deliberate edit is reported, not reverted)")
+    else:
+        print(f"claude agents: all {len(generated)} present and current")
+    return 0
 
 
 def cmd_reload(args: argparse.Namespace) -> int:

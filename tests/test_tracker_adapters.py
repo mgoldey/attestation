@@ -31,7 +31,7 @@ def _wandb_run(root, run_id, summary, config=None, metadata=None):
     if config is not None:
         lines = ["wandb_version: 1", ""]
         for k, v in config.items():
-            lines += [f"{k}:", f"  desc: null", f"  value: {v}"]
+            lines += [f"{k}:", "  desc: null", f"  value: {v}"]
         lines += ["_wandb:", "  desc: null", "  value:", "    cli_version: 0.16.0"]
         (d / "config.yaml").write_text("\n".join(lines) + "\n")
     if metadata is not None:
@@ -39,8 +39,18 @@ def _wandb_run(root, run_id, summary, config=None, metadata=None):
     return d
 
 
-def _mlflow_run(root, exp, run_id, *, name, metrics, params=None, status="FINISHED",
-                lifecycle="active", start_ms=1755000000000):
+def _mlflow_run(
+    root,
+    exp,
+    run_id,
+    *,
+    name,
+    metrics,
+    params=None,
+    status="FINISHED",
+    lifecycle="active",
+    start_ms=1755000000000,
+):
     d = root / "mlruns" / exp / run_id
     (d / "metrics").mkdir(parents=True)
     (d / "params").mkdir(parents=True)
@@ -126,7 +136,9 @@ def test_wandb_start_time_comes_from_metadata(tmp_path):
     this adapter reads carries one."""
     proj = tmp_path / "p"
     _wandb_run(
-        proj, "run-1-abc", {"wer": 0.1},
+        proj,
+        "run-1-abc",
+        {"wer": 0.1},
         metadata={"program": "t.py", "startedAt": "2026-08-14T10:11:33Z"},
     )
 
@@ -154,7 +166,10 @@ def test_mlflow_reads_the_final_value_of_each_metric(tmp_path):
     run in the ledger and flood run_metrics -- 200 epochs becomes 200 rows."""
     proj = tmp_path / "p"
     _mlflow_run(
-        proj, "0", "abc", name="run-a",
+        proj,
+        "0",
+        "abc",
+        name="run-a",
         metrics={"wer": [(1000, 0.51, 0), (2000, 0.33, 1), (3000, 0.29, 2)]},
     )
 
@@ -166,8 +181,7 @@ def test_mlflow_reads_the_final_value_of_each_metric(tmp_path):
 
 def test_mlflow_uses_its_run_name_not_the_uuid(tmp_path):
     proj = tmp_path / "p"
-    _mlflow_run(proj, "0", "9f8e7d6c5b4a", name="dense-baseline",
-                metrics={"wer": [(0, 0.2, 0)]})
+    _mlflow_run(proj, "0", "9f8e7d6c5b4a", name="dense-baseline", metrics={"wer": [(0, 0.2, 0)]})
 
     (run,) = generic.discover(proj)
     assert "dense-baseline" in run.name
@@ -178,8 +192,9 @@ def test_mlflow_deleted_runs_are_skipped(tmp_path):
     Resurrecting it is worse than missing it."""
     proj = tmp_path / "p"
     _mlflow_run(proj, "0", "keep", name="kept", metrics={"wer": [(0, 0.2, 0)]})
-    _mlflow_run(proj, "0", "gone", name="trashed", metrics={"wer": [(0, 0.1, 0)]},
-                lifecycle="deleted")
+    _mlflow_run(
+        proj, "0", "gone", name="trashed", metrics={"wer": [(0, 0.1, 0)]}, lifecycle="deleted"
+    )
 
     names = [r.name for r in generic.discover(proj)]
     assert any("kept" in n for n in names)
@@ -188,8 +203,14 @@ def test_mlflow_deleted_runs_are_skipped(tmp_path):
 
 def test_mlflow_params_become_config(tmp_path):
     proj = tmp_path / "p"
-    _mlflow_run(proj, "0", "abc", name="r", metrics={"wer": [(0, 0.2, 0)]},
-                params={"lr": "0.0003", "model": "conformer"})
+    _mlflow_run(
+        proj,
+        "0",
+        "abc",
+        name="r",
+        metrics={"wer": [(0, 0.2, 0)]},
+        params={"lr": "0.0003", "model": "conformer"},
+    )
 
     (run,) = generic.discover(proj)
     assert run.config["lr"] == "0.0003"
@@ -234,7 +255,9 @@ def test_a_tracker_run_colliding_with_a_results_run_is_recorded_once(tmp_path):
     (proj / "results" / "train_asr").mkdir()
     (proj / "results" / "train_asr" / "a1b2c3d4.json").write_text(json.dumps({"wer": 0.4}))
     _wandb_run(
-        proj, "run-20260814_101133-a1b2c3d4", {"wer": 0.12},
+        proj,
+        "run-20260814_101133-a1b2c3d4",
+        {"wer": 0.12},
         metadata={"program": "train_asr.py"},
     )
 

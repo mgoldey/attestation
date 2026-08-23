@@ -317,13 +317,96 @@ def _skill_dest_dir() -> Path:
     return Path.home() / ".hermes" / "skills" / SKILL_NAME
 
 
+def _register_surfaces(agent: str, root: Path) -> list[str]:
+    """Create the per-surface MCP entries. Returns the names it added.
+
+    These were typed by hand and the installer never knew about them, so a
+    fresh install got the full 46-tool surface -- which measured 8/15 -- rather
+    than the four restricted ones that are the reason the surfaces exist.
+
+    `enabled: false` on each: a surface is chosen at launch by a person, and
+    five servers all enabled would put every tool back into one session.
+    """
+    from attestation import emit
+
+    added = []
+    for name, entry in emit.hermes_servers(root).items():
+        created = _run_answering_prompts(
+            [agent, "mcp", "add", name, "--command", entry["command"], "--args", *entry["args"]]
+        )
+        if created.returncode != 0:
+            continue
+        _run(
+            [
+                agent,
+                "config",
+                "set",
+                f"mcp_servers.{name}.env.ATTEST_TOOLS",
+                entry["env"]["ATTEST_TOOLS"],
+            ]
+        )
+        _run([agent, "config", "set", f"mcp_servers.{name}.enabled", "false"])
+        added.append(name)
+    return added
+
+
+def _check_surfaces(agent: str, *, check: bool) -> StepResult:
+    """Whether the per-surface MCP entries match what the tool surface declares.
+
+    Compares against `emit`'s generator, not against a substring. The old
+    check returned ok on seeing "attestation" anywhere in `hermes mcp list`,
+    which is true of a config holding the full server and none of the four
+    per-surface entries -- exactly the state that shipped, since those four
+    were typed by hand and nothing in the repo knew they existed.
+
+    `orphaned` is the finding a substring can never make, and the same shape as
+    the duplicate crontab entry: a hand-added thing that used to be right, that
+    the tool owning the domain cannot see.
+    """
+    from attestation import emit
+
+    root = _checkout_root()
+    if root is None:
+        return StepResult("mcp_wiring", Status.OK, "attestation registered")
+
+    dump = _run([agent, "config", "get", "mcp_servers"])
+    findings = emit.check_hermes(emit.parse_config_dump(dump.stdout), root)
+
+    # A doctor that reports a state the installer cannot reach tells every user
+    # their install is broken. Missing surfaces are creatable, so create them
+    # unless this is a --check run; anything else is for the user to resolve.
+    if findings and not check and all(f.kind == "missing" for f in findings):
+        if _register_surfaces(agent, root):
+            dump = _run([agent, "config", "get", "mcp_servers"])
+            findings = emit.check_hermes(emit.parse_config_dump(dump.stdout), root)
+            if not findings:
+                return StepResult(
+                    "mcp_wiring",
+                    Status.FIXED,
+                    f"registered {len(emit.hermes_servers(root))} surfaces",
+                )
+
+    if not findings:
+        return StepResult(
+            "mcp_wiring",
+            Status.OK,
+            f"attestation registered, all {len(emit.hermes_servers(root))} surfaces current",
+        )
+    return StepResult(
+        "mcp_wiring",
+        Status.BROKEN,
+        f"{len(findings)} surface problem(s); `attest emit` explains each: "
+        + "; ".join(f"[{f.kind}] {f.detail}" for f in findings),
+    )
+
+
 def step_mcp_wiring(agent: str | None, check: bool = False) -> StepResult:
     if agent is None:
         return StepResult("mcp_wiring", Status.SKIPPED, "no hermes-agent binary found")
 
     proc = _run([agent, "mcp", "list"])
     if "attestation" in proc.stdout:
-        return StepResult("mcp_wiring", Status.OK, "attestation already registered")
+        return _check_surfaces(agent, check=check)
 
     if check:
         return StepResult("mcp_wiring", Status.BROKEN, "attestation MCP server not registered")
@@ -358,7 +441,11 @@ def step_mcp_wiring(agent: str | None, check: bool = False) -> StepResult:
             Status.BROKEN,
             f"{agent} did not register the attestation MCP server",
         )
-    return StepResult("mcp_wiring", Status.FIXED, "registered attestation MCP server")
+    # Fall through rather than returning: the surfaces are half of this step,
+    # and returning FIXED here would leave a fresh install with the full
+    # 46-tool surface and none of the four restricted ones -- then report them
+    # missing on the very next run.
+    return _check_surfaces(agent, check=check)
 
 
 def _skill_files_to_sync(src_dir: Path) -> list[Path]:

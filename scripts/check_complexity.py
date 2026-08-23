@@ -24,7 +24,7 @@ BASELINE = {
     "src/attestation/ledger.py": 30,  # compare -- +1 for the split-preference guard
     "src/attestation/ledger_adapters/generic.py": 29,  # discover
     "src/attestation/kg.py": 20,  # communities
-    "src/attestation/mcp/feed.py": 14,  # _score_matches: relevance blend
+    "src/attestation/mcp/feed.py": 11,  # _score_matches: relevance blend
     "src/attestation/corpus.py": 17,  # detect_in_source
     "src/attestation/claims.py": 15,  # check_claim
     "src/attestation/cli.py": 14,  # cmd_claims
@@ -32,7 +32,7 @@ BASELINE = {
     # route_feed is a rule table: each intent is one branch, and flattening it
     # into data would hide the ordering that the tests pin (a mutation like
     # "add X to my feeds" must be tested before the listing it mentions).
-    "src/attestation/mcp/ask.py": 14,  # route_feed: +1 for the read/summarise rule
+    "src/attestation/mcp/ask.py": 10,  # route_feed: +1 for the read/summarise rule
 }
 
 # Anything not listed must stay at or below this. New code starts strict.

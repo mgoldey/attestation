@@ -46,7 +46,7 @@ def test_no_restriction_serves_everything(monkeypatch, tmp_path):
 @pytest.mark.parametrize("surface", sorted(AGENT_SURFACES))
 def test_each_surface_serves_only_its_own_namespaces(monkeypatch, tmp_path, surface):
     names = _served(monkeypatch, tmp_path, surface)
-    allowed = AGENT_SURFACES[surface]
+    allowed = AGENT_SURFACES[surface].prefixes
     for name in names:
         namespace = name.split(".", 1)[0]
         assert namespace in allowed or name in allowed, (

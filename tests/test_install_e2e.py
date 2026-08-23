@@ -18,6 +18,7 @@ import threading
 from pathlib import Path
 
 import attestation.install as install
+from attestation import emit
 from attestation.cli import main
 from attestation.db import get_db
 
@@ -40,11 +41,19 @@ echo "$@" >> "$LOG_FILE"
 
 case "$1 $2" in
   "mcp list")
-    cat "$MCP_STATE"
+    cut -d"|" -f1 "$MCP_STATE"
     exit 0
     ;;
   "mcp add")
-    echo "$3" >> "$MCP_STATE"
+    # Record the name AND the args it was given. The doctor compares the
+    # recorded --project path against the live checkout, so a stub that
+    # invented a path would either pass a stale entry or fail a correct one.
+    name="$3"
+    shift 3
+    while [ "${{1:-}}" = "--command" ] || [ "${{1:-}}" = "--args" ]; do
+      if [ "$1" = "--command" ]; then shift 2; else shift; break; fi
+    done
+    echo "$name|$*" >> "$MCP_STATE"
     exit 0
     ;;
   "cron list")
@@ -57,6 +66,28 @@ case "$1 $2" in
     exit 0
     ;;
   "config get")
+    # `config get mcp_servers` returns the nested dump the real agent emits,
+    # rebuilt from what `mcp add` recorded. Modelling it matters: the doctor
+    # parses this shape to find missing and orphaned surfaces, and a flat
+    # key=value stub would make every one of those checks unreachable here.
+    if [ "$3" = "mcp_servers" ]; then
+      while IFS="|" read -r name arglist; do
+        [ -n "$name" ] || continue
+        echo "$name:"
+        echo "  args:"
+        for a in $arglist; do echo "  - $a"; done
+        echo "  command: uv"
+        tools=$(grep "^mcp_servers.$name.env.ATTEST_TOOLS=" "$CONFIG_STATE" || true)
+        if [ -n "$tools" ]; then
+          echo "  enabled: false"
+          echo "  env:"
+          echo "    ATTEST_TOOLS: ${{tools#*=}}"
+        else
+          echo "  enabled: true"
+        fi
+      done < "$MCP_STATE"
+      exit 0
+    fi
     line=$(grep "^$3=" "$CONFIG_STATE" || true)
     if [ -z "$line" ]; then
       exit 1
@@ -165,7 +196,10 @@ class _Sandbox:
 
         bin_dir = tmp_path / "stubbin"
         bin_dir.mkdir()
-        _write_executable(bin_dir / "hermes", HERMES_STUB.format(state_dir=str(self.state_dir)))
+        _write_executable(
+            bin_dir / "hermes",
+            HERMES_STUB.format(state_dir=str(self.state_dir)),
+        )
         _write_executable(
             bin_dir / "ollama",
             OLLAMA_STUB.format(chat_model=CHAT_MODEL, embed_model=EMBED_MODEL),
@@ -224,10 +258,16 @@ def test_fresh_install_demonstrates_end_to_end(tmp_path, monkeypatch):
         assert os.access(box.refresh_script, os.X_OK)
 
         log = box.log()
-        mcp_adds = [line for line in log if line.startswith("mcp add attestation")]
+        # "mcp add attestation " with the trailing space: the surfaces are
+        # named attestation-<surface> and a prefix match would count them too.
+        full_adds = [line for line in log if line.startswith("mcp add attestation ")]
+        surface_adds = [line for line in log if line.startswith("mcp add attestation-")]
         cron_creates = [line for line in log if "cron create" in line and "--no-agent" in line]
-        assert len(mcp_adds) == 1
+        assert len(full_adds) == 1
         assert len(cron_creates) == 1
+        # A fresh install must get the restricted surfaces, not just the full
+        # 46-tool one: the flat surface measured 8/15 and the split is the fix.
+        assert len(surface_adds) == len(emit.hermes_servers(box.repo_root)), surface_adds
     finally:
         server.shutdown()
 

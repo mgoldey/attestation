@@ -15,6 +15,7 @@ instead of picking from 34 flat names where `runs_compare`, `kg_path`,
 """
 
 import os
+from dataclasses import dataclass
 
 from attestation.mcp import ask, feed, knowledge, provenance, subscriptions, symbolic
 
@@ -42,11 +43,45 @@ DOMAINS = (ask, feed, knowledge, provenance, subscriptions, symbolic)
 #   Claims live with `runs`, not with the graph. `runs.claims_check` verifies
 #   numbers in Markdown AGAINST recorded runs; separating them would put a
 #   claim checker in a session that cannot see what it checks against.
-AGENT_SURFACES: dict[str, frozenset[str]] = {
-    "feed": frozenset({"feed"}),
-    "provenance": frozenset({"runs"}),
-    "knowledge": frozenset({"kg", "feed.search"}),
-    "symbolic": frozenset({"sym"}),
+#
+# `summary` and `rationale` are data rather than comments because
+# `attestation.emit` generates agent configs from this table, and prose that
+# explains a config should live where the config is generated from -- otherwise
+# it rots separately from it.
+
+
+@dataclass(frozen=True)
+class Surface:
+    """One agent's remit: what it may see, and why it is its own session."""
+
+    prefixes: frozenset[str]
+    summary: str
+    rationale: str
+
+
+AGENT_SURFACES: dict[str, Surface] = {
+    "feed": Surface(
+        prefixes=frozenset({"feed"}),
+        summary="Read and search the science feed, and manage what it subscribes to.",
+        rationale="Conversational; a wrong guess costs a retry.",
+    ),
+    "provenance": Surface(
+        prefixes=frozenset({"runs"}),
+        summary="Scan experiment runs, compare arms, and check claims against them.",
+        rationale=(
+            "Verification: a wrong answer reaches a manuscript, and the caveats are the product."
+        ),
+    ),
+    "knowledge": Surface(
+        prefixes=frozenset({"kg", "feed.search"}),
+        summary="Explore the reading knowledge graph and the items behind it.",
+        rationale="Exploratory, read-only.",
+    ),
+    "symbolic": Surface(
+        prefixes=frozenset({"sym"}),
+        summary="Symbolic algebra and calculus, in a sandboxed subprocess.",
+        rationale="Sandboxed subprocess, touches no database.",
+    ),
 }
 
 
@@ -113,6 +148,6 @@ def register_all(mcp) -> None:
         # surface boundary -- disclosure widens what you can see, never what
         # you are allowed to touch.
         expand = os.environ.get("ATTEST_EXPAND", "").strip() not in ("", "0", "false")
-        mcp = _FilteringServer(mcp, AGENT_SURFACES[requested], expand)
+        mcp = _FilteringServer(mcp, AGENT_SURFACES[requested].prefixes, expand)
     for domain in DOMAINS:
         domain.register(mcp)
