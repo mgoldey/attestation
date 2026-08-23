@@ -180,7 +180,7 @@ def test_mcp_domain_modules_stay_small():
         # tools that call them and touch the rest of the system.
         "ask.py": 315,
         "routing.py": 265,
-        "provenance.py": 250,
+        "provenance.py": 275,
     }
     # Anything not named above still gets a cap. `if name not in limits:
     # continue` meant a module was exempt until someone remembered to enrol it

@@ -258,10 +258,33 @@ def _detail(conn, project: str, name: str) -> dict:
 
     metrics = found["metrics"]
     total = len(metrics)
-    found = {**found, "metrics": metrics[:MAX_METRIC_ROWS], "n_metrics": total}
+
+    # Collapse a step SERIES to its last value, keeping every distinct metric.
+    # Slicing the first N rows instead returned `b_g` forty times -- ledger
+    # orders by (metric, step) -- while 32 other metrics vanished from a run
+    # whose shape is exactly those 33 names. A caller reading one run wants to
+    # know what was measured; runs.compare is where a series belongs.
+    # Keyed on the metric NAME alone. Keying on (metric, split) collapsed
+    # nothing on the live worst case: that run's `split` carries the sweep
+    # coordinate, so all 429 rows were distinct pairs and only 4 of its 33
+    # metric names survived the cap. `split` varies per project and cannot be
+    # relied on to mean train/test here.
+    last: dict[str, dict] = {}
+    seen: dict[str, int] = {}
+    for row in metrics:
+        last[row["metric"]] = row
+        seen[row["metric"]] = seen.get(row["metric"], 0) + 1
+    collapsed = list(last.values())[:MAX_METRIC_ROWS]
+
+    found = {**found, "metrics": collapsed, "n_metrics": total}
     message = f"{total} metric row(s)"
-    if total > MAX_METRIC_ROWS:
-        message += f"; showing {MAX_METRIC_ROWS} -- use runs.compare to rank a family"
+    if total > len(collapsed):
+        message += (
+            f"; showing the last of {len(collapsed)} distinct metric(s)"
+            f" of {len(last)} -- use runs.compare for a series"
+            if len(last) > len(collapsed)
+            else f"; showing the last value of each of {len(collapsed)} metric(s)"
+        )
     return {"message": message, "run": found}
 
 

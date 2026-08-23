@@ -377,3 +377,43 @@ def test_runs_list_reports_what_it_did_not_show(tmp_path, monkeypatch):
     assert len(out["runs"]) == pv.DEFAULT_RUNS_LIMIT
     assert "40" in out["message"], f"40 runs exist, message says {out['message']!r}"
     assert "limit" in out["message"], "the caller must be told how to see more"
+
+
+def test_detail_truncation_keeps_distinct_metrics_not_the_first_alphabetically(
+    tmp_path, monkeypatch
+):
+    """Capping ROWS destroyed the thing runs.detail exists to show.
+
+    ledger.detail orders by (metric, step), so taking the first 40 rows of a
+    429-row run returned `b_g` forty times -- one metric name at forty steps --
+    while 32 other distinct metrics vanished. The live worst case is exactly
+    that: 33 distinct names averaging 13 steps each.
+
+    A caller reading ONE run wants its shape: which quantities were measured.
+    The step series belongs to runs.compare. So the cap keeps the last value of
+    each distinct metric, and says how many steps it collapsed.
+    """
+    from attestation.mcp import provenance as pv
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    conn.execute(
+        "INSERT INTO runs(project, name, family, status, source_path)"
+        " VALUES ('p', 'r', 'f', 'recorded', '/tmp/r.json')"
+    )
+    for name in ("alpha", "beta", "gamma", "delta", "epsilon"):
+        for step in range(30):
+            conn.execute(
+                "INSERT INTO run_metrics(run_id, metric, value, step, split)"
+                " VALUES (1, ?, ?, ?, 'test')",
+                (name, float(step), step),
+            )
+    conn.commit()
+    conn.close()
+
+    out = pv._detail("p", "r")
+    kept = {m["metric"] for m in out["run"]["metrics"]}
+    assert kept == {"alpha", "beta", "gamma", "delta", "epsilon"}, (
+        f"truncation dropped whole metrics: kept {sorted(kept)}"
+    )
+    assert out["run"]["n_metrics"] == 150
