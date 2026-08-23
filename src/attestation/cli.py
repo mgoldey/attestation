@@ -36,6 +36,18 @@ def open_db(db_arg: str | None):
         yield conn
 
 
+def fail(message: str) -> int:
+    """Report a failure on stderr and return the exit code.
+
+    Every failure path printed to stdout, so `attest runs list > runs.txt`
+    wrote "no runs recorded" into the data file and `| jq` fed the complaint to
+    jq. Exit codes are for programs; streams are how a program separates its
+    answer from its excuse.
+    """
+    print(message, file=sys.stderr)
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="attest")
     sub = p.add_subparsers(dest="command", required=True)
@@ -265,8 +277,7 @@ def cmd_backup(args: argparse.Namespace) -> int:
 
     src = resolve_db_path(args.db)
     if not src.exists():
-        print(f"no database at {src}")
-        return 1
+        return fail(f"no database at {src}")
     try:
         dest = backup_db(get_db(src), args.dest)
     except FileExistsError as exc:
@@ -368,8 +379,7 @@ def cmd_claims(args: argparse.Namespace) -> int:
         print("pass a path, or set RESEARCH_ROOT")
         return 1
     if not target.exists():
-        print(f"no such path: {target}")
-        return 1
+        return fail(f"no such path: {target}")
 
     if args.coverage:
         cov = claims_mod.coverage(target)
@@ -421,8 +431,7 @@ def cmd_browse(args: argparse.Namespace) -> int:
         return 1
     db_path = resolve_db_path(args.db)
     if not Path(db_path).exists():
-        print(f"no database at {db_path}")
-        return 1
+        return fail(f"no database at {db_path}")
     config = Path(__file__).resolve().parents[2] / "datasette.yml"
     cmd = [datasette, "--immutable", str(db_path), "--port", str(args.port)]
     # The database holds a vec0 virtual table for embeddings. Datasette's
@@ -481,8 +490,7 @@ def cmd_runs_list(args: argparse.Namespace) -> int:
     with open_db(args.db) as conn:
         found = ledger.list_runs(conn, args.project, args.family, args.limit)
         if not found:
-            print("no runs recorded -- run `attest runs scan` first")
-            return 1
+            return fail("no runs recorded -- run `attest runs scan` first")
         for r in found:
             fam = f"[{r['family']}]" if r["family"] else ""
             print(f"  {r['project']:20s} {r['name']:38s} {r['status']:10s} {fam}")
@@ -504,8 +512,7 @@ def cmd_runs_compare(args: argparse.Namespace) -> int:
         if not result["arms"]:
             # say which families exist rather than dead-ending: `compare
             # <project>` is the intuitive first guess and is not a family
-            print(result.get("message") or f"no runs in family {args.family!r}")
-            return 1
+            return fail(result.get("message") or f"no runs in family {args.family!r}")
         header = f"{result['family']} — ranked by {result['metric']} ({result['direction']})"
         # Naming the shared corpus says the comparison was *checked*, not
         # assumed -- the reader cannot tell those apart otherwise.

@@ -189,7 +189,9 @@ def test_runs_list_before_scan_directs_the_user(tmp_path, capsys):
     rc = main(["runs", "--db", str(db), "list"])
 
     assert rc == 1
-    assert "scan" in capsys.readouterr().out
+    # stderr, not stdout: this is a failure, and the test below pins that
+    # convention. The message itself is what this test is about.
+    assert "scan" in capsys.readouterr().err
 
 
 def test_parser_claims_subcommand():
@@ -519,3 +521,28 @@ def test_kg_report_still_reports_a_populated_graph(tmp_path, capsys):
 
     assert rc == 0
     assert "nodes" in out, "a populated graph must still get the metrics"
+
+
+def test_failures_are_reported_on_stderr_not_stdout(tmp_path, capsys, monkeypatch):
+    """A failing command wrote its reason to stdout, so a pipeline consumed it.
+
+    Every CLI failure path exits 1 correctly and prints to stdout, which means
+    `attest runs list > runs.txt` writes "no runs recorded -- run `attest runs
+    scan` first" into the data file, and `attest runs list | jq` feeds the
+    error text to jq. Exit codes are for programs; streams are how the program
+    tells data apart from complaint.
+    """
+    from attestation.db import get_db
+
+    db = tmp_path / "t.db"
+    get_db(db).commit()
+    monkeypatch.setenv("RSS_DB", str(db))
+
+    rc = main(["runs", "list"])
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert "no runs recorded" in captured.err, (
+        f"the failure went to stdout: out={captured.out!r} err={captured.err!r}"
+    )
+    assert not captured.out.strip(), f"stdout should be empty on failure, got {captured.out!r}"
