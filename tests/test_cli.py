@@ -432,7 +432,12 @@ def test_backup_writes_a_restorable_copy(tmp_path, monkeypatch, capsys):
     conn = get_db(db)
     conn.execute("INSERT INTO users(name, interests) VALUES ('ada', 'analysis')")
     conn.commit()
-    conn.close()
+    # The connection stays OPEN. Closing it checkpoints the WAL, which put the
+    # data in the main file and made this test pass against the exact bug it
+    # names -- swapping VACUUM INTO for a plain file copy kept it green. An
+    # operator running `attest backup` while the web UI or a cron ingest holds
+    # a connection is the whole scenario, so the test has to hold one too.
+    assert (tmp_path / "src.db-wal").exists(), "no WAL to lose; this test would prove nothing"
 
     dest = tmp_path / "out" / "backup.db"
     rc = main(["backup", "--db", str(db), str(dest)])
@@ -440,7 +445,8 @@ def test_backup_writes_a_restorable_copy(tmp_path, monkeypatch, capsys):
     assert rc == 0
     assert dest.is_file()
     names = [r[0] for r in sqlite3.connect(dest).execute("SELECT name FROM users")]
-    assert "ada" in names
+    assert "ada" in names, "the backup lost a committed row still sitting in the WAL"
+    conn.close()
     assert str(dest) in capsys.readouterr().out
 
 

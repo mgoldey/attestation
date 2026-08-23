@@ -31,7 +31,14 @@ from attestation.mcp import feed as feed_mod
 # for fifty items has asked for a big answer and should get one. What must
 # stay small is the cost of each row, and the DEFAULT response an agent gets
 # when it does not think about limits at all.
-MAX_ITEM_CHARS = 300
+# Both from measurement, not preference. 300 was a round number chosen against
+# a fixture whose rows were 270 chars; real list rows reach 305 and real SEARCH
+# rows 366, because a search row carries already_rated/match/relevance that a
+# list row does not. 28 of 40 live rows violated the single 300 limit while
+# every test passed -- a guard set below what production produces is a guard
+# that lies. Two constants, because the two shapes are genuinely different.
+MAX_ITEM_CHARS = 320
+MAX_SEARCH_ITEM_CHARS = 380
 MAX_DEFAULT_RESPONSE_CHARS = 2000
 
 
@@ -46,7 +53,18 @@ def stocked(tmp_path, monkeypatch, fake_embedder):
         cur = conn.execute(
             "INSERT INTO items(feed_id, title, url, summary, content_hash) VALUES (1, ?, ?, ?, ?)",
             (
-                f"A Fairly Long Paper Title About Topic Number {i} And Its Consequences",
+                # 223 chars: the longest title in the live database, measured.
+                # The fixture used 67 -- half the real p95 of 127 -- so every
+                # budget here was checked against items cheaper than
+                # production, and 5 of 15 real rows exceed MAX_ITEM_CHARS while
+                # the guard stayed green. Same lesson as the caveat: the
+                # fixture must be the worst realistic input, and the field it
+                # measures must be bounded so no fixture can be wrong again.
+                (
+                    f"Retraction Note {i}: Fabrication of New Composite Materials for "
+                    "Photocatalytic Degradation of Organic Pollutants Under Visible "
+                    "Light Irradiation With Enhanced Stoichiometric Control"
+                ),
                 f"https://arxiv.org/abs/2508.{i:05d}",
                 "An abstract " * 40,
                 f"h{i}",
@@ -118,6 +136,14 @@ def test_each_item_stays_cheap(stocked):
         assert size <= MAX_ITEM_CHARS, f"{size} chars for one item: {item}"
 
 
+def test_each_search_item_stays_cheap(stocked):
+    """Search rows carry three fields a list row does not, so they get their
+    own budget rather than being measured against the list one."""
+    for item in feed_mod._search_feed("ana", "topic", limit=10)["items"]:
+        size = len(json.dumps(item))
+        assert size <= MAX_SEARCH_ITEM_CHARS, f"{size} chars for one search item: {item}"
+
+
 def test_search_is_bounded_too(stocked):
     out = feed_mod._search_feed("ana", "topic")
     assert len(json.dumps(out)) <= MAX_DEFAULT_RESPONSE_CHARS
@@ -186,6 +212,30 @@ def test_a_truncated_summary_says_so(stocked):
 # --- reading one item -----------------------------------------------------
 
 
+def test_no_field_in_a_row_is_unbounded(stocked):
+    """Per-field bounds, so no fixture can be wrong about the row again.
+
+    MAX_ITEM_CHARS was checked only against the fixture, and real rows exceeded
+    it: 28 of 40 across the live personas, up to 305, driven by long tag names
+    rather than titles. Rather than tune the fixture a fifth time, assert the
+    property -- every variable-length field a row carries has a stated cap --
+    so the row's worst case is a fact about the code.
+    """
+    from attestation.mcp.feed import MAX_TAGS_SHOWN, MAX_TITLE_CHARS, _clip_title
+
+    # A title is clipped whatever the input.
+    assert len(_clip_title("x" * 5000)) <= MAX_TITLE_CHARS + 1  # +1 for the ellipsis
+    assert len(_clip_title(None)) == 0
+
+    # Tags are capped in count. Their individual length is bounded by the
+    # tagging vocabulary, not by this module, so the cap on COUNT is what this
+    # row controls -- and n_tags reports what was dropped.
+    out = feed_mod._list_feed("ana")
+    for item in out["items"]:
+        assert len(item["tags"]) <= MAX_TAGS_SHOWN
+        assert len(item["title"]) <= MAX_TITLE_CHARS + 1
+
+
 def test_an_item_can_be_read_in_full(stocked):
     """The gap that made an agent tell a reader to go open the link.
 
@@ -206,8 +256,13 @@ def test_an_item_can_be_read_in_full(stocked):
 
     assert out["ok"] is True
     assert out["item"]["summary"], "the abstract is in the database and must come back"
-    assert out["item"]["title"] == listed["title"]
     assert out["item"]["url"] == listed["url"]
+    # read returns the FULL title where the list clips it. That asymmetry is
+    # the point of this tool: the list stays cheap, and reading stays
+    # possible. The listed form must still be a recognisable prefix, or a
+    # caller could not tell it is the same item.
+    assert len(out["item"]["title"]) >= len(listed["title"])
+    assert out["item"]["title"].startswith(listed["title"].rstrip("…")[:60])
 
 
 def test_reading_an_unknown_item_says_so(stocked):

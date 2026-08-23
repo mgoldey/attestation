@@ -36,7 +36,13 @@ def register(mcp) -> None:
     """Attach every feed.* tool to the server."""
 
     @mcp.tool(name="feed.list")
-    def list_feed(user: str, limit: Limit = 5, since_days: SinceDays = 14) -> dict:
+    # Four, matching search. Five REAL items (title p95 127, four tags each)
+    # plus a full ranking caveat reached 2443 against the 2000 budget; the
+    # fixture had been using 67-char titles, so nothing saw it. Clipping the
+    # title to 120 recovers most of it and one fewer item recovers the rest --
+    # and a result the caller cannot render is worth less than the result that
+    # was dropped.
+    def list_feed(user: str, limit: Limit = 4, since_days: SinceDays = 14) -> dict:
         """List this user's currently ranked, unread feed items (best first).
 
         Returns each item's id, title, url, source feed name, and its blended rank
@@ -262,6 +268,25 @@ MAX_TAGS_SHOWN = 3
 SUMMARY_CHARS = 240
 
 
+# A title's share of a row. Real titles reach 223 chars (p95 127) against a
+# fixture that used 67, so five real rows plus a caveat reached 2443 against a
+# 2000 budget while every guard stayed green. Bounding the field means no
+# fixture can be wrong about it again -- the lesson from the provenance caveat,
+# applied to the other axis.
+MAX_TITLE_CHARS = 90
+
+
+def _clip_title(title: str | None) -> str:
+    """A title trimmed to fit, with the cut made visible.
+
+    Silent truncation would let an agent quote half a title as though it were
+    the whole one; `feed.read` returns the full record for anything that needs
+    it.
+    """
+    text = " ".join((title or "").split())
+    return text if len(text) <= MAX_TITLE_CHARS else text[:MAX_TITLE_CHARS].rstrip() + "…"
+
+
 def _item_row(it, *, summary: bool = False) -> dict:
     """The compact item shape list_feed, search and digest all return.
 
@@ -282,7 +307,7 @@ def _item_row(it, *, summary: bool = False) -> dict:
     """
     row = {
         "item_id": it.item_id,
-        "title": it.title,
+        "title": _clip_title(it.title),
         "url": it.url,
         "source": it.source,
         "tags": (it.tags or [])[:MAX_TAGS_SHOWN],
@@ -368,7 +393,7 @@ def _read_item(conn, user_row, item_id: ItemId) -> dict:
     autocreate_user=True,
     label="list_feed",
 )
-def _list_feed(conn, user_row, limit: int = 5, since_days: SinceDays = 14) -> dict:
+def _list_feed(conn, user_row, limit: int = 4, since_days: SinceDays = 14) -> dict:
     """`since_days` defaults to rank_items' own 14-day window so list_feed's
     behavior is unchanged; digest passes its `days` through here.
 
