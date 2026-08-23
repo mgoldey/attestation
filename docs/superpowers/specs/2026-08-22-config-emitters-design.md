@@ -1,7 +1,11 @@
 # Agent-config emitters
 
 **Date:** 2026-08-22
-**Status:** proposed
+**Status:** implemented 2026-08-23 in `d29c604`. One addition the spec did
+not anticipate: the doctor found a state the installer could not reach --
+it reported four missing surfaces that nothing created -- so
+`step_mcp_wiring` now registers them rather than only reporting them. A
+check for an unreachable state tells every user their install is broken.
 **Roadmap:** rescopes spec 5 of `2026-08-21-architecture-roadmap.md`
 **Depends on:** nothing. See "What changed since the roadmap".
 

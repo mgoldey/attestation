@@ -1,7 +1,10 @@
 # Citations domain
 
 **Date:** 2026-08-22
-**Status:** proposed
+**Status:** implemented 2026-08-23 in `80c1a4f`. Deviations: CSL rendering
+was already out of scope here and remains unbuilt; the `web` reader queries
+CrossRef only (arXiv and Semantic Scholar would be additional readers behind
+the same port, and nothing needed them yet).
 **Roadmap:** spec 2 of `2026-08-21-architecture-roadmap.md`
 **Depends on:** nothing. See "What changed since the roadmap".
 

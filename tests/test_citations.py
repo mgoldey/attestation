@@ -236,8 +236,15 @@ def test_search_matches_title_and_author(tmp_path):
 def test_zotero_items_are_read(tmp_path):
     db = tmp_path / "zotero.sqlite"
     conn = _zotero_db(db)
-    _add_item(conn, 1, "ABCD1234", title="Attention Is All You Need", year="2017",
-              doi="10.5555/x", authors=[("Ashish", "Vaswani")])
+    _add_item(
+        conn,
+        1,
+        "ABCD1234",
+        title="Attention Is All You Need",
+        year="2017",
+        doi="10.5555/x",
+        authors=[("Ashish", "Vaswani")],
+    )
     conn.close()
 
     resolver = citations.Resolver.from_env(zotero_path=db)
