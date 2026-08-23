@@ -39,6 +39,29 @@ def safe_href(url: str | None) -> str:
     return "#"
 
 
+# A title long enough to matter is hostile or broken, never useful. The MCP
+# surface already clips to MAX_TITLE_CHARS; this is the same bound for the
+# other reader. Measured: one RSS entry with a 10MB title rendered a 10,001,592
+# byte page, because nothing between feedparser and Jinja bounds a string.
+MAX_RENDERED_CHARS = 300
+
+
+def clip(value, limit: int = MAX_RENDERED_CHARS) -> str:
+    """Bound one third-party string at the render boundary.
+
+    Autoescape makes hostile text inert; it does nothing about hostile LENGTH.
+    feedparser accepts a 10MB <title> without complaint (it is well-formed XML),
+    ingest stores it unbounded, and every reader of that row then pays for it --
+    the web UI served a 10MB page for a single item. The MCP tools escaped this
+    only because they clip independently.
+
+    Applied per field rather than to the page, so one bad item degrades to a
+    truncated line instead of taking the feed down with it.
+    """
+    text = "" if value is None else str(value)
+    return text if len(text) <= limit else text[: limit - 1] + "\u2026"
+
+
 def urlarg(value: str | None) -> str:
     """One query-string value, percent-encoded.
 
@@ -53,6 +76,7 @@ def urlarg(value: str | None) -> str:
     return quote(str(value or ""), safe="")
 
 
+env.filters["clip"] = clip
 env.filters["safe_href"] = safe_href
 env.filters["urlarg"] = urlarg
 
@@ -98,10 +122,11 @@ FRAGMENT = env.from_string("""<div id="feed">
 <ol>
 {% for it in items %}
  <li data-item-id="{{ it.item_id }}">
-  <a href="{{ it.url | safe_href }}">{{ it.title }}</a>
-  <span class="src">{{ it.source or '' }} · rank {{ '%.1f' % it.score }}</span>
-  {% if it.content_type %}<span class="tag type">{{ it.content_type }}</span>{% endif %}
-  {% for t in it.tags %}<span class="tag">{{ t }}</span>{% endfor %}
+  <a href="{{ it.url | safe_href }}">{{ it.title | clip }}</a>
+  <span class="src">{{ it.source | clip(60) if it.source else '' }}
+   · rank {{ '%.1f' % it.score }}</span>
+  {% if it.content_type %}<span class="tag type">{{ it.content_type | clip(40) }}</span>{% endif %}
+  {% for t in it.tags %}<span class="tag">{{ t | clip(40) }}</span>{% endfor %}
   <button class="yn" hx-post="/clicks"
       hx-vals='{"user":{{ user | tojson }},"item_id":{{ it.item_id }},"useful":1}'
       hx-target="#feed" hx-swap="outerHTML">✓</button>

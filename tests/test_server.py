@@ -349,3 +349,89 @@ def test_concurrent_requests_do_not_share_one_connection(client):
 
     bad = [c for c in codes if c != 200]
     assert not bad, f"{len(bad)} of {len(codes)} concurrent requests failed: {sorted(set(bad))}"
+
+
+def test_one_hostile_feed_entry_cannot_inflate_the_page(tmp_path, fake_embedder):
+    """Autoescape makes third-party text inert; it does nothing about LENGTH.
+
+    feedparser accepts a 10MB <title> without complaint -- it is well-formed
+    XML, so bozo is False -- and ingest stores it unbounded. Measured before
+    this: one such entry rendered a 10,001,592 byte page. The MCP tools escaped
+    it only because they clip independently at MAX_TITLE_CHARS, so the two
+    readers of the same row disagreed about whether the row was safe.
+    """
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO users(name, interests) VALUES ('v', 'science')")
+    conn.execute("INSERT INTO feeds(title, url) VALUES (?, 'http://f')", ("F" * 100_000,))
+    huge = "A" * 2_000_000
+    cur = conn.execute(
+        "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+        " VALUES (1, ?, 'http://x', ?, 'h1')",
+        (huge, huge),
+    )
+    conn.execute(
+        "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+        (cur.lastrowid, fake_embedder.embed_document("a", "b").tobytes()),
+    )
+    conn.commit()
+    conn.close()
+
+    app = create_app(tmp_path / "t.db", embedder=fake_embedder, chat_fn=lambda m, s: {"text": "w"})
+    html = TestClient(app).get("/", params={"user": "v"}).text
+    assert len(html) < 50_000, (
+        f"a single 2MB title produced a {len(html):,} byte page -- nothing bounds"
+        " third-party strings at the render boundary"
+    )
+    assert huge not in html, "the unclipped title reached the page"
+
+
+def test_hostile_feed_text_renders_inert(tmp_path, fake_embedder):
+    """Titles and summaries come from arbitrary third-party RSS. Verified by
+    PARSING the response rather than grepping it: 'onerror=' inside escaped
+    text matches a regex and executes nothing, so a grep-based check reports
+    a vulnerability that is not there."""
+    from html.parser import HTMLParser
+
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO users(name, interests) VALUES ('v', 'science')")
+    conn.execute("INSERT INTO feeds(title, url) VALUES ('f', 'http://f')")
+    payloads = [
+        "<script>alert('xss')</script>",
+        "<img src=x onerror=alert(1)>",
+        '" onmouseover="alert(2)',
+        "<svg/onload=alert(3)>",
+    ]
+    for i, payload in enumerate(payloads, start=1):
+        cur = conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (1, ?, 'javascript:alert(9)', ?, ?)",
+            (payload, payload, f"h{i}"),
+        )
+        conn.execute(
+            "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+            (cur.lastrowid, fake_embedder.embed_document(payload, "s").tobytes()),
+        )
+    conn.commit()
+    conn.close()
+
+    app = create_app(tmp_path / "t.db", embedder=fake_embedder, chat_fn=lambda m, s: {"text": "w"})
+    html = TestClient(app).get("/", params={"user": "v"}).text
+
+    injected: list[str] = []
+
+    class Scan(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            # The app's own <script src=...> bundle is expected; an injected one
+            # would carry a body or come from item text.
+            if tag in ("svg", "img"):
+                injected.append(f"<{tag}> element from feed content")
+            for key, value in attrs:
+                if key.lower().startswith("on"):
+                    injected.append(f"event attribute {key} on <{tag}>")
+                if key.lower() in ("href", "src") and (value or "").lower().startswith(
+                    "javascript:"
+                ):
+                    injected.append(f"javascript: URL in {tag}.{key}")
+
+    Scan().feed(html)
+    assert not injected, f"feed content became live markup: {injected}"
