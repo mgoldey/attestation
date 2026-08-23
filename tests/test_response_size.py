@@ -665,6 +665,13 @@ def test_every_tool_is_either_budgeted_or_declared_a_composition_tool():
         + ", ".join(sorted(unaccounted))
     )
 
+    # And the other direction, which is the costly one: an entry naming a tool
+    # that no longer exists is a live exemption for a name someone could reuse.
+    # Checking only for MISSING declarations is the allowlist bug this repo has
+    # now found six times -- it catches the harmless direction.
+    stale = (set(COMPOSITION_TOOLS) | trivial | budgeted) - names
+    assert not stale, "these are declared but no longer served: " + ", ".join(sorted(stale))
+
 
 def test_no_derived_budget_can_ratchet_past_the_hard_ceiling():
     """A derived budget must not grow without limit when its input grows.
@@ -679,13 +686,23 @@ def test_no_derived_budget_can_ratchet_past_the_hard_ceiling():
     So every derivation is checked against an absolute number that does not
     move. If one exceeds it, a cap grew too far.
     """
-    for name, value in (
-        ("MAX_ITEM_CHARS", MAX_ITEM_CHARS),
-        ("MAX_SEARCH_ITEM_CHARS", MAX_SEARCH_ITEM_CHARS),
-        ("MAX_DEFAULT_RESPONSE_CHARS", MAX_DEFAULT_RESPONSE_CHARS),
-        ("MAX_READ_RESPONSE_CHARS", MAX_READ_RESPONSE_CHARS),
-        ("MAX_DIGEST_RESPONSE_CHARS", MAX_DIGEST_RESPONSE_CHARS),
-    ):
+    # DISCOVERED from this module, not listed. A hand-written list of five was
+    # the census's prefix bug in another costume: adding a sixth budget left it
+    # unchecked, verified by adding MAX_SPRAWL_CHARS = 99999 and watching this
+    # pass. Anything named MAX_*_CHARS here is a budget and must fit.
+    import sys
+
+    module = sys.modules[__name__]
+    budgets = {
+        name: getattr(module, name)
+        for name in dir(module)
+        if name.startswith("MAX_")
+        and name.endswith("_CHARS")
+        and isinstance(getattr(module, name), int)
+    }
+    assert len(budgets) >= 5, f"expected to discover the budgets, found {sorted(budgets)}"
+
+    for name, value in budgets.items():
         assert value <= HARD_RESPONSE_CEILING, (
             f"{name} derives to {value}, past the {HARD_RESPONSE_CEILING} a small model"
             " can hold -- a cap it depends on grew too far"
