@@ -461,6 +461,221 @@ def diagnose_empty(root: Path) -> str:
     )
 
 
+# Experiment trackers put runs in a fixed directory name of their own choosing,
+# which makes them conventions in the strict sense: every project using the tool
+# produces the layout, and the user does not pick the name. That is why these
+# live here rather than as named adapters -- see ledger_adapters/__init__.py.
+#
+# NEITHER READER HAS BEEN RUN AGAINST A REAL DIRECTORY. There was no wandb/ or
+# mlruns/ on the machine where they were written, so both are built from the
+# tools' published layouts and tested against transcribed fixtures. They are
+# plausible, not verified. If you have a real one, point this at it: the shape-
+# tolerance tests in tests/test_tracker_adapters.py say what should happen when
+# the layout differs, but only a real library proves what it actually does.
+TRACKER_DIRS = ("wandb", "mlruns")
+
+
+def _yaml_scalars(path: Path) -> dict[str, str]:
+    """Top-level `key: value` pairs from a small machine-written YAML file.
+
+    Not a YAML parser and not trying to be. Both files this reads (`meta.yaml`,
+    `config.yaml`) are generated, flat at the level we need, and unquoted. The
+    module already refuses an undeclared parser dependency for exactly this --
+    see `_config_shape` and the networkx note there.
+    """
+    out: dict[str, str] = {}
+    for raw in path.read_text(errors="replace").splitlines():
+        if raw.startswith((" ", "\t", "#")) or ":" not in raw:
+            continue
+        key, _, value = raw.partition(":")
+        value = value.strip().strip("'\"")
+        if value:
+            out[key.strip()] = value
+    return out
+
+
+def _wandb_config(path: Path) -> dict | None:
+    """Unwrap W&B's `{desc, value}` wrapper around every config entry.
+
+    The file looks like:
+
+        lr:
+          desc: null
+          value: 0.0003
+
+    Storing it raw would make every config value a two-key dict. Keys starting
+    with `_` are W&B's own bookkeeping (`_wandb`) and are dropped.
+    """
+    out: dict = {}
+    key = None
+    for raw in path.read_text(errors="replace").splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if not raw.startswith((" ", "\t")):
+            key = raw.partition(":")[0].strip()
+            continue
+        stripped = raw.strip()
+        if key and not key.startswith("_") and stripped.startswith("value:"):
+            raw_value = stripped.partition(":")[2].strip().strip("'\"")
+            if raw_value:
+                out[key] = _coerce(raw_value)
+    return out or None
+
+
+def _coerce(text: str):
+    """A YAML scalar as int, float or str -- in that order."""
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
+def _wandb_runs(root: Path, seen: set[str]) -> list[RunRecord]:
+    """Runs under `wandb/run-<timestamp>-<id>/files/`.
+
+    `wandb-summary.json` is a flat object of scalars, which
+    `metrics_from_payload` already handles -- the mapping is nearly free. The
+    work here is naming: `run-20260814_101133-a1b2c3d4` is a timestamp and a
+    hash, and a ledger listing forty of those is unreadable.
+    """
+    base = root / "wandb"
+    if not base.is_dir():
+        return []
+    records: list[RunRecord] = []
+    for run_dir in sorted(base.iterdir()):
+        files = run_dir / "files"
+        summary = files / "wandb-summary.json"
+        if not summary.is_file():
+            continue
+        payload = _load(summary)
+        if not isinstance(payload, dict):
+            continue
+        metrics = metrics_from_payload(payload, None, None)
+        if not metrics:
+            continue
+
+        meta_path = files / "wandb-metadata.json"
+        meta = _load(meta_path) if meta_path.is_file() else None
+        meta = meta if isinstance(meta, dict) else {}
+
+        # run-20260814_101133-a1b2c3d4 -> a1b2c3d4
+        short_id = run_dir.name.rsplit("-", 1)[-1]
+        program = str(meta.get("program") or "").rsplit("/", 1)[-1]
+        stem = program[:-3] if program.endswith(".py") else program
+        name = f"{stem}/{short_id}" if stem else run_dir.name
+
+        if name in seen:
+            continue
+        seen.add(name)
+
+        config_path = files / "config.yaml"
+        records.append(
+            RunRecord(
+                project=root.name,
+                name=name,
+                source_path=str(run_dir),
+                family=stem or None,
+                status="recorded",
+                started=meta.get("startedAt"),
+                config=_wandb_config(config_path) if config_path.is_file() else None,
+                metrics=metrics,
+            )
+        )
+    return records
+
+
+def _mlflow_metric(path: Path) -> tuple[float, int | None] | None:
+    """The final value of one MLflow metric file, and the step it was logged at.
+
+    Each line is `<timestamp_ms> <value> <step>`. We read the last parseable
+    one: this adapter records final values, not curves. Recording the whole
+    history would make MLflow runs structurally unlike every other run in the
+    ledger and would put one row per logged step into run_metrics -- a
+    200-epoch run becomes 200 rows per metric.
+
+    The consequence is worth stating plainly: **a user who wants training
+    curves is not served by this ledger.**
+    """
+    for line in reversed(path.read_text(errors="replace").splitlines()):
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        try:
+            value = float(parts[1])
+        except ValueError:
+            continue
+        step = None
+        if len(parts) > 2:
+            try:
+                step = int(parts[2])
+            except ValueError:
+                step = None
+        return value, step
+    return None
+
+
+def _mlflow_runs(root: Path, seen: set[str]) -> list[RunRecord]:
+    """Runs under `mlruns/<experiment_id>/<run_id>/`.
+
+    The metric-per-file layout is genuinely unlike anything else this adapter
+    reads: not JSON, not CSV, one file per metric with one line per logged
+    step. See `_mlflow_metric` for what is taken from it and why.
+    """
+    base = root / "mlruns"
+    if not base.is_dir():
+        return []
+    records: list[RunRecord] = []
+    for exp_dir in sorted(p for p in base.iterdir() if p.is_dir()):
+        for run_dir in sorted(p for p in exp_dir.iterdir() if p.is_dir()):
+            meta_path = run_dir / "meta.yaml"
+            if not meta_path.is_file():
+                continue
+            meta = _yaml_scalars(meta_path)
+            # A run deleted in the MLflow UI is still on disk. Resurrecting it
+            # in a ledger the user reads for provenance is worse than missing
+            # it -- they decided it was not part of the record.
+            if meta.get("lifecycle_stage", "active") != "active":
+                continue
+
+            metrics = []
+            for metric_file in sorted((run_dir / "metrics").glob("*")):
+                if not metric_file.is_file():
+                    continue
+                final = _mlflow_metric(metric_file)
+                if final is not None:
+                    metrics.append(Metric(metric_file.name, final[0], step=final[1]))
+            if not metrics:
+                continue
+
+            label = meta.get("run_name") or run_dir.name
+            name = f"{label}/{run_dir.name[:8]}" if meta.get("run_name") else run_dir.name
+            if name in seen:
+                continue
+            seen.add(name)
+
+            config = {}
+            for param_file in sorted((run_dir / "params").glob("*")):
+                if param_file.is_file():
+                    config[param_file.name] = param_file.read_text(errors="replace").strip()
+
+            records.append(
+                RunRecord(
+                    project=root.name,
+                    name=name,
+                    source_path=str(run_dir),
+                    family=label if meta.get("run_name") else None,
+                    status="recorded",
+                    config=config or None,
+                    metrics=metrics,
+                )
+            )
+    return records
+
+
 def discover(root: Path) -> list[RunRecord]:
     project = root.name
     records: list[RunRecord] = []
@@ -551,4 +766,8 @@ def discover(root: Path) -> list[RunRecord]:
                 )
             )
 
+    # Tracker directories last, sharing `seen`: a project may have both a
+    # results/ tree and a wandb/ one, and the same run must not appear twice.
+    records.extend(_wandb_runs(root, seen))
+    records.extend(_mlflow_runs(root, seen))
     return records

@@ -1,0 +1,298 @@
+"""W&B and MLflow local artifact directories, read through `generic`.
+
+**These fixtures were transcribed from published examples, not observed.**
+There is no wandb/ or mlruns/ directory on the machine this was written on
+(`find ~ -maxdepth 4 -type d \\( -name wandb -o -name mlruns \\)` returned
+nothing), so every layout below comes from the tools' own documentation:
+
+  W&B run directory layout:
+    https://docs.wandb.ai/guides/track/save-restore
+  MLflow local filesystem store layout:
+    https://mlflow.org/docs/latest/tracking.html#backend-stores
+
+That is a real weakness. `CLAUDE.md` names this repo's recurring failure mode
+as "tests that pass against the bug they were written to catch", and a fixture
+written by the parser's own author is that with extra steps. The mitigation is
+the shape-tolerance tests at the bottom: the parser's job is to be un-surprised
+by a directory that does not match these fixtures exactly.
+"""
+
+import json
+
+import pytest
+
+from attestation.ledger_adapters import generic
+
+
+def _wandb_run(root, run_id, summary, config=None, metadata=None):
+    d = root / "wandb" / run_id / "files"
+    d.mkdir(parents=True)
+    (d / "wandb-summary.json").write_text(json.dumps(summary))
+    if config is not None:
+        lines = ["wandb_version: 1", ""]
+        for k, v in config.items():
+            lines += [f"{k}:", f"  desc: null", f"  value: {v}"]
+        lines += ["_wandb:", "  desc: null", "  value:", "    cli_version: 0.16.0"]
+        (d / "config.yaml").write_text("\n".join(lines) + "\n")
+    if metadata is not None:
+        (d / "wandb-metadata.json").write_text(json.dumps(metadata))
+    return d
+
+
+def _mlflow_run(root, exp, run_id, *, name, metrics, params=None, status="FINISHED",
+                lifecycle="active", start_ms=1755000000000):
+    d = root / "mlruns" / exp / run_id
+    (d / "metrics").mkdir(parents=True)
+    (d / "params").mkdir(parents=True)
+    (d / "meta.yaml").write_text(
+        f"artifact_uri: file://{d}/artifacts\n"
+        f"end_time: {start_ms + 60000}\n"
+        f"experiment_id: '{exp}'\n"
+        f"lifecycle_stage: {lifecycle}\n"
+        f"run_id: {run_id}\n"
+        f"run_name: {name}\n"
+        f"start_time: {start_ms}\n"
+        f"status: {status}\n"
+    )
+    for metric, lines in metrics.items():
+        (d / "metrics" / metric).write_text("".join(f"{t} {v} {s}\n" for t, v, s in lines))
+    for k, v in (params or {}).items():
+        (d / "params" / k).write_text(str(v))
+    return d
+
+
+# --------------------------------------------------------------------------
+# The gap this exists to close
+# --------------------------------------------------------------------------
+
+
+def test_a_project_with_only_tracker_dirs_is_not_invisible(tmp_path):
+    """The whole point. `discover` walks RESULT_DIRS and CONFIG_DIRS at the
+    project root; `wandb` and `mlruns` are in neither, so before this change a
+    project whose entire experimental record lived in one of them scanned to
+    zero runs and gave no indication why."""
+    proj = tmp_path / "myproj"
+    _wandb_run(proj, "run-20260814_101133-a1b2c3d4", {"wer": 0.12, "loss": 2.1})
+    _mlflow_run(proj, "0", "abc123", name="baseline", metrics={"wer": [(0, 0.31, 5)]})
+
+    runs = generic.discover(proj)
+    assert len(runs) == 2, [r.name for r in runs]
+
+
+# --------------------------------------------------------------------------
+# W&B
+# --------------------------------------------------------------------------
+
+
+def test_wandb_summary_becomes_metrics(tmp_path):
+    proj = tmp_path / "p"
+    _wandb_run(proj, "run-20260814_101133-a1b2c3d4", {"wer": 0.0688, "val_loss": 2.29})
+
+    (run,) = generic.discover(proj)
+    assert {m.metric: m.value for m in run.metrics} == {"wer": 0.0688, "val_loss": 2.29}
+
+
+def test_wandb_run_is_named_for_its_program_not_its_hash(tmp_path):
+    """`run-20260814_101133-a1b2c3d4` names a timestamp and a hash. A ledger
+    listing forty of those is unreadable, so the program name from
+    wandb-metadata.json leads and the short id disambiguates."""
+    proj = tmp_path / "p"
+    _wandb_run(
+        proj,
+        "run-20260814_101133-a1b2c3d4",
+        {"wer": 0.1},
+        metadata={"program": "train_asr.py", "startedAt": "2026-08-14T10:11:33Z"},
+    )
+
+    (run,) = generic.discover(proj)
+    assert "train_asr" in run.name
+    assert "a1b2c3d4" in run.name, "the id must survive: two runs of one program collide"
+
+
+def test_wandb_config_is_unwrapped_and_internals_dropped(tmp_path):
+    """W&B wraps every config entry as {desc, value} and injects `_wandb`.
+    Storing the wrapper would make every config value a dict."""
+    proj = tmp_path / "p"
+    _wandb_run(proj, "run-1-abc", {"wer": 0.1}, config={"lr": 0.0003, "epochs": 40})
+
+    (run,) = generic.discover(proj)
+    assert run.config["lr"] == 0.0003
+    assert run.config["epochs"] == 40
+    assert not any(k.startswith("_") for k in run.config), run.config
+
+
+def test_wandb_start_time_comes_from_metadata(tmp_path):
+    """`started` is otherwise unknowable for these runs -- no other artifact
+    this adapter reads carries one."""
+    proj = tmp_path / "p"
+    _wandb_run(
+        proj, "run-1-abc", {"wer": 0.1},
+        metadata={"program": "t.py", "startedAt": "2026-08-14T10:11:33Z"},
+    )
+
+    (run,) = generic.discover(proj)
+    assert run.started == "2026-08-14T10:11:33Z"
+
+
+def test_wandb_run_without_summary_yields_nothing(tmp_path):
+    """A crashed run leaves the directory and no summary. No metrics, no run --
+    the same rule the rest of the adapter follows."""
+    proj = tmp_path / "p"
+    (proj / "wandb" / "run-1-abc" / "files").mkdir(parents=True)
+
+    assert generic.discover(proj) == []
+
+
+# --------------------------------------------------------------------------
+# MLflow
+# --------------------------------------------------------------------------
+
+
+def test_mlflow_reads_the_final_value_of_each_metric(tmp_path):
+    """The decision recorded in the spec: last line, not the whole curve.
+    Recording history would make MLflow runs structurally unlike every other
+    run in the ledger and flood run_metrics -- 200 epochs becomes 200 rows."""
+    proj = tmp_path / "p"
+    _mlflow_run(
+        proj, "0", "abc", name="run-a",
+        metrics={"wer": [(1000, 0.51, 0), (2000, 0.33, 1), (3000, 0.29, 2)]},
+    )
+
+    (run,) = generic.discover(proj)
+    (metric,) = run.metrics
+    assert metric.value == 0.29
+    assert metric.step == 2, "the step of the value actually recorded"
+
+
+def test_mlflow_uses_its_run_name_not_the_uuid(tmp_path):
+    proj = tmp_path / "p"
+    _mlflow_run(proj, "0", "9f8e7d6c5b4a", name="dense-baseline",
+                metrics={"wer": [(0, 0.2, 0)]})
+
+    (run,) = generic.discover(proj)
+    assert "dense-baseline" in run.name
+
+
+def test_mlflow_deleted_runs_are_skipped(tmp_path):
+    """lifecycle_stage: deleted means the user deleted it in the UI.
+    Resurrecting it is worse than missing it."""
+    proj = tmp_path / "p"
+    _mlflow_run(proj, "0", "keep", name="kept", metrics={"wer": [(0, 0.2, 0)]})
+    _mlflow_run(proj, "0", "gone", name="trashed", metrics={"wer": [(0, 0.1, 0)]},
+                lifecycle="deleted")
+
+    names = [r.name for r in generic.discover(proj)]
+    assert any("kept" in n for n in names)
+    assert not any("trashed" in n for n in names), names
+
+
+def test_mlflow_params_become_config(tmp_path):
+    proj = tmp_path / "p"
+    _mlflow_run(proj, "0", "abc", name="r", metrics={"wer": [(0, 0.2, 0)]},
+                params={"lr": "0.0003", "model": "conformer"})
+
+    (run,) = generic.discover(proj)
+    assert run.config["lr"] == "0.0003"
+    assert run.config["model"] == "conformer"
+
+
+def test_mlflow_run_with_no_metrics_yields_nothing(tmp_path):
+    proj = tmp_path / "p"
+    _mlflow_run(proj, "0", "abc", name="r", metrics={})
+
+    assert generic.discover(proj) == []
+
+
+# --------------------------------------------------------------------------
+# Coexistence and shape tolerance
+# --------------------------------------------------------------------------
+
+
+def test_tracker_dirs_coexist_with_a_results_tree(tmp_path):
+    """A project may keep both; neither reader may hide the other."""
+    proj = tmp_path / "p"
+    (proj / "results").mkdir(parents=True)
+    (proj / "results" / "baseline.json").write_text(json.dumps({"wer": 0.4}))
+    _wandb_run(proj, "run-1-abc", {"wer": 0.12})
+
+    runs = generic.discover(proj)
+    assert len(runs) == 2
+    assert len({r.name for r in runs}) == 2
+
+
+def test_a_tracker_run_colliding_with_a_results_run_is_recorded_once(tmp_path):
+    """The readers must share `discover`'s `seen` set, not carry their own.
+
+    UNIQUE(project, name) on `runs` means a duplicate name is a scan-time
+    error rather than a duplicate row, so appending blindly would break the
+    scan instead of merely inflating it. Names collide in practice: a driver
+    that writes results/train_asr.json and also logs to W&B from train_asr.py
+    produces the same stem from both.
+    """
+    proj = tmp_path / "p"
+    (proj / "results").mkdir(parents=True)
+    (proj / "results" / "train_asr").mkdir()
+    (proj / "results" / "train_asr" / "a1b2c3d4.json").write_text(json.dumps({"wer": 0.4}))
+    _wandb_run(
+        proj, "run-20260814_101133-a1b2c3d4", {"wer": 0.12},
+        metadata={"program": "train_asr.py"},
+    )
+
+    runs = generic.discover(proj)
+    names = [r.name for r in runs]
+    assert names.count("train_asr/a1b2c3d4") == 1, names
+
+
+def test_no_metric_direction_is_inferred_from_tracker_metadata(tmp_path):
+    """ledger.py line 21: "Never rank a metric whose direction is undeclared."
+    W&B records a `goal` on some metrics. Reading it would put a second source
+    of truth beside METRIC_DIRECTION, which is how an ablation gets ranked
+    backwards. RunRecord has nowhere to put it, and that is deliberate."""
+    proj = tmp_path / "p"
+    d = _wandb_run(proj, "run-1-abc", {"custom_score": 0.9})
+    (d / "wandb-summary.json").write_text(
+        json.dumps({"custom_score": 0.9, "_wandb": {"goal": "maximize"}})
+    )
+
+    (run,) = generic.discover(proj)
+    assert [m.metric for m in run.metrics] == ["custom_score"]
+    assert "maximize" not in json.dumps(run.config or {})
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        "empty-summary",
+        "summary-not-json",
+        "no-metadata",
+        "meta-yaml-missing",
+        "metric-file-empty",
+        "metric-file-garbage",
+    ],
+)
+def test_malformed_tracker_dirs_degrade_rather_than_raise(tmp_path, broken):
+    """The parser's job is to be un-surprised.
+
+    These fixtures were written by the same person as the parser, so they
+    cannot prove it handles a real directory. What they CAN prove is that a
+    directory not matching them produces fewer runs, never a traceback -- which
+    is the property that matters when someone finally points it at a real one.
+    """
+    proj = tmp_path / "p"
+    if broken == "empty-summary":
+        _wandb_run(proj, "run-1-abc", {})
+    elif broken == "summary-not-json":
+        d = _wandb_run(proj, "run-1-abc", {"wer": 0.1})
+        (d / "wandb-summary.json").write_text("<!DOCTYPE html>not json")
+    elif broken == "no-metadata":
+        _wandb_run(proj, "run-1-abc", {"wer": 0.1})
+    elif broken == "meta-yaml-missing":
+        _mlflow_run(proj, "0", "abc", name="r", metrics={"wer": [(0, 0.2, 0)]})
+        (proj / "mlruns" / "0" / "abc" / "meta.yaml").unlink()
+    elif broken == "metric-file-empty":
+        _mlflow_run(proj, "0", "abc", name="r", metrics={"wer": []})
+    elif broken == "metric-file-garbage":
+        _mlflow_run(proj, "0", "abc", name="r", metrics={"wer": [(0, 0.2, 0)]})
+        (proj / "mlruns" / "0" / "abc" / "metrics" / "wer").write_text("not a metric line\n")
+
+    generic.discover(proj)  # must not raise
