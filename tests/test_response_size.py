@@ -552,3 +552,67 @@ def test_the_digest_is_bounded_by_total_items_not_by_topic_count(stocked):
     )
     assert shown <= feed_mod.MAX_DIGEST_ITEMS, f"digest rendered {shown} items"
     assert emitted(out) <= MAX_DIGEST_RESPONSE_CHARS, f"digest is {emitted(out)} chars"
+
+
+# Tools whose size is a deliberate design choice, with the reason. Everything
+# else must fit the conversational budget -- a tool absent from both this list
+# and the assertions above is unmeasured, which is how feed.digest reached
+# 6905 chars without anyone noticing.
+COMPOSITION_TOOLS = {
+    # CLAUDE.md: "No LLM in composition tools: digest/runs_compare return
+    # structure, never prose -- the caller is a model." These are read by a
+    # model that will select from them, not rendered verbatim to a person.
+    "runs.compare": "one row per arm; size is a function of the family, not a choice",
+    "runs.list": "one row per run; the caller narrows with project=",
+    "runs.claims_check": "one verdict per claim in the document",
+    "runs.claims_coverage": "one row per uncovered number",
+    "kg.communities": "one cluster per topic in the graph",
+    "kg.neighbors": "one row per adjacent concept",
+    "kg.concepts": "the graph vocabulary, which is the answer",
+    "feed.sources": "one row per subscribed feed",
+    "feed.digest": "grouped, and separately bounded at MAX_DIGEST_ITEMS",
+    "feed.personas": "one row per reader; small and bounded by persona count",
+    "feed.source_suggest": "a scored shortlist the caller picks from",
+}
+
+
+def test_every_tool_is_either_budgeted_or_declared_a_composition_tool():
+    """No tool may be simply unmeasured.
+
+    Round 9 measured all 50 as emitted and found 44 with no stated budget --
+    including the six largest, up to 13624 chars. feed.digest reached 6905
+    that way: coverage had followed what was easy to test rather than what was
+    called. This does not impose a number on a composition tool; it requires a
+    DECISION to have been made and written down.
+    """
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.mcp import register_all
+
+    server = FastMCP("budget-census")
+    register_all(server)
+    names = {t.name for t in asyncio.run(server.list_tools())}
+
+    # Tools with an explicit size assertion in this module.
+    budgeted = {"feed.list", "feed.search", "feed.read", "feed.digest"}
+    # Routers bound their own answers via _summarise's label cap.
+    routers = {n for n in names if n.endswith(".ask") or n.endswith(".tools")}
+    # Mutators and single-value tools return a status, not a payload.
+    trivial = {
+        n
+        for n in names
+        if n.startswith("sym.")
+        or n.startswith("cite.")
+        or n.startswith("feed.persona")
+        or n.startswith("feed.source_")
+        or n in {"feed.rate", "feed.explain", "feed.harvest_engagement", "feed.simulate_ratings"}
+        or n in {"runs.scan", "runs.detail", "kg.path", "kg.central"}
+    }
+
+    unaccounted = names - budgeted - routers - trivial - set(COMPOSITION_TOOLS)
+    assert not unaccounted, (
+        "these tools have no budget and are not declared composition tools: "
+        + ", ".join(sorted(unaccounted))
+    )
