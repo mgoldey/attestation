@@ -184,6 +184,26 @@ def tag_one_item(conn, item: sqlite3.Row, chat_fn, vocab: list[str], model_name:
     return True
 
 
+def _minted_first_use(conn, item_id: int, parsed_tags) -> bool:
+    """Did this item use a tag that exists NOWHERE else in the corpus?
+
+    Only a genuinely new tag can change the steering vocabulary, so only that
+    needs a re-read. Comparing against the vocabulary LIST instead was the
+    obvious version and it is wrong: tag_vocabulary returns the top 150, so
+    every ordinary tag ranked 151st or lower read as "unknown" and refreshed
+    anyway -- measured at 188 refreshes across 200 items, which is the per-item
+    cost with extra steps. This asks the table, which is the thing that decides.
+    """
+    if not parsed_tags:
+        return False
+    placeholders = ",".join("?" * len(list(parsed_tags)))
+    row = conn.execute(
+        f"SELECT 1 FROM item_tags WHERE tag IN ({placeholders}) AND item_id != ? LIMIT 1",
+        (*parsed_tags, item_id),
+    ).fetchone()
+    return row is None
+
+
 def run_tagging(conn, chat_fn=None, limit: int | None = None) -> dict:
     """Tag every untagged item, newest first. Returns {"tagged": n, "failed": n}.
 
@@ -217,11 +237,30 @@ def run_tagging(conn, chat_fn=None, limit: int | None = None) -> dict:
     model_name = chat_model()
     stats = {"tagged": 0, "failed": 0, "model": model_name}
     # disable=None -> bar only on a TTY; cron/pytest logs stay clean
+    # Re-read only when this item minted a tag the vocabulary did not have.
+    # The per-item call was a full GROUP BY over item_tags plus a canonical()
+    # pass, so its cost tracked the whole archive rather than the run:
+    # measured on the live corpus at 12.3ms with 20k tag rows and 67.9ms with
+    # 163k -- 68 SECONDS of database time in a 1000-item run, on top of
+    # inference. A fixed refresh interval was the obvious fix and it is wrong:
+    # a tag minted on item 1 must steer item 2, which is what
+    # test_new_tags_enter_vocabulary_within_a_run asserts. Refreshing exactly
+    # when the answer would change keeps that and makes the query rare.
+    vocab = tag_vocabulary(conn)
     with tqdm(rows, desc="tagging", unit="item", disable=None) as bar:
         for item in bar:
-            vocab = tag_vocabulary(conn)  # re-read so tags minted this run join the vocabulary
+            before = conn.total_changes
             if tag_one_item(conn, item, chat_fn, vocab, model_name):
                 stats["tagged"] += 1
+                if conn.total_changes != before:
+                    fresh = [
+                        r["tag"]
+                        for r in conn.execute(
+                            "SELECT tag FROM item_tags WHERE item_id = ?", (item["id"],)
+                        )
+                    ]
+                    if _minted_first_use(conn, item["id"], fresh):
+                        vocab = tag_vocabulary(conn)
             else:
                 stats["failed"] += 1
             bar.set_postfix(tagged=stats["tagged"], failed=stats["failed"], refresh=False)

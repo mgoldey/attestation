@@ -371,3 +371,51 @@ def test_tag_vocabulary_excludes_non_topic_tags(tmp_path):
     assert "nature" not in vocab and "release" not in vocab
     assert {"biology", "pytorch", "genomics"} <= set(vocab)
     conn.close()
+
+
+def test_the_vocabulary_is_not_re_read_for_every_item(tmp_path):
+    """tag_vocabulary is a full GROUP BY over item_tags plus a canonical()
+    pass, so its cost tracks the whole archive rather than the run: measured on
+    the live corpus at 12.3ms with 20k tag rows and 67.9ms with 163k. Calling
+    it per item spent 68 seconds of database time in a 1000-item run, on top of
+    inference.
+
+    It must still be re-read when a genuinely new tag appears -- see
+    test_new_tags_enter_vocabulary_within_a_run, which is the guarantee this
+    optimisation must not break.
+    """
+    from attestation import features
+
+    conn = get_db(tmp_path / "t.db")
+    for i in range(12):
+        add_item(conn, f"item-{i}", days_ago=i)
+    # An established tag: already used by an item that is not in this run.
+    conn.execute(
+        "INSERT INTO items(feed_id, title, url, content_hash)"
+        " VALUES (NULL, 'seed', 'http://seed', 'hseed')"
+    )
+    seed_id = conn.execute("SELECT id FROM items WHERE content_hash='hseed'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO item_features(item_id, content_type, model) VALUES (?, 'paper', 'm')",
+        (seed_id,),
+    )
+    conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, 'settled-tag')", (seed_id,))
+    conn.commit()
+
+    calls = {"n": 0}
+    real = features.tag_vocabulary
+
+    def counting(c, limit=150):
+        calls["n"] += 1
+        return real(c, limit)
+
+    features.tag_vocabulary = counting
+    try:
+        run_tagging(conn, chat_fn=lambda m, s: {"content_type": "paper", "tags": ["settled-tag"]})
+    finally:
+        features.tag_vocabulary = real
+
+    assert calls["n"] <= 2, (
+        f"tag_vocabulary ran {calls['n']} times for 12 items that minted no new"
+        " tag -- the per-item re-read is back"
+    )
