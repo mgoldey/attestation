@@ -404,3 +404,40 @@ def test_claude_md_tool_counts_match_the_live_surface():
 
     claimed = {m.group(1): int(m.group(2)) for m in re.finditer(r"(\w+)\.\*\((\d+)\)", line)}
     assert claimed == dict(live), f"CLAUDE.md claims {claimed}, live surface is {dict(live)}"
+
+
+def test_readme_tool_count_and_table_match_the_live_surface():
+    """The same drift as CLAUDE.md, in the doc a new reader actually opens.
+
+    CLAUDE.md learned this lesson on 2026-08-22 and got a test; README did not,
+    and went on saying "exposes 37 tools" while the live surface reached 50.
+    Its table was worse than the number: it silently omitted every `cite.*`
+    tool, all four `.ask` routers, all four `.tools` listings, and
+    `feed.read`/`feed.harvest_engagement`/`feed.simulate_ratings` -- so a
+    reader counting the rows got a third answer again.
+
+    A table is a claim about completeness. This asserts the count AND that
+    every live tool has a row, because a correct total above an incomplete
+    table is the drift that is hardest to notice.
+    """
+    import asyncio
+    import re
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.mcp import register_all
+
+    server = FastMCP("readme-check")
+    register_all(server)
+    names = {t.name for t in asyncio.run(server.list_tools())}
+
+    text = (SRC.parent.parent / "README.md").read_text()
+
+    claimed = int(re.search(r"exposes (\d+) tools", text).group(1))
+    assert claimed == len(names), (
+        f"README says {claimed} tools, live surface has {len(names)}. Update the line."
+    )
+
+    documented = set(re.findall(r"`([a-z_]+\.[a-z_]+)\(", text))
+    missing = sorted(names - documented)
+    assert not missing, f"live tools with no README row: {missing}"

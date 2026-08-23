@@ -49,7 +49,17 @@ attest-mcp = "attestation.mcp_server:main"
 # datasette is a dev/ops dependency, never imported by the package: it browses
 # hermes.db as a separate process, so a `uvx attestation` install never pays for
 # it and a broken version cannot break the tools.
-dev = ["pytest>=8", "ruff>=0.6", "ty", "radon>=6", "datasette>=0.64", "datasette-vega>=0.6", "pre-commit>=3.7"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "ty",
+    "radon>=6",
+    "xenon>=0.9",
+    "bandit>=1.7",
+    "datasette>=0.64",
+    "datasette-vega>=0.6",
+    "pre-commit>=3.7",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -76,3 +86,16 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "BLE", "RUF100"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+# B608 (SQL built by string construction) fires 12 times here and is a false
+# positive at every one. The pattern is always the same: an f-string that
+# interpolates ONLY generated `?` placeholders (`",".join("?" * len(chunk))`)
+# or a fixed module-level column tuple, with every value passed as a bound
+# parameter. SQLite takes no parameter for a column list or an IN arity, so
+# there is no way to write these without building the string. Audited
+# 2026-08-23 across rank.py, ledger.py, features.py, corpus.py, personas.py --
+# no user string reaches a query. Re-audit if a new site appears rather than
+# assuming this note still covers it.
+skips = ["B608"]

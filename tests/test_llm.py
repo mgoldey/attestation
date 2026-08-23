@@ -158,18 +158,42 @@ def test_load_env_real_environment_wins(tmp_path, monkeypatch):
 
 
 def test_env_sample_documents_exactly_the_vars_the_code_reads():
+    """.env.sample is the only place a user learns a setting exists.
+
+    The ATTEST_* half is DERIVED from the source rather than listed here. A
+    hand-maintained allowlist only catches a var that was documented without
+    being read -- the harmless direction. The costly direction is a var the
+    code reads and nothing documents, which is how ATTEST_TOOLS and
+    ATTEST_EXPAND stayed invisible to every user who did not read
+    mcp/__init__.py, and ATTEST_CITATION_WEB -- the one setting that permits a
+    network call -- stayed invisible to the persona most likely to audit it.
+    """
     import re
     from pathlib import Path
 
     from attestation import llm
 
-    sample = (Path(__file__).resolve().parents[1] / ".env.sample").read_text()
+    root = Path(__file__).resolve().parents[1]
+    sample = (root / ".env.sample").read_text()
     documented = {
         name
         for name in re.findall(r"^#?([A-Z_]+)=", sample, flags=re.MULTILINE)
         if not name.startswith("OLLAMA_")  # daemon section: documented, not read by hermes
     }
-    known = set(llm.ENV_VARS) | {"EMBED_DIMS", "RSS_DB"}
+
+    read_by_code = set()
+    for path in (root / "src" / "attestation").rglob("*.py"):
+        read_by_code |= set(
+            re.findall(r"environ(?:\.get)?[(\[]\s*[\"']([A-Z][A-Z_]+)", path.read_text())
+        )
+    # Vars the code reads that are deliberately not user settings.
+    read_by_code -= {"PATH", "HOME", "PYTEST_CURRENT_TEST", "OLLAMA_KEEP_ALIVE", "VIRTUAL_ENV"}
+
+    known = set(llm.ENV_VARS) | {"EMBED_DIMS", "RSS_DB"} | read_by_code
+    undocumented = known - documented
+    assert not undocumented, (
+        f"read by the code, documented nowhere a user looks: {sorted(undocumented)}"
+    )
     assert documented == known
 
 

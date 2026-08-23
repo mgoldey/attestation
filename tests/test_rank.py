@@ -593,3 +593,144 @@ def test_the_preference_term_waits_for_both_classes(tmp_path, fake_embedder):
     conn.commit()
     assert _preference_ready(conn, uid), "a single downvote is real signal"
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Provenance of the training signal
+# ---------------------------------------------------------------------------
+
+
+def _mixed_history(tmp_path, embedder, sources):
+    """A user whose clicks come from the given provenance sources, alternating
+    useful/not-useful so the classifier's single-class guard never fires."""
+    from attestation.db import get_db
+    from attestation.rank import create_user
+
+    conn = get_db(tmp_path / "t.db")
+    user_id = create_user(conn, "mixed", "machine learning")
+    for i, source in enumerate(sources):
+        item_id = add_item(conn, embedder, f"item {i}")
+        conn.execute(
+            "INSERT INTO clicks(user_id, item_id, useful, source) VALUES (?,?,?,?)",
+            (user_id, item_id, i % 2, source),
+        )
+    conn.commit()
+    return conn, user_id
+
+
+def test_ranking_quality_says_how_much_of_its_training_is_real(tmp_path, fake_embedder):
+    """A click count mixing real judgement with synthetic labels overstates the
+    evidence, and `clicks: 70` reads as seventy human decisions.
+
+    Measured on the live database when this was written: matt had 70 clicks and
+    `classifier_active: true`, of which 8 were `ui` and 3 `agent` -- eleven real
+    ones. The other 59 were `implicit` (harvested explanation requests) and
+    `simulated` (a chat model reacting as the persona). Two other personas were
+    58% `bootstrap`, which `evaluate_user` excludes as tautological because the
+    label is a linear threshold on the same embedding the classifier trains on.
+
+    This function exists because "a digest built from an untrained ranker looks
+    exactly like one built from a good one". A digest built from a
+    SYNTHETICALLY-trained ranker looked exactly like both.
+    """
+    from attestation.rank import ranking_quality
+
+    conn, user_id = _mixed_history(
+        tmp_path,
+        fake_embedder,
+        ["ui", "ui", "agent", "simulated", "simulated", "implicit", "bootstrap", "bootstrap"],
+    )
+
+    quality = ranking_quality(conn, user_id)
+
+    assert quality["clicks"] == 8
+    assert quality["real_clicks"] == 3, "ui + agent are the only human judgements"
+    assert quality["synthetic_clicks"] == 5
+    # The per-source breakdown is carried by the caveat prose, not by a
+    # `by_source` key: this dict ships inside every feed envelope's 2000-char
+    # budget, and an envelope key duplicating the sentence beside it is the
+    # cheapest thing to cut. See the size test below.
+    assert "2 bootstrap" in quality["caveat"], quality["caveat"]
+
+
+def test_a_mostly_synthetic_history_is_caveated_even_when_the_classifier_fires(
+    tmp_path, fake_embedder
+):
+    """classifier_active=true with a synthetic majority is the case that
+    produced no caveat at all: both classes are present, so the guard passes,
+    and nothing said the classes came from a model rather than a reader."""
+    from attestation.rank import ranking_quality
+
+    conn, user_id = _mixed_history(tmp_path, fake_embedder, ["ui"] + ["simulated"] * 9)
+
+    quality = ranking_quality(conn, user_id)
+
+    assert quality["classifier_active"] is True
+    assert "caveat" in quality, "a 9/10-synthetic history reported no caveat"
+    assert "simulated" in quality["caveat"]
+
+
+def test_bootstrap_labels_are_named_as_tautological(tmp_path, fake_embedder):
+    """bootstrap is not merely synthetic, it is circular: the label is a linear
+    threshold on the same vector the classifier then trains on. evaluate_user
+    excludes it for that reason; a reader of the live ranking deserves the same
+    warning, since nothing excludes it there."""
+    from attestation.rank import ranking_quality
+
+    conn, user_id = _mixed_history(tmp_path, fake_embedder, ["bootstrap"] * 6)
+
+    caveat = ranking_quality(conn, user_id).get("caveat", "")
+    assert "bootstrap" in caveat.lower(), caveat
+
+
+def test_an_all_human_history_gets_no_provenance_caveat(tmp_path, fake_embedder):
+    """The caveat must stay a real signal rather than decoration on every
+    response."""
+    from attestation.rank import ranking_quality
+
+    conn, user_id = _mixed_history(tmp_path, fake_embedder, ["ui"] * 25)
+
+    quality = ranking_quality(conn, user_id)
+    assert quality["real_clicks"] == 25
+    assert quality["synthetic_clicks"] == 0
+    assert "caveat" not in quality, quality.get("caveat")
+
+
+def test_ranking_quality_stays_small_enough_to_ship_in_every_envelope(tmp_path, fake_embedder):
+    """This dict rides along on feed.list, feed.search and feed.digest, and
+    those responses have a measured 2000-char budget (test_response_size.py):
+    a 2B model that cannot hold the payload loops truncate-apologise-redump.
+
+    The provenance keys were added to stop `clicks: 70` overstating the
+    evidence, and adding them pushed feed.search to 2050 chars. The fix is not
+    a bigger budget. Two things are dropped instead:
+
+    - `by_source` never ships. Every count it holds is already spelled out in
+      the caveat string, which a reader has to read anyway -- an envelope key
+      duplicating prose is the cheapest thing to cut.
+    - `real_clicks`/`synthetic_clicks` are omitted when there are no clicks at
+      all, where "0 of 0 are real" is noise rather than an honesty note.
+
+    What must NOT be dropped is the split on a history that has clicks: that
+    is the whole point of the change.
+    """
+    import json
+
+    from attestation.rank import create_user, ranking_quality
+
+    conn, user_id = _mixed_history(tmp_path, fake_embedder, ["ui", "simulated"])
+    quality = ranking_quality(conn, user_id)
+    assert "by_source" not in quality, "the caveat already names every source count"
+    assert quality["real_clicks"] == 1, "the split survives on a history with clicks"
+    assert quality["synthetic_clicks"] == 1
+
+    conn2 = get_db(tmp_path / "empty.db")
+    empty_user = create_user(conn2, "nobody", "machine learning")
+    empty = ranking_quality(conn2, empty_user)
+    assert empty["clicks"] == 0
+    assert "real_clicks" not in empty, "0 of 0 real clicks is noise, not honesty"
+    assert "synthetic_clicks" not in empty
+    assert len(json.dumps(empty)) <= 260, (
+        f"{len(json.dumps(empty))} chars of quality metadata on a fresh user; "
+        "this dict ships inside a 2000-char response budget"
+    )

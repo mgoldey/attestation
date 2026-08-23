@@ -22,6 +22,12 @@ OpenAI-compatible backend), a single SQLite file, no new services, and a strong
 bias against inventing structure the data does not have. A tool that reports
 success for work it did not do is worse than no tool.
 
+There is exactly one documented exception, and it is off unless you turn it on:
+setting `ATTEST_CITATION_WEB` adds a citation reader that queries
+api.crossref.org. It is checked when the resolver is built rather than when it
+is called, so a disabled reader cannot be coaxed into a request, and
+`cite.sources()` reports which readers can reach the network.
+
 The ledger reads artifacts that already exist — no instrumentation, no
 `log_metric()` calls, no change to how anything runs. That is deliberate:
 adoption cost is the constraint that decides whether a tool gets used at all.
@@ -212,13 +218,22 @@ mcp_servers:
 
 Verify with `hermes mcp list` — you should see `attestation ... ✓ enabled`.
 
-The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 37 tools:
+The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 50 tools.
+These counts move: re-measure rather than quoting this paragraph.
+
+```bash
+uv run python -c "from mcp.server.fastmcp import FastMCP; \
+from attestation.mcp import register_all; import asyncio; \
+m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
+```
+
 
 | Tool | What it does | Speed |
 |---|---|---|
 | `feed.personas()` | List reader personas + interest profiles | instant |
 | `feed.list(user, limit)` | Ranked unread items, best first (capped at 50) | fast |
 | `feed.search(user, query, tag, content_type, limit)` | Search the whole archive, ranked for this user; includes already-rated items | fast |
+| `feed.read(user, item_id)` | Read ONE item in full — title, source, abstract | fast |
 | `feed.rate(user, item_id, useful)` | Record a ✓/✗ click; retrains ranking | fast |
 | `feed.explain(user, item_id)` | One-sentence "why did this rank here" | **slow** first call (local LLM), cached after |
 | `feed.persona_create(name, interests)` | Create a reader persona | instant |
@@ -227,6 +242,8 @@ The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 37 tools
 | `feed.persona_status(user)` | Click count, behavior-vs-text blend weight, top liked/disliked tags | instant |
 | `feed.persona_delete(name, confirm)` | Delete a persona and its feedback (needs `confirm=true`) | instant |
 | `feed.persona_reset(name, confirm)` | Clear a persona's clicks, keep the persona (needs `confirm=true`) | instant |
+| `feed.harvest_engagement(user)` | Turn past "why is this here?" questions into weak positive feedback | fast |
+| `feed.simulate_ratings(user, limit, confirm)` | Generate simulated reader reactions to train ranking (needs `confirm=true`) | **slow** (local LLM per item) |
 | `feed.source_add(url, title)` | Subscribe to a feed (register-only; items arrive at the next ingest) | fast |
 | `feed.sources()` | Subscribed feeds with item counts and last-fetched times | instant |
 | `feed.source_preview(url, limit)` | Show a feed's recent entries without subscribing | fast |
@@ -251,6 +268,15 @@ The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 37 tools
 | `runs.claims_check(path, verdict)` | Verify Markdown claims against recorded runs | instant |
 | `runs.claims_coverage(path)` | Numbers asserted in prose that no claim covers | instant |
 | `feed.digest(user, days, per_topic, limit)` | Ranked unread feed grouped by topic, with a ranking-quality caveat | fast |
+| `cite.lookup(key)` | One bibliographic record, and which source it came from | fast |
+| `cite.search(query, limit)` | Find references by title or author, from local sources only | fast |
+| `cite.check(path)` | Claims whose citation key no configured source can resolve | fast |
+| `cite.sources()` | Which citation sources are configured, and which can reach the network | instant |
+| `feed.ask(user, question)` | Route a plain-language feed question to the right tool | fast |
+| `kg.ask(question, source, target)` | Route a plain-language graph question to the right tool | instant |
+| `runs.ask(question, family, path)` | Route a plain-language ledger question to the right tool | instant |
+| `sym.ask(expr, question)` | Route a plain-language math question to the right tool | fast |
+| `feed.tools()`, `kg.tools()`, `runs.tools()`, `sym.tools()` | List the tools this agent surface actually has | instant |
 
 The knowledge graph is derived from the tagging pass, not from separate
 content: concepts are tags used at least twice, and two concepts are linked
@@ -484,6 +510,17 @@ runs which already finished, across many projects, in several languages, some
 dormant for months. Adoption cost is the design constraint: a tool needing new
 discipline gets used for a week, while one that reads what is already there
 keeps working after you forget it exists.
+
+That argument cuts the other way for trackers you already run, so a scan does
+read existing `wandb/` and `mlruns/` trees (`TRACKER_DIRS` in
+`src/attestation/ledger_adapters/generic.py`) — they are conventions in the
+strict sense, since the tool picks the directory name, not you. Two honest
+caveats: it records **final values, not curves**, because a ledger that
+compares finished arms has no use for the whole series; and **neither reader
+has been run against a real directory.** There was no `wandb/` or `mlruns/` on
+the machine where they were written, so both are built from the published
+layouts and tested against transcribed fixtures — plausible, not verified. If
+you have a real one, point this at it.
 
 It reads the conventions research repos already use — `results/`, `logs/`,
 `configs/`, `outputs/`, `benchmarks/` holding JSON, JSONL, CSV, YAML or TOML —

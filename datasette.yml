@@ -34,8 +34,6 @@ databases:
           Long format: one row per (run, metric, step, split). Long rather than
           wide because projects report entirely different metrics, and a wide
           table would need a migration per project.
-      kg_nodes:
-        description: Concepts from the reading graph, with their degree.
       # vec0 internals: implementation detail of the embedding index, not
       # anything a human reviews.
       item_vectors_chunks:

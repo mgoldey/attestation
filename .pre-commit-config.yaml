@@ -62,6 +62,31 @@ repos:
         # watching a global gate return 0. Each file is pinned at its own
         # measured worst instead, so getting worse requires editing the list.
 
+      - id: bandit
+        name: bandit (security)
+        entry: uv run --frozen bandit -q -c pyproject.toml -r src/attestation --severity-level medium
+        language: system
+        types: [python]
+        pass_filenames: false
+        # Medium and above only. At LOW, bandit reports every `import
+        # subprocess` and every partial executable path, which here are 8
+        # deliberate calls with static argv and no shell -- noise that trains
+        # people to ignore the hook. Baseline at adoption: 0 findings at
+        # medium, 0 at high.
+
+      - id: xenon
+        name: xenon (maintainability)
+        entry: uv run --frozen xenon --max-modules B --max-average A src/attestation
+        language: system
+        types: [python]
+        pass_filenames: false
+        # Module and average grades only -- NOT --max-absolute, which was tried
+        # here and found hollow: `--max-absolute D` returned exit 0 against a
+        # 26-branch function. Per-function complexity is enforced by the radon
+        # ratchet above, which pins each file at its own measured worst. This
+        # hook covers what that one does not: a module whose total complexity
+        # creeps up while no single function crosses its own line.
+
       - id: pytest
         name: pytest
         entry: uv run --frozen pytest -q

@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from attestation.db import get_db, resolve_db_path
 
 
@@ -381,3 +383,73 @@ def test_existing_db_migrates_to_corpora(tmp_path):
     tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"corpora", "corpus_splits"} <= tables
     assert conn.execute("SELECT COUNT(*) c FROM runs").fetchone()["c"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Backup
+# ---------------------------------------------------------------------------
+
+
+def test_backup_captures_writes_still_in_the_wal(tmp_path):
+    """`cp hermes.db` is the obvious backup and it silently loses data.
+
+    get_db sets journal_mode=WAL, so recent commits live in `hermes.db-wal`
+    until a checkpoint. A copy of the main file alone opens fine, looks fine,
+    and is missing the newest rows -- which is worse than no backup, because it
+    looks trustworthy. Five such copies existed in the real data directory when
+    this was written, made by hand in earlier sessions.
+
+    VACUUM INTO is the fix: it writes one consistent file including the WAL,
+    without stopping writers.
+    """
+    from attestation.db import backup_db
+
+    src = tmp_path / "live.db"
+    conn = get_db(src)
+    for i in range(200):  # enough writes that the WAL is not trivially empty
+        conn.execute("INSERT INTO users(name, interests) VALUES (?, 'analysis')", (f"u{i}",))
+    conn.commit()
+
+    naive = tmp_path / "naive.db"
+    naive.write_bytes(src.read_bytes())  # what an operator would type
+    dest = backup_db(conn, tmp_path / "backup.db")
+
+    live_users = conn.execute("SELECT count(*) FROM users").fetchone()[0]
+    backup_users = sqlite3.connect(dest).execute("SELECT count(*) FROM users").fetchone()[0]
+    assert backup_users == live_users, "the backup lost rows the live database has"
+
+    # The naive copy is worse than "missing recent rows": measured here, it has
+    # no schema at all, because the CREATE TABLEs were still in the WAL too. It
+    # is a valid, openable, empty SQLite file.
+    try:
+        naive_users = sqlite3.connect(naive).execute("SELECT count(*) FROM users").fetchone()[0]
+    except sqlite3.OperationalError:
+        naive_users = None
+    assert naive_users != live_users, (
+        "a plain file copy captured everything, so this test proves nothing --"
+        " the WAL must be non-empty for the comparison to mean anything"
+    )
+
+
+def test_backup_refuses_to_overwrite(tmp_path):
+    """A backup that silently replaces the previous one is one keystroke from
+    having no backup at all."""
+    from attestation.db import backup_db
+
+    conn = get_db(tmp_path / "live.db")
+    dest = backup_db(conn, tmp_path / "b.db")
+
+    with pytest.raises(FileExistsError):
+        backup_db(conn, dest)
+
+
+def test_backup_result_is_a_readable_database(tmp_path):
+    """VACUUM INTO produces a real database, not a byte copy -- verify it opens
+    and carries the schema version, so a restore is not a surprise."""
+    from attestation.db import SCHEMA_VERSION, backup_db
+
+    conn = get_db(tmp_path / "live.db")
+    dest = backup_db(conn, tmp_path / "b.db")
+
+    restored = sqlite3.connect(dest)
+    assert restored.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION

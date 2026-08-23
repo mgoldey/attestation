@@ -247,6 +247,33 @@ SEED_USERS = {
 }
 
 
+def backup_db(conn: sqlite3.Connection, dest: str | Path) -> Path:
+    """Write a consistent single-file copy of the database to `dest`.
+
+    `cp hermes.db backup.db` is the obvious thing to type and it silently loses
+    data: `get_db` sets journal_mode=WAL, so recent commits live in
+    `hermes.db-wal` until a checkpoint. The copy opens, looks intact, and is
+    missing the newest clicks and items -- worse than having no backup, because
+    it looks trustworthy. Five such copies were sitting in the real data
+    directory when this was written.
+
+    VACUUM INTO reads through the WAL and writes one consistent, compacted file
+    without stopping writers, which is exactly the operation an operator
+    thought they were getting.
+
+    Refuses an existing destination: a backup that silently replaces the
+    previous one is one keystroke from being no backup at all.
+    """
+    dest = Path(dest)
+    if dest.exists():
+        raise FileExistsError(f"{dest} already exists; pick another name or remove it first")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # VACUUM INTO takes a literal, not a bound parameter, and rejects a path it
+    # cannot create. Quote-escape rather than interpolate raw.
+    conn.execute("VACUUM INTO ?", (str(dest),))
+    return dest
+
+
 def resolve_db_path(explicit: str | None) -> Path:
     """Resolve the hermes.db path with this precedence:
 

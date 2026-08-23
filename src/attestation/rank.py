@@ -93,6 +93,12 @@ def create_user(conn, name: str, interests: str) -> int:
 # positive evidence only; nothing here ever infers a negative from silence.
 CLICK_SOURCES = ("ui", "agent", "bootstrap", "simulated", "implicit")
 
+# Which sources are a person actually deciding something. `ui` is a button
+# press; `agent` is a verdict extracted from what the reader said. Everything
+# else is inferred or generated, and a click count that pools them overstates
+# how much the ranker was told -- see ranking_quality.
+HUMAN_CLICK_SOURCES = frozenset({"ui", "agent"})
+
 
 def record_click(conn, user_id: int, item_id: int, useful: bool, source: str = "ui") -> None:
     """The single click write path. `source` records provenance (see CLICK_SOURCES).
@@ -416,18 +422,38 @@ def ranking_quality(conn, user_id: int) -> dict:
     in exactly the case this caveat exists to describe.
     """
     rows = conn.execute(
-        "SELECT useful, COUNT(*) n FROM clicks WHERE user_id = ? GROUP BY useful",
+        "SELECT useful, source, COUNT(*) n FROM clicks WHERE user_id = ? GROUP BY useful, source",
         (user_id,),
     ).fetchall()
-    counts = {int(r["useful"]): r["n"] for r in rows}
+    counts: dict[int, int] = {}
+    by_source: dict[str, int] = {}
+    for row in rows:
+        counts[int(row["useful"])] = counts.get(int(row["useful"]), 0) + row["n"]
+        by_source[row["source"]] = by_source.get(row["source"], 0) + row["n"]
+
     total = sum(counts.values())
     active = len(counts) > 1
+    real = sum(n for src, n in by_source.items() if src in HUMAN_CLICK_SOURCES)
     out = {
         "clicks": total,
         "useful": counts.get(1, 0),
         "not_useful": counts.get(0, 0),
         "classifier_active": active,
     }
+    # A bare count reads as that many human decisions. Measured on the live
+    # database: one persona showed `clicks: 70, classifier_active: true` while
+    # only 11 were a person deciding anything -- the rest harvested or
+    # generated. Two others were 58% bootstrap.
+    #
+    # This dict rides on every feed envelope, inside a measured 2000-char
+    # budget (test_response_size.py), so it pays for its own weight twice over:
+    # the per-source breakdown is NOT a key here, because _provenance_caveat
+    # already spells out every count in the prose a reader has to read anyway.
+    # On a user with no clicks the split says nothing either, so it is omitted
+    # rather than shipped as "0 of 0".
+    if total:
+        out["real_clicks"] = real
+        out["synthetic_clicks"] = total - real
     if not active:
         if total > 0:
             out["caveat"] = (
@@ -447,7 +473,42 @@ def ranking_quality(conn, user_id: int) -> dict:
             )
     elif total < 20:
         out["caveat"] = f"only {total} clicks: the classifier is active but weakly trained"
+
+    # Provenance caveat, appended to whatever the training-strength caveat said.
+    # It is a separate concern: a history can be large, both-class and
+    # well-trained, and still be almost entirely machine-generated.
+    provenance = _provenance_caveat(total, real, by_source)
+    if provenance:
+        out["caveat"] = f"{out['caveat']} {provenance}" if out.get("caveat") else provenance
     return out
+
+
+def _provenance_caveat(total: int, real: int, by_source: dict[str, int]) -> str:
+    """What to say when the training signal is mostly not a person.
+
+    `bootstrap` is called out separately because it is not merely synthetic, it
+    is circular: `bootstrap_persona` labels by a linear threshold on the very
+    embedding `classifier_probs` then trains on. `evaluate_user` excludes it for
+    that reason and its docstring says never to remove that filter to get more
+    eval data -- but nothing excludes it from the LIVE ranking, so a persona
+    seeded for a demo keeps being ranked by a classifier fit on its own input.
+    """
+    if not total or real == total:
+        return ""
+
+    parts = ", ".join(f"{n} {src}" for src, n in sorted(by_source.items(), key=lambda kv: -kv[1]))
+    caveat = (
+        f"only {real} of {total} clicks are a person deciding something"
+        f" (by source: {parts}); the rest are inferred or generated,"
+        " so the ranker knows less than the count suggests."
+    )
+    if by_source.get("bootstrap"):
+        caveat += (
+            f" {by_source['bootstrap']} are bootstrap labels, which are a threshold on the"
+            " same embedding the classifier trains on -- circular, and excluded from"
+            " `attest eval` for that reason."
+        )
+    return caveat
 
 
 STARTER_INTERESTS = "general science and technology research"

@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import os
 import re
 import sqlite3
 import time
@@ -9,6 +10,8 @@ import tomllib
 from pathlib import Path
 
 import feedparser
+
+from attestation.llm import DEFAULT_BASE_URL
 
 log = logging.getLogger(__name__)
 
@@ -142,8 +145,42 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
             )
             conn.commit()
             stats["added"] += added_here
-        except Exception:
-            log.exception("feed failed: %s", feed["url"])
+        except Exception as exc:  # noqa: BLE001 -- one bad feed must not end
+            # the run, and the handler below sorts the two cases that matter:
+            # an unreachable embedding backend (fatal for every feed, so stop
+            # and say so once) versus this feed being broken (report and go on).
             conn.rollback()
             stats["failed_feeds"] += 1
+            # An unreachable embedder is not a broken feed, and reporting it as
+            # one sends a new user to debug their network or feeds.toml while
+            # the actual cause is that Ollama is not running. Measured: with the
+            # backend down this printed one full httpx traceback PER FEED --
+            # 22 of them, ~880 lines -- every one headed "feed failed: <url>".
+            if _is_embedder_down(exc):
+                if not stats.get("embedder_down"):
+                    stats["embedder_down"] = True
+                    log.warning(
+                        "embedding model unreachable at %s -- is ollama running?"
+                        " (`attest install --check` diagnoses this). Skipping the"
+                        " remaining feeds; nothing can be embedded until it is back.",
+                        os.environ.get("LLM_BASE_URL", DEFAULT_BASE_URL),
+                    )
+                break
+            # A genuine per-feed failure still names the feed. No stack trace:
+            # the exception text is the diagnosis, and a traceback for an
+            # expected condition trains people to ignore the output.
+            log.warning("feed failed: %s -- %s: %s", feed["url"], type(exc).__name__, exc)
     return stats
+
+
+def _is_embedder_down(exc: BaseException) -> bool:
+    """Whether this failure means the embedding backend is unreachable.
+
+    Matched on the transport exception rather than on message text: httpx
+    raises ConnectError/ConnectTimeout for a refused or unanswered socket,
+    which is exactly the "Ollama is not running" case and is not something a
+    malformed feed can produce -- `parse` never opens a socket to the backend.
+    """
+    import httpx
+
+    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))

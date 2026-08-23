@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import feedparser
 import pytest
@@ -248,3 +249,95 @@ def test_stats_never_counts_an_item_that_was_rolled_back(tmp_path, fake_embedder
     )
     assert stats["failed_feeds"] == 1
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Diagnosing the embedder, not blaming the feed
+# ---------------------------------------------------------------------------
+
+
+class _DeadEmbedder:
+    """An embedder whose backend is not running -- the commonest first-run state."""
+
+    dims = 256
+
+    def embed_document(self, title, text):
+        import httpx
+
+        raise httpx.ConnectError("[Errno 111] Connection refused")
+
+    def embed_query(self, text):
+        return self.embed_document("", text)
+
+
+def test_a_dead_embedder_is_named_once_not_blamed_on_every_feed(tmp_path, caplog):
+    """Measured first-run failure: with Ollama down, ingest printed 22 full
+    tracebacks -- one per feed -- each headed "feed failed: <url>", and exited 0.
+
+    Three faults compounding. The stack dump is httpx internals for an expected,
+    diagnosable condition. The message blames the FEED, sending a new user to
+    debug their network or feeds.toml when the embedding model is what is down.
+    And a zero exit means the documented cron line (`attest ingest && attest
+    tag`) chains happily and produces nothing, forever, silently.
+
+    `attest install --check` already diagnoses this correctly. Ingest just never
+    asked.
+    """
+    import logging
+
+    conn = get_db(tmp_path / "t.db")
+    feeds = tmp_path / "feeds.toml"
+    feeds.write_text(
+        '[[feeds]]\nurl = "http://a.example/f"\ntitle = "A"\n'
+        '[[feeds]]\nurl = "http://b.example/f"\ntitle = "B"\n'
+        '[[feeds]]\nurl = "http://c.example/f"\ntitle = "C"\n'
+    )
+
+    def parse(url):
+        return SimpleNamespace(
+            entries=[{"title": "t", "summary": "s", "id": f"{url}#1", "link": f"{url}#1"}],
+            feed=SimpleNamespace(title="T"),
+        )
+
+    with caplog.at_level(logging.WARNING):
+        stats = run_ingest(conn, _DeadEmbedder(), feeds, parse=parse)
+
+    text = caplog.text
+    # caplog.text does not render exc_info, so check the records directly:
+    # log.exception() sets exc_info, log.warning() does not, and it was the
+    # former (22 times) that produced ~880 lines of httpx internals.
+    assert not any(r.exc_info for r in caplog.records), (
+        "an expected, diagnosable condition logged a stack trace"
+    )
+    assert text.lower().count("embedding") >= 1, "never named the embedder as the cause"
+    # Said once, not once per feed.
+    assert text.count("unreachable") <= 1, f"repeated the same diagnosis per feed:\n{text}"
+    assert stats["failed_feeds"] >= 1
+    assert stats.get("embedder_down") is True, "the caller cannot tell this apart from bad feeds"
+
+
+def test_one_broken_feed_still_reports_per_feed(tmp_path, caplog, fake_embedder):
+    """The embedder shortcut must not swallow ordinary per-feed failures --
+    a 404 on one feed is still that feed's problem and the others must run."""
+    import logging
+
+    conn = get_db(tmp_path / "t.db")
+    feeds = tmp_path / "feeds.toml"
+    feeds.write_text('[[feeds]]\nurl = "http://bad.example/f"\ntitle = "Bad"\n')
+
+    def parse(url):
+        raise ValueError("malformed feed document")
+
+    with caplog.at_level(logging.WARNING):
+        stats = run_ingest(conn, fake_embedder, feeds, parse=parse)
+
+    assert stats["failed_feeds"] == 1
+    assert not stats.get("embedder_down")
+    assert "bad.example" in caplog.text, "a genuine feed failure stopped naming the feed"
+    # No stack trace even here. caplog.text omits exc_info, so inspect the
+    # records: log.exception sets it, log.warning does not. A traceback for an
+    # expected condition is what trained people to ignore this output.
+    assert not any(r.exc_info for r in caplog.records), (
+        "a malformed feed dumped a stack trace instead of naming the problem"
+    )
+    assert "malformed feed document" in caplog.text, "the reason was not reported"
