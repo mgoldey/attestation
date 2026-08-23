@@ -59,8 +59,6 @@ def _tools_listing(surface: str, expanded: bool) -> dict:
     }
 
 
-
-
 def register_disclosure(mcp, restricted: str, expanded: bool) -> None:
     """Attach `<surface>.tools`, but only when the specifics are hidden."""
     if not restricted:

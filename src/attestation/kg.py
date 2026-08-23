@@ -78,6 +78,44 @@ for _key, _spelling in _ALIAS_DOC.get("fold_canonical", {}).items():
     _FOLD_CANON[_fold(_key)] = _spelling
 
 
+def resolve_query(text: str, adjacency) -> str:
+    """A user's phrasing turned into a node name the graph actually holds.
+
+    Distinct from `canonical`, deliberately. canonical() maps a STORED tag to
+    its canonical spelling and is a pure function used when building the
+    graph; this maps what a person or a model TYPED to a node, and is used only
+    at lookup. Merging them would let a query's spelling rules leak into the
+    graph's node names.
+
+    Measured: `kg.neighbors` refused 'reinforcement learning' and
+    'Reinforcement Learning' while 'reinforcement-learning' returned 95
+    neighbours. Both refusals are correct about the stored name and useless to
+    the caller, and gemma4:e2b hit exactly this -- it called
+    kg_path(source="transformers", target="reinforcement learning"), because
+    spaces are how the question was asked.
+
+    Falls back to the input unchanged when nothing matches, so an unknown
+    concept is still refused rather than silently resolved to something near.
+    """
+    if text in adjacency:
+        return text
+    direct = canonical(text)
+    if direct in adjacency:
+        return direct
+    # Spaces and case are how a person writes a concept; the graph stores
+    # lowercase and hyphenated. Try that shape before giving up.
+    spelled = canonical("-".join(text.lower().split()))
+    if spelled in adjacency:
+        return spelled
+    # Last resort: match on the fold key, which already ignores separators and
+    # trailing plurals, so "Large Language Model" reaches large-language-models.
+    key = _fold("-".join(text.lower().split()))
+    for node in adjacency:
+        if _fold(node) == key:
+            return node
+    return text
+
+
 def canonical(tag: str) -> str:
     """Map a tag to its canonical spelling. Identity for unmapped tags.
 
@@ -183,7 +221,7 @@ def neighbors(conn: sqlite3.Connection, node: str, limit: int = 20) -> list[dict
     # suggested recovery made it worse: kg.concepts(prefix="llm") returns
     # code-llm and llm-safety and NOT the hub, so the caller concludes their
     # reading is absent. Measured on gemma4:e2b, the model did exactly that.
-    node = canonical(node)
+    node = resolve_query(node, adjacency)
     if node not in adjacency:
         return []
 
@@ -207,7 +245,8 @@ def shortest_path(conn: sqlite3.Connection, source: str, target: str) -> list[st
     # built from canonical names, so `llm` -> `large-language-models`. Without
     # this, a path between two real concepts reported None whenever either was
     # spelled the way people actually write it.
-    source, target = canonical(source), canonical(target)
+    source = resolve_query(source, adjacency)
+    target = resolve_query(target, adjacency)
     if source not in adjacency or target not in adjacency:
         return None
     if source == target:

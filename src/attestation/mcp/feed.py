@@ -142,8 +142,10 @@ def register(mcp) -> None:
 
     @mcp.tool(name="feed.persona_status")
     def profile_status(user: str) -> dict:
-        """Show how well-trained a persona is: click count, how much ranking is
-        driven by behavior vs the written interests, and top liked/disliked tags."""
+        """How well-trained a persona is, and on what.
+
+        Click count, how much of the ranking is driven by behaviour versus the
+        written interests, and the tags this reader liked and disliked most."""
         return _profile_status(user)
 
     @mcp.tool(name="feed.search")

@@ -127,7 +127,9 @@ def register(mcp) -> None:
     def sym_evaluate(
         expr: str, subs: dict | None = None, units: str | None = None, timeout: Timeout = 10
     ) -> dict:
-        """Evaluate an expression numerically, optionally substituting values or
+        """Evaluate an expression to a number.
+
+        Optionally substituting values or
         converting units.
 
         Substitution: expr "x**2 + 1" with subs {"x": 3} -> 10.

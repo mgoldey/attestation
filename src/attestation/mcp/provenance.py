@@ -106,6 +106,13 @@ def register(mcp) -> None:
         filenames: which variant won, on what metric, by how much. Omit `metric` to
         use the one most arms share.
 
+        `family` is a name from `runs.list`, which needs NO arguments and
+        returns every family in the ledger. Call it first when the user names a
+        sweep in prose ("my learning-rate sweep") -- the recorded names are
+        whatever the directories were called, not what the user calls them.
+        Measured: without this, gemma4:e2b pushed the question back at the user
+        and hermes3:8b invented a family, a metric and a project.
+
         Refuses to rank a metric whose direction is undeclared rather than guessing
         -- ranking WER as if higher were better would name the worst arm the
         winner. Arms with no value for the metric are listed in `without_metric`
@@ -120,8 +127,11 @@ def register(mcp) -> None:
 
     @mcp.tool(name="runs.detail")
     def runs_detail(project: str, name: str) -> dict:
-        """One run in full: config shape, every metric, source path, and the
-        header comment from its config if it had one.
+        """Everything recorded about one run.
+
+        Config shape, every metric, the source path it was read from, and the
+        header comment from its config if it had one. `project` and `name` come
+        from `runs.list`, which needs no arguments.
 
         That header is often where the hypothesis and the single changed variable
         are written down. It is stored verbatim and never interpreted.
@@ -133,7 +143,10 @@ def register(mcp) -> None:
     def claims_coverage(path: str | None = None) -> dict:
         """Numbers asserted in Markdown that no claim annotation covers.
 
-        The inverse of `claims_check`: that verifies the claims that exist, this
+        Omit `path` to scan every Markdown file under the configured research
+        root.
+
+        The inverse of `runs.claims_check`: that verifies the claims that exist, this
         finds assertions nobody made checkable. A document with zero contradicted
         claims looks healthy while asserting a dozen unverifiable numbers, and
         nothing else surfaces the difference.
@@ -149,6 +162,9 @@ def register(mcp) -> None:
     @mcp.tool(name="runs.claims_check")
     def claims_check(path: str | None = None, verdict: str | None = None) -> dict:
         """Verify numeric claims written in Markdown against runs in the ledger.
+
+        Omit `path` to check every Markdown file under the configured research
+        root.
 
         A claim is an HTML comment beside the prose it describes, so it renders as
         nothing and the document reads exactly as before:

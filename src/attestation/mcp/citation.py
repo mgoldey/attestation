@@ -131,9 +131,17 @@ def register(mcp) -> None:
 
     @mcp.tool(name="cite.sources")
     def cite_sources() -> dict:
-        """Which citation sources are configured, and which can reach the network.
+        """Does anything here reach the network? Answers "is this all local".
 
-        Call this to answer "can this leave my machine". `offline: true` means
-        every configured source is on disk.
+        Reports every configured bibliographic source and whether each reads
+        from disk or online. `offline: true` means nothing can leave this
+        machine. The feed, ranking, graph, ledger and symbolic tools are always
+        local; the only possible network reader is CrossRef for citations, and
+        this says whether it is enabled.
+
+        Both gemma4:e2b and hermes3:8b skipped this tool when asked "does
+        anything I do here send data over the internet" -- one declined, and
+        one asserted from the tool NAMES that everything was local, which is
+        the confident wrong answer this tool exists to prevent.
         """
         return _sources()

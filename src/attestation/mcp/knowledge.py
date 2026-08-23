@@ -57,15 +57,21 @@ def register(mcp) -> None:
         ] = "degree",
         limit: Limit = 10,
     ) -> dict:
-        """Most important concepts. metric="degree" for most-connected,
-        "betweenness" for the bridges between otherwise separate clusters.
+        """The concepts this reader's work centres on.
+
+        metric="degree" ranks by most-connected; "betweenness" finds the
+        bridges between otherwise separate clusters, which is the more
+        interesting answer to "what ties my areas together".
         """
         return _central(metric, limit)
 
     @mcp.tool(name="kg.communities")
     def kg_communities(min_size: Annotated[int, Field(ge=2, le=100)] = 3) -> dict:
-        """Topic clusters in the reading graph, each labelled by its most
-        connected member. Useful for seeing what the reading actually splits into.
+        """What subjects this reader's papers split into.
+
+        Answers "what are my main research areas" and "what themes run through
+        my reading". Topic clusters over the concepts extracted from their
+        items, each labelled by its most connected member.
 
         Clusters by modularity, so a dense hub does not swallow the graph: a
         concept joins a group only when its links there beat what chance predicts.
@@ -82,8 +88,11 @@ def register(mcp) -> None:
 
     @mcp.tool(name="kg.concepts")
     def kg_concepts(prefix: str | None = None, limit: Limit = MAX_LIST_LIMIT) -> dict:
-        """Concept names in the reading graph -- the vocabulary the other kg
-        tools accept.
+        """The concept vocabulary the other kg tools accept.
+
+        Names are lowercase and hyphenated (`reinforcement-learning`). The
+        lookups now accept spaces and capitals too, but this is how to turn a
+        vague phrase into the exact name, via `prefix`.
 
         Call this when you are not certain a name exists. The others take exact
         names and refuse one they do not have, rather than answering about it:
@@ -142,7 +151,7 @@ def _path(conn, source: str, target: str) -> dict:
     # live corpus and maps to a 163-neighbour hub. The refusal is right about
     # unknown names and was wrong about known ones spelled differently.
     for original in (source, target):
-        if kg.canonical(original) not in adjacency:
+        if kg.resolve_query(original, adjacency) not in adjacency:
             raise ToolError(NOT_A_CONCEPT.format(name=original))
     found = kg.shortest_path(conn, source, target)
     if found is None:

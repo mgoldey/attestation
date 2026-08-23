@@ -850,3 +850,62 @@ def test_the_feed_entry_points_say_what_the_corpus_holds():
             f" agent asked for papers cannot tell this tool applies:"
             f" {described[name].splitlines()[0]!r}"
         )
+
+
+def test_every_tool_summary_line_is_a_complete_sentence():
+    """A router scans the FIRST line to choose among tools, and six tools had
+    a first line that stopped mid-clause -- "Topic clusters in the reading
+    graph, each labelled by its most". The rest of the docstring is never
+    weighed at selection time, so a truncated summary is the whole pitch.
+    """
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.mcp import register_all
+
+    mcp = FastMCP("audit")
+    register_all(mcp)
+    truncated = [
+        f"{t.name}: {t.description.splitlines()[0][-40:]!r}"
+        for t in asyncio.run(mcp.list_tools())
+        if t.description and not t.description.splitlines()[0].rstrip().endswith((".", "?", "!"))
+    ]
+    assert not truncated, "summary lines break mid-sentence: " + "; ".join(truncated)
+
+
+def test_no_description_names_a_tool_that_does_not_exist():
+    """Namespacing renamed every tool, and two descriptions still pointed at
+    the old flat names: `feed.source_add` said "Use preview_feed first" and
+    `runs.claims_coverage` said "the inverse of `claims_check`". A model that
+    follows a cross-reference to a name that is not registered wastes a turn on
+    a hard error.
+    """
+    import asyncio
+    import re
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.mcp import register_all
+
+    mcp = FastMCP("audit")
+    register_all(mcp)
+    tools = asyncio.run(mcp.list_tools())
+    registered = {t.name for t in tools}
+
+    # A bare snake_case name in backticks is a tool reference when the same
+    # WORDS exist as a registered tool, in any order: `preview_feed` against
+    # `feed.source_preview`, `claims_check` against `runs.claims_check`.
+    # Matching on the local half alone missed the first of those, since the
+    # rename reordered the words -- verified by mutation.
+    def words(name: str) -> frozenset[str]:
+        return frozenset(name.replace(".", "_").split("_"))
+
+    registered_words = {words(n) for n in registered}
+    phantom: list[str] = []
+    for tool in tools:
+        for ref in re.findall(r"`([a-z][a-z0-9_]*_[a-z0-9_]+)`", tool.description or ""):
+            if ref not in registered and words(ref) <= set().union(*registered_words):
+                if any(words(ref) <= rw for rw in registered_words):
+                    phantom.append(f"{tool.name} -> `{ref}`")
+    assert not phantom, "descriptions name pre-namespacing tools: " + "; ".join(phantom)

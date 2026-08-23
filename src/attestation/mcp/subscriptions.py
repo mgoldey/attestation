@@ -27,7 +27,7 @@ def register(mcp) -> None:
 
         Validates that the URL parses as a feed, then registers it. Does NOT fetch
         its articles: items appear after the next ingest (hourly cron, or
-        `attest ingest`). Use preview_feed first to check a feed's content.
+        `attest ingest`). Use `feed.source_preview` first to check a feed's content.
         """
         return _add_feed(url, title)
 
