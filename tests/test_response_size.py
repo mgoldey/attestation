@@ -717,3 +717,114 @@ def test_no_derived_budget_can_ratchet_past_the_hard_ceiling():
             f"{name} derives to {value}, past the {HARD_RESPONSE_CEILING} a small model"
             " can hold -- a cap it depends on grew too far"
         )
+
+
+def test_no_tool_exceeds_the_hard_ceiling_when_actually_driven(stocked):
+    """Membership in a list is not a measurement.
+
+    The census checks that every tool is accounted for BY NAME. runs.detail was
+    accounted for -- filed as a status-returning tool -- and emitted 60,680
+    chars, the largest response on the surface. Being listed had become
+    permanent permission to grow.
+
+    So the list is paired with something that runs. Every tool callable without
+    side effects is driven and measured against the ceiling that does not move.
+    Composition tools are exempt from the CONVERSATIONAL budgets, not from the
+    limit of what a caller can hold.
+    """
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.mcp import register_all
+
+    # The fixture must be big enough that the CAPS bind, not the data. A first
+    # version passed while MEMBERS_SHOWN=500 and MAX_METRIC_ROWS=100000 --
+    # both round-11 regressions -- because the graph had two clusters and the
+    # ledger no runs. A census driven against toy data is the cheap-fixture
+    # failure one level up.
+    conn = get_db(stocked)
+    for group in range(12):
+        for member in range(60):
+            conn.execute(
+                "INSERT OR IGNORE INTO item_tags(item_id, tag) VALUES (?, ?)",
+                ((group % 40) + 1, f"g{group}_concept_{member}"),
+            )
+    conn.execute(
+        "INSERT INTO runs(project, name, family, status, source_path)"
+        " VALUES ('p', 'r', 'f', 'recorded', '/tmp/r.json')"
+    )
+    run_id = conn.execute("SELECT id FROM runs WHERE name = 'r'").fetchone()[0]
+    for i in range(500):
+        conn.execute(
+            "INSERT INTO run_metrics(run_id, metric, value, step, split)"
+            " VALUES (?, ?, ?, ?, 'test')",
+            (run_id, f"conformer_energy_variant_{i}", float(i), i),
+        )
+    conn.commit()
+    conn.close()
+
+    server = FastMCP("ceiling-census")
+    register_all(server)
+
+    # Read-only tools with arguments that work against the fixture. Mutators,
+    # destructive tools and anything needing a live model are driven by their
+    # own tests, not here.
+    calls = {
+        "feed.list": {"user": "ana"},
+        "feed.search": {"user": "ana", "query": "topic"},
+        "feed.digest": {"user": "ana"},
+        "feed.read": {"user": "ana", "item_id": 1},
+        "feed.personas": {},
+        "feed.persona_status": {"user": "ana"},
+        "feed.ask": {"user": "ana", "question": "what should I read"},
+        "runs.list": {},
+        "runs.detail": {"project": "p", "name": "r"},
+    }
+    # kg.* is absent on purpose: this fixture's items all carry the same tags,
+    # so the graph has no clusters and every kg response is an empty state --
+    # which a ceiling check would happily "pass" while measuring nothing. The
+    # kg caps are guarded in tests/test_kg_mcp.py against a graph built to
+    # cluster. feed.sources is absent for the same reason: one feed.
+
+    measured: dict[str, int] = {}
+
+    async def drive():
+        oversized = []
+        for name, args in calls.items():
+            result = await server.call_tool(name, args)
+            first = result[0]
+            if isinstance(first, tuple):
+                first = first[0]
+            text = (
+                json.dumps(first, indent=2, default=str)
+                if isinstance(first, list)
+                else getattr(first, "text", "")
+            )
+            # An empty or error payload must not read as "small and fine" --
+            # that is how a census passes by measuring nothing. The .ask tools
+            # return structured output (a list), so they carry `answer` rather
+            # than the `ok` envelope.
+            assert text, f"{name} returned no text; the census measured nothing"
+            marker = "answer" if name.endswith(".ask") else '"ok": true'
+            assert marker in text.lower(), f"{name} returned no payload: {text[:120]}"
+            # Non-empty is not enough: a tool that found nothing to return
+            # measures its own empty state, not its size. Verified -- the first
+            # fixture gave every item the same tags, so kg.communities produced
+            # ZERO clusters and its 106-char empty response "passed" a ceiling
+            # check that had measured nothing at all.
+            measured[name] = len(text)
+            if len(text) > HARD_RESPONSE_CEILING:
+                oversized.append(f"{name}={len(text)}")
+        return oversized
+
+    oversized = asyncio.run(drive())
+
+    # Each tool must have produced a real payload, or the census is measuring
+    # empty states. These floors are deliberately low -- they catch "returned
+    # nothing", not "returned a bit less than usual".
+    thin = {n: v for n, v in measured.items() if v < 250}
+    assert not thin, f"these returned an empty-looking payload, so nothing was measured: {thin}"
+    assert not oversized, f"over the {HARD_RESPONSE_CEILING}-char ceiling as emitted: " + ", ".join(
+        oversized
+    )
