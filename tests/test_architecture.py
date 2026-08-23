@@ -215,6 +215,24 @@ def test_mcp_domain_modules_stay_small():
 # an empty set here is how a new module silently gained the exemption.
 PRE_DECORATOR_MODULES = {"attestation.mcp.symbolic", "attestation.mcp.ask"}
 
+# Helpers inside those modules, so their bodies can be counted exactly rather
+# than with slack. symbolic.py had 8 underscore callables for 7 tool bodies --
+# `_call` being the eighth -- which gave one free slot: a tool could become a
+# closure and the count still matched. Naming the helpers is a short, stable
+# list; guessing which names are bodies is not, since bodies are called
+# `_list_feed` for feed.list and `_digest_body` for feed.digest.
+PRE_DECORATOR_HELPERS = {
+    "attestation.mcp.symbolic": {"_call"},
+    # ask.py is exempted from the exact count entirely rather than listed:
+    # its four `.tools` tools all delegate to ONE body (_tools_listing), so it
+    # legitimately serves 8 tools from 5 bodies and any count-based rule is
+    # wrong for it. The four `.ask` bodies are reachable and asserted by name
+    # below instead.
+}
+
+# Modules where tools legitimately share a body, so counting cannot apply.
+SHARED_BODY_MODULES = {"attestation.mcp.ask"}
+
 
 def test_every_tool_body_is_reachable_without_fastmcp():
     """Tools must be callable directly, or they can only be tested through a server.
@@ -305,7 +323,23 @@ def test_every_tool_body_is_reachable_without_fastmcp():
         # like a pre-decorator module. Pre-decorator modules are named
         # explicitly instead, so a NEW module that forgets @tool fails rather
         # than inheriting the exemption.
-        found = len(attrs) if module.__name__ in PRE_DECORATOR_MODULES else len(bodies)
+        if module.__name__ in SHARED_BODY_MODULES:
+            # Named check instead of a count: these four must stay reachable.
+            missing = [
+                n
+                for n in ("_feed_ask", "_runs_ask", "_kg_ask", "_sym_ask", "_tools_listing")
+                if not callable(getattr(module, n, None))
+            ]
+            if missing:
+                unreachable.append(f"{module.__name__}: {missing} not reachable")
+            continue
+        if module.__name__ in PRE_DECORATOR_MODULES:
+            helpers = PRE_DECORATOR_HELPERS.get(module.__name__, set())
+            found = len(
+                [a for a in impls_by_module.get(module.__name__, set()) if a not in helpers]
+            )
+        else:
+            found = len(bodies)
         if found < len(names):
             unreachable.append(
                 f"{module.__name__}: {found} reachable bodies for {len(names)} tools"
@@ -493,6 +527,15 @@ def test_claude_md_tool_counts_match_the_live_surface():
 
     text = (SRC.parent.parent / "CLAUDE.md").read_text()
     line = next(ln for ln in text.splitlines() if "MCP surface:" in ln)
+
+    # EVERY "<n> MCP tools" / "<n> tools" claim in the file, not just the one
+    # on the surface line. Line 5's opening summary said 37 while line 40 said
+    # 50 -- the guard matched only the line it was written against, so the
+    # stale number sat in the always-loaded doc's first paragraph.
+    for stale in re.finditer(r"(\d+)\s+MCP tools", text):
+        assert int(stale.group(1)) == len(names), (
+            f"CLAUDE.md claims {stale.group(1)} MCP tools; live surface has {len(names)}"
+        )
 
     total = int(re.search(r"MCP surface: (\d+) tools", line).group(1))
     assert total == len(names), (

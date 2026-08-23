@@ -734,3 +734,29 @@ def test_ranking_quality_stays_small_enough_to_ship_in_every_envelope(tmp_path, 
         f"{len(json.dumps(empty))} chars of quality metadata on a fresh user; "
         "this dict ships inside a 2000-char response budget"
     )
+
+
+def test_the_provenance_caveat_is_bounded_regardless_of_source_mix(tmp_path, fake_embedder):
+    """The caveat must not grow with the number of click sources.
+
+    Three rounds running, a payload guard missed the worst case because its
+    fixture was hand-built while the worst case is a property of the live data
+    distribution. The root cause is here rather than in any fixture: the
+    caveat joined EVERY source present, so its length was unbounded in
+    `len(CLICK_SOURCES)` -- 116 chars at the two sources the guard used, 144 at
+    the five a real persona can reach via bootstrap-persona. It rides on every
+    ranked response, so the budget was 28 chars closer to breaching than any
+    test showed.
+
+    Bounding it here means no future fixture can be wrong about it.
+    """
+    from attestation.rank import CLICK_SOURCES, _provenance_caveat
+
+    every_source = dict.fromkeys(CLICK_SOURCES, 999999)
+    worst = _provenance_caveat(sum(every_source.values()), 0, every_source)
+
+    assert len(worst) <= 160, f"{len(worst)} chars with every source present: {worst}"
+    # Still says the two things that matter: how much is real, and that
+    # bootstrap is circular.
+    assert "0/" in worst
+    assert "bootstrap" in worst

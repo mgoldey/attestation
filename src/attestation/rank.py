@@ -502,7 +502,19 @@ def _provenance_caveat(total: int, real: int, by_source: dict[str, int]) -> str:
     # once. The facts are what a caller needs; the essay explaining why
     # bootstrap labels are circular belongs in the docstring, not in the
     # response, because the response repeats it forever.
-    parts = "/".join(f"{n} {src}" for src, n in sorted(by_source.items(), key=lambda kv: -kv[1]))
+    # Only the two largest sources are named. Joining every source made the
+    # string grow with len(CLICK_SOURCES) -- 116 chars at two sources, 144 at
+    # five, 168 at the theoretical worst -- on a string that rides on every
+    # ranked response. Three separate payload-budget failures traced back to a
+    # fixture that happened to use fewer sources than a real persona.
+    #
+    # The proportion is what a caller acts on; the full breakdown is available
+    # from the clicks table, and bootstrap is called out below regardless of
+    # rank because it is circular rather than merely synthetic.
+    ranked = sorted(by_source.items(), key=lambda kv: (-kv[1], kv[0]))
+    parts = "/".join(f"{n} {src}" for src, n in ranked[:2])
+    if len(ranked) > 2:
+        parts += f"/+{len(ranked) - 2} more"
     caveat = f"only {real}/{total} clicks are human ({parts})"
     if by_source.get("bootstrap"):
         # Named, not explained: bootstrap is circular rather than merely

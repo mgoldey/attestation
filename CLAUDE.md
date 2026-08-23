@@ -2,7 +2,7 @@
 
 Auditable research provenance, fully local: experiment runs, verifiable claims,
 a reading knowledge graph, symbolic derivations, and a personalized science feed.
-Exposed as 37 MCP tools plus a small HTMX web UI and an `attest` CLI.
+Exposed as 50 MCP tools plus a small HTMX web UI and an `attest` CLI.
 
 ## Docs Index
 
