@@ -109,3 +109,35 @@ def test_the_suite_does_not_read_the_developers_own_metric_directions(tmp_path, 
     assert str(pathlib.Path.home()) not in configured, (
         f"the ladder still resolves inside $HOME: {configured}"
     )
+
+
+def test_the_readme_quickstart_runs_without_a_model_server(tmp_path, monkeypatch):
+    """README's "Try it in 60 seconds" promises the ledger and claim checker
+    work with no LLM backend reachable. That promise is the whole point of the
+    block -- it moves first value from ~40 minutes (install Ollama, pull 7GB,
+    ingest, tag) to under a second -- so it must not rot into a lie.
+
+    Runs the documented sequence against a deliberately dead backend.
+    """
+    monkeypatch.setenv("LLM_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "quickstart.db"))
+    root = pathlib.Path(__file__).resolve().parents[1]
+
+    conn = get_db(tmp_path / "quickstart.db")
+    scanned = ledger.scan(conn, root / "examples" / "workspace")
+    assert scanned, "the documented `runs scan --root examples/workspace` found nothing"
+
+    ranked = ledger.compare(conn, "kdsweep")
+    assert ranked["winner"] == "kdsweep_t4", (
+        "README prints kdsweep_t4 as the winner of the documented command"
+    )
+    caveats = " ".join(ranked.get("caveats", []))
+    assert "seed replication" in caveats, (
+        "README quotes the seed-replication caveat as the reason this output"
+        " earns its keep; without it the block oversells"
+    )
+
+    out = claims.check(conn, FINDINGS)
+    assert out["counts"].get("contradicted") == 1, (
+        f"README promises a contradicted verdict from this exact file: {out['counts']}"
+    )

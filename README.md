@@ -32,6 +32,42 @@ The ledger reads artifacts that already exist — no instrumentation, no
 `log_metric()` calls, no change to how anything runs. That is deliberate:
 adoption cost is the constraint that decides whether a tool gets used at all.
 
+## Try it in 60 seconds
+
+No model server, no ingest, no config — the run ledger and claim checker are
+pure local computation over files that already exist. This uses the sweep in
+`examples/workspace`:
+
+```bash
+git clone <this repo> ~/attestation && cd ~/attestation && uv sync
+export RSS_DB=/tmp/attest-demo.db
+
+uv run attest runs scan --root examples/workspace
+uv run attest runs compare kdsweep
+uv run attest claims examples/workspace/speech-distill/FINDINGS.md
+```
+
+Measured at **0.94s total** with no LLM backend reachable at all. What it says:
+
+```
+kdsweep — ranked by val_loss (lower_is_better), all arms on librispeech-100h
+winner: kdsweep_t4
+  caveat: the top two arms differ by 0.03 (1.4%) -- too close to call from
+          these numbers alone
+  caveat: each arm is a single run; no seed replication, so this ranking
+          cannot separate configuration from run-to-run variance
+
+7 claim(s): 1 contradicted, 5 supported, 1 unsupported
+```
+
+Every tracker ranks arms. The second caveat — this ranking cannot separate
+configuration from noise — is the part that earns its keep, and the
+`contradicted` verdict is a number in a document that no longer matches the
+artifact it came from.
+
+`examples/README.md` walks through the rest. When you want the feed, the
+knowledge graph, or tagging, keep reading — those need a model server.
+
 ## Feed ranking
 
 The original core, still here. An agent orchestrator for personalized feed
@@ -52,11 +88,20 @@ It runs two ways, and they share one database:
 
 ### Prerequisites
 
-- Python 3.12+ and [`uv`](https://docs.astral.sh/uv/)
-- [Ollama](https://ollama.com) running locally. `attest install` pulls the
-  required models (`embeddinggemma` for embeddings, `gemma4:e2b` for
-  explanations and tagging by default) for you — no manual `ollama pull`
-  needed. gemma4:e2b needs ollama >= 0.32.9.
+Two tiers, because half this tool needs no model at all:
+
+**For the run ledger and claim checker** — Python 3.12+ and
+[`uv`](https://docs.astral.sh/uv/). That is the whole list. `ledger.py` and
+`claims.py` import no LLM or embedding module, and the quickstart above is
+verified against an unreachable backend.
+
+**Additionally, for the feed, tagging, and knowledge graph** —
+[Ollama](https://ollama.com) running locally. `attest install` pulls the
+required models (`embeddinggemma` for embeddings, `gemma4:e2b` for
+explanations and tagging by default) — no manual `ollama pull` needed.
+gemma4:e2b needs ollama >= 0.32.9. Budget for it: a first `ingest` of ~1000
+items takes about 6 minutes, and `attest tag` runs at roughly 2.3s/item, so
+tagging that same 1000 items is a ~40-minute unattended job.
 
 ### One-liner
 
@@ -67,23 +112,27 @@ found — wires up the MCP server, the skill copy, the reasoning override,
 and the refresh cron job. Re-running it repairs whatever's missing; nothing
 it does is destructive.
 
-No checkout, straight from git — replace `REPO_URL` below with your actual
-remote (see "Once the repo has a reachable remote" further down for how the
-URL gets set for hermes-agent too):
+From a local clone — this is the path that works today:
 
 ```bash
-REPO_URL=https://github.com/you/attestation
-uvx --from "git+$REPO_URL" attest install
-```
-
-From a local clone (replace `<your-attestation-remote-url>` with your remote):
-
-```bash
-git clone <your-attestation-remote-url> ~/attestation
+git clone <this repo> ~/attestation
 cd ~/attestation
 uv sync
 uv run attest install
 ```
+
+**There is no published remote yet**, so the no-checkout `uvx --from git+...`
+form below cannot work until there is one. It is recorded here so the URL has
+one place to change, not as a command to run:
+
+```bash
+# Only once this repo has a reachable remote:
+REPO_URL=https://github.com/<owner>/attestation
+uvx --from "git+$REPO_URL" attest install
+```
+
+Same for `setup.sh`'s uvx fallback and `science_recommendations.repo_url` in
+the hermes-agent section — all three inherit whatever that URL becomes.
 
 Add `--check` to see what's missing without changing anything (exits 1 on
 gaps — useful in scripts), and `--yes` to skip the confirmation prompt for

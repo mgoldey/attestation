@@ -163,7 +163,10 @@ def step_ollama_reachable() -> StepResult:
     return StepResult(
         "ollama_reachable",
         Status.BROKEN,
-        f"cannot reach {_native_root()} — is `ollama serve` running?",
+        f"cannot reach {_native_root()} — is `ollama serve` running?"
+        " The run ledger and claim checker need no model at all:"
+        " `attest runs scan --root examples/workspace && attest runs compare kdsweep`"
+        " works right now.",
     )
 
 
