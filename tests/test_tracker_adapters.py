@@ -18,6 +18,7 @@ by a directory that does not match these fixtures exactly.
 """
 
 import json
+import math
 
 import pytest
 
@@ -319,3 +320,46 @@ def test_malformed_tracker_dirs_degrade_rather_than_raise(tmp_path, broken):
         (proj / "mlruns" / "0" / "abc" / "metrics" / "wer").write_text("not a metric line\n")
 
     generic.discover(proj)  # must not raise
+
+
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "Infinity", "NaN"])
+def test_a_non_finite_mlflow_metric_is_not_recorded(tmp_path, bad):
+    """NaN and inf must not become metrics, and MLflow can produce both.
+
+    `_numeric_items` filters them and its docstring says why: NaN compares
+    false to everything, so it loses every ranking it appears in and is
+    reported as a legitimate last place, and `statistics.pstdev` raises on one
+    -- "one such file took down every project in the workspace".
+
+    That docstring also says it is "the one place every numeric metric passes
+    through". The MLflow reader made that untrue: it builds Metric directly
+    from float(), which accepts every spelling above.
+    """
+    proj = tmp_path / "p"
+    d = _mlflow_run(proj, "0", "abc", name="diverged", metrics={"loss": [(0, 0.5, 0)]})
+    (d / "metrics" / "loss").write_text(f"1000 0.5 0\n2000 {bad} 1\n")
+
+    runs = generic.discover(proj)
+    values = [m.value for r in runs for m in r.metrics]
+    assert all(math.isfinite(v) for v in values), values
+
+
+def test_a_finite_value_before_a_non_finite_one_is_still_lost(tmp_path):
+    """Skipping the bad final line and reporting the last GOOD one would be
+    worse: it would report a diverged run's mid-training loss as its result.
+    The run diverged; "not measured" is the honest answer."""
+    proj = tmp_path / "p"
+    d = _mlflow_run(proj, "0", "abc", name="diverged", metrics={"loss": [(0, 0.5, 0)]})
+    (d / "metrics" / "loss").write_text("1000 0.5 0\n2000 nan 1\n")
+
+    assert generic.discover(proj) == []
+
+
+def test_a_non_finite_wandb_config_value_stays_a_string(tmp_path):
+    """Same root cause, lower stakes: config is not ranked, but silently
+    turning the string "nan" into a float NaN is still wrong."""
+    proj = tmp_path / "p"
+    _wandb_run(proj, "run-1-abc", {"wer": 0.1}, config={"threshold": "nan"})
+
+    (run,) = generic.discover(proj)
+    assert run.config["threshold"] == "nan"

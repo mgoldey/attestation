@@ -523,15 +523,22 @@ def _wandb_config(path: Path) -> dict | None:
 
 
 def _coerce(text: str):
-    """A YAML scalar as int, float or str -- in that order."""
+    """A YAML scalar as int, float or str -- in that order.
+
+    A non-finite float stays a string. `float("nan")` and `float("inf")` both
+    parse, so a config value literally spelled `nan` would otherwise become a
+    NaN silently. Config is not ranked, so the stakes are lower than in
+    `_mlflow_metric`, but it is the same mistake.
+    """
     try:
         return int(text)
     except ValueError:
         pass
     try:
-        return float(text)
+        value = float(text)
     except ValueError:
         return text
+    return value if math.isfinite(value) else text
 
 
 def _wandb_runs(root: Path, seen: set[str]) -> list[RunRecord]:
@@ -608,6 +615,19 @@ def _mlflow_metric(path: Path) -> tuple[float, int | None] | None:
             value = float(parts[1])
         except ValueError:
             continue
+        # A diverged run's last logged loss is `nan` or `inf`, and float()
+        # accepts both. `_numeric_items` filters these on the JSON path and its
+        # docstring calls itself "the one place every numeric metric passes
+        # through" -- this reader made that untrue by building Metric directly.
+        # A NaN compares false to everything, so it loses every ranking it
+        # appears in and is reported as a legitimate last place.
+        #
+        # Return None rather than falling through to an earlier finite line:
+        # reporting a diverged run's mid-training loss as its result would be
+        # worse than reporting nothing. The run diverged; "not measured" is
+        # what happened.
+        if not math.isfinite(value):
+            return None
         step = None
         if len(parts) > 2:
             try:

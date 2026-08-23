@@ -98,6 +98,33 @@ def test_an_entry_pointing_at_another_checkout_is_stale(root, tmp_path):
     assert kinds == {"stale"}
 
 
+def test_an_entry_bound_to_the_wrong_surface_is_stale(root):
+    """The check must compare ATTEST_TOOLS, not only the checkout path.
+
+    That variable IS the mechanism this whole feature exists to keep correct:
+    it is what restricts the tool surface, and a plausible-but-wrong binding --
+    attestation-feed serving `knowledge` after a copy-paste -- is precisely the
+    drift the emitter is for. Comparing only `args` reports it clean, because
+    the path is right.
+    """
+    servers = emit.hermes_servers(root)
+    servers["attestation-feed"]["env"]["ATTEST_TOOLS"] = "knowledge"
+
+    findings = emit.check_hermes(servers, root)
+    assert [f.kind for f in findings] == ["stale"], findings
+    assert "ATTEST_TOOLS" in findings[0].detail
+
+
+def test_an_entry_with_no_env_at_all_is_stale(root):
+    """A surface entry that never got its ATTEST_TOOLS set serves all 50 tools
+    under a name promising four -- worse than a missing entry, because it looks
+    present."""
+    servers = emit.hermes_servers(root)
+    del servers["attestation-feed"]["env"]
+
+    assert [f.kind for f in emit.check_hermes(servers, root)] == ["stale"]
+
+
 def test_an_entry_for_a_surface_that_no_longer_exists_is_orphaned(root):
     """The one a substring check can never find, and the reason this is a
     generator rather than a bigger `in` test. Same shape as the duplicate
@@ -241,3 +268,65 @@ def test_install_and_emit_share_one_generator(root, monkeypatch):
 
     install.step_mcp_wiring("hermes", check=True)
     assert calls == [root], "the doctor did not go through emit.check_hermes"
+
+
+# --------------------------------------------------------------------------
+# The CLI, which is where "never overwrite" is actually enforced
+# --------------------------------------------------------------------------
+
+
+def _emit(tmp_path, monkeypatch, write):
+    import argparse
+
+    from attestation import cli, install
+
+    monkeypatch.setattr(install, "_checkout_root", lambda: tmp_path)
+    monkeypatch.setattr(install, "_find_agent_binary", lambda: None)
+    return cli.cmd_emit(argparse.Namespace(write=write))
+
+
+def test_write_creates_missing_agent_files(tmp_path, monkeypatch, capsys):
+    assert _emit(tmp_path, monkeypatch, write=True) == 0
+    assert (tmp_path / ".claude" / "agents" / "attestation-feed.md").is_file()
+
+
+def test_write_refuses_to_clobber_a_hand_edited_file(tmp_path, monkeypatch, capsys):
+    """The spec's success criterion, and the reason this is a generator rather
+    than a formatter: "a hand-edited emitted file is reported, never
+    overwritten". A checksum would turn a deliberate edit into a warning the
+    user cannot act on; silently rewriting it is worse.
+
+    The realistic path is not someone running --write on a file they just
+    edited. It is someone adding a fifth surface, running --write to get it,
+    and losing an unrelated edit they made weeks ago as a side effect.
+    """
+    _emit(tmp_path, monkeypatch, write=True)
+    edited = tmp_path / ".claude" / "agents" / "attestation-feed.md"
+    edited.write_text(edited.read_text() + "\nMY HAND EDIT\n")
+
+    rc = _emit(tmp_path, monkeypatch, write=True)
+
+    assert "MY HAND EDIT" in edited.read_text(), "a hand edit was silently overwritten"
+    assert rc != 0, "clobbering was refused but the exit code said success"
+    assert "attestation-feed" in capsys.readouterr().out
+
+
+def test_write_still_updates_the_files_it_did_not_touch(tmp_path, monkeypatch):
+    """One edited file must not block the rest: a user who customised one
+    agent still needs the other three regenerated when a surface changes."""
+    _emit(tmp_path, monkeypatch, write=True)
+    agents = tmp_path / ".claude" / "agents"
+    (agents / "attestation-feed.md").write_text("HAND EDITED\n")
+    (agents / "attestation-symbolic.md").unlink()
+
+    _emit(tmp_path, monkeypatch, write=True)
+
+    assert (agents / "attestation-feed.md").read_text() == "HAND EDITED\n"
+    assert (agents / "attestation-symbolic.md").is_file()
+
+
+def test_rewriting_an_unmodified_file_is_not_an_error(tmp_path, monkeypatch):
+    """Only a DIFFERENCE is protected. Re-running --write on files that match
+    what would be generated is a no-op, not a refusal."""
+    _emit(tmp_path, monkeypatch, write=True)
+    assert _emit(tmp_path, monkeypatch, write=True) == 0

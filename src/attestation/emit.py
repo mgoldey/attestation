@@ -186,6 +186,22 @@ def check_hermes(servers: dict[str, dict], root: Path) -> list[Finding]:
                     f" expected {' '.join(want['args'])!r}",
                 )
             )
+        elif have.get("env", {}).get("ATTEST_TOOLS") != want["env"]["ATTEST_TOOLS"]:
+            # ATTEST_TOOLS is the mechanism this whole check exists for -- it
+            # is what restricts the surface. An entry with the right path and
+            # the wrong binding is the drift most likely to be plausible, and
+            # comparing only `args` reported it clean. An entry with no env at
+            # all is worse than a missing one: it serves every tool under a
+            # name promising four.
+            findings.append(
+                Finding(
+                    "stale",
+                    key.removeprefix(PREFIX),
+                    f"{key} sets ATTEST_TOOLS="
+                    f"{have.get('env', {}).get('ATTEST_TOOLS')!r},"
+                    f" expected {want['env']['ATTEST_TOOLS']!r}",
+                )
+            )
 
     for key in servers:
         if key == FULL_SERVER or not key.startswith(PREFIX):

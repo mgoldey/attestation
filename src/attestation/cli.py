@@ -196,6 +196,59 @@ def _running_mcp_pids() -> list[int]:
     return [int(line) for line in out.split() if line.isdigit() and int(line) != os.getpid()]
 
 
+def _emit_agent_files(root, write: bool) -> int:
+    """Report -- or with `write`, create -- the .claude/agents files.
+
+    Split from `cmd_emit` for the complexity ratchet, and because "is the MCP
+    config right" and "are the agent files right" are two questions with two
+    answers.
+    """
+    from attestation import emit
+
+    agents_dir = root / ".claude" / "agents"
+    generated = emit.claude_agents(root)
+
+    if not write:
+        stale = [
+            name
+            for name, body in generated.items()
+            if not (agents_dir / f"attestation-{name}.md").is_file()
+            or (agents_dir / f"attestation-{name}.md").read_text() != body
+        ]
+        if stale:
+            print(f"{len(stale)} agent file(s) missing or differing: {', '.join(sorted(stale))}")
+            print("  run `attest emit --write` to regenerate (an existing file that differs")
+            print("  is reported, never overwritten -- a deliberate edit survives)")
+        else:
+            print(f"claude agents: all {len(generated)} present and current")
+        return 0
+
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    wrote, refused = [], []
+    for name, body in generated.items():
+        path = agents_dir / f"attestation-{name}.md"
+        # Write only what is missing or already matches. An existing file whose
+        # contents differ is someone's edit, and losing it is not this
+        # command's call: the realistic path is not running --write on a file
+        # you just changed, it is adding a fifth surface and silently losing an
+        # unrelated edit as a side effect.
+        if path.is_file() and path.read_text() != body:
+            refused.append(name)
+            continue
+        path.write_text(body)
+        wrote.append(name)
+
+    if wrote:
+        print(f"wrote {len(wrote)} agent file(s) to {agents_dir}")
+    if refused:
+        print(f"{len(refused)} file(s) differ from what would be generated and were LEFT")
+        for name in sorted(refused):
+            print(f"  {agents_dir / f'attestation-{name}.md'}")
+        print("  delete one to accept the generated version, or keep your edit")
+        return 1
+    return 0
+
+
 def cmd_emit(args: argparse.Namespace) -> int:
     """Report -- or with --write, produce -- the per-surface agent configs.
 
@@ -228,27 +281,7 @@ def cmd_emit(args: argparse.Namespace) -> int:
     else:
         print("no agent binary found; skipping the MCP config check")
 
-    agents_dir = root / ".claude" / "agents"
-    generated = emit.claude_agents(root)
-    if args.write:
-        agents_dir.mkdir(parents=True, exist_ok=True)
-        for name, body in generated.items():
-            (agents_dir / f"attestation-{name}.md").write_text(body)
-        print(f"wrote {len(generated)} agent file(s) to {agents_dir}")
-        return 0
-
-    stale = []
-    for name, body in generated.items():
-        path = agents_dir / f"attestation-{name}.md"
-        if not path.is_file() or path.read_text() != body:
-            stale.append(name)
-    if stale:
-        print(f"{len(stale)} agent file(s) missing or differing: {', '.join(sorted(stale))}")
-        print("  run `attest emit --write` to regenerate (existing files are never overwritten")
-        print("  without it -- a deliberate edit is reported, not reverted)")
-    else:
-        print(f"claude agents: all {len(generated)} present and current")
-    return 0
+    return _emit_agent_files(root, args.write)
 
 
 def cmd_reload(args: argparse.Namespace) -> int:
