@@ -285,3 +285,44 @@ def test_communities_orders_by_size_so_the_big_ones_come_first(tmp_path, monkeyp
     groups = mcp_server._kg_communities_impl(min_size=3)["communities"]
     sizes = [g["n_members"] for g in groups]
     assert sizes == sorted(sizes, reverse=True), f"not ordered by size: {sizes}"
+
+
+def test_communities_caps_the_number_of_groups_not_just_their_members(tmp_path, monkeypatch):
+    """One axis capped, the other left open -- the digest bug, again.
+
+    `_communities` caps members per group at MEMBERS_SHOWN but iterates every
+    group `kg.communities` returns, and the tool exposes no limit. Measured
+    against the live graph: 16 groups at the default min_size=3 emits 4039
+    chars, and min_size=2 -- schema-allowed, ge=2 -- emits 6033, larger than
+    the digest worst case that was bounded for the same reason.
+
+    The guard above could not catch it: its fixture builds two communities and
+    asserts under 2500, five times more headroom than it needs.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    # 30 disjoint 3-concept clusters: every one qualifies at min_size=3.
+    item = 0
+    for group in range(30):
+        for pair in range(3):
+            item += 1
+            conn.execute(
+                "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+                " VALUES (NULL, ?, 'u', 's', ?)",
+                (f"i{item}", f"h{item}"),
+            )
+            for tag in (f"g{group}a", f"g{group}b", f"g{group}c"):
+                conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (item, tag))
+    conn.commit()
+    conn.close()
+
+    from attestation.mcp import knowledge as kn
+
+    out = kn._communities()
+    assert out["ok"] is True
+    assert len(out["communities"]) <= kn.MAX_COMMUNITIES_SHOWN, (
+        f"{len(out['communities'])} groups returned with no cap"
+    )
+    assert "n_communities" in out, "the true count must survive truncation"
+    assert out["n_communities"] >= len(out["communities"])
+    assert len(json.dumps(out, indent=2)) < 2500

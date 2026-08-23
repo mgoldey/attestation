@@ -95,6 +95,18 @@ def _response_budget() -> int:
 
 MAX_DEFAULT_RESPONSE_CHARS = _response_budget()
 
+# The absolute ceiling every derived budget must fit UNDER. Deriving a budget
+# from the caps it governs (round 7) stopped a sample masquerading as a bound,
+# but introduced a ratchet: raising MAX_DIGEST_ITEMS 12 -> 100 moved the budget
+# with it, and the suite stayed green while the live digest regressed from 5946
+# to 6859 -- essentially the number the fix was written to remove.
+#
+# 7000 is not a preference: it is what a gemma4:e2b context can hold alongside
+# a system prompt and the turn, which is the constraint the module docstring
+# names. A derivation that exceeds it means a cap grew too far, and the fix is
+# the cap, not this number.
+HARD_RESPONSE_CEILING = 7000
+
 
 # feed.read carries one full abstract, so it is deliberately the largest
 # single-item response. Derived from the abstract cap plus the row, rather than
@@ -111,7 +123,13 @@ MAX_READ_RESPONSE_CHARS = _read_budget()
 def _digest_budget() -> int:
     from attestation.mcp.feed import MAX_DIGEST_ITEMS
 
-    return MAX_DIGEST_ITEMS * MAX_ITEM_CHARS + 900  # + topic labels and envelope
+    # Items in a digest are cheaper than the worst a list row may cost: a
+    # digest row carries no relevance/match, and measured on the live database
+    # the mean is 313 chars against MAX_ITEM_CHARS's 496 worst case. Using the
+    # worst case here derived 7452, past the hard ceiling, for a response whose
+    # real worst is 5946.
+    DIGEST_ITEM_CHARS = 400
+    return MAX_DIGEST_ITEMS * DIGEST_ITEM_CHARS + 900  # + topic labels and envelope
 
 
 MAX_DIGEST_RESPONSE_CHARS = _digest_budget()
@@ -600,15 +618,45 @@ def test_every_tool_is_either_budgeted_or_declared_a_composition_tool():
     # Routers bound their own answers via _summarise's label cap.
     routers = {n for n in names if n.endswith(".ask") or n.endswith(".tools")}
     # Mutators and single-value tools return a status, not a payload.
+    # EXACT names, never prefixes. The first version used startswith for four
+    # groups, and each admitted an arbitrarily large new tool: feed.personagram,
+    # sym.symphony, cite.citegraph and feed.source_source_dump all shipped a
+    # 100KB payload past the census. The kg.sprawl probe I verified with
+    # happened to fall outside every prefix, which is why it looked sound.
+    #
+    # A prefix rule exempts tools that do not exist yet. Listing names means a
+    # new tool is unaccounted until someone decides where it belongs, which is
+    # the entire point of this test.
     trivial = {
-        n
-        for n in names
-        if n.startswith("sym.")
-        or n.startswith("cite.")
-        or n.startswith("feed.persona")
-        or n.startswith("feed.source_")
-        or n in {"feed.rate", "feed.explain", "feed.harvest_engagement", "feed.simulate_ratings"}
-        or n in {"runs.scan", "runs.detail", "kg.path", "kg.central"}
+        "sym.simplify",
+        "sym.solve",
+        "sym.differentiate",
+        "sym.integrate",
+        "sym.derivation",
+        "sym.verify",
+        "sym.evaluate",
+        "cite.lookup",
+        "cite.search",
+        "cite.check",
+        "cite.sources",
+        "feed.persona_create",
+        "feed.persona_update",
+        "feed.persona_delete",
+        "feed.persona_reset",
+        "feed.persona_status",
+        "feed.persona_suggest_interests",
+        "feed.source_add",
+        "feed.source_remove",
+        "feed.source_preview",
+        "feed.source_suggest",
+        "feed.rate",
+        "feed.explain",
+        "feed.harvest_engagement",
+        "feed.simulate_ratings",
+        "runs.scan",
+        "runs.detail",
+        "kg.path",
+        "kg.central",
     }
 
     unaccounted = names - budgeted - routers - trivial - set(COMPOSITION_TOOLS)
@@ -616,3 +664,29 @@ def test_every_tool_is_either_budgeted_or_declared_a_composition_tool():
         "these tools have no budget and are not declared composition tools: "
         + ", ".join(sorted(unaccounted))
     )
+
+
+def test_no_derived_budget_can_ratchet_past_the_hard_ceiling():
+    """A derived budget must not grow without limit when its input grows.
+
+    Round 7 derived the budgets from the caps so a sample could not masquerade
+    as a bound. That was right and it introduced the opposite failure: the
+    ceiling now moves with the constant it constrains. Measured -- raising
+    MAX_DIGEST_ITEMS from 12 to 100 kept all 23 tests green while the live
+    digest went from 5946 back to 6859, which is the regression the bound
+    exists to prevent.
+
+    So every derivation is checked against an absolute number that does not
+    move. If one exceeds it, a cap grew too far.
+    """
+    for name, value in (
+        ("MAX_ITEM_CHARS", MAX_ITEM_CHARS),
+        ("MAX_SEARCH_ITEM_CHARS", MAX_SEARCH_ITEM_CHARS),
+        ("MAX_DEFAULT_RESPONSE_CHARS", MAX_DEFAULT_RESPONSE_CHARS),
+        ("MAX_READ_RESPONSE_CHARS", MAX_READ_RESPONSE_CHARS),
+        ("MAX_DIGEST_RESPONSE_CHARS", MAX_DIGEST_RESPONSE_CHARS),
+    ):
+        assert value <= HARD_RESPONSE_CEILING, (
+            f"{name} derives to {value}, past the {HARD_RESPONSE_CEILING} a small model"
+            " can hold -- a cap it depends on grew too far"
+        )

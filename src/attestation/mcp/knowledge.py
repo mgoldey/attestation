@@ -144,6 +144,16 @@ def _central(conn, metric: str = "degree", limit: int = 10) -> dict:
 MEMBERS_SHOWN = 8
 
 
+# Groups the tool will show. Members per group were capped and the group COUNT
+# was not, which is the same shape as the digest bug: one axis bounded, the
+# other open. Measured on the live graph, 16 groups emitted 4039 chars and
+# min_size=2 -- allowed by the schema -- reached 6033.
+#
+# Largest-first ordering means this drops the smallest clusters, and
+# n_communities keeps the omission reportable.
+MAX_COMMUNITIES_SHOWN = 8
+
+
 @tool(empty={"communities": []}, label="kg_communities")
 def _communities(conn, min_size: int = 3) -> dict:
     found = kg.communities(conn, min_size=min_size)
@@ -157,19 +167,18 @@ def _communities(conn, min_size: int = 3) -> dict:
             "n_members": len(c["members"]),
             "members": c["members"][:MEMBERS_SHOWN],
         }
-        for c in found
+        for c in found[:MAX_COMMUNITIES_SHOWN]
     ]
     biggest = summarised[0]["n_members"] if summarised else 0
+    message = f"{len(found)} communit(ies), largest first"
+    if len(found) > len(summarised):
+        message += f"; showing the {len(summarised)} largest"
+    if biggest > MEMBERS_SHOWN:
+        message += f"; the largest has {biggest} concepts, showing {MEMBERS_SHOWN}"
     return {
-        "message": (
-            f"{len(found)} communit(ies), largest first"
-            + (
-                f"; the largest has {biggest} concepts, showing {MEMBERS_SHOWN}"
-                if biggest > MEMBERS_SHOWN
-                else ""
-            )
-        ),
+        "message": message,
         "communities": summarised,
+        "n_communities": len(found),
     }
 
 
