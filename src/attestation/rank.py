@@ -216,7 +216,16 @@ def _candidate_items(conn, user_id: int, since_days: int | None, *, exclude_clic
     )
     params: list = []
     if since_days is not None:
-        sql += " AND i.published >= datetime('now', ?)"
+        # replace(published,'T',' '), not a bare comparison. `published` is
+        # stored ISO-8601 with a T separator -- all 5222 items in the live
+        # corpus -- while datetime() renders a space, and 'T' (0x54) sorts
+        # after ' ' (0x20). So "2026-08-19T00:00:00" compares as NEWER than
+        # "2026-08-19 10:29:46" despite being ten hours older, which is
+        # exactly how arXiv stamps its items: midnight on the day.
+        #
+        # Measured on the live database before this: a 12-day window returned
+        # 3120 items where 2494 qualify, 626 of them silently too old.
+        sql += " AND replace(i.published, 'T', ' ') >= datetime('now', ?)"
         params.append(f"-{since_days} days")
     if exclude_clicked:
         sql += " AND i.id NOT IN (SELECT item_id FROM clicks WHERE user_id = ?)"

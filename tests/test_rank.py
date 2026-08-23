@@ -760,3 +760,42 @@ def test_the_provenance_caveat_is_bounded_regardless_of_source_mix(tmp_path, fak
     # bootstrap is circular.
     assert "0/" in worst
     assert "bootstrap" in worst
+
+
+def test_the_since_days_window_is_not_confused_by_the_date_separator(tmp_path, fake_embedder):
+    """`published` is stored ISO-8601 with a `T`; SQLite's datetime() uses a space.
+
+    String comparison puts 'T' (0x54) after ' ' (0x20), so
+    '2026-08-11T23:00:00' > '2026-08-11 09:00:00' compares as newer even when
+    it is fourteen hours older. Every one of the live corpus's 5222 items uses
+    the T form, and the window boundary uses datetime('now', '-N days'), so an
+    item can be up to a day older than the window and still be inside it.
+
+    Measured on the live database: a 12-day window returned 3120 items where
+    2494 qualify -- 626 wrongly included, 25% too many.
+    """
+    from attestation.db import get_db
+    from attestation.rank import create_user, rank_items
+
+    conn = get_db(tmp_path / "t.db")
+    user_id = create_user(conn, "ana", "machine learning")
+    assert user_id
+
+    # Midnight on the cutoff DAY, which is older than the cutoff instant --
+    # and exactly how arXiv stamps its items. 'T' (0x54) sorts after ' '
+    # (0x20), so "2026-08-19T00:00:00" compares as newer than
+    # "2026-08-19 10:29:46" while being ten hours older.
+    conn.execute(
+        "INSERT INTO items(feed_id, title, url, summary, published, content_hash)"
+        " VALUES (NULL, 'stale', 'u', 's',"
+        " date('now', '-4 days') || 'T00:00:00', 'h1')"
+    )
+    vec = fake_embedder.embed_document("stale", "s")
+    conn.execute("INSERT INTO item_vectors(rowid, embedding) VALUES (1, ?)", (vec.tobytes(),))
+    conn.commit()
+
+    # The item is 5 days minus an hour old, so a 4-day window must exclude it.
+    ranked = rank_items(conn, fake_embedder, user_id, since_days=4)
+    assert not ranked, (
+        "an item outside the window was returned; the T separator made it sort as newer"
+    )
