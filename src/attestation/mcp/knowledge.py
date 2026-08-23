@@ -32,7 +32,7 @@ def register(mcp) -> None:
         Returns only DIRECT neighbours, ranked by co-occurrence weight (how many
         items carry both concepts), strongest first, capped at `limit` (clamped
         to 50). Each row's `weight` is that real edge weight. For questions that
-        span more than one hop, use `kg_path`, which answers them exactly.
+        span more than one hop, use `kg.path`, which answers them exactly.
 
         """
         return _neighbors(node, limit)
@@ -45,7 +45,7 @@ def register(mcp) -> None:
         that is a legitimate answer meaning "these never co-occur", not an error.
         It is given only about names that really are concepts: one that is not is
         refused separately and says so, so a typo never reads as a finding. Use
-        `kg_concepts` to see the valid names.
+        `kg.concepts` to see the valid names.
 
         """
         return _path(source, target)
@@ -87,7 +87,7 @@ def register(mcp) -> None:
 
         Call this when you are not certain a name exists. The others take exact
         names and refuse one they do not have, rather than answering about it:
-        `kg_path` reports "no path" only for two REAL concepts that never
+        `kg.path` reports "no path" only for two REAL concepts that never
         co-occur, which is a fact about the reading, not a typo.
 
         `prefix` is a case-insensitive SUBSTRING match, so "learn" finds

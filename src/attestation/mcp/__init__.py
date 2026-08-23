@@ -8,8 +8,10 @@ checks.
 
 The split is by domain rather than by layer, and the namespaces are the point:
 a calling agent chooses a domain first (4 ways) and then a tool within it,
-instead of picking from 34 flat names where `runs_compare`, `kg_path`,
-`sym_integrate` and `digest` all look like peers.
+instead of picking from 34 flat names where runs_compare, kg_path,
+sym_integrate and digest all looked like peers. (Those names are quoted here as
+history -- none is served any more, and backticking them would tell a reader
+they were callable.)
 
 `_tool.tool` owns the ritual so each tool body computes only its own answer.
 """

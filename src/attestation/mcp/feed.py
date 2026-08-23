@@ -57,7 +57,7 @@ def register(mcp) -> None:
         `since_days` bounds how far back the feed reaches -- defaults to 14, so an
         empty result may mean "nothing published in the window" rather than
         "nothing relevant"; pass a larger value or `None` (unbounded) to tell them
-        apart. Use `search_feed` instead for the whole archive including already-
+        apart. Use `feed.search` instead for the whole archive including already-
         rated items.
 
         **Read `ranking_quality` before trusting the order.** With a single-class
@@ -73,7 +73,7 @@ def register(mcp) -> None:
 
         This writes (or overwrites) a single click record for (user, item_id) --
         calling it again for the same item just replaces the previous verdict, so it
-        is safe to call repeatedly. The next list_feed call for this user will
+        is safe to call repeatedly. The next `feed.list` call for this user will
         reflect the updated ranking once enough mixed feedback has accumulated.
         """
         return _record_feedback(user, item_id, useful)
@@ -107,7 +107,7 @@ def register(mcp) -> None:
     def list_users() -> dict:
         """List all available reader personas (users) and their interest profiles.
 
-        Use this to discover which `user` values are valid for list_feed,
+        Use this to discover which `user` values are valid for `feed.list`,
         feed.rate, and feed.explain before calling them.
         """
         return _list_users()
@@ -158,7 +158,7 @@ def register(mcp) -> None:
     ) -> dict:
         """Search items by keyword (and optional tag/content_type), ranked for this user.
 
-        Unlike list_feed this searches the whole archive and includes items already
+        Unlike `feed.list` this searches the whole archive and includes items already
         rated, flagging each with already_rated.
 
         **Read `ranking_quality` before trusting the order.** It reports whether the
@@ -247,7 +247,7 @@ def register(mcp) -> None:
         `n_total` reports how many it actually had, so truncation is visible.
 
         Returns structure, never prose: no LLM runs inside this tool. Per-item
-        `explanation` is surfaced only when `explain_item` already cached one.
+        `explanation` is surfaced only when `feed.explain` already cached one.
 
         **Read `ranking_quality` before trusting the order.** It reports whether the
         click classifier is actually active -- with a single-class click history it
@@ -288,7 +288,7 @@ def _clip_title(title: str | None) -> str:
 
 
 def _item_row(it, *, summary: bool = False) -> dict:
-    """The compact item shape list_feed, search and digest all return.
+    """The compact item shape feed.list, feed.search and feed.digest all return.
 
     Deliberately small. A ten-item response used to run past 3,000 characters,
     and gemma4:e2b could not reproduce one: it truncated, apologised,

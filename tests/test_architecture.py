@@ -449,7 +449,26 @@ def test_no_message_or_docstring_names_a_tool_that_does_not_exist():
         ]
         for text in strings:
             for name in sorted(stale):
-                if re.search(rf"\b{re.escape(name)}\s*\(", text) or f"call {name}" in text:
+                # Backticked and bare mentions count too. The guard matched
+                # only `name(` and "call name", so seven live descriptions told
+                # an agent to use `kg_path`, `search_feed` and `list_feed` --
+                # none of which the server serves since namespacing -- and one
+                # description mixed both spellings in a single sentence.
+                # Backticked mentions count too. The guard matched only
+                # `name(` and "call name", so seven live descriptions told an
+                # agent to use `kg_path`, `search_feed` and `list_feed` -- none
+                # of which the server serves since namespacing.
+                #
+                # NOT a bare-word match: that also hits Python identifiers like
+                # the `_list_feed` impl and `_cite_lookup`, which legitimately
+                # exist. A backtick means "this is a thing you can call", which
+                # is exactly the claim being checked.
+                mentioned = (
+                    re.search(rf"(?<![_.\w]){re.escape(name)}\s*\(", text)
+                    or f"call {name}" in text
+                    or f"`{name}`" in text
+                )
+                if mentioned:
                     offenders.append(f"{path.name}: {name}")
     assert not offenders, "these name tools that no longer exist: " + ", ".join(offenders)
 

@@ -53,7 +53,7 @@ def register(mcp) -> None:
         """Experiment runs in the ledger, with the families they group into.
 
         A `family` is a set of sibling runs -- the arms of a sweep, or one run's
-        checkpoints over training. Use it with `runs_compare` to answer which arm
+        checkpoints over training. Use it with `runs.compare` to answer which arm
         won. Also returns the family list, so you can see what is comparable.
 
         """
