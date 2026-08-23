@@ -1257,3 +1257,38 @@ def test_two_corpora_sharing_a_name_do_not_silently_merge(tmp_path):
     result = ledger.compare(conn, "f", metric="wer")
     assert result.get("corpus") is None, "vouched for a corpus whose definition is disputed"
     assert any("disputed" in c for c in result["caveats"]), result["caveats"]
+
+
+def test_concurrent_first_scans_do_not_lose_the_corpus(tmp_path):
+    """The fourth site of the same check-then-insert shape, and the worst.
+
+    `corpus.upsert` reads `SELECT * FROM corpora WHERE name = ?` and then
+    INSERTs. Concurrent first scans of one workspace -- the ordinary case when
+    two projects declare the same corpus -- gave 7 of 8 callers an
+    OperationalError and left ZERO rows: the others lost their data rather than
+    merely their race.
+
+    Only the first scan is exposed; once the row exists the UPDATE path is
+    safe, which is why it hides behind a populated database.
+    """
+    import concurrent.futures
+
+    from attestation import corpus
+    from attestation.db import get_db
+
+    db = tmp_path / "t.db"
+    get_db(db).commit()
+
+    def declare(_):
+        try:
+            corpus.upsert(get_db(db), {"name": "shared-corpus", "source": "librispeech"})
+            return None
+        except Exception as exc:  # noqa: BLE001 -- the point is what leaks out
+            return f"{type(exc).__name__}: {exc}"
+
+    with concurrent.futures.ThreadPoolExecutor(8) as pool:
+        errors = [e for e in pool.map(declare, range(8)) if e]
+
+    assert not errors, f"{len(errors)} of 8 concurrent upserts failed: {errors[0]}"
+    rows = get_db(db).execute("SELECT COUNT(*) FROM corpora").fetchone()[0]
+    assert rows == 1, f"{rows} corpora rows for one name"

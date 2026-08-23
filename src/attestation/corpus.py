@@ -215,11 +215,19 @@ def upsert(conn, entry: dict) -> int | None:
     columns = ("source", "config", "tokenizer", "vocab_size", "seq_len", "source_path")
     row = conn.execute("SELECT * FROM corpora WHERE name = ?", (str(name),)).fetchone()
     if row is None:
+        # INSERT OR IGNORE, not a bare INSERT after a read. The check and the
+        # write had nothing around them, so concurrent FIRST scans of one
+        # workspace -- ordinary when two projects declare the same corpus --
+        # gave 7 of 8 callers an OperationalError and left ZERO rows: they lost
+        # their data, not just their race. Only the first scan is exposed;
+        # after that the UPDATE path below is safe, which is why it hid behind
+        # a populated database.
         conn.execute(
-            f"INSERT INTO corpora(name, {', '.join(columns)})"
+            f"INSERT OR IGNORE INTO corpora(name, {', '.join(columns)})"
             f" VALUES (?, {', '.join('?' * len(columns))})",
             (str(name), *(entry.get(c) for c in columns)),
         )
+        conn.commit()
     else:
         # A CONFLICT is not a gap. The docstring below promises a declaration
         # is never silently replaced by a weaker value; a different value was
