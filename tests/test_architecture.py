@@ -210,6 +210,12 @@ def test_mcp_domain_modules_stay_small():
     assert not oversized, "mcp domain modules grew: " + ", ".join(oversized)
 
 
+# Modules whose tools predate mcp/_tool.py's @tool decorator, so their bodies
+# carry no __wrapped__ marker and must be counted plainly. Named, not detected:
+# an empty set here is how a new module silently gained the exemption.
+PRE_DECORATOR_MODULES = {"attestation.mcp.symbolic", "attestation.mcp.ask"}
+
+
 def test_every_tool_body_is_reachable_without_fastmcp():
     """Tools must be callable directly, or they can only be tested through a server.
 
@@ -242,7 +248,7 @@ def test_every_tool_body_is_reachable_without_fastmcp():
     # Names are not matched to tools -- that would re-encode the naming
     # convention rather than check anything. Per-module counting needs no
     # convention and localises the failure to the module that broke.
-    served_by_module: dict[str, int] = {}
+    served_by_module: dict[str, list[str]] = {}
     impls_by_module = {
         module.__name__: {
             attr
@@ -274,13 +280,35 @@ def test_every_tool_body_is_reachable_without_fastmcp():
             # against a stub is a separate failure, caught by the tool-listing
             # tests; here it simply contributes no expectations.
             continue
-        served_by_module[module.__name__] = len(recorded)
+        served_by_module[module.__name__] = recorded
 
+    # Count only DECORATED bodies. Plain counting -- even per module -- lets a
+    # helper mask a tool body one for one: feed.py has 8 helpers against 8
+    # slack, so eight of its bodies could become closures undetected.
+    #
+    # Name-matching was tried and rejected: bodies are named `_list_feed` for
+    # `feed.list`, `_digest_body` for `feed.digest`, and so on, so matching by
+    # name would encode a convention the code does not actually follow.
+    # @tool sets __wrapped__, which identifies a body exactly and assumes
+    # nothing about what it is called. symbolic.py predates the decorator and
+    # is counted the old way.
     unreachable = []
-    for name, count in served_by_module.items():
-        if len(impls_by_module.get(name, ())) < count:
+    for module in DOMAINS:
+        names = served_by_module.get(module.__name__, [])
+        if not names:
+            continue
+        attrs = [getattr(module, a) for a in impls_by_module.get(module.__name__, set())]
+        bodies = [a for a in attrs if hasattr(a, "__wrapped__")]
+        # No fallback for "this module has no decorated bodies" -- that was
+        # tried and it IS the hole: a probe module with two closure-bodied
+        # tools and two helpers passed, because zero decorated bodies looked
+        # like a pre-decorator module. Pre-decorator modules are named
+        # explicitly instead, so a NEW module that forgets @tool fails rather
+        # than inheriting the exemption.
+        found = len(attrs) if module.__name__ in PRE_DECORATOR_MODULES else len(bodies)
+        if found < len(names):
             unreachable.append(
-                f"{name}: {len(impls_by_module.get(name, ()))} module-level impls for {count} tools"
+                f"{module.__name__}: {found} reachable bodies for {len(names)} tools"
             )
 
     assert not unreachable, (

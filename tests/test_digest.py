@@ -122,7 +122,7 @@ def test_single_class_clicks_report_the_classifier_as_inactive(db, monkeypatch):
 
     assert quality["classifier_active"] is False
     assert quality["clicks"] == 3
-    assert "WITHOUT its click classifier" in quality["caveat"]
+    assert "classifier OFF" in quality["caveat"]
 
 
 def test_both_classes_activate_the_classifier(db, monkeypatch):

@@ -476,3 +476,24 @@ def test_compare_warns_when_an_arm_came_from_a_tracker(tmp_path):
     assert "wandb" in joined, out["caveats"]
     assert "final" in joined.lower()
     conn.close()
+
+
+def test_wandb_bookkeeping_keys_are_not_metrics(tmp_path):
+    """W&B writes its own `_step`/`_runtime`/`_timestamp` into the summary.
+
+    `_wandb_config` already drops underscore-prefixed keys; the metric path did
+    not, so a wall-clock timestamp landed in run_metrics and showed up in
+    runs.detail beside the real numbers. compare() refuses to rank them
+    (undeclared direction), so this was noise rather than a wrong verdict --
+    but a ledger that lists `_timestamp: 170000001.0` as a measurement invites
+    exactly the misreading the direction rule exists to prevent.
+    """
+    proj = tmp_path / "p"
+    _wandb_run(
+        proj,
+        "run-1-abc",
+        {"accuracy": 0.71, "_step": 1001, "_runtime": 451.2, "_timestamp": 170000001.0},
+    )
+
+    (run,) = generic.discover(proj)
+    assert [m.metric for m in run.metrics] == ["accuracy"], [m.metric for m in run.metrics]

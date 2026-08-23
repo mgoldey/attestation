@@ -568,6 +568,14 @@ def _wandb_runs(root: Path, seen: set[str]) -> list[RunRecord]:
         payload = _load(summary)
         if not isinstance(payload, dict):
             continue
+        # W&B writes its own bookkeeping into the summary: _step, _runtime,
+        # _timestamp, _wandb. `_wandb_config` already drops underscore keys on
+        # the config side; without the same filter here a wall-clock timestamp
+        # is recorded as a measurement. compare() refuses to rank it, so it was
+        # noise rather than a wrong verdict -- but a ledger listing
+        # `_timestamp: 170000001.0` beside a real metric invites the misreading
+        # the direction rule exists to prevent.
+        payload = {k: v for k, v in payload.items() if not k.startswith("_")}
         metrics = metrics_from_payload(payload, None, None)
         if not metrics:
             continue

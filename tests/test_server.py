@@ -187,13 +187,13 @@ def test_caveat_tracks_the_ranker_state_rather_than_being_static(client):
     in the other direction.
     """
     html = client.get("/list", params={"user": "matt"}).text
-    assert "WITHOUT its click classifier" in html
+    assert "classifier OFF" in html
     ids = [int(s.split('"')[0]) for s in html.split('data-item-id="')[1:]]
     client.post("/clicks", data={"user": "matt", "item_id": ids[0], "useful": "1"})
     client.post("/clicks", data={"user": "matt", "item_id": ids[1], "useful": "0"})
 
     after = client.get("/list", params={"user": "matt"}).text
-    assert "WITHOUT its click classifier" not in after
+    assert "classifier OFF" not in after
     assert "weakly trained" in after
 
 

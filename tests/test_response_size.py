@@ -76,6 +76,41 @@ def test_the_default_feed_fits_in_a_small_context(stocked):
     )
 
 
+def test_the_default_feed_fits_with_the_worst_case_caveat(stocked):
+    """The budget must hold for a REAL persona, not just a pristine one.
+
+    The fixture above has zero clicks, so `ranking_quality` emits its cheapest
+    caveat (229 chars) and the guard reported ~126 chars of margin. The
+    expensive branch -- a single-class history whose clicks are mostly
+    bootstrap -- is 463 chars, a 234-char delta the test never exercised.
+    Measured on the live database after that caveat shipped: bench-chemist
+    2038 chars and ml-engineer 2083, both over a 2000 budget, with three more
+    personas inside 130 chars of it.
+
+    This is the exact failure the module docstring describes, reintroduced by
+    a fix. The guard must exercise the most expensive ranking_quality a real
+    user can produce.
+    """
+    conn = get_db(stocked)
+    user_id = conn.execute("SELECT id FROM users WHERE name = 'ana'").fetchone()[0]
+    # Bootstrap-heavy and single-class: the longest caveat the code can emit.
+    for item_id in range(1, 31):
+        conn.execute(
+            "INSERT INTO clicks(user_id, item_id, useful, source) VALUES (?,?,1,?)",
+            (user_id, item_id, "bootstrap" if item_id <= 20 else "simulated"),
+        )
+    conn.commit()
+    conn.close()
+
+    out = feed_mod._list_feed("ana")
+    size = len(json.dumps(out))
+    assert out["ranking_quality"].get("caveat"), "this fixture must produce a caveat"
+    assert size <= MAX_DEFAULT_RESPONSE_CHARS, (
+        f"the default feed.list is {size} chars for a bootstrap-heavy persona; "
+        "the zero-click fixture hid this"
+    )
+
+
 def test_each_item_stays_cheap(stocked):
     """The per-row cost, which is what makes a large explicit limit tolerable."""
     for item in feed_mod._list_feed("ana", limit=10)["items"]:

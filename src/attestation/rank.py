@@ -456,20 +456,19 @@ def ranking_quality(conn, user_id: int) -> dict:
         out["synthetic_clicks"] = total - real
     if not active:
         if total > 0:
+            # Terse: this rides on every ranked response. It was 363 chars of
+            # explanation, which together with the provenance line pushed
+            # feed.list to 2098 against a 2000 budget. State the fact and the
+            # fix; the mechanism is in this function's docstring.
             out["caveat"] = (
-                f"ranking is running WITHOUT its click classifier: {total} click(s), "
-                f"all {'useful' if counts.get(1) else 'not-useful'}. Order blends "
-                "profile-embedding similarity with a feature-preference term learned "
-                "from those clicks -- the classifier term is silent (needs both "
-                "useful and not-useful clicks to fire), but the preference term is "
-                "still contributing. Mark some items the other way to train the "
-                "classifier too."
+                f"classifier OFF: all {total} clicks are"
+                f" {'useful' if counts.get(1) else 'not-useful'}, so only the"
+                " profile embedding and a preference term rank this."
+                " Mark some items the other way to train it."
             )
         else:
             out["caveat"] = (
-                "ranking is running WITHOUT its click classifier or any "
-                "feature-preference signal: 0 clicks recorded. Order is "
-                "profile-embedding similarity only."
+                "classifier OFF: 0 clicks recorded, so this is profile-embedding similarity only."
             )
     elif total < 20:
         out["caveat"] = f"only {total} clicks: the classifier is active but weakly trained"
@@ -496,19 +495,20 @@ def _provenance_caveat(total: int, real: int, by_source: dict[str, int]) -> str:
     if not total or real == total:
         return ""
 
-    parts = ", ".join(f"{n} {src}" for src, n in sorted(by_source.items(), key=lambda kv: -kv[1]))
-    caveat = (
-        f"only {real} of {total} clicks are a person deciding something"
-        f" (by source: {parts}); the rest are inferred or generated,"
-        " so the ranker knows less than the count suggests."
-    )
+    # Terse on purpose. This string rides on EVERY ranked response, and the
+    # first version cost 463 chars in its bootstrap branch -- which pushed
+    # feed.list to 2316 chars against a 2000 budget for a bootstrap-heavy
+    # persona, reintroducing the payload failure this project already fixed
+    # once. The facts are what a caller needs; the essay explaining why
+    # bootstrap labels are circular belongs in the docstring, not in the
+    # response, because the response repeats it forever.
+    parts = "/".join(f"{n} {src}" for src, n in sorted(by_source.items(), key=lambda kv: -kv[1]))
+    caveat = f"only {real}/{total} clicks are human ({parts})"
     if by_source.get("bootstrap"):
-        caveat += (
-            f" {by_source['bootstrap']} are bootstrap labels, which are a threshold on the"
-            " same embedding the classifier trains on -- circular, and excluded from"
-            " `attest eval` for that reason."
-        )
-    return caveat
+        # Named, not explained: bootstrap is circular rather than merely
+        # synthetic, and a caller that wants the reason can read the docstring.
+        caveat += "; bootstrap labels are circular (excluded from `attest eval`)"
+    return caveat + "."
 
 
 STARTER_INTERESTS = "general science and technology research"
