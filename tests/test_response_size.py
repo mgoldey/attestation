@@ -841,3 +841,51 @@ def test_no_tool_exceeds_the_hard_ceiling_when_actually_driven(stocked):
     assert not oversized, f"over the {HARD_RESPONSE_CEILING}-char ceiling as emitted: " + ", ".join(
         oversized
     )
+
+
+def test_a_message_that_counts_must_count_what_shipped(stocked):
+    """A summary line that describes a payload the caller did not receive.
+
+    Two instances in one round: feed.digest said "16 item(s)" and shipped 7,
+    and kg.ask said "7 neighbour(s)" while discarding the names. Both passed
+    their own guards, which checked the payload and never the sentence about
+    it.
+
+    Twelve rounds of truncation is exactly when this appears: every cap added
+    is a chance for the message to describe the pre-cap answer. So the rule is
+    checked directly -- if a message states a count, the payload must either
+    contain that many items or say what it did not show.
+    """
+    import re
+
+    conn = get_db(stocked)
+    user_id = conn.execute("SELECT id FROM users WHERE name = 'ana'").fetchone()[0]
+    for item_id in range(1, 21):
+        conn.execute(
+            "INSERT INTO clicks(user_id, item_id, useful, source) VALUES (?,?,1,'ui')",
+            (user_id, item_id),
+        )
+    conn.commit()
+    conn.close()
+
+    checks = [
+        ("feed.list", feed_mod._list_feed("ana"), "items"),
+        ("feed.search", feed_mod._search_feed("ana", "topic"), "items"),
+        ("feed.digest", feed_mod._digest("ana"), None),
+    ]
+    for name, out, key in checks:
+        message = out.get("message") or ""
+        stated = re.match(r"(\d+)", message)
+        if not stated:
+            continue
+        claimed = int(stated.group(1))
+        shipped = (
+            len(out.get(key) or [])
+            if key
+            else sum(len(t["items"]) for t in out.get("topics", []))
+            + len(out.get("unclustered") or [])
+        )
+        if claimed > shipped:
+            assert "not shown" in message or "more available" in message, (
+                f"{name} says {claimed} and ships {shipped} without saying so: {message!r}"
+            )
