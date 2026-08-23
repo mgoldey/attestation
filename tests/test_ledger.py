@@ -1411,3 +1411,55 @@ def test_a_family_with_no_metrics_is_not_told_to_declare_a_direction():
     assert "metric_direction" not in message, (
         f"a family with no metrics is pointed at the direction file: {message}"
     )
+
+
+def test_nested_splits_become_separate_arms_not_one_run_scored_by_its_best():
+    """Real artifacts put the arms of an experiment INSIDE one file, under keys
+    like `arms.Baseline` / `arms.Oracle_Post`. The ledger's unit is the file,
+    and `_split_rank` gives every unrecognised nested key the same rank, so
+    `_best_step` took the max across siblings.
+
+    Measured on a real corpus: a run recording Baseline 0.000, Control_RAG
+    0.644, Oracle_Post 0.988 and Treatment_Eigen 0.655 scored 0.988. Every arm
+    was credited with its own oracle upper bound. On lm-eval-harness output the
+    same bug ranked each model by its own easiest subtask, reordering the
+    bottom half of the table.
+    """
+    from attestation.db import get_db
+    from attestation.ledger import compare, nested_arms
+
+    # The detector fires only on several unrecognised nested keys.
+    assert sorted(
+        nested_arms([{"split": "arms.A", "value": 1.0}, {"split": "arms.B", "value": 2.0}])
+    ) == ["arms.A", "arms.B"]
+    assert nested_arms([{"split": "test", "value": 1.0}, {"split": "train", "value": 2.0}]) == {}
+    assert nested_arms([{"split": "arms.Only", "value": 1.0}]) == {}
+
+    conn = get_db(":memory:")
+    for run_name, scores in (
+        ("seed1", {"arms.Baseline": 0.10, "arms.Treatment": 0.60, "arms.Oracle": 0.99}),
+        ("seed2", {"arms.Baseline": 0.12, "arms.Treatment": 0.62, "arms.Oracle": 0.98}),
+    ):
+        cur = conn.execute(
+            "INSERT INTO runs(project, name, family, status, source_path)"
+            " VALUES ('p', ?, 'fam', 'recorded', ?)",
+            (run_name, f"/tmp/{run_name}.json"),
+        )
+        for split, value in scores.items():
+            conn.execute(
+                "INSERT INTO run_metrics(run_id, metric, value, split)"
+                " VALUES (?, 'accuracy', ?, ?)",
+                (cur.lastrowid, value, split),
+            )
+    conn.commit()
+
+    out = compare(conn, "fam")
+    names = [a["name"] for a in out["arms"]]
+    assert len(names) == 6, f"two runs of three arms should give six arms, got {names}"
+    assert "seed1[arms.Baseline]" in names, names
+    # The oracle is still top -- it is genuinely the highest number -- but it is
+    # now VISIBLE as its own arm rather than silently standing in for the run.
+    baseline = next(a for a in out["arms"] if a["name"] == "seed1[arms.Baseline]")
+    assert baseline["value"] == 0.10, (
+        "the baseline arm reports the oracle's value; siblings are still collapsed"
+    )

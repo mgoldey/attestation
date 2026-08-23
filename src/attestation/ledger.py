@@ -534,6 +534,35 @@ def _split_rank(split: str | None) -> int:
     return len(_EVAL_SPLITS)
 
 
+def nested_arms(values: list[dict]) -> dict[str, list[dict]]:
+    """Group a run's metric rows by nested split key, when it has several.
+
+    Real artifacts record the arms of an experiment INSIDE one file, under
+    keys like `arms.Baseline` / `arms.Treatment_Eigen`, or lm-eval-harness's
+    `results.mmlu_marketing`. The ledger's unit is the file, so all of those
+    collapse into one run -- and `_split_rank` returns the same rank for every
+    one of them, so `_best_step` takes the max across siblings.
+
+    Measured on a real corpus: a run reporting Baseline 0.000, Control_RAG
+    0.644, Oracle_Post 0.988 and Treatment_Eigen 0.655 scored 0.988. Every arm
+    was credited with its own oracle upper bound, and on ~/nota's lm-eval
+    output each model was ranked on its own easiest subtask, which reordered
+    the bottom half of the table.
+
+    Returns {} when there is nothing to fan out -- one nested group, or none.
+    """
+    groups: dict[str, list[dict]] = {}
+    for value in values:
+        split = value.get("split") or ""
+        prefix, _, rest = split.partition(".")
+        if not rest or _split_rank(split) != len(_EVAL_SPLITS):
+            # Either not nested, or a recognised split like `test.clean` whose
+            # rank already orders it. Only unrecognised nested keys are arms.
+            return {}
+        groups.setdefault(split, []).append(value)
+    return groups if len(groups) > 1 else {}
+
+
 def _best_step(values: list[dict], direction: str) -> dict | None:
     """The run's best value for a metric, not its last -- a training run that
     diverges late should not be judged by where it ended up.
@@ -674,6 +703,53 @@ def _no_direction_message(family: str, counts: dict[str, int]) -> str:
     )
 
 
+def _arms_for_run(run, values: list[dict], n_value, direction: str) -> list[dict]:
+    """The comparable arms one run contributes -- usually itself, sometimes many.
+
+    A run recording several unrecognised nested splits is not one arm; it is a
+    whole experiment in one file, with the arms under keys like
+    `arms.Treatment_Eigen`. Ranked as a single run it scored its own best
+    sibling, so every arm was credited with the oracle upper bound sitting
+    beside it. Each nested split becomes its own arm, named `<run>[<split>]`
+    so the file it came from stays visible.
+    """
+    n = int(n_value) if n_value is not None else None
+    groups = nested_arms(values)
+    if groups:
+        out = []
+        for split, rows in sorted(groups.items()):
+            best = _best_step(rows, direction)
+            if best is not None:
+                out.append(
+                    {
+                        "name": f"{run['name']}[{split}]",
+                        "status": run["status"],
+                        "value": best["value"],
+                        "step": best["step"],
+                        "split": split,
+                        "source_path": run["source_path"],
+                        "n": n,
+                    }
+                )
+        return out
+    best = _best_step(values, direction)
+    return [
+        {
+            "name": run["name"],
+            "status": run["status"],
+            "value": best["value"] if best else None,
+            "step": best["step"] if best else None,
+            # which split the number came from: a reader comparing arms needs
+            # to know whether they are looking at test or train
+            "split": best["split"] if best else None,
+            # provenance: every number must be traceable to the file it came
+            # from, or the comparison cannot be audited
+            "source_path": run["source_path"],
+            "n": n,
+        }
+    ]
+
+
 def compare(
     conn: sqlite3.Connection,
     family: str,
@@ -793,23 +869,7 @@ def compare(
 
     arms = []
     for r in runs:
-        best = _best_step(values_by_run[r["id"]], direction)
-        n_value = n_by_run.get(r["id"])
-        arms.append(
-            {
-                "name": r["name"],
-                "status": r["status"],
-                "value": best["value"] if best else None,
-                "step": best["step"] if best else None,
-                # which split the number came from: a reader comparing arms
-                # needs to know whether they are looking at test or train
-                "split": best["split"] if best else None,
-                # provenance: every number must be traceable to the file it came
-                # from, or the comparison cannot be audited
-                "source_path": r["source_path"],
-                "n": int(n_value) if n_value is not None else None,
-            }
-        )
+        arms.extend(_arms_for_run(r, values_by_run[r["id"]], n_by_run.get(r["id"]), direction))
 
     scored = [a for a in arms if a["value"] is not None]
 
