@@ -414,3 +414,48 @@ def test_bootstrap_persona_for_an_unknown_name_does_not_traceback(tmp_path, caps
     assert "Traceback" not in out
     # names the fix, not just the problem
     assert "persona" in out.lower()
+
+
+def test_backup_writes_a_restorable_copy(tmp_path, monkeypatch, capsys):
+    """`backup_db` was added in round 1 and had no CLI entry point.
+
+    The finding it fixed was that operators reach for `cp hermes.db`, which
+    silently drops the WAL -- five such copies were sitting beside the live
+    database. A backup function no operator can invoke does not fix that; the
+    command is the whole deliverable.
+    """
+    import sqlite3
+
+    from attestation.db import get_db
+
+    db = tmp_path / "src.db"
+    conn = get_db(db)
+    conn.execute("INSERT INTO users(name, interests) VALUES ('ada', 'analysis')")
+    conn.commit()
+    conn.close()
+
+    dest = tmp_path / "out" / "backup.db"
+    rc = main(["backup", "--db", str(db), str(dest)])
+
+    assert rc == 0
+    assert dest.is_file()
+    names = [r[0] for r in sqlite3.connect(dest).execute("SELECT name FROM users")]
+    assert "ada" in names
+    assert str(dest) in capsys.readouterr().out
+
+
+def test_backup_refuses_an_existing_destination(tmp_path, capsys):
+    """Silently replacing the previous backup is one keystroke from having
+    none. Exit non-zero and say so."""
+    from attestation.db import get_db
+
+    db = tmp_path / "src.db"
+    get_db(db).commit()
+    dest = tmp_path / "b.db"
+    dest.write_text("not empty")
+
+    rc = main(["backup", "--db", str(db), str(dest)])
+
+    assert rc == 1
+    assert dest.read_text() == "not empty", "an existing file was overwritten"
+    assert "exists" in capsys.readouterr().out.lower()

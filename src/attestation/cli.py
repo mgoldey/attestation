@@ -74,6 +74,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("reload", help="restart running MCP servers so code edits take effect")
     sp.set_defaults(func=cmd_reload)
 
+    sp = sub.add_parser("backup", help="write a consistent copy of the database")
+    add_db(sp)
+    sp.add_argument("dest", help="path to write; must not already exist")
+    sp.set_defaults(func=cmd_backup)
+
     sp = sub.add_parser("emit", help="agent configs generated from the tool surfaces")
     sp.add_argument(
         "--write", action="store_true", help="write the Claude agent files (default: report only)"
@@ -246,6 +251,29 @@ def _emit_agent_files(root, write: bool) -> int:
             print(f"  {agents_dir / f'attestation-{name}.md'}")
         print("  delete one to accept the generated version, or keep your edit")
         return 1
+    return 0
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    """Write a consistent single-file copy of the database.
+
+    Exists because `cp hermes.db backup.db` is what an operator types and it
+    silently drops the WAL -- the copy opens, looks intact, and is missing the
+    newest writes. Five such copies were found beside the live database.
+    """
+    from attestation.db import backup_db, get_db, resolve_db_path
+
+    src = resolve_db_path(args.db)
+    if not src.exists():
+        print(f"no database at {src}")
+        return 1
+    try:
+        dest = backup_db(get_db(src), args.dest)
+    except FileExistsError as exc:
+        print(str(exc))
+        return 1
+    size = dest.stat().st_size / 1e6
+    print(f"wrote {dest} ({size:.1f} MB) — restore by copying it back over {src}")
     return 0
 
 
