@@ -92,6 +92,15 @@ def simulate_feedback(
     user_name: str,
     items: list[sqlite3.Row],
     *,
+    # MEASURED INERT on gemma4:e2b: 45 calls returned confidence 4 or 5 every
+    # time, including a content-free item ("This paper discusses matters of
+    # interest") and an empty one. The live database agrees -- simulated counts
+    # of 22/22/22/22/24 are round numbers consistent with nothing ever dropped.
+    #
+    # Kept rather than removed: the threshold costs nothing, a better-calibrated
+    # model would use it, and `skipped_unsure` in the returned counts lets a
+    # caller see for themselves that it did not fire. What is NOT safe is
+    # reading a run as "filtered for confidence" when the filter never engaged.
     min_confidence: int = 3,
 ) -> dict:
     """Record a simulated reaction per item. Returns what was written and why.
