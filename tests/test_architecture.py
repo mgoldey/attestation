@@ -637,3 +637,30 @@ def test_a_schema_bound_is_never_looser_than_the_code_enforces():
                 looser.append(f"{tool.name}.{arg}: schema says {declared}, code enforces {ceiling}")
 
     assert not looser, "schema bounds looser than the code: " + ", ".join(looser)
+
+
+def test_nothing_holds_a_sqlite_connection_across_requests():
+    """A connection shared between threads is a 500 generator.
+
+    The web UI held one "for the whole app" while FastAPI ran sync routes in a
+    threadpool, so concurrent requests interleaved cursors: get_user returned
+    None for a user that exists, and that None reached autocreate_user. The MCP
+    surface never had it -- `@tool` opens a connection per call -- so the rule
+    is one holder's mistake, not a design.
+
+    Enforced structurally: module-level or closure-scoped `get_db(...)` results
+    that outlive a request are what to look for.
+    """
+    import re
+
+    server = (SRC / "server.py").read_text()
+
+    # get_db may be called, but its result must not be bound once and reused --
+    # it goes through a per-thread accessor.
+    direct = re.findall(r"^\s+(\w+)\s*=\s*get_db\(", server, flags=re.MULTILINE)
+    allowed = {"existing"}  # the per-thread cache inside connection()
+    leaked = [name for name in direct if name not in allowed]
+    assert not leaked, (
+        f"server.py binds a shared connection: {leaked}."
+        " Use the per-thread accessor; a shared connection interleaves cursors."
+    )
