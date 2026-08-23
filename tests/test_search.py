@@ -417,26 +417,68 @@ def test_a_tag_from_kg_concepts_reaches_every_item_carrying_it(tmp_path, monkeyp
     )
 
 
-def test_the_relevance_floor_is_not_anchored_on_one_item(search_db):
+def test_the_relevance_floor_is_not_anchored_on_one_item():
     """One weak top hit collapsed the whole result set.
 
-    `_semantic_hits` kept items scoring >= best * RELEVANCE_FLOOR, where `best`
-    is the similarity of the SINGLE nearest neighbour -- so the size of every
-    answer was a function of one item. Measured on the live corpus:
-    `feed.search("enzyme mechanism")` returned exactly one result, a snail
-    slime paper, while four genuine enzyme papers were cut, three of them by
-    less than 0.4% of the threshold. Six of sixteen queries could not fill a
-    five-result page.
+    The floor kept items scoring >= best * RELEVANCE_FLOOR, where `best` was
+    the similarity of the SINGLE nearest neighbour -- so the size of every
+    answer was a function of one item. Measured on the live corpus,
+    `feed.search("enzyme mechanism")` returned one result, a snail slime paper,
+    while four genuine enzyme papers were cut, three by less than 0.4% of the
+    threshold.
 
-    Anchoring on the mean of the top three fixed it at NO precision cost:
-    across nine queries, literal-stem precision was 62% either way while the
-    kept set grew from 34 items to 63. Recall for free.
-
-    The original comment reasons about how far similarity DECAYS; the failure
-    was in the ANCHOR, not the slope.
+    This asserts the BEHAVIOUR, not the constant. An earlier version checked
+    `RELEVANCE_ANCHOR >= 3`, and a reviewer restored `best = max(...)` while
+    leaving the constant at 3 -- the whole suite passed while the live failure
+    was back. The two are separately mutable and only one of them matters.
     """
-    from attestation.mcp import feed as feed_mod
+    import math
 
-    assert feed_mod.RELEVANCE_ANCHOR >= 3, (
-        "the floor is anchored on a single item; one weak top hit starves the query"
+    from attestation.mcp.feed import _semantic_hits
+
+    # One strong outlier, then a tight cluster of genuine matches. Anchored on
+    # the single best hit the cluster falls below the floor and only the
+    # outlier survives; averaged over the top few, the cluster is the answer.
+    # The REAL similarities for "enzyme mechanism" on the live corpus, which is
+    # the query that returned one snail-slime paper. A synthetic outlier at
+    # 0.95 does not reproduce it -- that drags even a top-3 mean above the
+    # cluster. The failure needs a MODEST outlier over a tight band, which is
+    # what real embeddings produce.
+    wanted = {
+        1: 0.3635,
+        2: 0.3238,
+        3: 0.3154,
+        4: 0.3154,
+        5: 0.3133,
+        6: 0.3131,
+        7: 0.3078,
+        8: 0.3071,
+    }
+
+    class _Rows:
+        """A cursor returning the distances that produce `wanted`."""
+
+        def fetchall(self):
+            return [
+                {"rowid": rid, "distance": math.sqrt(2.0 * (1.0 - sim))}
+                for rid, sim in wanted.items()
+            ]
+
+    class _Conn:
+        def execute(self, *_args):
+            return _Rows()
+
+    class _Embedder:
+        def embed_query(self, _text):
+            class _V:
+                @staticmethod
+                def tobytes():
+                    return b""
+
+            return _V()
+
+    kept = _semantic_hits(_Conn(), _Embedder(), "anything", 10)
+    assert len(kept) >= 6, (
+        f"one modest outlier starved the query: {len(kept)} of 8 kept."
+        " The floor is anchored on a single item."
     )

@@ -188,3 +188,40 @@ def test_changing_interests_drops_the_cached_explanations(tmp_path, monkeypatch)
         "SELECT COUNT(*) FROM explanations WHERE user_id = ?", (user_id,)
     ).fetchone()[0]
     assert left == 0, f"{left} explanation(s) survived a change of interests"
+
+
+def test_merging_personas_drops_the_loser_and_keeper_explanations(tmp_path, monkeypatch):
+    """The merge path got the fix and not the test.
+
+    `_update_persona`'s explanation delete is covered; `personas.merge`'s is
+    not -- deleting that line leaves the whole suite green. The leak is real:
+    after merging bob into alice, alice keeps "matches your interest in cryo-EM
+    protein structure" under her new merged interests.
+
+    Same reasoning as the sibling: the cache key is (user_id, item_id) with no
+    interests in it, so an explanation outlives the profile that produced it.
+    """
+    from attestation.db import get_db
+    from attestation.personas import merge
+    from attestation.rank import create_user
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    keeper = create_user(conn, "alice", "cryo-EM protein structure")
+    loser = create_user(conn, "bob", "medieval poetry")
+    conn.execute(
+        "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+        " VALUES (NULL, 't', 'u', 's', 'h')"
+    )
+    for user_id in (keeper, loser):
+        conn.execute(
+            "INSERT INTO explanations(user_id, item_id, text)"
+            " VALUES (?, 1, 'matches your interest in cryo-EM protein structure')",
+            (user_id,),
+        )
+    conn.commit()
+
+    merge(conn, into="alice", drop=["bob"])
+
+    left = conn.execute("SELECT COUNT(*) FROM explanations").fetchone()[0]
+    assert left == 0, f"{left} explanation(s) survived a merge that changed the interests"
