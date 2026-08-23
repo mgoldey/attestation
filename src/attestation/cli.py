@@ -574,16 +574,19 @@ def cmd_kg_report(args: argparse.Namespace) -> int:
         if not health.get("nodes"):
             tagged = conn.execute("SELECT COUNT(*) FROM item_tags").fetchone()[0]
             items = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+            # fail(), like every other empty/error state. This branch predates
+            # that convention and kept printing guidance to stdout with exit 0,
+            # so a pipeline could not tell "no graph yet" from "here is your
+            # graph" -- while `runs compare` and `eval` both exit 1 to stderr
+            # for the same shape of nothing-to-report.
             if not items:
-                print("no items yet -- run `attest ingest` to fetch some, then `attest tag`")
-            elif not tagged:
-                print(f"{items} item(s), none tagged -- run `attest tag` to build the graph")
-            else:
-                print(
-                    f"{tagged} tag assignment(s) but no concepts: a tag must be used at least"
-                    f" {kg.MIN_TAG_USES} times to become one. Tag more items."
-                )
-            return 0
+                return fail("no items yet -- run `attest ingest` to fetch some, then `attest tag`")
+            if not tagged:
+                return fail(f"{items} item(s), none tagged -- run `attest tag` to build the graph")
+            return fail(
+                f"{tagged} tag assignment(s) but no concepts: a tag must be used at least"
+                f" {kg.MIN_TAG_USES} times to become one. Tag more items."
+            )
 
         for key, value in health.items():
             print(f"{key:24s} {value}")

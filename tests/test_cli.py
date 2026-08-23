@@ -152,8 +152,10 @@ def test_kg_report_runs_on_an_empty_database(tmp_path, capsys):
 
     rc = main(["kg-report", "--db", str(db)])
 
-    assert rc == 0
-    assert capsys.readouterr().out.strip(), "printed nothing at all"
+    # Exit 1 with guidance on stderr: an empty graph is nothing to report, and
+    # the test below pins that convention. This one is about not crashing.
+    assert rc == 1
+    assert capsys.readouterr().err.strip(), "printed nothing at all"
 
 
 def test_parser_runs_subcommands():
@@ -491,12 +493,12 @@ def test_kg_report_on_an_empty_graph_says_what_to_do(tmp_path, capsys):
     get_db(db).commit()
 
     rc = main(["kg-report", "--db", str(db)])
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
 
-    assert rc == 0
-    assert "attest tag" in out, out
+    assert rc == 1
+    assert "attest tag" in err, err
     # The zeros are noise when there is nothing to report.
-    assert "singleton_rate" not in out, "dumped the full metric table for an empty graph"
+    assert "singleton_rate" not in err, "dumped the full metric table for an empty graph"
 
 
 def test_kg_report_still_reports_a_populated_graph(tmp_path, capsys):
@@ -546,3 +548,27 @@ def test_failures_are_reported_on_stderr_not_stdout(tmp_path, capsys, monkeypatc
         f"the failure went to stdout: out={captured.out!r} err={captured.err!r}"
     )
     assert not captured.out.strip(), f"stdout should be empty on failure, got {captured.out!r}"
+
+
+def test_kg_report_on_an_empty_graph_fails_like_its_siblings(tmp_path, capsys, monkeypatch):
+    """The empty state I added in an early round predates the stderr/exit
+    convention added later, and never adopted it.
+
+    `runs compare` on a missing family exits 1 to stderr; `eval` with too few
+    clicks exits 1 to stderr; `kg-report` on an empty graph printed its
+    guidance to STDOUT and exited 0. A pipeline cannot tell "no graph yet" from
+    "here is your graph", which is the same defect the six other sites were
+    fixed for.
+    """
+    from attestation.db import get_db
+
+    db = tmp_path / "t.db"
+    get_db(db).commit()
+    monkeypatch.setenv("RSS_DB", str(db))
+
+    rc = main(["kg-report"])
+    captured = capsys.readouterr()
+
+    assert rc == 1, "an empty graph reported success"
+    assert "attest tag" in captured.err, f"guidance went to stdout: {captured.out!r}"
+    assert not captured.out.strip()
