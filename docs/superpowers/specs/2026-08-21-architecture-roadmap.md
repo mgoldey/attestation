@@ -1,7 +1,35 @@
 # Architecture roadmap — five specs
 
 **Date:** 2026-08-21
-**Status:** proposed
+**Status:** superseded in part — all five slots resolved 2026-08-22. See the
+amendment immediately below before reading anything else here.
+
+## Amendment, 2026-08-22 — how each of the five resolved
+
+This roadmap was written before any of it was measured. Two of its five specs
+were changed by that measurement and one was refuted outright. Read this table
+first; the original text below is kept because its reasoning is still worth
+reading, but three of its five sections no longer describe the plan.
+
+| # | Original | Resolution |
+|---|---|---|
+| 1 | Onion refactor | **Superseded** by `2026-08-21-onion-refactor-design.md`. Two reviews found a repository whose method count tracks its call-site count is a rename, not an abstraction. What shipped is the tool-surface half: `2026-08-21-tool-surface-design.md`. |
+| 2 | Citations domain | **Written** as `2026-08-22-citations-domain-design.md`. Scope stands; its stated second purpose ("proof that spec 1's boundaries hold") is void, since there is no spec 1. |
+| 3 | Tracker adapters | **Written** as `2026-08-22-tracker-adapters-design.md`. Scope stands unchanged — it was the one spec with no dependency on the rest. |
+| 4 | Swarm + `swarm.toml` | **REFUTED.** `2026-08-22-swarm-refutation.md`. Measured 7.3/15 against 8/15 for doing nothing, at twice the latency. This roadmap's own "measure before building" gate was honoured and the swarm failed it. |
+| 5 | Agent-config emitters | **Rescoped** as `2026-08-22-config-emitters-design.md`. Generates from `AGENT_SURFACES` rather than the `swarm.toml` that will not exist. |
+
+The dependency table below is therefore stale: specs 2, 3 and 5 have no
+dependencies, and spec 4 is closed. Nothing in this roadmap is blocked on
+anything else in it.
+
+What the measurement actually delivered is in
+`2026-08-22-agent-surfaces-design.md`: four per-domain agents — spec 4's
+deliverable — reached by session-level tool restriction rather than by runtime
+model routing.
+
+---
+
 **Kind:** roadmap. Names the specs, their interfaces, and their order. Each
 numbered section below becomes its own design doc; none is designed here.
 
