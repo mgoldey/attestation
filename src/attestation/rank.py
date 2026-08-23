@@ -177,6 +177,16 @@ def _preference_ready(conn: sqlite3.Connection, user_id: int) -> bool:
     key from the untouched baseline. Upvotes alone need volume AND a downvote
     to compare against, since on their own they cannot rank anything below
     neutral.
+
+    A MIRROR GUARD WAS TRIED AND REVERTED. A review found that with 2 positives
+    against 20 negatives no key clears neutral, so the term scores a perfect
+    in-sample AUC while ranking nothing -- the ordering it contributes there is
+    by how UNFAMILIAR an item is. That diagnosis is correct. But requiring a
+    minimum positive count made the outcome that matters slightly WORSE:
+    top-20 relevance against stated interests fell from 64/100 to 62/100
+    across the five live personas, because unfamiliarity is a weak signal and
+    not a wrong one when nothing better is available. Do not re-add the guard
+    without a measurement that improves, not merely a story that convinces.
     """
     row = conn.execute(
         "SELECT COUNT(*) n, SUM(useful) pos FROM clicks WHERE user_id = ?", (user_id,)
