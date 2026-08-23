@@ -42,7 +42,7 @@ def register(mcp) -> None:
     # title to 120 recovers most of it and one fewer item recovers the rest --
     # and a result the caller cannot render is worth less than the result that
     # was dropped.
-    def list_feed(user: str, limit: Limit = 4, since_days: SinceDays = 14) -> dict:
+    def list_feed(user: str, limit: Limit = DEFAULT_LIST_LIMIT, since_days: SinceDays = 14) -> dict:
         """List this user's currently ranked, unread feed items (best first).
 
         Returns each item's id, title, url, source feed name, and its blended rank
@@ -154,7 +154,7 @@ def register(mcp) -> None:
         # (null content_type and false already_rated are now omitted); this is
         # the remainder, and one fewer result is a smaller loss than a result
         # the caller cannot read.
-        limit: Limit = 4,
+        limit: Limit = DEFAULT_LIST_LIMIT,
     ) -> dict:
         """Search items by keyword (and optional tag/content_type), ranked for this user.
 
@@ -273,6 +273,14 @@ SUMMARY_CHARS = 240
 # 2000 budget while every guard stayed green. Bounding the field means no
 # fixture can be wrong about it again -- the lesson from the provenance caveat,
 # applied to the other axis.
+# The default number of items feed.list and feed.search return. Named so the
+# response budget can be derived from it rather than asserted beside it.
+DEFAULT_LIST_LIMIT = 4
+# The digest groups by topic and is the biggest response the feed produces --
+# 4296 chars as emitted against list's 1835. Named so its budget derives from
+# it rather than being asserted beside it.
+DEFAULT_DIGEST_LIMIT = 30
+
 MAX_TITLE_CHARS = 90
 
 # url and source were the fields round 6's property test forgot. `url` reaches
@@ -770,7 +778,9 @@ def _reset_feedback(conn, user_row, confirm: bool = False) -> dict:
     return {"message": f"cleared {n} click(s) for {name!r}"}
 
 
-def _digest(user: str, days: int = 7, per_topic: int = 3, limit: int = 30) -> dict:
+def _digest(
+    user: str, days: int = 7, per_topic: int = 3, limit: int = DEFAULT_DIGEST_LIMIT
+) -> dict:
     """`window_days` echoes the window that was ASKED for, on failure as well as
     success -- a caller that got nothing back still needs to know which window
     came up empty. `empty` cannot carry a per-call value, so it is filled in here.

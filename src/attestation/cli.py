@@ -559,7 +559,26 @@ def cmd_kg_report(args: argparse.Namespace) -> int:
     from attestation import kg
 
     with open_db(args.db) as conn:
-        for key, value in kg.health(conn).items():
+        health = kg.health(conn)
+        # Ten zeros do not answer "what does my reading graph look like", and
+        # they hide the actual fix: the graph is DERIVED from the tagging pass,
+        # so an empty one means nothing has been tagged yet. `attest runs list`
+        # already sets the house pattern for this.
+        if not health.get("nodes"):
+            tagged = conn.execute("SELECT COUNT(*) FROM item_tags").fetchone()[0]
+            items = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+            if not items:
+                print("no items yet -- run `attest ingest` to fetch some, then `attest tag`")
+            elif not tagged:
+                print(f"{items} item(s), none tagged -- run `attest tag` to build the graph")
+            else:
+                print(
+                    f"{tagged} tag assignment(s) but no concepts: a tag must be used at least"
+                    f" {kg.MIN_TAG_USES} times to become one. Tag more items."
+                )
+            return 0
+
+        for key, value in health.items():
             print(f"{key:24s} {value}")
         print()
         for i, c in enumerate(kg.communities(conn, min_size=args.min_size), 1):

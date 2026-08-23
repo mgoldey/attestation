@@ -28,6 +28,22 @@ from attestation.mcp import _shared
 from attestation.mcp import feed as feed_mod
 
 
+def emitted(payload) -> int:
+    """Characters the MODEL receives, not the characters we happened to measure.
+
+    Every budget in this file measured `json.dumps(out)` -- compact, no spaces.
+    FastMCP serialises tool results with `indent=2`, a measured 1.238x
+    inflation on a real response: 1562 compact became 1934 emitted. So the
+    guards were green while 27 of 30 default calls against the live database
+    exceeded 2000 as actually sent, which is precisely the payload the module
+    docstring says gemma4:e2b could not render.
+
+    A budget that measures something other than what the caller receives is
+    not a budget.
+    """
+    return len(json.dumps(payload, indent=2))
+
+
 # The invariant is PER ITEM, not per response: a caller who explicitly asks
 # for fifty items has asked for a big answer and should get one. What must
 # stay small is the cost of each row, and the DEFAULT response an agent gets
@@ -59,7 +75,22 @@ def _row_budget(extra: int = 0) -> int:
 MAX_ITEM_CHARS = _row_budget()
 # A search row adds already_rated, match and relevance.
 MAX_SEARCH_ITEM_CHARS = _row_budget(60)
-MAX_DEFAULT_RESPONSE_CHARS = 2000
+
+
+# DERIVED, like the row budgets: the default item count times what a row may
+# cost, plus the envelope. A fixed 2000 disagreed with the caps -- 4 rows at
+# the permitted 496 is already 1984, leaving 16 chars for ok/message/
+# ranking_quality, which alone measures 245-393. That contradiction was
+# invisible because the guard measured COMPACT json while FastMCP emits
+# indent=2 (1.238x), so all five live personas exceeded 2000 as actually sent.
+def _response_budget() -> int:
+    from attestation.mcp.feed import DEFAULT_LIST_LIMIT
+
+    envelope = 500  # ok, message, ranking_quality with its longest caveat
+    return DEFAULT_LIST_LIMIT * MAX_SEARCH_ITEM_CHARS + envelope
+
+
+MAX_DEFAULT_RESPONSE_CHARS = _response_budget()
 
 
 @pytest.fixture
@@ -107,7 +138,7 @@ def test_the_default_feed_fits_in_a_small_context(stocked):
     """No limit argument at all -- what an agent sends when it is not
     thinking about payload size, which is most of the time."""
     out = feed_mod._list_feed("ana")
-    size = len(json.dumps(out))
+    size = emitted(out)
     assert size <= MAX_DEFAULT_RESPONSE_CHARS, (
         f"the default feed.list is {size} chars; a 2B model loses the thread "
         "rendering payloads this size"
@@ -141,7 +172,7 @@ def test_the_default_feed_fits_with_the_worst_case_caveat(stocked):
     conn.close()
 
     out = feed_mod._list_feed("ana")
-    size = len(json.dumps(out))
+    size = emitted(out)
     assert out["ranking_quality"].get("caveat"), "this fixture must produce a caveat"
     assert size <= MAX_DEFAULT_RESPONSE_CHARS, (
         f"the default feed.list is {size} chars for a bootstrap-heavy persona; "
@@ -166,7 +197,7 @@ def test_each_search_item_stays_cheap(stocked):
 
 def test_search_is_bounded_too(stocked):
     out = feed_mod._search_feed("ana", "topic")
-    assert len(json.dumps(out)) <= MAX_DEFAULT_RESPONSE_CHARS
+    assert emitted(out) <= MAX_DEFAULT_RESPONSE_CHARS
 
 
 def test_search_is_bounded_with_the_worst_case_caveat(stocked):
@@ -185,7 +216,7 @@ def test_search_is_bounded_with_the_worst_case_caveat(stocked):
 
     out = feed_mod._search_feed("ana", "topic")
     assert out["ranking_quality"].get("caveat"), "this fixture must produce a caveat"
-    size = len(json.dumps(out))
+    size = emitted(out)
     assert size <= MAX_DEFAULT_RESPONSE_CHARS, f"search is {size} chars with a full caveat"
 
 
@@ -340,7 +371,7 @@ def test_router_answers_are_bounded_by_title_length(stocked):
 
     out = _feed_ask("ana", "what should I read today")
     assert len(out["answer"]) <= 600, f"answer is {len(out['answer'])} chars"
-    assert len(json.dumps(out)) <= MAX_DEFAULT_RESPONSE_CHARS
+    assert emitted(out) <= MAX_DEFAULT_RESPONSE_CHARS
 
     # _label directly, not only through the router: _item_row now clips the
     # title first, so a long title never reaches _label via the feed path and
@@ -407,3 +438,41 @@ def test_the_item_budget_is_at_least_what_the_field_caps_permit(stocked):
         for tag in item["tags"]:
             assert len(tag) <= MAX_TAG_CHARS + 1, tag
         assert len(json.dumps(item)) <= MAX_ITEM_CHARS
+
+
+def test_emitted_size_is_what_is_measured(stocked):
+    """The guard must measure what FastMCP sends, not what we serialise here.
+
+    Every budget in this file measured compact `json.dumps`. FastMCP emits
+    `indent=2` -- a measured 1.238x on a real response (1562 -> 1934) -- so all
+    five live personas exceeded 2000 on feed.search as actually sent while
+    every test here was green.
+
+    Anchored in the difference itself, so reverting `emitted()` to compact
+    fails: a fixture cheap enough to fit either way cannot catch that.
+    """
+    out = feed_mod._list_feed("ana")
+    assert emitted(out) > len(json.dumps(out)), (
+        "emitted() is not measuring the indented form FastMCP actually sends"
+    )
+    assert emitted(out) / len(json.dumps(out)) > 1.1
+
+
+def test_the_digest_has_a_stated_budget_too(stocked):
+    """feed.digest had no size guard at all, and it is the largest response.
+
+    Measured on the live database as FastMCP emits it: feed.list 1835,
+    feed.search 2083, feed.digest 4296. The digest groups by topic and defaults
+    to limit=30 against list's 4, so it legitimately costs more -- but "more"
+    was unbounded and untested, which is how the one tool a reader is most
+    likely to call each morning became the one nothing measured.
+
+    Its budget is derived from its own defaults, the same way the list budget
+    is, so a default change cannot silently invalidate it.
+    """
+    from attestation.mcp.feed import DEFAULT_DIGEST_LIMIT
+
+    out = feed_mod._digest("ana")
+    size = emitted(out)
+    ceiling = DEFAULT_DIGEST_LIMIT * MAX_ITEM_CHARS + 900  # + topic labels, envelope
+    assert size <= ceiling, f"digest is {size} chars, ceiling {ceiling}"

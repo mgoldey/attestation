@@ -140,15 +140,20 @@ def test_main_loads_dotenv(tmp_path, monkeypatch, capsys):
 
 def test_kg_report_runs_on_an_empty_database(tmp_path, capsys):
     """The report must work on a fresh database -- no tags, no graph, no
-    division by zero -- since that is when someone first runs it."""
+    division by zero -- since that is when someone first runs it.
+
+    This asserted the metric table was printed, which was only ever how it
+    checked the command ran. An empty graph now gets a next step instead of
+    ten zeros (see the test below); the no-crash property is what this one is
+    for and it is unchanged.
+    """
     db = tmp_path / "t.db"
     get_db(db).close()
 
     rc = main(["kg-report", "--db", str(db)])
 
     assert rc == 0
-    out = capsys.readouterr().out
-    assert "nodes" in out and "singleton_rate" in out
+    assert capsys.readouterr().out.strip(), "printed nothing at all"
 
 
 def test_parser_runs_subcommands():
@@ -465,3 +470,52 @@ def test_backup_refuses_an_existing_destination(tmp_path, capsys):
     assert rc == 1
     assert dest.read_text() == "not empty", "an existing file was overwritten"
     assert "exists" in capsys.readouterr().out.lower()
+
+
+def test_kg_report_on_an_empty_graph_says_what_to_do(tmp_path, capsys):
+    """Ten zeros are not an answer to "what does my reading graph look like".
+
+    Flagged in the first review round and still true seven rounds later: a new
+    user runs this before ingesting anything and gets `nodes 0 / edges 0 /
+    singleton_rate 0.0 ...` with no indication that the graph is DERIVED from
+    the tagging pass, so the fix is `attest ingest && attest tag`.
+
+    The house pattern is already set by `attest runs list`, which says "no runs
+    recorded -- run `attest runs scan` first". This makes the graph match it.
+    """
+    from attestation.db import get_db
+
+    db = tmp_path / "t.db"
+    get_db(db).commit()
+
+    rc = main(["kg-report", "--db", str(db)])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "attest tag" in out, out
+    # The zeros are noise when there is nothing to report.
+    assert "singleton_rate" not in out, "dumped the full metric table for an empty graph"
+
+
+def test_kg_report_still_reports_a_populated_graph(tmp_path, capsys):
+    """The empty-state branch must not swallow a real report."""
+    from attestation.db import get_db
+
+    db = tmp_path / "t.db"
+    conn = get_db(db)
+    for i in range(6):
+        cur = conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (NULL, ?, 'u', 's', ?)",
+            (f"item {i}", f"h{i}"),
+        )
+        for tag in ("alpha", "beta"):
+            conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (cur.lastrowid, tag))
+    conn.commit()
+    conn.close()
+
+    rc = main(["kg-report", "--db", str(db)])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "nodes" in out, "a populated graph must still get the metrics"
