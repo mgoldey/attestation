@@ -163,7 +163,21 @@ def register(mcp) -> None:
         # the caller cannot read.
         limit: Annotated[int, Field(ge=1, le=MAX_SEARCH_LIMIT)] = DEFAULT_LIST_LIMIT,
     ) -> dict:
-        """Search items by keyword (and optional tag/content_type), ranked for this user.
+        """Search the reader's own corpus of PAPERS AND ARTICLES by keyword.
+
+        USE THIS for "find me papers/research/articles on X". The corpus is
+        built from subscribed feeds -- on this installation, mostly arXiv
+        (cs.LG and neighbours), plus Nature, Scientific Reports, Hugging Face
+        and HN. Call `feed.sources` to see the actual list.
+
+        This is a local semantic index, not a live query to arxiv.org, but for
+        "what recent papers are there on X" it is usually the right answer and
+        it needs no network. An agent that read the old one-line description
+        ("Search items by keyword") could not tell what was IN the corpus, and
+        so answered a request for arXiv papers on KV-cache optimization with
+        "I do not have a tool that can search academic repositories" -- while
+        this tool held 3,106 arXiv papers and returned four directly on-topic
+        ones for that exact query.
 
         Unlike `feed.list` this searches the whole archive and includes items already
         rated, flagging each with already_rated.

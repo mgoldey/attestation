@@ -811,3 +811,42 @@ def test_truncation_messages_do_not_name_a_limit_the_schema_rejects():
                 if int(match.group(1)) > MAX_LIST_LIMIT:
                     offenders.append(f"{path.name}:{lineno} advertises max {match.group(1)}")
     assert not offenders, f"messages name a limit above the schema's {MAX_LIST_LIMIT}: {offenders}"
+
+
+def test_the_feed_entry_points_say_what_the_corpus_holds():
+    """An agent with these tools available answered a request for arXiv papers
+    on KV-cache optimization with "I do not have a tool that can execute live
+    searches on external academic repositories" -- and told the user to go
+    search arxiv.org by hand.
+
+    The tools were registered and working: the same query through feed.search
+    returns four directly on-topic KV-cache papers, and the corpus holds 3,106
+    arXiv items. The failure was the DESCRIPTION. "Search items by keyword"
+    does not tell a caller what the items are, so a request phrased as
+    "find me papers" never matched a tool that only advertised "items".
+
+    A tool's description is its API. These two are the entry points a model
+    reaches for first, so they must name the thing they contain.
+    """
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.mcp import register_all
+
+    mcp = FastMCP("audit")
+    register_all(mcp)
+    described = {t.name: (t.description or "") for t in asyncio.run(mcp.list_tools())}
+
+    # The FIRST line specifically. Many tools mention papers somewhere in a
+    # long docstring; a model choosing among 50 tools reads the summary line,
+    # and the original failure was a first line that said only "Search items by
+    # keyword". Checking the whole description passes even when that line is
+    # restored verbatim, which makes the guard useless -- verified by mutation.
+    for name in ("feed.ask", "feed.search"):
+        first_line = described[name].splitlines()[0].lower()
+        assert any(word in first_line for word in ("paper", "arxiv", "research", "article")), (
+            f"{name}'s summary line never says its corpus holds papers, so an"
+            f" agent asked for papers cannot tell this tool applies:"
+            f" {described[name].splitlines()[0]!r}"
+        )

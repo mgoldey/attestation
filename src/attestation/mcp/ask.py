@@ -370,11 +370,17 @@ def register(mcp) -> None:
 
     @mcp.tool(name="feed.ask")
     def feed_ask(user: str, question: str) -> Answer:
-        """Ask anything about this reader's feed, in their own words.
+        """Ask anything about this reader's PAPERS AND ARTICLES, in their words.
 
-        Start here. Routes to the right feed tool by rule -- no extra model
-        call, no guessing -- and returns a line to relay VERBATIM plus the ids
-        needed to act. Reads `caveat` before trusting the order.
+        Start here, including for "find me papers on X" and "what's new in Y".
+        The reader's corpus is built from subscribed feeds -- on this
+        installation mostly arXiv, plus Nature, Scientific Reports, Hugging
+        Face and HN -- so questions about recent research are answerable here
+        without any network call.
+
+        Routes to the right feed tool by rule -- no extra model call, no
+        guessing -- and returns a line to relay VERBATIM plus the ids needed
+        to act. Reads `caveat` before trusting the order.
 
         If the question is ambiguous it asks back and names the alternatives
         in `options` rather than picking a default.
