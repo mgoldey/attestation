@@ -750,16 +750,24 @@ def test_the_provenance_caveat_is_bounded_regardless_of_source_mix(tmp_path, fak
 
     Bounding it here means no future fixture can be wrong about it.
     """
-    from attestation.rank import CLICK_SOURCES, _provenance_caveat
+    from attestation.rank import CLICK_SOURCES, HUMAN_CLICK_SOURCES, _provenance_caveat
 
+    # `real` must MATCH the mix: passing 0 alongside human sources described an
+    # impossible history and exercised a branch that cannot occur, which then
+    # failed the bound for a string no caller can ever see.
     every_source = dict.fromkeys(CLICK_SOURCES, 999999)
-    worst = _provenance_caveat(sum(every_source.values()), 0, every_source)
+    real = sum(n for src, n in every_source.items() if src in HUMAN_CLICK_SOURCES)
+    worst_mixed = _provenance_caveat(sum(every_source.values()), real, every_source)
 
-    assert len(worst) <= 160, f"{len(worst)} chars with every source present: {worst}"
+    synthetic_only = {s: 999999 for s in CLICK_SOURCES if s not in HUMAN_CLICK_SOURCES}
+    worst_synthetic = _provenance_caveat(sum(synthetic_only.values()), 0, synthetic_only)
+
+    for worst in (worst_mixed, worst_synthetic):
+        assert len(worst) <= 160, f"{len(worst)} chars: {worst}"
     # Still says the two things that matter: how much is real, and that
     # bootstrap is circular.
-    assert "0/" in worst
-    assert "bootstrap" in worst
+    assert "bootstrap" in worst_mixed
+    assert "NOT judged" in worst_synthetic
 
 
 def test_the_since_days_window_is_not_confused_by_the_date_separator(tmp_path, fake_embedder):
@@ -879,3 +887,32 @@ def test_two_threads_creating_one_persona_do_not_both_raise(tmp_path):
     assert not errors, f"{len(errors)} of 12 concurrent autocreates raised: {errors[0]}"
     rows = get_db(db).execute("SELECT COUNT(*) FROM users WHERE name = 'freshreader'").fetchone()[0]
     assert rows == 1, f"{rows} personas created for one name"
+
+
+def test_a_wholly_synthetic_history_is_flagged_as_untrusted_not_merely_noted(
+    tmp_path, fake_embedder
+):
+    """Zero human clicks is a different claim from "mostly synthetic".
+
+    Measured on the live database: removing the simulated clicks improved or
+    matched top-10 relevance for every one of the five personas and hurt none
+    -- structural-biologist went 2/5 to 5/5 in the top five. The synthetic
+    training is net-negative on that corpus, while `classifier_active: True`
+    reads as MORE trained rather than less.
+
+    The existing caveat said "only 0/22 clicks are human (22 simulated)",
+    which is accurate and reads as a footnote. A reader deciding whether to
+    trust an order needs the conclusion, not just the arithmetic.
+    """
+    from attestation.rank import ranking_quality
+
+    conn, user_id = _mixed_history(tmp_path, fake_embedder, ["simulated"] * 12)
+
+    quality = ranking_quality(conn, user_id)
+
+    assert quality["real_clicks"] == 0
+    caveat = quality["caveat"]
+    assert "not judged by a person" in caveat.lower(), caveat
+    assert "untrained" in caveat.lower(), (
+        f"a wholly synthetic history reads as merely noted: {caveat!r}"
+    )

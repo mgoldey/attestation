@@ -559,8 +559,25 @@ def _provenance_caveat(total: int, real: int, by_source: dict[str, int]) -> str:
     parts = "/".join(f"{n} {src}" for src, n in ranked[:2])
     if len(ranked) > 2:
         parts += f"/+{len(ranked) - 2} more"
-    caveat = f"only {real}/{total} clicks are human ({parts})"
-    if by_source.get("bootstrap"):
+
+    # Zero human clicks is a different claim from "mostly synthetic", and the
+    # difference is measurable: deleting the simulated clicks improved or
+    # matched top-10 relevance for all five live personas and hurt none --
+    # structural-biologist went 2/5 to 5/5 in the top five. So a wholly
+    # synthetic history is not a weakly-trained ranker, it is an untrained one
+    # wearing `classifier_active: true`, and a reader deciding whether to trust
+    # the order needs that conclusion rather than the arithmetic behind it.
+    if real == 0:
+        caveat = (
+            f"NOT judged by a person: all {total} clicks are generated ({parts});"
+            " untrained in practice"
+        )
+    else:
+        caveat = f"only {real}/{total} clicks are human ({parts})"
+    # Skipped when the message already says the order was not judged by a
+    # person: "untrained in practice" subsumes "these particular labels are
+    # circular", and both together exceed the 160-char bound.
+    if by_source.get("bootstrap") and real:
         # Named, not explained: bootstrap is circular rather than merely
         # synthetic, and a caller that wants the reason can read the docstring.
         caveat += "; bootstrap labels are circular (excluded from `attest eval`)"
