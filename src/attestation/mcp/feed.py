@@ -52,14 +52,15 @@ def register(mcp) -> None:
     def list_feed(user: str, limit: Limit = DEFAULT_LIST_LIMIT, since_days: SinceDays = 14) -> dict:
         """List this user's currently ranked, unread feed items (best first).
 
-        Returns each item's id, title, url, source feed name, and its blended rank
-        score (lower score = better/more relevant). Does NOT return HTML or full
-        article text -- just enough to summarize or link to items. `limit` is capped
-        at 50 items regardless of the value passed. If `user` isn't a recognized
-        persona, the response names the valid users instead of raising an error.
-        Each item also carries its LLM-extracted topic "tags" and "content_type"
-        (paper/survey/announcement/release/blog/other) when the tagging pass has
-        processed it; both are empty/null for not-yet-tagged items.
+        Returns each item's `item_id`, title, url, source feed name, topic `tags`
+        and `content_type` (paper/survey/announcement/release/blog/other; both
+        empty until the tagging pass has processed it). No HTML and no article
+        text -- call `feed.read` for one item's abstract. `limit` is capped at 16.
+
+        An unrecognised `user` is CREATED, not refused: a new reader is seeded
+        from the corpus's most common topics, and the response says so. Do not
+        use this tool to test whether a persona exists -- `feed.personas` lists
+        them without writing.
 
         `since_days` bounds how far back the feed reaches -- defaults to 14, so an
         empty result may mean "nothing published in the window" rather than

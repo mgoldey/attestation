@@ -353,3 +353,41 @@ def test_the_generated_header_names_a_real_command(root):
         # The frontmatter fence and the HTML comment close are not flags.
         for flag in set(re.findall(r"--[a-z][a-z-]+\b", body)):
             assert flag in flags, f"the generated header names {flag!r}, not in {sorted(flags)}"
+
+
+def test_every_agent_definition_states_its_goal_before_its_plumbing():
+    """A generated definition said which tools were registered and how to run
+    the server, and never what the agent was FOR.
+
+    That is the shape of the reported failure: an agent holding 3,106 arXiv
+    papers answered a request for recent papers with "I do not have a direct
+    tool that can execute live searches on external academic repositories" and
+    told the user to search arxiv.org by hand. Every tool was registered and
+    working. Capability was documented; purpose was not.
+    """
+    from pathlib import Path
+
+    from attestation.emit import claude_agents
+
+    generated = claude_agents(Path("/tmp"))
+    for name, body in generated.items():
+        assert "## Your job" in body, f"{name} has no goal section"
+        # Purpose before plumbing: a model reads top-down, and the first thing
+        # it meets should be the job, not ATTEST_TOOLS.
+        assert body.index("## Your job") < body.index("ATTEST_TOOLS"), (
+            f"{name} explains how to run the server before saying what it is for"
+        )
+
+    # `goal` defaults to "" so a Surface can be built in a test without one.
+    # Every SHIPPED surface must still have a real goal, or the definition
+    # falls back to plumbing-only and the failure above returns.
+    from attestation.mcp import AGENT_SURFACES
+
+    missing = sorted(k for k, v in AGENT_SURFACES.items() if len(v.goal) < 80)
+    assert not missing, f"shipped surfaces with no meaningful goal: {missing}"
+
+    feed = generated["feed"]
+    assert "arxiv" in feed.lower(), (
+        "the feed agent never names what its corpus holds -- the exact gap that"
+        " made a model decline a request for papers"
+    )

@@ -21,6 +21,7 @@ this repo's existing convention rather than a new one.
 
 from __future__ import annotations
 
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -153,6 +154,13 @@ def claude_agents(root: Path) -> dict[str, str]:
             f"tools: {tools}\n"
             "---\n\n"
             f"{HEADER}\n\n"
+            # The goal comes FIRST and the plumbing after. A definition that
+            # opens with which tools are registered tells a model what it CAN
+            # do and never what it is FOR -- which is how an agent holding
+            # 3,106 arXiv papers told a user to go search arxiv.org by hand.
+            "## Your job\n\n"
+            f"{textwrap.fill(surface.goal, 76)}\n\n"
+            "## Why this agent is separate\n\n"
             f"{surface.rationale}\n\n"
             f"Run with `ATTEST_TOOLS={name}`. Tools outside `{tools}` are not\n"
             "registered for this agent: they are absent rather than merely\n"

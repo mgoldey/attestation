@@ -6,6 +6,8 @@ database, and they are the regression guard for the measured 13/15. This
 module is the part that touches the rest of the system.
 """
 
+import os
+
 from pydantic import BaseModel, Field
 
 from attestation.mcp.routing import (
@@ -329,44 +331,25 @@ def _sym_ask(expr: str, question: str = "simplify") -> dict:
     }
 
 
-def _tools_listing(surface: str) -> dict:
-    """What the specific tools in this agent are, and how to reach them."""
-    return {
-        "ok": True,
-        "answer": (
-            f"The {surface} agent's specific tools are hidden by default,"
-            " because a visible tool gets called: measured on gemma4:e2b, a"
-            " model picked the ask router 1 time in 26 when the specifics were"
-            f" listed alongside it, and 26 in 26 when they were not. Set"
-            f" ATTEST_EXPAND=1 on the server to see them, or keep using"
-            f" {surface}.ask, which routes by rule and asks back when a"
-            " question is ambiguous."
-        ),
-        "refs": [],
-        "caveat": None,
-        "options": [f"{surface}.ask"],
-        "tool_used": f"{surface}.tools",
-    }
+# Re-exported: the disclosure tools are registered from ask.register, and
+# test_architecture requires every tool's implementation to be importable from
+# the module that registers it.
+from attestation.mcp.disclosure import _tools_listing  # noqa: E402,F401
 
 
 def register(mcp) -> None:
     """Attach the four `ask` routers and their disclosure tools."""
 
-    for _surface in ("feed", "runs", "kg", "sym"):
+    # Registered ONLY when this agent's specifics are hidden. With the full
+    # surface served they are all visible, and four identical tools claiming
+    # otherwise is a falsehood in the commonest configuration.
+    from attestation.mcp.disclosure import register_disclosure
 
-        def _make(surface=_surface):
-            @mcp.tool(name=f"{surface}.tools")
-            def _list_tools() -> Answer:
-                """Explain how to reach this agent's specific tools.
-
-                The specific tools are hidden by default so the router is
-                chosen instead of guessed at. This says how to reveal them.
-                """
-                return Answer(**_tools_listing(surface))
-
-            return _list_tools
-
-        _make()
+    register_disclosure(
+        mcp,
+        os.environ.get("ATTEST_TOOLS", "").strip(),
+        os.environ.get("ATTEST_EXPAND", "").strip() not in ("", "0", "false"),
+    )
 
     @mcp.tool(name="feed.ask")
     def feed_ask(user: str, question: str) -> Answer:

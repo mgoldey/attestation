@@ -2,7 +2,7 @@
 
 Auditable research provenance, fully local: experiment runs, verifiable claims,
 a reading knowledge graph, symbolic derivations, and a personalized science feed.
-Exposed as 50 MCP tools plus a small HTMX web UI and an `attest` CLI.
+Exposed as 46 MCP tools plus a small HTMX web UI and an `attest` CLI.
 
 ## Docs Index
 
@@ -12,7 +12,7 @@ IMPORTANT: Prefer retrieval-led reasoning over pre-training-led reasoning for an
 [Project Docs Index]|root: .
 |.:{README.md,DEMO.md,CLAUDE.md,pyproject.toml,datasette.yml,.pre-commit-config.yaml,.env.sample,LICENSE}
 |src/attestation:{__init__.py,implicit.py,personas.py,cli.py,mcp_server.py,server.py,db.py,rank.py,embed.py,llm.py,ingest.py,feeds.py,features.py,explain.py,kg.py,ledger.py,claims.py,citations.py,corpus.py,symbolic.py,symbolic_ops.py,simulate.py,ports.py,install.py,emit.py,feeds.toml,feed_candidates.toml,kg_aliases.toml}
-|src/attestation/mcp:{__init__.py,_tool.py,_shared.py,ask.py,citation.py,feed.py,knowledge.py,personas.py,provenance.py,routing.py,subscriptions.py,symbolic.py}
+|src/attestation/mcp:{__init__.py,_tool.py,_shared.py,ask.py,citation.py,disclosure.py,feed.py,knowledge.py,personas.py,provenance.py,routing.py,subscriptions.py,symbolic.py}
 |evals:{run_tagging_eval.py,tagging_cases.json}|examples:{README.md,workspace/}
 |src/attestation/ledger_adapters:{__init__.py,generic.py}
 |src/attestation/skills/research-provenance:{SKILL.md,scripts/setup.sh}
@@ -37,7 +37,7 @@ code. Read the spec before changing a subsystem — it records why, not just wha
 |SKILL.md says: never ask for a persona NAME (it is whatever was passed), ask what they read about; and answer "what can you do" by CALLING feed.list, not by listing tools
 |mcp/routing.py: 4 deterministic routers (question -> tool, no model call), surfaced by mcp/ask.py returning a Pydantic Answer, so MCP emits a real outputSchema|MEASURED on gemma4:e2b over 15 turns x3: routed 13/15, flat-37 8/15, LLM swarm 7.3/15 at 2x latency — the swarm is REFUTED for routing
 |NO catch-all destination: an early `doctor` tool absorbed 3 of 4 remaining misses|an ambiguous question returns options, never a default
-|MCP surface: 50 tools (2026-08-23) NAMESPACED as feed.*(22) sym.*(9) runs.*(8) kg.*(7) cite.*(4) via @mcp.tool(name=...) in mcp/{feed,knowledge,provenance,symbolic,ask,citation,subscriptions}.py|a tool never repeats its namespace (kg.path, not kg.kg_path) — two tests in test_architecture.py enforce both rules|the flat names were removed outright, no aliases; mcp_server.py is a ~95-line entry point + one-release `_<name>_impl` aliases|mcp/_tool.py's @tool owns the ritual: connection, user lookup, and BOTH envelopes — a body returns only what it computed|expected refusals `raise ToolError(msg)` (verbatim to caller); anything else is a bug (logged, generic message)|`empty={...}` makes a failure envelope structurally match its success envelope
+|MCP surface: 46 tools by default (2026-08-23) NAMESPACED as feed.*(21) sym.*(8) runs.*(7) kg.*(6) cite.*(4) — the four `<surface>.tools` disclosure tools register ONLY under ATTEST_TOOLS, since with everything served they claimed to hide tools sitting beside them via @mcp.tool(name=...) in mcp/{feed,knowledge,provenance,symbolic,ask,citation,subscriptions}.py|a tool never repeats its namespace (kg.path, not kg.kg_path) — two tests in test_architecture.py enforce both rules|the flat names were removed outright, no aliases; mcp_server.py is a ~95-line entry point + one-release `_<name>_impl` aliases|mcp/_tool.py's @tool owns the ritual: connection, user lookup, and BOTH envelopes — a body returns only what it computed|expected refusals `raise ToolError(msg)` (verbatim to caller); anything else is a bug (logged, generic message)|`empty={...}` makes a failure envelope structurally match its success envelope
 |Search: search_feed queries sqlite-vec with embed_query() then blends with profile rank (QUERY_WEIGHT=0.75)|RELEVANCE_FLOOR=0.90 is RELATIVE to the best hit for that query — absolute cutoffs fail because top similarity varies 0.44-0.62 by query|a literal hit is a BOOST not a floor: flooring made all 711 "llm" matches tie
 |Feedback: clicks.source = ui|agent|bootstrap|simulated|implicit, and provenance decides what a row may be used for|bootstrap labels are a linear threshold on the SAME embedding the classifier trains on → tautological, excluded by evaluate_user|simulated = a chat model reacting to TEXT as the persona, independent of the vector, so trainable
 |Signal scarcity is the core problem: MEASURED 2026-08-23, 11 human clicks (8 ui + 3 agent) on 3 DAYS across 19, against 5265 items — feedback that needs a gesture does not arrive|implicit.py harvests engagement as weak positives: explanation requests AND `feed.read`, via the `engagement` table (migration 005)|SKILL.md tells the agent to extract verdicts from ordinary discourse, since users never press buttons

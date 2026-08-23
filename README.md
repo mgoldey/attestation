@@ -267,7 +267,7 @@ mcp_servers:
 
 Verify with `hermes mcp list` — you should see `attestation ... ✓ enabled`.
 
-The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 50 tools.
+The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 46 tools.
 These counts move: re-measure rather than quoting this paragraph.
 
 ```bash

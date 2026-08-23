@@ -71,6 +71,13 @@ class Surface:
     prefixes: frozenset[str]
     summary: str
     rationale: str
+    # What the agent is FOR, in the words a user would use, plus the questions
+    # it should recognise as its own. A definition that lists capabilities and
+    # omits purpose is how a live agent with 3,106 arXiv papers answered a
+    # request for papers with "I have no tool for searching academic
+    # repositories" -- every tool was registered and working, and nothing said
+    # what they were for.
+    goal: str = ""
 
 
 AGENT_SURFACES: dict[str, Surface] = {
@@ -78,12 +85,31 @@ AGENT_SURFACES: dict[str, Surface] = {
         prefixes=frozenset({"feed"}),
         summary="Read and search the science feed, and manage what it subscribes to.",
         rationale="Conversational; a wrong guess costs a retry.",
+        goal=(
+            "Help this reader keep up with the literature. The corpus is their"
+            " own subscribed feeds -- mostly arXiv, plus Nature, Scientific"
+            ' Reports, Hugging Face and HN -- so questions like "find me'
+            ' recent papers on X", "what should I read this week" and'
+            ' "what\'s new in Y" are YOURS to answer, locally, without any'
+            " network call. Reach for feed.ask when the question is in plain"
+            " words. Reading an item is itself feedback: it trains the ranker,"
+            " so open what looks relevant rather than only listing titles."
+        ),
     ),
     "provenance": Surface(
         prefixes=frozenset({"runs", "cite.check"}),
         summary="Scan experiment runs, compare arms, and check claims against them.",
         rationale=(
             "Verification: a wrong answer reaches a manuscript, and the caveats are the product."
+        ),
+        goal=(
+            'Answer "which arm actually won, and on what evidence" and "is'
+            ' what my draft says still true". You read experiment artifacts'
+            " already on disk -- no instrumentation, no re-running anything."
+            " The caveats you return are the product, not a disclaimer: relay"
+            " them verbatim. When a comparison refuses, the refusal is the"
+            " right answer and it names what to do next; do not work around it"
+            " by picking a metric yourself."
         ),
     ),
     "knowledge": Surface(
@@ -93,11 +119,24 @@ AGENT_SURFACES: dict[str, Surface] = {
             " references they cite."
         ),
         rationale="Exploratory, read-only.",
+        goal=(
+            'Answer "what have I been reading about", "how do these two'
+            ' topics connect" and "what are my main research areas", from'
+            " the concept graph built out of this reader's own items. Concept"
+            " names are lowercase and hyphenated; turn a user's phrasing into"
+            " one with kg.concepts before looking it up."
+        ),
     ),
     "symbolic": Surface(
         prefixes=frozenset({"sym"}),
         summary="Symbolic algebra and calculus, in a sandboxed subprocess.",
         rationale="Sandboxed subprocess, touches no database.",
+        goal=(
+            "Do the algebra and calculus exactly, so a derivation in a paper"
+            " can be checked rather than eyeballed. `^` and `2x` both parse."
+            " sym.verify reports unproven as unproven -- it is never a"
+            " disproof."
+        ),
     ),
 }
 
