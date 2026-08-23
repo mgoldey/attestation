@@ -522,6 +522,37 @@ def _write_refresh_script(check: bool, root: Path) -> StepResult:
     return StepResult("schedule", Status.FIXED, f"wrote {script_path}")
 
 
+def _crontab_lines() -> list[str]:
+    """The user's crontab, or an empty list if they have none.
+
+    `crontab -l` exits nonzero when no crontab exists, which is a normal
+    state and not an error worth surfacing.
+    """
+    result = _run(["crontab", "-l"])
+    if result.returncode != 0:
+        return []
+    return [ln for ln in result.stdout.splitlines() if ln.strip() and not ln.startswith("#")]
+
+
+def _duplicate_crontab_entry() -> str | None:
+    """A hand-added crontab line running the same refresh script.
+
+    This step's own failure message tells the user to add one when the agent
+    cannot register a job. That happened on 2026-08-11, the line was added,
+    and the agent job later registered successfully -- so both ran. The script
+    takes its own flock, so every crontab run from 2026-08-20 logged "SKIP:
+    previous run still holding lock" and the log recorded zero successes,
+    while the agent job quietly did the work.
+
+    Checking only our own job reports `schedule: ok` for that, which is how it
+    went unnoticed for two days.
+    """
+    for line in _crontab_lines():
+        if REFRESH_SCRIPT_NAME in line:
+            return line.strip()
+    return None
+
+
 def step_schedule(agent: str | None, check: bool = False) -> StepResult:
     if agent is None:
         return StepResult("schedule", Status.SKIPPED, "no hermes-agent binary found")
@@ -538,6 +569,17 @@ def step_schedule(agent: str | None, check: bool = False) -> StepResult:
 
     proc = _run([agent, "cron", "list"])
     if CRON_JOB_NAME in proc.stdout:
+        duplicate = _duplicate_crontab_entry()
+        if duplicate:
+            return StepResult(
+                "schedule",
+                Status.BROKEN,
+                f"{CRON_JOB_NAME} is registered with {agent}, and a duplicate"
+                " crontab entry runs the same script. Both take the script's"
+                " own lock, so one logs 'SKIP: previous run still holding"
+                " lock' on every wakeup and never ingests. Remove the crontab"
+                f" line: {duplicate}",
+            )
         return script_result
 
     if check:

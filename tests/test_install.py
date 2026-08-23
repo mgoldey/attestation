@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1232,3 +1233,77 @@ def test_reasoning_override_is_skipped_for_non_hermes3_models(monkeypatch, tmp_p
     assert result.status == "SKIPPED"
     assert "does not need an override" in result.detail
     assert not any("config" in c for c in fake.calls), "must not touch the agent's config"
+
+
+def test_schedule_reports_a_duplicate_crontab_entry(monkeypatch):
+    """Two schedulers running the same script is invisible until you read a log.
+
+    Found live: the installer's fallback message tells you to add a crontab
+    line when `hermes cron create` fails. It failed once on 2026-08-11, the
+    line was added by hand, and the hermes job later registered fine -- so
+    both ran. The script takes its own flock, so every crontab run since
+    2026-08-20 logged "SKIP: previous run still holding lock" and the log
+    recorded zero successes, while hermes quietly did the work.
+
+    A doctor that only checks its own job reports `schedule: ok` for that.
+    """
+    monkeypatch.setattr(install, "_is_ollama_backend", lambda: True)
+    monkeypatch.setattr(install, "_find_agent_binary", lambda: "hermes")
+    monkeypatch.setattr(
+        install,
+        "_crontab_lines",
+        lambda: [
+            "17 */4 * * * /usr/bin/flock -n /x.lock /home/matt/.hermes/scripts/"
+            "attestation-refresh.sh >> /x.log 2>&1"
+        ],
+    )
+
+    def fake_run(cmd, **kw):
+        joined = " ".join(cmd)
+        if "cron" in joined and "list" in joined:
+            return SimpleNamespace(returncode=0, stdout="attestation-refresh", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(install, "_run", fake_run)
+    monkeypatch.setattr(
+        install,
+        "_write_refresh_script",
+        lambda check, root: install.StepResult("schedule", install.Status.OK, "up to date"),
+    )
+
+    result = install.step_schedule("hermes", check=True)
+
+    assert result.status == install.Status.BROKEN
+    assert "crontab" in result.detail.lower()
+    assert "duplicate" in result.detail.lower() or "twice" in result.detail.lower()
+
+
+def test_schedule_is_ok_with_only_the_agent_job(monkeypatch):
+    """One scheduler is the correct state and must not be reported as a fault."""
+    monkeypatch.setattr(install, "_is_ollama_backend", lambda: True)
+    monkeypatch.setattr(install, "_find_agent_binary", lambda: "hermes")
+    monkeypatch.setattr(install, "_crontab_lines", lambda: ["0 11 * * * /some/other/job.sh"])
+    monkeypatch.setattr(
+        install,
+        "_run",
+        lambda cmd, **kw: SimpleNamespace(returncode=0, stdout="attestation-refresh", stderr=""),
+    )
+    monkeypatch.setattr(
+        install,
+        "_write_refresh_script",
+        lambda check, root: install.StepResult("schedule", install.Status.OK, "up to date"),
+    )
+
+    result = install.step_schedule("hermes", check=True)
+    assert result.status != install.Status.BROKEN, result.detail
+
+
+def test_crontab_lines_survives_no_crontab(monkeypatch):
+    """`crontab -l` exits nonzero when the user has none. That is a normal
+    state, not an error, and must not break the doctor."""
+    monkeypatch.setattr(
+        install,
+        "_run",
+        lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr="no crontab"),
+    )
+    assert install._crontab_lines() == []

@@ -23,7 +23,9 @@ def client(tmp_path, fake_embedder):
     conn.commit()
     conn.close()
     app = create_app(db_path, embedder=fake_embedder, chat_fn=lambda m, s: {"text": "why"})
-    return TestClient(app)
+    tc = TestClient(app)
+    tc.db_path = db_path
+    return tc
 
 
 def test_index_renders_users_and_feed(client):
@@ -73,17 +75,10 @@ def test_static_htmx_served(client):
     assert "htmx" in resp.text
 
 
-def test_unknown_user_list_returns_404(client):
-    resp = client.get("/list", params={"user": "nobody"})
-    assert resp.status_code == 404
-
-
-def test_unknown_user_index_returns_404(client):
-    resp = client.get("/", params={"user": "nobody"})
-    assert resp.status_code == 404
-
-
 def test_unknown_user_clicks_returns_404(client):
+    """Writes still refuse. A vote under an unknown name is a typo or a stale
+    form far more often than a new reader, and creating a persona as the side
+    effect of a click is a permanent profile nobody knows exists."""
     resp = client.post("/clicks", data={"user": "nobody", "item_id": 1, "useful": 1})
     assert resp.status_code == 404
 
@@ -166,3 +161,59 @@ def test_list_renders_tag_badges(tmp_path, fake_embedder):
     assert resp.status_code == 200
     assert '<span class="tag type">paper</span>' in resp.text
     assert '<span class="tag">dft</span>' in resp.text
+
+
+def test_feed_shows_the_ranking_caveat_when_the_classifier_is_silent(client):
+    """The web UI must not present an untrained order as if it were trained.
+
+    CLAUDE.md states the invariant: "_ranking_quality() reports
+    classifier_active + caveat | surface it rather than letting a reader assume
+    the ranker learned something". Every MCP tool that returns an order carries
+    it. The web UI -- the surface a human actually reads -- rendered a bare
+    ranked list, so a reader had no way to tell a cold-start order from a
+    learned one.
+    """
+    html = client.get("/list", params={"user": "matt"}).text
+    assert "classifier" in html.lower(), "no honesty caveat rendered"
+
+
+def test_caveat_tracks_the_ranker_state_rather_than_being_static(client):
+    """The caveat is a live signal, not decoration.
+
+    A cold profile is told the classifier is silent. After one useful and one
+    not-useful click the classifier CAN fire, so the wording has to change --
+    to the weakly-trained caveat, not to nothing: two clicks is still two
+    clicks, and claiming a trained ranker there would be the same dishonesty
+    in the other direction.
+    """
+    html = client.get("/list", params={"user": "matt"}).text
+    assert "WITHOUT its click classifier" in html
+    ids = [int(s.split('"')[0]) for s in html.split('data-item-id="')[1:]]
+    client.post("/clicks", data={"user": "matt", "item_id": ids[0], "useful": "1"})
+    client.post("/clicks", data={"user": "matt", "item_id": ids[1], "useful": "0"})
+
+    after = client.get("/list", params={"user": "matt"}).text
+    assert "WITHOUT its click classifier" not in after
+    assert "weakly trained" in after
+
+
+def test_unknown_user_is_created_not_404ed(client):
+    """Two front doors onto one database must not disagree about a new user.
+
+    The MCP surface auto-creates on first contact (mcp/_tool.py
+    _autocreate_user) because asking an agent to run a setup command first is
+    the friction that made people give up. The web UI 404'd the same name. A
+    reader who visits /?user=newname before their first agent call gets an
+    error page for a state the other front door treats as ordinary.
+    """
+    resp = client.get("/list", params={"user": "brand-new-reader"})
+    assert resp.status_code == 200, resp.text
+
+    from attestation.rank import get_user
+
+    conn = get_db(client.db_path)
+    row = get_user(conn, "brand-new-reader")
+    assert row is not None
+    # Seeded with something, not left blank: the interests text IS the profile
+    # embedding, and an empty one ranks nothing.
+    assert row["interests"].strip()

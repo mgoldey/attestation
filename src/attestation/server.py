@@ -11,7 +11,13 @@ from fastapi.staticfiles import StaticFiles
 from attestation.db import get_db
 from attestation.explain import explain
 from attestation.llm import default_chat_fn
-from attestation.rank import get_user, rank_items, record_click
+from attestation.rank import (
+    autocreate_user,
+    get_user,
+    rank_items,
+    ranking_quality,
+    record_click,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -59,7 +65,15 @@ PAGE = env.from_string("""<!doctype html>
 </div>
 </body></html>""")
 
-FRAGMENT = env.from_string("""<ol id="feed">
+# The caveat lives INSIDE #feed, not above it. The vote buttons swap #feed
+# with outerHTML, so anything outside it survives the swap unchanged -- a
+# caveat rendered as a sibling would still be claiming "0 clicks recorded"
+# after the click that fixed it.
+FRAGMENT = env.from_string("""<div id="feed">
+{% if quality and quality.caveat %}
+<p class="caveat">{{ quality.caveat }}</p>
+{% endif %}
+<ol>
 {% for it in items %}
  <li data-item-id="{{ it.item_id }}">
   <a href="{{ it.url | safe_href }}">{{ it.title }}</a>
@@ -78,7 +92,8 @@ FRAGMENT = env.from_string("""<ol id="feed">
   {% endif %}
  </li>
 {% endfor %}
-</ol>""")
+</ol>
+</div>""")
 
 
 def _is_loopback_origin(value: str) -> bool:
@@ -126,19 +141,51 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
     conn = get_db(db_path)  # single writer connection for the whole app
 
     def require_user(user_name: str) -> sqlite3.Row:
+        """An existing reader, or 404. Used by the routes that WRITE.
+
+        Recording a click or asking for an explanation under an unknown name
+        is far more likely a typo or a stale form than a new reader arriving,
+        and creating a persona as the side effect of a vote produces exactly
+        the "permanent persona nobody knows exists" that mcp/_tool.py warns
+        about -- except here nothing announces it. Reads create; writes refuse.
+        """
         user = get_user(conn, user_name)
         if user is None:
             raise HTTPException(status_code=404, detail=f"unknown user: {user_name}")
         return user
 
+    def reader(user_name: str) -> sqlite3.Row:
+        """An existing reader, created on first sight. Used by the routes that READ.
+
+        Browsing used to 404. Two front doors onto one database disagreeing
+        about what a new name means is drift a reader hits before they have
+        any way to understand it: they visit /?user=<their name>, get an error
+        page, and never learn that any MCP tool with the same name would
+        simply have worked. mcp/_tool.py already made this call and recorded
+        why -- an unknown-name refusal taught agents to invent personas, so
+        the refusal caused the duplicates it was meant to prevent. The web UI
+        just never got the same treatment.
+        """
+        if not user_name.strip():
+            raise HTTPException(status_code=400, detail="user name required")
+        user = get_user(conn, user_name)
+        if user is None:
+            user, _ = autocreate_user(conn, user_name)
+        return user
+
     def render_list(user_name: str) -> str:
-        user = require_user(user_name)
+        user = reader(user_name)
         items = rank_items(conn, embedder, user["id"])[:LIST_LIMIT]
-        return FRAGMENT.render(items=items, user=user_name, explain_limit=EXPLAIN_LIMIT)
+        return FRAGMENT.render(
+            items=items,
+            user=user_name,
+            explain_limit=EXPLAIN_LIMIT,
+            quality=ranking_quality(conn, user["id"]),
+        )
 
     @app.get("/", response_class=HTMLResponse)
     def index(user: str = Query("matt")):
-        feed_content = render_list(user)  # 404s via require_user if user is unknown
+        feed_content = render_list(user)  # creates the reader if new; see reader()
         users = [r["name"] for r in conn.execute("SELECT name FROM users ORDER BY name")]
         return PAGE.render(users=users, user=user, feed_content=feed_content)
 

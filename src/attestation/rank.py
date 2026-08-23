@@ -399,3 +399,79 @@ def evaluate_user(conn, user_id: int, n_holdout: int = 5) -> float | None:
     if not aucs:
         return None
     return float(np.mean(aucs))
+
+
+def ranking_quality(conn, user_id: int) -> dict:
+    """How much to trust the ordering, stated up front.
+
+    A digest built from an untrained ranker looks exactly like one built from a
+    good one. rank.classifier_probs returns None when a user's clicks are all
+    one class (rank.py's single-class guard), so the click-CLASSIFIER term
+    never fires -- but rank_items blends in a second, independent term
+    (avg_ranks over pref_scores_for_items) whenever n_clicks > 0, regardless of
+    the guard. So a single-class history with at least one click is NOT pure
+    embedding similarity: the feature-preference term still contributes, only
+    the classifier is silent. Naming which terms are actually contributing
+    matters more than a blanket "profile-embedding only" claim, which is wrong
+    in exactly the case this caveat exists to describe.
+    """
+    rows = conn.execute(
+        "SELECT useful, COUNT(*) n FROM clicks WHERE user_id = ? GROUP BY useful",
+        (user_id,),
+    ).fetchall()
+    counts = {int(r["useful"]): r["n"] for r in rows}
+    total = sum(counts.values())
+    active = len(counts) > 1
+    out = {
+        "clicks": total,
+        "useful": counts.get(1, 0),
+        "not_useful": counts.get(0, 0),
+        "classifier_active": active,
+    }
+    if not active:
+        if total > 0:
+            out["caveat"] = (
+                f"ranking is running WITHOUT its click classifier: {total} click(s), "
+                f"all {'useful' if counts.get(1) else 'not-useful'}. Order blends "
+                "profile-embedding similarity with a feature-preference term learned "
+                "from those clicks -- the classifier term is silent (needs both "
+                "useful and not-useful clicks to fire), but the preference term is "
+                "still contributing. Mark some items the other way to train the "
+                "classifier too."
+            )
+        else:
+            out["caveat"] = (
+                "ranking is running WITHOUT its click classifier or any "
+                "feature-preference signal: 0 clicks recorded. Order is "
+                "profile-embedding similarity only."
+            )
+    elif total < 20:
+        out["caveat"] = f"only {total} clicks: the classifier is active but weakly trained"
+    return out
+
+
+STARTER_INTERESTS = "general science and technology research"
+
+
+def autocreate_user(conn: sqlite3.Connection, name: str):
+    """Create a reader on first sight, seeded from what the corpus covers.
+
+    Refusing an unknown name and listing the valid ones taught agents to call
+    persona_create with whatever string they had: the live database grew a
+    duplicate persona with zero clicks that way, days after that reader had
+    been merged away. The refusal did not prevent the duplicate, it caused it.
+    """
+    from attestation.features import tag_vocabulary
+
+    try:
+        topics = tag_vocabulary(conn, limit=6)
+    except sqlite3.Error:
+        # A database without the tag tables yet is not a reason to refuse a
+        # reader; the starter string is a placeholder either way. Narrow to
+        # sqlite errors on purpose -- anything else here is a real bug and
+        # should reach the decorator's own handler.
+        topics = []
+    interests = ", ".join(topics) if topics else STARTER_INTERESTS
+    create_user(conn, name, interests)
+    conn.commit()
+    return get_user(conn, name), interests

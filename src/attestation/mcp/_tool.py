@@ -77,32 +77,6 @@ class ToolError(Exception):
 # reader would get an arbitrary order and no reason to trust it. The corpus's
 # own most-common topics are the honest default -- "here is what this feed is
 # about" -- and the first thing the agent does is ask what to change it to.
-STARTER_INTERESTS = "general science and technology research"
-
-
-def _autocreate_user(conn: sqlite3.Connection, name: str):
-    """Create a reader on first sight, seeded from what the corpus covers.
-
-    Refusing an unknown name and listing the valid ones taught agents to call
-    persona_create with whatever string they had: the live database grew a
-    duplicate persona with zero clicks that way, days after that reader had
-    been merged away. The refusal did not prevent the duplicate, it caused it.
-    """
-    from attestation.features import tag_vocabulary
-    from attestation.rank import create_user
-
-    try:
-        topics = tag_vocabulary(conn, limit=6)
-    except sqlite3.Error:
-        # A database without the tag tables yet is not a reason to refuse a
-        # reader; the starter string is a placeholder either way. Narrow to
-        # sqlite errors on purpose -- anything else here is a real bug and
-        # should reach the decorator's own handler.
-        topics = []
-    interests = ", ".join(topics) if topics else STARTER_INTERESTS
-    create_user(conn, name, interests)
-    conn.commit()
-    return _get_user(conn, name), interests
 
 
 def tool(
@@ -188,6 +162,13 @@ def tool(
         return wrapper
 
     return decorate
+
+
+def _autocreate_user(conn: sqlite3.Connection, name: str):
+    """Moved to rank.py so server.py can share it without importing mcp/."""
+    from attestation.rank import autocreate_user
+
+    return autocreate_user(conn, name)
 
 
 def _get_user(conn: sqlite3.Connection, name: str):
