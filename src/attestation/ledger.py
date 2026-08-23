@@ -733,13 +733,19 @@ def _corpus_agreement(runs: list[dict], metric: str) -> tuple[str | None, list[s
     unverified -- unknown is never silently treated as agreement, which is
     exactly the assumption every comparison made before this existed.
     """
-    named = {r["name"]: r.get("corpus") for r in runs}
+    # Keyed on (project, name), which is what `UNIQUE (project, name)` on the
+    # runs table already says the identity is. Keying on name alone let a
+    # collision overwrite one arm's corpus with another's, so two corpora
+    # looked like one and this function reported agreement it had not checked
+    # -- failing closed to a confident falsehood. `compare` now refuses to
+    # span projects, but a helper must not depend on its caller's discipline.
+    named = {(r["project"], r["name"]): r.get("corpus") for r in runs}
     known = {c for c in named.values() if c}
-    unknown = sorted(n for n, c in named.items() if not c)
+    unknown = sorted(name for (_project, name), c in named.items() if not c)
 
     if len(known) > 1:
         sensitive = _metric_stem(metric) in _CORPUS_SENSITIVE
-        detail = ", ".join(f"{n} saw {c}" for n, c in sorted(named.items()) if c)
+        detail = ", ".join(f"{name} saw {c}" for (_p, name), c in sorted(named.items()) if c)
         note = (
             f"arms did not share a corpus ({detail});"
             f" {metric} is not comparable across different data"

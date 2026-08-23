@@ -1186,3 +1186,24 @@ def test_corpus_agreement_is_not_erased_by_a_name_collision(tmp_path):
 
     with pytest.raises(ValueError):
         ledger.compare(conn, "asr", metric="wer")
+
+
+def test_corpus_agreement_is_safe_called_directly_with_colliding_names():
+    """The helper must not depend on its caller's discipline.
+
+    `compare` now refuses to span projects, so the collision cannot reach here
+    through that path. But `_corpus_agreement` keyed on run name alone while
+    the schema says `UNIQUE (project, name)` -- the database already knew the
+    identity was a pair. A helper that is only correct because of where it
+    happens to be called from is one refactor away from being wrong again.
+    """
+    from attestation.ledger import _corpus_agreement
+
+    arms = [
+        {"project": "asr-english", "name": "asr_baseline", "corpus": "librispeech-100h"},
+        {"project": "asr-mandarin", "name": "asr_baseline", "corpus": "aishell-1"},
+    ]
+    corpus, caveats = _corpus_agreement(arms, "wer")
+
+    assert corpus is None, f"reported agreement on {corpus!r} across two corpora"
+    assert caveats, "two corpora and no caveat"
