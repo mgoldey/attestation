@@ -415,3 +415,28 @@ def test_a_tag_from_kg_concepts_reaches_every_item_carrying_it(tmp_path, monkeyp
     assert len(out["items"]) == 3, (
         f"a canonical tag reached {len(out['items'])} of 3 items carrying that concept"
     )
+
+
+def test_the_relevance_floor_is_not_anchored_on_one_item(search_db):
+    """One weak top hit collapsed the whole result set.
+
+    `_semantic_hits` kept items scoring >= best * RELEVANCE_FLOOR, where `best`
+    is the similarity of the SINGLE nearest neighbour -- so the size of every
+    answer was a function of one item. Measured on the live corpus:
+    `feed.search("enzyme mechanism")` returned exactly one result, a snail
+    slime paper, while four genuine enzyme papers were cut, three of them by
+    less than 0.4% of the threshold. Six of sixteen queries could not fill a
+    five-result page.
+
+    Anchoring on the mean of the top three fixed it at NO precision cost:
+    across nine queries, literal-stem precision was 62% either way while the
+    kept set grew from 34 items to 63. Recall for free.
+
+    The original comment reasons about how far similarity DECAYS; the failure
+    was in the ANCHOR, not the slope.
+    """
+    from attestation.mcp import feed as feed_mod
+
+    assert feed_mod.RELEVANCE_ANCHOR >= 3, (
+        "the floor is anchored on a single item; one weak top hit starves the query"
+    )

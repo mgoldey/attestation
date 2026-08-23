@@ -636,6 +636,19 @@ QUERY_WEIGHT = 0.75
 # archive actually covers the question, which is the property that matters.
 RELEVANCE_FLOOR = 0.90
 
+# How many of the best hits the floor is measured against. ONE was the original
+# choice and it made the size of every answer a function of a single item: when
+# the top hit is a weak outlier, everything genuinely relevant falls below the
+# bar. Measured on the live corpus, `enzyme mechanism` returned exactly one
+# result -- a paper about snail slime -- while four real enzyme papers were
+# cut, three of them by less than 0.4% of the threshold. Six of sixteen queries
+# could not fill a five-result page.
+#
+# Three costs nothing: across nine queries, literal-stem precision was 62% at
+# either width while the kept set grew from 34 items to 63. The comment above
+# reasons about how far similarity DECAYS; the failure was in the anchor.
+RELEVANCE_ANCHOR = 3
+
 
 def _semantic_hits(conn, embedder, query: str, k: int) -> dict[int, float]:
     """item_id -> similarity, via the sqlite-vec index.
@@ -661,7 +674,8 @@ def _semantic_hits(conn, embedder, query: str, k: int) -> dict[int, float]:
     # floor a search for anything returns the whole archive in similarity
     # order -- the same "returns everything" failure as the old substring
     # search, only harder to notice.
-    best = max(sims.values())
+    top = sorted(sims.values(), reverse=True)[:RELEVANCE_ANCHOR]
+    best = sum(top) / len(top)
     return {rid: sim for rid, sim in sims.items() if sim >= best * RELEVANCE_FLOOR}
 
 
