@@ -135,10 +135,21 @@ def _compose(out: dict, tool: str) -> dict:
 # Where a tool puts its results. Different names for the same idea, and a
 # caller should not have to know which -- nor should _compose branch over all
 # of them inline.
+# The payload keys a summary may draw its answer from. `path` and `neighbors`
+# were missing, so kg.path and kg.neighbors -- two of kg.ask's five routes --
+# named the right tool and threw its result away: "2 hop(s)" and "7
+# neighbour(s)", with the concepts sitting unused in the payload. That is the
+# failure _summarise's own docstring describes.
+#
+# A route whose result key is absent here degrades to a bare count, which is
+# silent, so test_ask_routing asserts the ANSWER names concepts rather than
+# counting them.
 _RESULT_KEYS = (
     "items",
     "nodes",
     "concepts",
+    "neighbors",
+    "path",
     "arms",
     "communities",
     "feeds",

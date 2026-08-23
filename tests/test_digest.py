@@ -220,3 +220,48 @@ def test_list_feed_keeps_its_default_window(db, monkeypatch):
     mcp_server._list_feed_impl("matt", limit=5)
 
     assert seen["since_days"] == 14
+
+
+def test_the_digest_message_counts_what_it_actually_shipped(tmp_path, monkeypatch, fake_embedder):
+    """The summary line described a payload the caller did not receive.
+
+    `dropped` counted groups omitted by the item budget and unclustered items
+    left over -- never items cut INSIDE a shown topic by `per_topic`. Measured
+    on all five live personas: every one said "16 item(s)" while shipping 6-11.
+
+    tests/test_digest.py already has a case titled "Silent truncation reads as
+    'that was everything'". It asserts n_total stays true per topic and never
+    asserts the MESSAGE reports the total, so this bug passed its own guard.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO users(name, interests) VALUES ('ana', 'machine learning')")
+    for i in range(1, 21):
+        conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (NULL, ?, 'u', 's', ?)",
+            (f"item {i}", f"h{i}"),
+        )
+        conn.execute(
+            "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+            (i, fake_embedder.embed_document(f"item {i}", "s").tobytes()),
+        )
+        # One big topic, so per_topic=3 cuts far more than it shows.
+        for tag in ("machine-learning", "evaluation", "ranking"):
+            conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (i, tag))
+    conn.commit()
+    conn.close()
+
+    from attestation.mcp import _shared
+    from attestation.mcp import feed as feed_mod
+
+    monkeypatch.setattr(_shared, "get_embedder", lambda: fake_embedder)
+    out = feed_mod._digest("ana")
+
+    shipped = sum(len(t["items"]) for t in out["topics"]) + len(out["unclustered"])
+    considered = int(out["message"].split(" item(s)")[0])
+    assert considered >= shipped
+    if considered > shipped:
+        assert "not shown" in out["message"], (
+            f"message says {considered} item(s), payload has {shipped}: {out['message']!r}"
+        )

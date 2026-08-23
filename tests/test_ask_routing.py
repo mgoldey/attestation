@@ -263,3 +263,54 @@ def test_the_which_family_prompt_reports_how_many_it_left_out(tmp_path, monkeypa
     assert out["ok"] is False
     assert "20" in out["answer"], out["answer"]
     assert "of" in out["answer"]
+
+
+def test_kg_ask_returns_the_answer_not_just_a_count(tmp_path, monkeypatch):
+    """Two of kg.ask's five routes named the tool and threw away its result.
+
+    `_RESULT_KEYS` listed items/nodes/concepts/arms/communities/feeds/runs/
+    suggestions -- not `path` or `neighbors`, which are the keys kg.path and
+    kg.neighbors actually return. So a reader asking how two topics connect got
+    "2 hop(s)" and a reader asking what is adjacent got "7 neighbour(s)", with
+    the answer sitting unused in the payload.
+
+    _summarise's own docstring says why that is wrong: "top 10 by degree tells
+    a reader nothing; the ten concepts do."
+    """
+    from attestation.db import get_db
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    for i in range(1, 7):
+        conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (NULL, ?, 'u', 's', ?)",
+            (f"item {i}", f"h{i}"),
+        )
+    for item, tags in (
+        (1, ("retrieval", "ranking")),
+        (2, ("retrieval", "ranking")),
+        (3, ("ranking", "transformers")),
+        (4, ("ranking", "transformers")),
+        (5, ("retrieval", "transformers")),
+        (6, ("retrieval", "transformers")),
+    ):
+        for tag in tags:
+            conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (item, tag))
+    conn.commit()
+    conn.close()
+
+    from attestation.mcp.ask import _kg_ask
+
+    neighbours = _kg_ask("what is next to retrieval?", source="retrieval")
+    assert "ranking" in neighbours["answer"] or "transformers" in neighbours["answer"], (
+        f"named the tool and dropped its answer: {neighbours['answer']!r}"
+    )
+
+    path = _kg_ask(
+        "how does retrieval connect to transformers?",
+        source="retrieval",
+        target="transformers",
+    )
+    assert any(c.isalpha() for c in path["answer"].replace("hop", "")), path["answer"]
+    assert "retrieval" in path["answer"], f"the path itself is missing: {path['answer']!r}"

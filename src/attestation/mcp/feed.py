@@ -888,20 +888,28 @@ def _digest_body(conn, user_row, days: int = 7, per_topic: int = 3, limit: int =
     grouped, unclustered = _cluster(items, members, cached)
 
     topics = []
+    shipped_in_topics = 0
     budget = MAX_DIGEST_ITEMS
     for label, group in sorted(grouped.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         if budget <= 0:
             break
         shown = group[: max(1, min(int(per_topic), budget))]
         budget -= len(shown)
+        shipped_in_topics += len(shown)
         topics.append({"label": label, "n_total": len(group), "items": shown})
 
     # Unclustered draws from the SAME budget, after topics: they are the
     # leftovers, and a digest that spent its whole allowance on them would bury
     # the grouping that is the point of the tool.
     shown_unclustered = unclustered[: max(0, budget)]
-    dropped = (len(grouped) - len(topics)) + (len(unclustered) - len(shown_unclustered))
-    note = f"; {dropped} more group(s)/item(s) not shown" if dropped else ""
+    # Count ITEMS not shown, from all three causes. This counted omitted groups
+    # and leftover unclustered items but never items cut inside a SHOWN topic
+    # by per_topic -- so every live persona read "16 item(s)" while shipping
+    # 6 to 11. The existing guard asserts n_total per topic and never the
+    # message, which is how it passed.
+    shipped = shipped_in_topics + len(shown_unclustered)
+    dropped = len(items) - shipped
+    note = f"; showing {shipped} -- {dropped} not shown" if dropped else ""
     return {
         "message": f"{len(items)} item(s) in {len(grouped)} topic(s){note}",
         "topics": topics,
