@@ -13,6 +13,7 @@ from typing import Annotated
 
 from pydantic import Field
 
+from attestation.mcp._shared import Limit
 from attestation.mcp._tool import ToolError, tool
 
 
@@ -106,7 +107,7 @@ def register(mcp) -> None:
     @mcp.tool(name="cite.search")
     def cite_search(
         query: Annotated[str, Field(description="words from a title or an author's name")],
-        limit: Annotated[int, Field(ge=1, le=25)] = 5,
+        limit: Limit = 5,
     ) -> dict:
         """Find references by title or author, from local sources only.
 

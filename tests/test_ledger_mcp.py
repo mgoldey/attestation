@@ -417,3 +417,102 @@ def test_detail_truncation_keeps_distinct_metrics_not_the_first_alphabetically(
         f"truncation dropped whole metrics: kept {sorted(kept)}"
     )
     assert out["run"]["n_metrics"] == 150
+
+
+def test_runs_list_samples_across_projects_not_alphabetically(tmp_path, monkeypatch):
+    """A default listing showed one project and hid seventeen.
+
+    ORDER BY project, family, name plus LIMIT 10 means the first project
+    alphabetically fills the whole answer. Measured on the live ledger: 18
+    projects, 858 runs, and a default runs.list returned 10 runs all from
+    `ablation`. The message said "10 run(s) of 858" -- true, and it did not say
+    they were all one project, so a researcher asking what runs they have sees
+    one seventeenth of the answer with no sign of the rest.
+
+    `families` in the same response already samples across projects. This makes
+    the runs do the same, which is what makes the count honest.
+    """
+    from attestation.mcp import provenance as pv
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    for project in ("aardvark", "beta", "gamma", "delta", "epsilon"):
+        for i in range(30):
+            conn.execute(
+                "INSERT INTO runs(project, name, family, status, source_path)"
+                " VALUES (?, ?, 'f', 'recorded', '/tmp/x.json')",
+                (project, f"{project}_run{i}"),
+            )
+    conn.commit()
+    conn.close()
+
+    out = pv._list()
+    projects = {r["project"] for r in out["runs"]}
+    assert len(projects) >= 3, f"a default listing of 5 projects showed only {sorted(projects)}"
+
+
+def test_runs_list_fits_at_the_limit_it_advertises(tmp_path, monkeypatch):
+    """The escape moved from "a tool nobody measured" to "an argument nobody
+    passed".
+
+    Every size guard drives runs.list at its DEFAULT. Its schema allows
+    limit=50 and its own message tells the caller to use it -- "raise limit
+    (max 50)" -- and at 50 it emitted 9965 chars against a 7000 ceiling.
+    Round 11's honesty fix is what made the breach reachable: the message now
+    advertises the limit that blows it.
+    """
+    import json
+
+    from attestation.mcp import provenance as pv
+    from attestation.mcp._shared import MAX_LIST_LIMIT
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    for project in ("alpha", "beta", "gamma"):
+        for i in range(40):
+            conn.execute(
+                "INSERT INTO runs(project, name, family, status, source_path)"
+                " VALUES (?, ?, ?, 'recorded', '/tmp/x.json')",
+                (project, f"{project}_experiment_variant_{i}", f"{project}_family_{i % 7}"),
+            )
+    conn.commit()
+    conn.close()
+
+    out = pv._list(limit=MAX_LIST_LIMIT)
+    size = len(json.dumps(out, indent=2))
+    assert size <= 7000, f"runs.list at its advertised max emits {size} chars"
+
+
+def test_runs_compare_fits_at_its_widest_family(tmp_path, monkeypatch):
+    """A composition tool is exempt from the conversational budget, not from
+    what a caller can hold.
+
+    runs.compare had no cap at all and reached 13624 chars on a 48-arm family
+    -- larger than the pre-fix runs.detail. Being declared a composition tool
+    had become permanent permission to grow, which is round 11's finding in a
+    tool that was left out of the driven census.
+    """
+    import json
+
+    from attestation.mcp import provenance as pv
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    for i in range(80):
+        conn.execute(
+            "INSERT INTO runs(project, name, family, status, source_path)"
+            " VALUES ('p', ?, 'sweep', 'recorded', ?)",
+            (f"sweep_arm_variant_{i}", f"/home/matt/qc/p/results/arm_{i}.json"),
+        )
+        conn.execute(
+            "INSERT INTO run_metrics(run_id, metric, value, step, split)"
+            " VALUES ((SELECT id FROM runs WHERE name = ?), 'wer', ?, 1, 'test')",
+            (f"sweep_arm_variant_{i}", 0.5 - i * 0.001),
+        )
+    conn.commit()
+    conn.close()
+
+    out = pv._compare("sweep")
+    size = len(json.dumps(out, indent=2))
+    assert size <= 7000, f"runs.compare on an 80-arm family emits {size} chars"
+    assert out["n_arms"] >= 80, "the true arm count must survive truncation"

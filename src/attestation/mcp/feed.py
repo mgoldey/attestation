@@ -154,7 +154,7 @@ def register(mcp) -> None:
         # (null content_type and false already_rated are now omitted); this is
         # the remainder, and one fewer result is a smaller loss than a result
         # the caller cannot read.
-        limit: Limit = DEFAULT_LIST_LIMIT,
+        limit: Annotated[int, Field(ge=1, le=MAX_SEARCH_LIMIT)] = DEFAULT_LIST_LIMIT,
     ) -> dict:
         """Search items by keyword (and optional tag/content_type), ranked for this user.
 
@@ -231,7 +231,10 @@ def register(mcp) -> None:
         user: str,
         days: Annotated[int, Field(ge=0, le=3650)] = 7,
         per_topic: Annotated[int, Field(ge=1, le=20)] = 3,
-        limit: Limit = 30,
+        # The digest CONSIDERS more items than a list returns -- it groups
+        # them, and MAX_DIGEST_ITEMS bounds what it renders. So it does not
+        # share Limit, which is sized for how many rows fit in one response.
+        limit: Annotated[int, Field(ge=1, le=60)] = DEFAULT_DIGEST_LIMIT,
     ) -> dict:
         """This user's unread feed, ranked and grouped by topic — the weekly review.
 
@@ -276,6 +279,14 @@ SUMMARY_CHARS = 240
 # The default number of items feed.list and feed.search return. Named so the
 # response budget can be derived from it rather than asserted beside it.
 DEFAULT_LIST_LIMIT = 4
+
+# A search row carries already_rated, match and relevance that a list row does
+# not -- ~60 chars more each -- so it cannot return as many. Measured on the
+# live database: at the shared limit of 16 it emitted 7476 against a 7000
+# ceiling while the fixture-driven census passed, because fixture rows are
+# cheaper than real ones. This is the shared cap minus what the extra fields
+# cost.
+MAX_SEARCH_LIMIT = 13
 # The digest groups by topic and is the biggest response the feed produces --
 # 4296 chars as emitted against list's 1835. Named so its budget derives from
 # it rather than being asserted beside it.

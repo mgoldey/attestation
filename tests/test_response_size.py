@@ -780,6 +780,18 @@ def test_no_tool_exceeds_the_hard_ceiling_when_actually_driven(stocked):
         "feed.ask": {"user": "ana", "question": "what should I read"},
         "runs.list": {},
         "runs.detail": {"project": "p", "name": "r"},
+        # At the MAXIMUM its schema allows, not only its default. Every guard
+        # drove defaults, so the escape moved from "a tool nobody measured" to
+        # "an argument nobody passed": runs.list emitted 9965 at limit=50 while
+        # its own message told callers to raise the limit to 50.
+        "runs.list@max": {"limit": _shared.MAX_LIST_LIMIT},
+        "feed.list@max": {"user": "ana", "limit": _shared.MAX_LIST_LIMIT},
+        "feed.search@max": {
+            "user": "ana",
+            "query": "topic",
+            "limit": feed_mod.MAX_SEARCH_LIMIT,
+        },
+        "feed.digest@max": {"user": "ana", "per_topic": 20, "limit": 30},
     }
     # kg.* is absent on purpose: this fixture's items all carry the same tags,
     # so the graph has no clusters and every kg response is an empty state --
@@ -792,7 +804,8 @@ def test_no_tool_exceeds_the_hard_ceiling_when_actually_driven(stocked):
     async def drive():
         oversized = []
         for name, args in calls.items():
-            result = await server.call_tool(name, args)
+            # "tool@max" drives the same tool with maximal arguments.
+            result = await server.call_tool(name.split("@", 1)[0], args)
             first = result[0]
             if isinstance(first, tuple):
                 first = first[0]

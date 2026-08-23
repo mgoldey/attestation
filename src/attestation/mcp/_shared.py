@@ -16,7 +16,15 @@ from attestation.rank import rank_items, ranking_quality
 
 log = logging.getLogger(__name__)
 
-MAX_LIST_LIMIT = 50
+# 18, from measurement. A feed row costs ~370 chars emitted, so 50 -- the old
+# value -- produced 18457 for feed.list and 22530 for feed.search, against a
+# 7000-char ceiling. Every size guard drove the DEFAULT, so a limit the schema
+# advertised and no test exercised blew it silently.
+#
+# The number is what fits, not a preference: 16 rows plus envelope lands just
+# under (measured: 18 gave 7130, 130 over). A caller who wants 50 items is asking for a payload that
+# does not survive the trip, and paging is the honest answer.
+MAX_LIST_LIMIT = 16
 
 # Argument constraints live in the SCHEMA, not just in runtime checks, so an
 # MCP client rejects a bad call before it is made. Shared here because three

@@ -324,6 +324,39 @@ def _replace_project(conn: sqlite3.Connection, project: str, records: list[RunRe
             )
 
 
+def sample_runs(
+    conn: sqlite3.Connection,
+    project: str | None = None,
+    family: str | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """Runs to show for a listing: spread across projects when not filtered.
+
+    `list_runs` orders by (project, family, name), so a LIMIT let the
+    alphabetically-first project fill the whole answer -- the live ledger has
+    18 projects and 858 runs, and a default listing returned 10, all
+    `ablation`. The count said "10 of 858" and not that they were one project,
+    so an honest count made a partial answer look complete.
+
+    A filtered call is already narrowed by the caller and passes straight
+    through.
+    """
+    if project or family:
+        return list_runs(conn, project=project, family=family, limit=limit)
+
+    pool = list_runs(conn, limit=max(limit * 20, 200))
+    by_project: dict[str, list] = {}
+    for run in pool:
+        by_project.setdefault(run["project"], []).append(run)
+
+    out: list[dict] = []
+    while len(out) < limit and any(by_project.values()):
+        for runs in by_project.values():
+            if runs and len(out) < limit:
+                out.append(runs.pop(0))
+    return out
+
+
 def count_runs(
     conn: sqlite3.Connection,
     project: str | None = None,

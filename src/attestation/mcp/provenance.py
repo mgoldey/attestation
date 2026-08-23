@@ -13,7 +13,7 @@ ToolError with the reason spelled out, because it is caller-fixable.
 from pathlib import Path
 
 from attestation import claims, ledger
-from attestation.mcp._shared import MAX_LIST_LIMIT, Limit
+from attestation.mcp._shared import Limit
 from attestation.mcp._tool import ToolError, open_db, tool
 
 # Ten, not twenty. Even without source_path, 20 rows emitted 4576 chars against
@@ -30,6 +30,20 @@ DEFAULT_RUNS_LIMIT = 10
 # A caller comparing arms uses runs.compare; a caller reading one run wants to
 # see its shape. n_metrics reports the true count either way.
 MAX_METRIC_ROWS = 40
+
+# Runs one listing may return. Distinct from _shared.MAX_LIST_LIMIT (50, a feed
+# row is cheaper): at 50 this emitted 9965 chars against a 7000 ceiling, and
+# its own message tells the caller to "raise limit (max 50)" -- round 11's
+# honesty fix advertised the limit that breaks it. Every size guard drove the
+# DEFAULT, so the escape moved from a tool nobody measured to an argument
+# nobody passed.
+MAX_RUNS_LISTED = 25
+
+# Arms one comparison may return. It had no cap and reached 13624 chars on a
+# 48-arm family -- larger than the pre-fix runs.detail. Being declared a
+# composition tool is exemption from the CONVERSATIONAL budget, not from what
+# a caller can hold. Arms are ranked, so this keeps the ones that won.
+MAX_ARMS_SHOWN = 20
 
 NO_ROOT = (
     "no workspace configured -- set RESEARCH_ROOT to the directory holding your"
@@ -172,7 +186,8 @@ def _scan(root: str | None = None, project: str | None = None, confirm: bool = F
 def _list(
     conn, project: str | None = None, family: str | None = None, limit: int = DEFAULT_RUNS_LIMIT
 ) -> dict:
-    found = ledger.list_runs(conn, project=project, family=family, limit=min(limit, MAX_LIST_LIMIT))
+    capped = min(limit, MAX_RUNS_LISTED)
+    found = ledger.sample_runs(conn, project=project, family=family, limit=capped)
     if not found:
         raise ToolError("no runs recorded -- call runs.scan(confirm=true) first")
     families = ledger.families(conn, project=project)
@@ -196,7 +211,7 @@ def _list(
     total_runs = ledger.count_runs(conn, project=project, family=family)
     message = f"{len(found)} run(s)"
     if total_runs > len(found):
-        message += f" of {total_runs} -- raise limit (max {MAX_LIST_LIMIT})"
+        message += f" of {total_runs} -- raise limit (max {MAX_RUNS_LISTED})"
     if len(families) > len(shown):
         message += (
             f"; showing {len(shown)} of {len(families)} families -- pass project= to narrow them"
@@ -247,7 +262,13 @@ def _compare(conn, family: str, metric: str | None = None) -> dict:
         # wrapper replaced it with a bare "no runs in family 'x'", throwing
         # away the one thing that tells the caller what to do next.
         raise ToolError(result.get("message") or f"no runs in family {family!r}")
-    return {"message": f"{len(result['arms'])} arm(s)", **result}
+    arms = result["arms"]
+    total_arms = len(arms)
+    result = {**result, "arms": arms[:MAX_ARMS_SHOWN], "n_arms": total_arms}
+    message = f"{total_arms} arm(s)"
+    if total_arms > MAX_ARMS_SHOWN:
+        message += f"; showing the {MAX_ARMS_SHOWN} best"
+    return {"message": message, **result}
 
 
 @tool(empty={"run": None}, label="runs_detail")
