@@ -20,3 +20,4 @@ demo/
 # Build artifacts: `uv build` / CI wheel smoke test write here.
 dist/
 build/
+.mutate-backup/
