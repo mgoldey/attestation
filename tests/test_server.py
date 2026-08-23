@@ -293,3 +293,26 @@ def test_a_backslash_in_a_reader_name_does_not_break_the_vote_buttons(client):
     assert values, "no vote buttons rendered"
     for raw in values:
         json.loads(raw.replace("&#34;", '"').replace("&quot;", '"'))
+
+
+def test_a_hash_in_a_reader_name_does_not_truncate_the_explanation_url(client):
+    """The hx-vals bug's sibling, in a URL rather than in JSON.
+
+    `hx-get="/explanation?user={{ user }}&item_id={{ it.item_id }}"` interpolates
+    the name into a query string under HTML autoescape, which escapes `&` and
+    not `#`. A reader named `a#b` produces a URL whose fragment starts before
+    `item_id`, so the explanation request arrives with no item and the "why is
+    this here?" panel silently never loads.
+
+    Escape for the language being embedded in: this is a URL, so urlencode.
+    """
+    import re
+    from urllib.parse import parse_qs, urlparse
+
+    html = client.get("/list", params={"user": "a#b"}).text
+    urls = re.findall(r'hx-get="([^"]*explanation[^"]*)"', html)
+    assert urls, "no explanation panels rendered"
+    for raw in urls:
+        query = parse_qs(urlparse(raw.replace("&amp;", "&")).query)
+        assert query.get("item_id"), f"item_id lost from {raw!r}"
+        assert query.get("user") == ["a#b"], f"user mangled in {raw!r}"

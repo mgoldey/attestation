@@ -38,7 +38,22 @@ def safe_href(url: str | None) -> str:
     return "#"
 
 
+def urlarg(value: str | None) -> str:
+    """One query-string value, percent-encoded.
+
+    HTML autoescape covers the HTML layer and knows nothing about URL syntax:
+    it escapes `&` and leaves `#`, so a reader named `a#b` produced
+    `?user=a#b&item_id=2` -- everything after the fragment marker is dropped by
+    the browser, and the explanation panel silently never loads. Same shape as
+    the hx-vals JSON bug: escape for the language you are embedding in.
+    """
+    from urllib.parse import quote
+
+    return quote(str(value or ""), safe="")
+
+
 env.filters["safe_href"] = safe_href
+env.filters["urlarg"] = urlarg
 
 PAGE = env.from_string("""<!doctype html>
 <html><head><title>attestation</title>
@@ -93,7 +108,7 @@ FRAGMENT = env.from_string("""<div id="feed">
       hx-vals='{"user":{{ user | tojson }},"item_id":{{ it.item_id }},"useful":0}'
       hx-target="#feed" hx-swap="outerHTML">✗</button>
   {% if loop.index <= explain_limit %}
-  <div class="why" hx-get="/explanation?user={{ user }}&item_id={{ it.item_id }}"
+  <div class="why" hx-get="/explanation?user={{ user | urlarg }}&item_id={{ it.item_id }}"
        hx-trigger="load delay:{{ loop.index }}s" hx-swap="innerHTML"></div>
   {% endif %}
  </li>
