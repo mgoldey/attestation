@@ -187,8 +187,14 @@ def test_tag_and_content_type_filters_still_apply(search_db):
 
 def test_empty_query_is_a_filter_not_a_search(search_db):
     """`search_feed(user, "")` filters without a semantic query. Undocumented
-    before; asserted here so it stays intentional."""
-    out = feed_mod._search_feed("ana", "")
+    before; asserted here so it stays intentional.
+
+    The limit is explicit: this test is about the FILTER semantics, and it
+    previously relied on the default happening to exceed the fixture size, so
+    lowering that default (5 -> 4, for the payload budget) failed it for a
+    reason unrelated to what it checks.
+    """
+    out = feed_mod._search_feed("ana", "", limit=len(ITEMS))
     assert out["ok"]
     assert len(out["items"]) == len(ITEMS)
 

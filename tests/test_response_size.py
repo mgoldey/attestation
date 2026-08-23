@@ -123,6 +123,26 @@ def test_search_is_bounded_too(stocked):
     assert len(json.dumps(out)) <= MAX_DEFAULT_RESPONSE_CHARS
 
 
+def test_search_is_bounded_with_the_worst_case_caveat(stocked):
+    """Same trap as the feed guard: `stocked` has no clicks, so this measured
+    ranking_quality's cheapest branch. Every budget test needs the most
+    expensive realistic input, not a convenient one."""
+    conn = get_db(stocked)
+    user_id = conn.execute("SELECT id FROM users WHERE name = 'ana'").fetchone()[0]
+    for item_id in range(1, 31):
+        conn.execute(
+            "INSERT INTO clicks(user_id, item_id, useful, source) VALUES (?,?,1,?)",
+            (user_id, item_id, "bootstrap" if item_id <= 20 else "simulated"),
+        )
+    conn.commit()
+    conn.close()
+
+    out = feed_mod._search_feed("ana", "topic")
+    assert out["ranking_quality"].get("caveat"), "this fixture must produce a caveat"
+    size = len(json.dumps(out))
+    assert size <= MAX_DEFAULT_RESPONSE_CHARS, f"search is {size} chars with a full caveat"
+
+
 def test_a_truncated_list_says_more_is_available(stocked):
     """Silent truncation is how an agent reports five of forty as if it were
     everything."""

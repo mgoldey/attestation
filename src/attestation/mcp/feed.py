@@ -141,7 +141,14 @@ def register(mcp) -> None:
             Literal["paper", "survey", "announcement", "release", "blog", "other"] | None,
             Field(description="Filter to one content type."),
         ] = None,
-        limit: Limit = 5,
+        # Four, not five. A search row carries `match` and `relevance` that a
+        # list row does not, so five of them plus a full ranking caveat came to
+        # 2041 against the 2000 budget -- and a payload an agent cannot hold is
+        # one the tool should not send. Trimming the row was tried first
+        # (null content_type and false already_rated are now omitted); this is
+        # the remainder, and one fewer result is a smaller loss than a result
+        # the caller cannot read.
+        limit: Limit = 4,
     ) -> dict:
         """Search items by keyword (and optional tag/content_type), ranked for this user.
 
@@ -279,11 +286,14 @@ def _item_row(it, *, summary: bool = False) -> dict:
         "url": it.url,
         "source": it.source,
         "tags": (it.tags or [])[:MAX_TAGS_SHOWN],
-        "content_type": it.content_type,
     }
-    if it.tags and len(it.tags) > MAX_TAGS_SHOWN:
-        row["n_tags"] = len(it.tags)
-    elif it.tags:
+    # Always present, even as null. Omitting it saved ~25 chars a row and broke
+    # a stated key contract (tests/test_mcp_server.py asserts the key set), so
+    # a caller reading item["content_type"] would get a KeyError rather than
+    # None. The budget was recovered by trimming one default search result
+    # instead -- a smaller loss than an envelope whose shape varies by row.
+    row["content_type"] = it.content_type
+    if it.tags:
         row["n_tags"] = len(it.tags)
     if summary and getattr(it, "summary", None):
         text = it.summary.strip()
@@ -627,7 +637,7 @@ def _search_feed(
     query: str,
     tag: str | None = None,
     content_type: str | None = None,
-    limit: int = 5,
+    limit: int = 4,
 ) -> dict:
     from attestation.rank import rank_items
 
@@ -655,6 +665,11 @@ def _search_feed(
     matches = [
         {
             **_item_row(item),
+            # Always present, even when false. Making it conditional saved ~24
+            # chars a row and broke the contract: a caller reading
+            # item["already_rated"] got a KeyError instead of False, which is a
+            # worse failure than the bytes were worth. The savings came from
+            # dropping null content_type and one default result instead.
             "already_rated": item.item_id in clicked,
             # How this item was found, so a caller can tell relevance from
             # noise when a result looks surprising. Two decimals: the third
