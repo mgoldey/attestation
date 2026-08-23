@@ -799,3 +799,44 @@ def test_the_since_days_window_is_not_confused_by_the_date_separator(tmp_path, f
     assert not ranked, (
         "an item outside the window was returned; the T separator made it sort as newer"
     )
+
+
+def test_a_persona_lookup_is_case_insensitive(tmp_path):
+    """One shift key created a second account and discarded 70 clicks.
+
+    Measured against the live database: `feed.list(user="Matt")` did not find
+    `matt`, so autocreate made a fresh persona -- greeted as a first-time
+    reader, blend_weight 0.933 down to 0.0, every click ignored. That is the
+    duplicate-persona failure CLAUDE.md records ("it grew a duplicate 'Matthew
+    Goldey' days after that persona was merged away"); autocreate removed the
+    refusal that caused it and left the key's case scope untouched.
+
+    A person typing their own name with different capitalisation is the same
+    person. Case-preserving on write, case-insensitive on lookup.
+    """
+    from attestation.db import get_db
+    from attestation.rank import create_user, get_user
+
+    # A fresh database is seeded with demo personas including `matt`, so use
+    # a name of our own to keep the assertion about case and nothing else.
+    conn = get_db(tmp_path / "t.db")
+    create_user(conn, "ada", "machine learning")
+
+    assert get_user(conn, "Ada") is not None, "a capitalised name missed the persona"
+    assert get_user(conn, "ADA") is not None
+    assert get_user(conn, "ada")["name"] == "ada", "the stored spelling must be preserved"
+
+
+def test_creating_a_persona_that_differs_only_in_case_is_refused(tmp_path):
+    """The other half: if lookup folds case, creation must too, or the second
+    spelling silently shadows the first."""
+    import pytest
+
+    from attestation.db import get_db
+    from attestation.rank import create_user
+
+    conn = get_db(tmp_path / "t.db")
+    create_user(conn, "ada", "machine learning")
+
+    with pytest.raises(ValueError):
+        create_user(conn, "Ada", "quantum chemistry")

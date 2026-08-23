@@ -71,7 +71,19 @@ class RankedItem(BaseModel):
 
 
 def get_user(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
-    return conn.execute("SELECT * FROM users WHERE name = ?", (name,)).fetchone()
+    """A persona by name, matched without regard to case.
+
+    Case-sensitive lookup turned one shift key into a second account:
+    `feed.list(user="Matt")` missed `matt`, autocreate made a fresh persona,
+    and 70 clicks were discarded while the reader was greeted as new. That is
+    the duplicate-persona failure CLAUDE.md records -- autocreate removed the
+    refusal that caused it and left the key's case scope untouched.
+
+    `create_user` checks through here, so creation inherits the same folding
+    and a second spelling is refused rather than shadowing the first. The
+    stored spelling is whatever was passed: preserved on write, folded on read.
+    """
+    return conn.execute("SELECT * FROM users WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
 
 
 def create_user(conn, name: str, interests: str) -> int:

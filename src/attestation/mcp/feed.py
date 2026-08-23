@@ -540,13 +540,18 @@ def _update_persona(conn, user_row, interests: str) -> dict:
 
 @tool(empty={"prevalent_tags": []}, label="propose_interests")
 def _propose_interests(conn, limit: int = 12) -> dict:
-    tags = [
-        r["tag"]
-        for r in conn.execute(
-            "SELECT tag FROM item_tags GROUP BY tag ORDER BY COUNT(*) DESC, tag LIMIT ?",
-            (limit,),
-        )
-    ]
+    from attestation.features import tag_vocabulary
+
+    # tag_vocabulary, not a raw GROUP BY. This grouped item_tags directly, so
+    # on the live corpus it proposed `llm` and `machinelearning` -- fragments
+    # kg.canonical folds into large-language-models and machine-learning --
+    # and pushed natural-language-processing out of the list entirely.
+    #
+    # This string becomes a persona's interests text, which IS the profile
+    # embedding, and autocreate_user already uses the canonicalising version.
+    # Two tools answering "what should a new reader follow" must not disagree,
+    # least of all with the one an agent is told to call being the wrong one.
+    tags = tag_vocabulary(conn, limit=limit)
     return {
         "prevalent_tags": tags,
         "message": (

@@ -286,3 +286,39 @@ class TestNonsenseArguments:
 
     def test_search_rejects_the_same_nonsense(self, seeded_conn):
         assert mcp_server._search_feed_impl("matt", "x", limit=0)["ok"] is False
+
+
+def test_propose_interests_folds_tags_the_way_autocreate_does(tmp_path, monkeypatch):
+    """The two tools that answer "what should a new persona read about"
+    disagreed, and the one an agent is told to call was the wrong one.
+
+    `_propose_interests` grouped raw item_tags; `features.tag_vocabulary`
+    canonicalises first, and `autocreate_user` uses that one. On the live
+    corpus the raw version spent slots on `llm` and `machinelearning` --
+    fragments `kg.canonical` folds into `large-language-models` and
+    `machine-learning` -- and pushed `natural-language-processing` out
+    entirely.
+
+    This string IS the profile embedding, and features.tag_vocabulary's
+    docstring documents fixing exactly this feedback loop.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    for i, tag in enumerate(
+        ["llm"] * 6 + ["language-models"] * 5 + ["machinelearning"] * 4 + ["evaluation"] * 3,
+        start=1,
+    ):
+        conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (NULL, ?, 'u', 's', ?)",
+            (f"i{i}", f"h{i}"),
+        )
+        conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (i, tag))
+    conn.commit()
+    conn.close()
+
+    from attestation.mcp.feed import _propose_interests
+
+    tags = _propose_interests()["prevalent_tags"]
+    assert "llm" not in tags, f"an unfolded fragment reached the profile text: {tags}"
+    assert "machinelearning" not in tags, f"a deprecated spelling was proposed: {tags}"

@@ -255,3 +255,28 @@ def test_a_real_sqlite_error_is_still_a_bug():
     out = _probe()
     assert out["ok"] is False
     assert "internal error" in out["message"].lower(), out["message"]
+
+
+def test_a_type_error_inside_a_body_does_not_escape_the_envelope():
+    """The envelope's stated purpose: "an MCP tool never returns a traceback".
+
+    The `except TypeError` clause bare-`raise`s when the message lacks the
+    substring "argument", which escapes the wrapper entirely -- the generic
+    handler is a SIBLING of that clause, not an outer one. The comment three
+    lines below, added for OperationalError, warns about exactly this.
+
+    kg.neighbors demonstrates it: `min(limit, MAX)` against a None limit raises
+    "'<' not supported between instances of 'int' and 'NoneType'". Its siblings
+    survive only by luck -- their TypeError comes from int(), whose message
+    happens to contain "argument".
+    """
+    from attestation.mcp._tool import tool
+
+    @tool(empty={"value": None}, needs_db=False, label="typeerror_probe")
+    def _probe() -> dict:
+        return {"value": min(3, None)}  # type: ignore[type-var]
+
+    out = _probe()
+    assert out["ok"] is False
+    assert "value" in out, "the failure envelope must still match the success shape"
+    assert "traceback" not in out["message"].lower()

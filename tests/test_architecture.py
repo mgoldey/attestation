@@ -171,7 +171,7 @@ def test_mcp_domain_modules_stay_small():
         # attestation.feeds and nothing else in the domain did.
         "feed.py": 745,
         "subscriptions.py": 150,
-        "knowledge.py": 140,
+        "knowledge.py": 165,
         "symbolic.py": 130,
         # ask.py was 540 code lines and entirely unguarded until the default
         # below existed. Split at the seam it already had: routing.py holds the

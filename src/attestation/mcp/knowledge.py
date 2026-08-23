@@ -103,10 +103,24 @@ NOT_A_CONCEPT = "{name!r} is not a concept in the graph; call kg.concepts() to l
 
 @tool(empty={"neighbors": []}, label="kg_neighbors")
 def _neighbors(conn, node: str, limit: int = 20) -> dict:
-    found = kg.neighbors(conn, node, limit=min(limit, MAX_LIST_LIMIT))
+    shown = min(limit, MAX_LIST_LIMIT)
+    found = kg.neighbors(conn, node, limit=shown)
     if not found:
         raise ToolError(NOT_A_CONCEPT.format(name=node))
-    return {"message": f"{len(found)} neighbour(s)", "neighbors": found}
+
+    # The true degree, because kg.neighbors truncates internally and this tool
+    # cannot otherwise see what it dropped. This namespace states the rule
+    # twice -- "Never silent: a caller that cannot tell a capped list from the
+    # whole vocabulary reads a missing name as proof the concept does not
+    # exist" -- and kg.concepts and kg.communities both report their totals.
+    # This one said "16 neighbour(s)" for a concept with 253.
+    adjacency, _edges = kg.build_graph(kg.tag_assignments(conn))
+    total = len(adjacency.get(kg.canonical(node), ()))
+
+    message = f"{len(found)} neighbour(s)"
+    if total > len(found):
+        message = f"{total} neighbour(s); showing {len(found)} -- raise limit to see more"
+    return {"message": message, "neighbors": found, "n_neighbors": max(total, len(found))}
 
 
 @tool(empty={"path": None}, label="kg_path")

@@ -365,3 +365,49 @@ def test_members_shown_cannot_ratchet_either(tmp_path, monkeypatch):
         f"MEMBERS_SHOWN is {kn.MEMBERS_SHOWN}; at 500 the live response reached 17360 chars"
     )
     assert len(json.dumps(out, indent=2)) < 2500
+
+
+def test_neighbors_reports_what_it_truncated(tmp_path, monkeypatch):
+    """The rule this namespace states twice, broken by the one tool that has
+    no total.
+
+    knowledge.py: "Never silent: a caller that cannot tell a capped list from
+    the whole vocabulary reads a missing name as proof the concept does not
+    exist." kg.concepts says "727 concept(s) in the graph; showing 16";
+    kg.communities says "showing the 8 largest". kg.neighbors said "16
+    neighbour(s)" for a concept with 253, with no n_neighbors and no note, and
+    raising the limit never changed the message.
+
+    The existing guard asserts the cap is HONOURED and never that it is
+    REPORTED.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    # One hub adjacent to far more concepts than any limit will show.
+    for i in range(1, 41):
+        conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (NULL, ?, 'u', 's', ?)",
+            (f"i{i}", f"h{i}"),
+        )
+        for tag in ("hub", f"spoke{i}", f"spoke{i + 100}"):
+            conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (i, tag))
+    # A second item per spoke, so each clears MIN_TAG_USES.
+    for i in range(41, 81):
+        conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (NULL, ?, 'u', 's', ?)",
+            (f"i{i}", f"h{i}"),
+        )
+        for tag in ("hub", f"spoke{i - 40}", f"spoke{i + 60}"):
+            conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (i, tag))
+    conn.commit()
+    conn.close()
+
+    from attestation.mcp import knowledge as kn
+
+    out = kn._neighbors("hub", limit=5)
+    assert out["ok"] is True
+    assert len(out["neighbors"]) == 5
+    assert out.get("n_neighbors", 0) > 5, "the true count must survive truncation"
+    assert "5" in out["message"] and str(out["n_neighbors"]) in out["message"], out["message"]

@@ -174,7 +174,16 @@ def tool(
                 # come from binding, since a TypeError inside a body is a bug.
                 message = str(exc)
                 if "argument" not in message:
-                    raise
+                    # NOT a bare `raise`: the generic handler below is a
+                    # SIBLING of this clause, not an outer one, so raising here
+                    # escapes the wrapper and an MCP tool returns a traceback --
+                    # the one thing this envelope exists to prevent. Found via
+                    # kg.neighbors, whose `min(limit, MAX)` against a None limit
+                    # says "'<' not supported", with no "argument" in it. Its
+                    # siblings survived only because int()'s message happens to
+                    # contain the word.
+                    log.exception("%s failed args=%s kwargs=%s", name, args, kwargs)
+                    return fail(f"internal error in {name}; see server logs")
                 return fail(f"{name}: {message.split('()', 1)[-1].strip()}")
             except Exception:
                 log.exception("%s failed args=%s kwargs=%s", name, args, kwargs)
