@@ -1294,31 +1294,47 @@ def test_concurrent_first_scans_do_not_lose_the_corpus(tmp_path):
     assert rows == 1, f"{rows} corpora rows for one name"
 
 
-def test_the_family_refusal_names_the_fix_and_suggests_a_real_metric():
-    """`runs compare` on the shipped example data refuses -- correctly, since
-    it will not guess metric direction -- and that refusal is the flagship
-    capability's first impression on a new user.
+def test_the_example_workspace_ranks_with_no_user_configuration():
+    """A new user's FIRST `runs compare` was a refusal.
 
-    It listed what it found and stopped, while its sibling refusal for a single
-    named metric already pointed at the file to edit. An error stating a rule
-    without its remedy reads as a dead end rather than a step.
+    The shipped examples/workspace records ndcg_at_10, which was absent from a
+    15-entry METRIC_DIRECTION table, so the flagship capability's first
+    impression was "no metric with a known direction" -- correct by the tool's
+    rules, and a wall. Measured on the real corpus at ~/qc: 17 of 44 multi-run
+    families refused, and the refusals were ordinary retrieval and
+    classification metrics, not edge cases.
 
-    The suggested metric must be a RESULT, not bookkeeping: alphabetical order
-    picked `n_records` out of the example workspace, and a user pasting that
-    would rank their ablation by dataset size and get a confident, meaningless
-    winner. The refusal exists to prevent exactly that class of answer.
+    Honest scope: widening the table did NOT change the real corpus's yield
+    (22 families ranked before and after). It fixes the fixture, which is what
+    a new user meets. The real bottleneck there is cross-project ambiguity.
+    """
+    from attestation.ledger import METRIC_DIRECTION, _metric_direction, _metric_stem
+
+    assert _metric_stem("ndcg_at_10") == "ndcg", "the @k cutoff suffix is not stripped"
+    assert _metric_direction("ndcg_at_10", METRIC_DIRECTION) == "higher_is_better"
+    # k is unbounded, so this is a pattern rather than a list.
+    assert _metric_stem("recall_at_5") == "recall"
+    assert _metric_stem("map_at_100") == "map"
+    # Affixes still compose with it.
+    assert _metric_stem("test_ndcg_at_10") == "ndcg"
+
+
+def test_the_refusal_declines_to_guess_when_no_metric_stands_out():
+    """The suggestion added to this refusal must never be confidently wrong --
+    the refusal exists to stop confident wrong answers.
+
+    Three versions were measured against ~/qc's real families, and each earlier
+    one named a metric that would have misled: alphabetical order picked
+    `n_records` (a row count), a bookkeeping blocklist picked
+    `consecutive_detections` out of 43 names, and substring matching picked
+    `nll_missing_rate` because it contains "nll" -- a missing-data rate where
+    higher_is_better is exactly backwards.
     """
     from attestation.ledger import _likeliest_metric
 
-    # Shape of the shipped example: a row count shared by every arm, and the
-    # actual result metric.
-    counts = {"n_records": 4, "ndcg_at_10": 4}
-    assert _likeliest_metric(counts) == "ndcg_at_10", (
-        "the refusal suggests declaring a direction for a bookkeeping field"
-    )
-
-    # Ties among real metrics fall back to the most-shared, then alphabetical.
-    assert _likeliest_metric({"wer": 2, "accuracy": 5}) == "accuracy"
-    # All-bookkeeping is still better answered than not at all.
-    assert _likeliest_metric({"n_params": 3}) == "n_params"
-    assert _likeliest_metric({}) == "accuracy"
+    assert _likeliest_metric({"n_records": 4, "ndcg_at_10": 4}) == "ndcg_at_10"
+    # Several plausible candidates: name shape cannot rank between them.
+    assert _likeliest_metric({"test_acc": 3, "probe_auc_polarity": 3}) is None
+    # Nothing resembling a known metric.
+    assert _likeliest_metric({"consecutive_detections": 9, "window": 9}) is None
+    assert _likeliest_metric({}) is None

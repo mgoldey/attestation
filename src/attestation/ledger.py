@@ -25,6 +25,7 @@ will confidently order an ablation backwards, which is worse than refusing.
 
 import json
 import os
+import re
 import sqlite3
 import tomllib
 from dataclasses import dataclass, field
@@ -67,6 +68,30 @@ METRIC_DIRECTION: dict[str, str] = {
     "accuracy": "higher_is_better",
     "r_squared": "higher_is_better",
     "f1": "higher_is_better",
+    # Widened after measuring the real corpus at ~/qc rather than the example
+    # fixture: 17 of 44 multi-run families refused to rank, and the refusals
+    # were not edge cases -- they were ordinary retrieval and classification
+    # metrics missing from a 15-entry table. Every name here has ONE
+    # direction by definition across every field that uses it; anything whose
+    # direction depends on context (a "rate", a "count", a "gap") stays out and
+    # is declared per-user, which is what the TOML override exists for.
+    "auc": "higher_is_better",
+    "roc_auc": "higher_is_better",
+    "precision": "higher_is_better",
+    "recall": "higher_is_better",
+    "ndcg": "higher_is_better",
+    "map": "higher_is_better",
+    "mrr": "higher_is_better",
+    "bleu": "higher_is_better",
+    "rouge": "higher_is_better",
+    "iou": "higher_is_better",
+    "dice": "higher_is_better",
+    "psnr": "higher_is_better",
+    "ssim": "higher_is_better",
+    "mse": "lower_is_better",
+    "mape": "lower_is_better",
+    "fid": "lower_is_better",
+    "eer": "lower_is_better",
 }
 
 # Optional user-supplied TOML holding a `[metric_direction]` table, merged over
@@ -88,6 +113,10 @@ _DEFAULT_METRIC_DIRECTION_PATH = Path.home() / ".hermes" / "metric_direction.tom
 # comparison.
 _METRIC_PREFIXES = ("train_", "val_", "valid_", "test_", "eval_", "top1_", "best_", "final_")
 _METRIC_SUFFIXES = ("_macro", "_micro")
+# `_at_10`, `_at_5`: the standard cutoff notation for the ranking metrics
+# (ndcg, map, mrr, recall, precision) whose direction does not depend on k.
+# Stripped by regex rather than a literal list because k is unbounded.
+_METRIC_CUTOFF_RE = re.compile(r"_at_\d+$")
 
 
 def _metric_stem(metric: str) -> str:
@@ -101,6 +130,10 @@ def _metric_stem(metric: str) -> str:
     changed = True
     while changed:
         changed = False
+        stripped = _METRIC_CUTOFF_RE.sub("", stem)
+        if stripped != stem and stripped:
+            stem = stripped
+            changed = True
         for prefix in _METRIC_PREFIXES:
             if stem.startswith(prefix) and len(stem) > len(prefix):
                 stem = stem[len(prefix) :]
@@ -554,27 +587,62 @@ def _refuse_cross_project(family: str, rows: list[dict]) -> None:
         )
 
 
-# Counts and sizes, not results. Suggesting one as the metric to rank by is
-# worse than suggesting nothing: it is a plausible-looking wrong answer, and
-# the refusal exists precisely to stop plausible-looking wrong answers.
-_BOOKKEEPING_METRICS = frozenset(
-    {"n_records", "n_params", "n_layers", "d_model", "epochs", "seed", "steps", "batch_size"}
-)
+def _likeliest_metric(counts: dict[str, int]) -> str | None:
+    """A metric worth naming in the refusal, or None if nothing is safe to name.
 
+    Only names whose SEGMENTS include one whose direction is already known:
+    `test_acc` splits to {test, acc}, `consecutive_detections` shares nothing.
+    Substring matching was worse -- it picked `nll_missing_rate` out of a real
+    43-metric family because the name contains "nll", and that is a
+    missing-data rate where "higher_is_better" would be exactly backwards.
 
-def _likeliest_metric(counts: dict[str, int]) -> str:
-    """The metric the refusal should suggest declaring a direction for.
+    Even segment matching cannot fully separate `nll_missing_rate` from a loss,
+    so the suggestion is deliberately hedged as "looks like a result metric"
+    rather than asserted, and a name is offered only when exactly one candidate
+    stands out. Three versions of this were measured against the real corpus at
+    ~/qc rather than the example fixture; each earlier one confidently named a
+    metric that would have ranked an ablation backwards or by dataset size.
 
-    Same signal `compare` itself uses -- the metric the most arms share, since
-    that is the one a comparison would cover -- with bookkeeping fields set
-    aside. Alphabetical order picked `n_records` out of the example workspace,
-    which is a row count: a user who pasted that suggestion would rank their
-    ablation by dataset size and get a confident, meaningless winner.
+    Returning None matters as much as returning a name: this refusal exists to
+    stop confident wrong answers, so an unjustifiable suggestion is the one
+    thing it must not emit.
     """
     if not counts:
-        return "accuracy"
-    real = {k: v for k, v in counts.items() if k not in _BOOKKEEPING_METRICS}
-    return sorted((real or counts).items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+        return None
+    known = {k.lower() for k in METRIC_DIRECTION} | {"acc", "auc"}
+    plausible = {
+        name: n for name, n in counts.items() if known & set(re.split(r"[^a-z0-9]+", name.lower()))
+    }
+    if len(plausible) != 1:
+        # Zero candidates, or several that name-shape cannot rank between.
+        # Listing the family's metrics (which the caller already does) beats
+        # picking one of them on a coin flip.
+        return None
+    return next(iter(plausible))
+
+
+def _no_direction_message(family: str, counts: dict[str, int]) -> str:
+    """The refusal a new user meets first, with the remedy in it.
+
+    `runs compare` on the shipped example workspace used to say only what it
+    found and stop, which reads as a dead end rather than a step -- while its
+    sibling refusal for a single named metric already pointed at the file to
+    edit.
+    """
+    suggestion = _likeliest_metric(counts)
+    example = (
+        f" -- `{suggestion}` looks like a result metric, so perhaps"
+        f' `{suggestion} = "higher_is_better"`'
+        if suggestion
+        else " for whichever of those is the result you care about"
+    )
+    return (
+        f"no metric with a known direction in family {family!r};"
+        f" found {sorted(counts) or 'none'}."
+        f" Declare one under [metric_direction] in"
+        f" {_metric_direction_path()}{example};"
+        " guessing would rank ablation arms backwards."
+    )
 
 
 def compare(
@@ -665,14 +733,7 @@ def compare(
             # refuses this way, which is the flagship capability's first
             # impression. An error that states a rule without stating the
             # remedy reads as a dead end rather than a step.
-            raise ValueError(
-                f"no metric with a known direction in family {family!r};"
-                f" found {sorted(counts) or 'none'}."
-                f" Declare one under [metric_direction] in"
-                f" {_metric_direction_path()},"
-                f' e.g. `{_likeliest_metric(counts)} = "higher_is_better"`;'
-                " guessing would rank ablation arms backwards."
-            )
+            raise ValueError(_no_direction_message(family, counts))
         metric = sorted(known.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
 
     direction = _metric_direction(metric, directions)

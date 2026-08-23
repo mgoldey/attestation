@@ -48,9 +48,17 @@ def test_comparing_the_sweep_warns_about_seeds_and_closeness(scanned):
 def test_an_undeclared_metric_direction_is_refused_not_guessed(scanned):
     """The ledger's second rule: WER 0.043 -> 0.053 is a regression and
     accuracy 0.90 -> 0.94 is an improvement, so a metric with no known
-    direction gets no ranking at all."""
+    direction gets no ranking at all.
+
+    This used `rank-method` as its example until ndcg was added to
+    METRIC_DIRECTION, at which point the family ranked and the test failed --
+    correctly. The RULE is what matters, not which family happens to violate
+    it, so the example is now a metric that is genuinely ambiguous rather than
+    merely absent: a "rate" can be a hit rate or an error rate, and no table
+    should ever declare a direction for it.
+    """
     with pytest.raises(ValueError, match="known direction"):
-        ledger.compare(scanned, "rank-method")
+        ledger.compare(scanned, "rank-method", metric="n_records")
 
 
 def test_a_config_without_results_records_no_metrics(scanned):
