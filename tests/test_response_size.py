@@ -238,3 +238,31 @@ def test_reading_stays_cheap_enough_to_render(stocked):
     from attestation.mcp import feed as f
 
     assert len(json.dumps(f._read_item("ana", 1))) <= 2600
+
+
+def test_router_answers_are_bounded_by_title_length(stocked):
+    """The `.ask` answers had no size guard, and they are the primary entry point.
+
+    `_summarise` caps the number of results at five but not their length, and
+    `_label` returns a title verbatim. The longest title in the live database
+    is 223 chars, so five of them is ~1115 for the answer string alone --
+    twice the largest answer observed there, and reached by ordinary arXiv
+    titles rather than anything pathological.
+
+    This is the same shape as the provenance caveat that breached the payload
+    budget three rounds running: a string on a hot path whose length is a
+    property of the data rather than of the code.
+    """
+    conn = get_db(stocked)
+    conn.execute(
+        "UPDATE items SET title = ?",
+        ("A Remarkably Long Paper Title " * 12,),  # 360 chars, > the live max
+    )
+    conn.commit()
+    conn.close()
+
+    from attestation.mcp.ask import _feed_ask
+
+    out = _feed_ask("ana", "what should I read today")
+    assert len(out["answer"]) <= 600, f"answer is {len(out['answer'])} chars"
+    assert len(json.dumps(out)) <= MAX_DEFAULT_RESPONSE_CHARS

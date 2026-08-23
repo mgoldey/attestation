@@ -160,21 +160,39 @@ def _summarise(out: dict) -> str:
     return f"{headline}: {'; '.join(labels)}" if headline else "; ".join(labels)
 
 
+# One label's share of an answer. Five labels ride in every router reply, and
+# `_summarise` capped their COUNT but not their length -- the longest title in
+# the live database is 223 chars, so five ordinary arXiv titles made a 1115-char
+# answer, and a synthetic 360-char title made 1901. Same shape as the
+# provenance caveat that breached the payload budget three rounds running: a
+# string on a hot path whose length is a property of the data, not the code.
+MAX_LABEL_CHARS = 90
+
+
 def _label(x) -> str:
-    """One readable line for whatever a tool returned.
+    """One readable line for whatever a tool returned, truncated to fit.
 
     Items, graph nodes, concepts, comparison arms and feeds all have different
     key names for the same idea, and a caller should not have to know which.
+
+    Truncation is visible (an ellipsis) rather than silent: a caller quoting a
+    half-title should be able to see that it was cut, and `refs` carries the
+    ids for anything that needs the full record.
     """
     if isinstance(x, str):
-        return x
+        return _clip(x)
     if not isinstance(x, dict):
-        return str(x)
+        return _clip(str(x))
     title = x.get("title") or x.get("name") or x.get("label") or x.get("tag")
     source = x.get("source") or x.get("project")
     if title and source:
-        return f"{title} ({source})"
-    return str(title or "")
+        return f"{_clip(str(title))} ({source})"
+    return _clip(str(title or ""))
+
+
+def _clip(text: str) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= MAX_LABEL_CHARS else text[:MAX_LABEL_CHARS].rstrip() + "…"
 
 
 def _which_family(listed: dict) -> str:

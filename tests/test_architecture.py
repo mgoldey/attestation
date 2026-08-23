@@ -178,7 +178,7 @@ def test_mcp_domain_modules_stay_small():
         # rule tables (pure functions over a string, no model, no database --
         # the regression guard for the measured 13/15), ask.py holds the four
         # tools that call them and touch the rest of the system.
-        "ask.py": 305,
+        "ask.py": 315,
         "routing.py": 265,
         "provenance.py": 250,
     }
