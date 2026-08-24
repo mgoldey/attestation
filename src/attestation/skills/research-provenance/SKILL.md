@@ -483,33 +483,36 @@ tools; the router is the reliable path when the question is phrased in the
 reader's own words rather than yours.
 
 **Present each item as one line: a linked title, then source and topic.**
-**Use YOUR SURFACE's link syntax -- copy the matching line, not the first one.**
 
 ```
-Markdown client / terminal:
 1. [LogicIF: Towards Complex Logic Instruction Following](https://arxiv.org/abs/2508.09125)
    arXiv cs.LG · language-models, reasoning
-
-Slack:
-1. <https://arxiv.org/abs/2508.09125|LogicIF: Towards Complex Logic Instruction Following>
-   arXiv cs.LG · language-models, reasoning
-
-Unknown surface -- bare url, every client autolinks it:
-1. LogicIF: Towards Complex Logic Instruction Following
-   https://arxiv.org/abs/2508.09125 — arXiv cs.LG · language-models, reasoning
 ```
+
+**Markdown link syntax is correct on every surface this agent ships to.**
+Telegram is the measured one: the gateway runs a markdown->MarkdownV2
+converter before sending (`plugins/platforms/telegram/adapter.py`,
+`format_message`), and `[title](url)` comes through as a real link -- five of
+five in a five-item list. Do NOT hand-write another surface's syntax to
+"help": Slack's `<url|title>` contains angle brackets, which trips that same
+sender's HTML auto-detect (`re.search(r'<[a-zA-Z/][^>]*>', message)`), so the
+whole message is posted as `parse_mode=HTML` where `<url|title>` is not a tag.
+Emitting Markdown and letting the gateway convert is the working path.
+
+**List every item the tool returned.** "What should I read first?" is answered
+by the ORDER, not by truncating to one. Measured on gemma4:e2b against a
+five-item payload: with the presentation rule alone it rendered one item and
+dropped four; told to list them all, five of five.
 
 Nothing else. Do not restate `item_id`, `content_type` or `n_tags` in prose --
 they are there for your next tool call, not for the reader. Do not reproduce
 the JSON.
 
-Slack `mrkdwn` renders `[title](url)` as literal text, so a reader there asked
-for their feed, got five Markdown links, and replied "the links weren't
-clickable" -- every url was present and none of them worked. Telegram wants
-HTML (`<a href="...">`) or MarkdownV2. Measured on gemma4:e2b: with a single
-Markdown example above this paragraph, the model copied it into Slack 5 times
-out of 5 and the prose here changed nothing -- a worked example outweighs a
-rule about it, so the block now shows one line per surface.
+A reader on Telegram asked for their feed and replied "you didn't give links",
+then "the links weren't clickable". Neither was a rendering bug: the model had
+emitted no links at all, printing `ID: 2385` instead -- an argument for the
+next tool call, useless to a human. The urls were in the payload the whole
+time (5499 of 5499 items carry one).
 
 **List every item the tool returned.** "What should I read first?" is answered
 by the ORDER, not by truncating to one. Measured on gemma4:e2b against a

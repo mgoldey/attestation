@@ -149,30 +149,35 @@ def test_skill_md_teaches_every_ask_router():
     assert not missing, f"SKILL.md never mentions {missing}; agents will pick flat tools instead"
 
 
-def test_the_presentation_example_covers_slack_not_just_markdown():
-    """A worked example outweighs the rule written next to it.
+def test_the_presentation_example_stays_markdown_not_a_foreign_surface():
+    """The gateway converts Markdown; hand-written foreign syntax breaks it.
 
-    A Slack reader got their feed as five Markdown links and replied "the
-    links weren't clickable": Slack `mrkdwn` renders `[title](url)` as literal
-    text. The urls were all present -- the syntax was for another surface.
+    A Telegram reader asked for their feed and replied "you didn't give links",
+    then "the links weren't clickable". Neither was a rendering bug -- the
+    model emitted no links at all, printing `ID: 2385`, an argument for the
+    next tool call and useless to a human.
 
-    The first fix added a paragraph saying so and left the single Markdown
-    example above it. Measured on gemma4:e2b against the real file: 5 of 5
-    items rendered, 0 of 5 clickable in Slack -- the model copied the example
-    and the prose changed nothing. Only splitting the example block by surface
-    moved it, to 5 of 5 clickable across four runs, while the Markdown surface
-    stayed correct.
+    The first fix misread the transcript as Slack and taught the example
+    `<url|title>`. Run against the real sender, that is actively worse: the
+    Telegram path (hermes-agent tools/send_message_tool.py `_send_telegram`)
+    auto-detects HTML with `re.search(r'<[a-zA-Z/][^>]*>', message)`, so a
+    Slack link makes the WHOLE message go out as parse_mode=HTML, where
+    `<url|title>` is not a tag. Plain Markdown instead reaches
+    `plugins/platforms/telegram/adapter.py::format_message`, which converts it
+    to MarkdownV2 -- verified five of five links preserved in a five-item list.
 
-    So the guard is on the EXAMPLE, not on the prose. A future edit that
-    collapses the block back to one Markdown line reintroduces the bug.
+    So: the example must stay Markdown, and must NOT acquire another surface's
+    syntax. Both directions are guarded, because both have now been wrong once.
     """
     skill_md = (_skill_dir() / "SKILL.md").read_text()
     start = skill_md.index("**Present each item as one line")
     block = skill_md[start : skill_md.index("```", skill_md.index("```", start) + 3)]
 
-    assert "<https://" in block and "|" in block, (
-        "the presentation example shows no Slack-syntax link; a model in Slack "
-        "copies the Markdown form and the reader gets unclickable text"
+    assert "](http" in block, (
+        "the presentation example lost its Markdown link; the gateway's "
+        "markdown->MarkdownV2 converter is what makes urls clickable"
     )
-    assert "](http" in block, "the Markdown example was dropped; it is still correct elsewhere"
-    assert "Slack" in block, "the example block must label which line is for which surface"
+    assert "<http" not in block, (
+        "the example shows an angle-bracket link; that trips the Telegram "
+        "sender's HTML auto-detect and posts the whole message as HTML"
+    )
