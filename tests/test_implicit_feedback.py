@@ -267,3 +267,45 @@ def test_reading_an_item_never_overturns_a_stated_verdict(tmp_path, monkeypatch)
     ).fetchone()
     assert row["useful"] == 0, "a read overwrote a stated rejection"
     assert row["source"] == "ui", f"provenance was downgraded to {row['source']!r}"
+
+
+def test_asking_why_records_engagement_even_when_the_model_is_down(tmp_path, monkeypatch):
+    """Two defects in one call, found because `engagement` was still empty two
+    rounds after it shipped.
+
+    `feed.explain` returned `ok: true, explanation: null, message: ""` when the
+    local model was unreachable -- collapsing "no explanation could be
+    generated", "the model is down" and "the item has no text" into one
+    indistinguishable success. A caller reading `explanation: null` has no
+    reason to retry and tells the reader there is no explanation.
+
+    And a failed explain wrote no `explanations` row, so it also lost the
+    ENGAGEMENT: asking why an item ranked is evidence this reader cared about
+    it, whether or not the model answers. That is the signal implicit.harvest
+    was built on, and a cold model silently discarded it.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    from attestation.db import get_db
+    from attestation.implicit import candidates
+    from attestation.mcp.feed import _explain_item
+
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO users(name, interests) VALUES ('reader', 'science')")
+    conn.execute("INSERT INTO feeds(title, url) VALUES ('f', 'http://f')")
+    conn.execute(
+        "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+        " VALUES (1, 'a paper', 'http://x', 'body', 'h1')"
+    )
+    conn.commit()
+    user_id = conn.execute("SELECT id FROM users WHERE name='reader'").fetchone()["id"]
+
+    # A model that cannot answer.
+    monkeypatch.setattr("attestation.mcp.feed.explain_item_fn", lambda *a, **k: None)
+    out = _explain_item("reader", item_id=1)
+    assert out["ok"] is False, "a failed explanation was reported as success"
+    assert "unreachable" in out["message"], out["message"]
+
+    fresh = get_db(tmp_path / "t.db")
+    assert candidates(fresh, user_id) == [1], (
+        "a failed explain discarded the engagement as well as the explanation"
+    )

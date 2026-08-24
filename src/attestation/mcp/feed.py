@@ -535,7 +535,27 @@ def _explain_item(conn, user_row, item_id: ItemId) -> dict:
     item = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
     if item is None:
         raise ToolError(f"unknown item_id: {item_id}")
+    # Asking WHY an item ranked is engagement whether or not the model answers,
+    # and it is the signal implicit.harvest was built on. Recorded before the
+    # call, so a model that is down costs the explanation and not the evidence
+    # that this reader cared about this item.
+    conn.execute(
+        "INSERT OR IGNORE INTO engagement(user_id, item_id, kind) VALUES (?, ?, 'explain')",
+        (user_row["id"], item_id),
+    )
+    conn.commit()
     text = explain_item_fn(conn, user_row["id"], item_id, chat_fn=default_chat_fn)
+    if text is None:
+        # explain() catches everything and returns None, and wrapping that in
+        # ok=true collapsed three states into one: no explanation could be
+        # generated, the model is down, the item has no text. A caller reading
+        # `explanation: null` on a success envelope has no reason to retry and
+        # will tell the reader there is no explanation.
+        raise ToolError(
+            "could not generate an explanation -- the local model is"
+            " unreachable or returned nothing. Check `attest install --check`;"
+            " the ranking itself needs no model and feed.list still works."
+        )
     return {"explanation": text}
 
 
