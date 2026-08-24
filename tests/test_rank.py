@@ -957,3 +957,101 @@ def test_eval_reports_what_it_actually_measured(tmp_path, fake_embedder):
     assert isinstance(result, dict), f"evaluate_user returned a bare {type(result).__name__}"
     assert "auc" in result and "measures" in result
     assert "classifier" in result["measures"].lower()
+
+
+def _skewed_history(conn, name: str, n: int = 200, minority: int = 1) -> int:
+    """A both-class history that is overwhelmingly one class.
+
+    Every other honesty fixture here is `_mixed_history`, which sets
+    `useful = i % 2` -- perfectly balanced, always. No test exercised a skewed
+    both-class history, which is the structural reason a 199:1 account shipped
+    with no caveat at all.
+    """
+    from attestation.rank import record_click
+
+    conn.execute("INSERT INTO users(name, interests) VALUES (?, 'science')", (name,))
+    conn.execute("INSERT INTO feeds(title, url) VALUES ('f', 'http://f')")
+    for i in range(n):
+        conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (1, ?, 'http://x', ?, ?)",
+            (f"t{i}", f"s{i}", f"h{name}{i}"),
+        )
+    conn.commit()
+    user_id = conn.execute("SELECT id FROM users WHERE name = ?", (name,)).fetchone()["id"]
+    for i in range(n):
+        record_click(conn, user_id, i + 1, useful=(i >= minority), source="ui")
+    return user_id
+
+
+def test_both_classes_present_is_not_the_same_as_trained_on_both(tmp_path):
+    """199 useful and 1 not-useful satisfied every caveat branch -- active,
+    over 20 clicks, entirely human -- and shipped with NO caveat, while
+    `attest eval` on the same data printed "insufficient click data for a
+    meaningful holdout" and exited 1. Two surfaces contradicting each other.
+
+    Measured: that classifier's probabilities over 1000 items span 0.31-0.80
+    with std 0.057, which is a near-constant dressed as a trained model.
+    """
+    from attestation.db import get_db
+    from attestation.rank import ranking_quality
+
+    conn = get_db(tmp_path / "t.db")
+    user_id = _skewed_history(conn, "skewed", n=200, minority=1)
+
+    quality = ranking_quality(conn, user_id)
+    assert quality["classifier_active"] is True
+    assert quality["caveat"], "a 199:1 history reported an active classifier with no caveat at all"
+    assert "1 not-useful" in quality["caveat"], quality["caveat"]
+
+    # Enough of the minority class and the caveat correctly goes away.
+    balanced = get_db(tmp_path / "b.db")
+    fine = _skewed_history(balanced, "fine", n=200, minority=20)
+    assert not ranking_quality(balanced, fine).get("caveat"), (
+        "a well-balanced history is being caveated"
+    )
+
+
+def test_eval_reports_whether_the_labels_are_really_about_provenance(tmp_path):
+    """`bootstrap` is excluded from eval as tautological and nothing checked
+    the remaining sources. On the live database all 35 implicit and all 8 ui
+    clicks are positive while 21 of 24 simulated are negative, so the label is
+    nearly a restatement of the source: fitting the same classifier to predict
+    PROVENANCE scores 1.000 against 0.964 for usefulness, agreeing on 94% of
+    rows.
+
+    The mechanism is item selection, not the labels. Harvested positives are
+    what the ranker surfaced; simulated negatives are sampled to be rejected.
+    """
+    import numpy as np
+
+    from attestation.db import get_db
+    from attestation.rank import evaluate_user, record_click
+
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO users(name, interests) VALUES ('split', 'science')")
+    conn.execute("INSERT INTO feeds(title, url) VALUES ('f', 'http://f')")
+    # Two separable populations: harvested positives in one region of the
+    # embedding space, generated negatives in another.
+    for i in range(40):
+        conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (1, ?, 'http://x', ?, ?)",
+            (f"t{i}", f"s{i}", f"h{i}"),
+        )
+        vec = np.zeros(256, dtype="float32")
+        vec[0 if i < 20 else 128] = 1.0
+        conn.execute(
+            "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)", (i + 1, vec.tobytes())
+        )
+    conn.commit()
+    user_id = conn.execute("SELECT id FROM users WHERE name='split'").fetchone()["id"]
+    for i in range(40):
+        record_click(conn, user_id, i + 1, useful=(i < 20), source="ui" if i < 20 else "simulated")
+
+    out = evaluate_user(conn, user_id)
+    assert out is not None
+    assert out["provenance_auc"] is not None, "provenance separability is not reported"
+    assert out["provenance_auc"] >= 0.9, (
+        f"the fixture's two populations should separate perfectly: {out['provenance_auc']}"
+    )

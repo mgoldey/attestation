@@ -149,6 +149,13 @@ CLICK_SOURCES = ("ui", "agent", "bootstrap", "simulated", "implicit")
 # how much the ranker was told -- see ranking_quality.
 HUMAN_CLICK_SOURCES = frozenset({"ui", "agent"})
 
+# Below this many clicks in the SMALLER class, a both-class history is active
+# in name only -- `classifier_active` tests `len(counts) > 1`, which reads as
+# "trained" and means "both labels appear at least once". Five is where a
+# StratifiedKFold can still put a minority member in more than one fold, which
+# is the same threshold evaluate_user's n_splits guard already enforces.
+MIN_MINORITY_CLICKS = 5
+
 
 def record_click(conn, user_id: int, item_id: int, useful: bool, source: str = "ui") -> None:
     """The single click write path. `source` records provenance (see CLICK_SOURCES).
@@ -488,6 +495,48 @@ def bootstrap_persona(conn, embedder, user_name: str, k: int = 30) -> int:
     return len(chosen)
 
 
+def _provenance_auc(rows, X, skf) -> float | None:
+    """How well the same model predicts WHERE a label came from, not what it says.
+
+    bootstrap is excluded from evaluation as tautological, and nothing checked
+    whether the remaining sources are any better. Measured on the live
+    database: of matt's 70 non-bootstrap clicks, all 35 implicit and all 8 ui
+    are positive while 21 of 24 simulated are negative -- so the label is very
+    nearly a restatement of the source. Fitting this same classifier to predict
+    provenance scores 1.000 against 0.942 for usefulness, and the two label
+    vectors agree on 94% of rows.
+
+    The mechanism is item SELECTION, not the labels themselves. simulate.py is
+    careful that a chat model reads text rather than the vector -- but harvested
+    positives are things the ranker surfaced (median archive rank 88 of 5273)
+    and simulated negatives are sampled round-robin across feeds to find things
+    to reject (median 3426). Two populations drawn from different regions of
+    the archive separate perfectly whatever the labels say.
+
+    Returns None when there is only one source, which is the case where the
+    question does not arise.
+    """
+    # HARVESTED from this reader (ui, agent, implicit) vs GENERATED for them.
+    # Not HUMAN_CLICK_SOURCES, which is {ui, agent}: implicit rows come from
+    # the reader's own actions and are selected the same way -- by what the
+    # ranker put in front of them -- so they sit on the harvested side of the
+    # split this is testing for.
+    harvested = HUMAN_CLICK_SOURCES | {"implicit"}
+    provenance = np.array([1 if r["source"] in harvested else 0 for r in rows])
+    if len(set(provenance.tolist())) < 2:
+        return None
+    scores = []
+    for train_idx, test_idx in skf.split(X, provenance):
+        if len(set(provenance[train_idx].tolist())) < 2:
+            continue
+        if len(set(provenance[test_idx].tolist())) < 2:
+            continue
+        clf = LogisticRegression(class_weight="balanced", C=0.1, max_iter=1000)
+        clf.fit(X[train_idx], provenance[train_idx])
+        scores.append(roc_auc_score(provenance[test_idx], clf.predict_proba(X[test_idx])[:, 1]))
+    return float(np.mean(scores)) if scores else None
+
+
 def evaluate_user(conn, user_id: int, n_holdout: int = 5) -> dict | None:
     """Stratified-holdout AUC over real (non-bootstrap) clicks only.
 
@@ -506,7 +555,7 @@ def evaluate_user(conn, user_id: int, n_holdout: int = 5) -> dict | None:
     construction -- always returning None instead of an honest score.
     """
     rows = conn.execute(
-        "SELECT c.useful, v.embedding FROM clicks c"
+        "SELECT c.useful, c.source, v.embedding FROM clicks c"
         " JOIN item_vectors v ON v.rowid = c.item_id"
         " WHERE c.user_id = ? AND c.source != 'bootstrap'"
         " ORDER BY c.clicked_at, c.id",
@@ -545,6 +594,7 @@ def evaluate_user(conn, user_id: int, n_holdout: int = 5) -> dict | None:
         "auc": float(np.mean(aucs)),
         "n_clicks": len(rows),
         "n_splits": len(aucs),
+        "provenance_auc": _provenance_auc(rows, X, skf),
         "measures": (
             "the click classifier alone, on stored embeddings."
             " NOT the profile-similarity or feature-preference terms, which"
@@ -619,6 +669,23 @@ def ranking_quality(conn, user_id: int) -> dict:
             )
     elif total < 20:
         out["caveat"] = f"only {total} clicks: the classifier is active but weakly trained"
+    elif min(counts.values()) < MIN_MINORITY_CLICKS:
+        # Both classes present is not the same as trained on both. A history of
+        # 199 useful and 1 not-useful satisfied every branch above -- active,
+        # over 20 clicks, entirely human -- and shipped with NO caveat, while
+        # `attest eval` on the same data printed "insufficient click data for a
+        # meaningful holdout" and exited 1. Two surfaces flatly contradicting
+        # each other. Measured: that classifier's probabilities over 1000 items
+        # span 0.31-0.80 with std 0.057, which is a near-constant.
+        #
+        # This is on the path engagement harvesting creates: reads become
+        # implicit positives, so a reader who reads a lot and rejects once
+        # lands here.
+        fewer = "not-useful" if counts.get(0, 0) < counts.get(1, 0) else "useful"
+        out["caveat"] = (
+            f"only {min(counts.values())} {fewer} click(s) of {total}: the"
+            " classifier is active but has almost nothing to contrast against."
+        )
 
     # Provenance caveat, appended to whatever the training-strength caveat said.
     # It is a separate concern: a history can be large, both-class and

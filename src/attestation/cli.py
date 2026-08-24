@@ -682,6 +682,20 @@ def cmd_eval(args: argparse.Namespace) -> int:
         f"  ({result['n_splits']}-fold over {result['n_clicks']} clicks)"
     )
     print(f"  measures {result['measures']}")
+    provenance = result.get("provenance_auc")
+    if provenance is not None and provenance >= result["auc"]:
+        # The number above is not measuring what it appears to. Printed
+        # whenever provenance separates at least as well as usefulness, because
+        # at that point the classifier cannot be shown to have learned anything
+        # about this reader that it did not learn about where the labels came
+        # from. Measured on the live database: 1.000 against 0.964.
+        print(
+            f"  WARNING: predicting where each label CAME FROM scores"
+            f" {provenance:.3f} on the same data -- at or above the score above."
+            " Harvested positives are items the ranker surfaced; generated"
+            " negatives are sampled to be rejected. The classifier may be"
+            " separating those two populations rather than useful from not."
+        )
     return 0
 
 
