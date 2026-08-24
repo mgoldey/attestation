@@ -66,6 +66,13 @@ def register(mcp) -> None:
         empty until the tagging pass has processed it). No HTML and no article
         text -- call `feed.read` for one item's abstract. `limit` is capped at 16.
 
+        **Show the reader the `url`, as a linked title.** A watched session
+        rendered title/source/tags/`item_id` for five papers and omitted every
+        link, and the reader replied "you didn't give links" -- they had five
+        titles they could not open. `item_id` is an argument for your NEXT tool
+        call (`feed.read`, `feed.rate`); it is not an address and means nothing
+        to a human. If you print only one identifier per item, print the url.
+
         An unrecognised `user` is CREATED, not refused: a new reader is seeded
         from the corpus's most common topics, and the response says so. Do not
         use this tool to test whether a persona exists -- `feed.personas` lists
@@ -193,6 +200,10 @@ def register(mcp) -> None:
 
         Unlike `feed.list` this searches the whole archive and includes items already
         rated, flagging each with already_rated.
+
+        **Each row carries a `url` -- show it, as a linked title.** `item_id` is
+        an argument for your next tool call, not an address; a reader given only
+        titles and ids cannot open any of the results.
 
         **Read `ranking_quality` before trusting the order.** It reports whether the
         click classifier is actually active -- with a single-class click history it

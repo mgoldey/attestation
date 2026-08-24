@@ -22,6 +22,7 @@ have destroyed.
 
 import ast
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -909,3 +910,75 @@ def test_no_description_names_a_tool_that_does_not_exist():
                 if any(words(ref) <= rw for rw in registered_words):
                     phantom.append(f"{tool.name} -> `{ref}`")
     assert not phantom, "descriptions name pre-namespacing tools: " + "; ".join(phantom)
+
+
+def test_every_tool_that_returns_a_url_tells_the_agent_to_show_it():
+    """A link the agent receives and does not render is a link the reader lacks.
+
+    A watched Slack session asked "what should I read first today?", got five
+    ranked papers, and rendered title/source/tags/item_id for each -- dropping
+    every url. The reader replied "you didn't give links". The urls were all
+    present in the payload (verified against the live DB: all five items had
+    real arxiv.org/abs addresses, and 5499 of 5499 items carried one), so this
+    was never a data or ranking bug. SKILL.md has said "present each item as
+    one line: a linked title" from the start, but that is 700 lines of body
+    loaded on invoke, whereas the tool description is in the prompt on EVERY
+    turn -- and it listed `url` as a returned field without ever saying to
+    render it. `item_id` looks like an identifier and is not an address, so it
+    is what a small model reaches for.
+
+    Keyed off the tools that actually EMIT a url, listed here explicitly. A
+    first version keyed off `outputSchema`, which only the four `ask` routers
+    declare -- so it inspected four tools, silently skipped `feed.list` and
+    `feed.search`, and passed while both of the tools from the transcript were
+    unguarded. Deleting either instruction wholesale did not fail it. The
+    adjacency requirement matters too: every docstring already says "Returns
+    ... url" in passing, so a bare `"url" in text and "show" in text` check
+    passed with the whole instruction gone.
+    """
+    import asyncio
+    import os
+    import tempfile
+
+    os.environ.setdefault("RSS_DB", tempfile.mkdtemp() + "/t.db")
+    from attestation import mcp_server
+
+    # Tools whose rows carry a url a human is meant to open. Verified against
+    # a live payload rather than assumed: feed.list and feed.search both
+    # return `url` on every row.
+    EMIT_URLS = {"feed.list", "feed.search", "feed.ask", "runs.ask", "kg.ask", "sym.ask"}
+
+    served = {t.name: t for t in asyncio.run(mcp_server.mcp.list_tools())}
+    missing = EMIT_URLS - set(served)
+    assert not missing, f"guard names tools that no longer exist: {missing}"
+
+    silent = []
+    for name in sorted(EMIT_URLS):
+        tool = served[name]
+
+        # Prose only. Scanning the serialized schema matched a field literally
+        # NAMED url ("title": "Url") sitting in the same unsplittable JSON blob
+        # as some unrelated verb, so deleting every real instruction still
+        # passed. Collect the human-written `description` strings instead.
+        def _descriptions(node) -> list[str]:
+            found = []
+            if isinstance(node, dict):
+                if isinstance(node.get("description"), str):
+                    found.append(node["description"])
+                for value in node.values():
+                    found.extend(_descriptions(value))
+            elif isinstance(node, list):
+                for value in node:
+                    found.extend(_descriptions(value))
+            return found
+
+        prose = [tool.description or "", *_descriptions(tool.outputSchema or {})]
+        sentences = [part for chunk in prose for part in re.split(r"(?<=[.!?])\s+|\n", chunk)]
+        instructs = any(
+            "url" in part.lower()
+            and re.search(r"\b(show|render|display|linked|link)\b", part.lower())
+            for part in sentences
+        )
+        if not instructs:
+            silent.append(name)
+    assert not silent, f"these tools return a url but never tell the agent to show it: {silent}"

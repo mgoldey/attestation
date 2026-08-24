@@ -26,6 +26,10 @@ class Ref(BaseModel):
 
     Id and url only. Deliberately too little to tempt a model into rewriting
     the list -- rewriting a ten-item payload is what looped in Telegram.
+
+    Minimal does not mean invisible: show the url. A watched session rendered
+    ids without links and the reader answered "you didn't give links".
+    `item_id` is for your next call; `url` is the only field a human can use.
     """
 
     item_id: int
@@ -43,7 +47,7 @@ class Answer(BaseModel):
 
     ok: bool
     answer: str = Field(description="One or two lines. Render verbatim; do not reformat.")
-    refs: list[Ref] = Field(default_factory=list, description="Ids for follow-up calls.")
+    refs: list[Ref] = Field(default_factory=list, description="Ids to follow up. Show the url.")
     caveat: str | None = Field(default=None, description="Reasons not to trust the answer.")
     options: list[str] = Field(default_factory=list, description="Tools to choose between.")
     tool_used: str | None = Field(default=None, description="Which tool answered.")
