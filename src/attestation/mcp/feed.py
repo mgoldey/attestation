@@ -556,7 +556,16 @@ def _explain_item(conn, user_row, item_id: ItemId) -> dict:
             " unreachable or returned nothing. Check `attest install --check`;"
             " the ranking itself needs no model and feed.list still works."
         )
-    return {"explanation": text}
+    return {
+        "explanation": text,
+        # Says what this call just did. implicit.py is honest in its docstring
+        # that "curiosity is not approval, and a reader may well have asked
+        # precisely because the item looked wrong" -- and the surface that
+        # records it said nothing, so a reader interrogating a SUSPICIOUS
+        # recommendation was upvoting it silently. One line, on the one tool
+        # whose side effect is invisible.
+        "message": "recorded as engagement; feed.rate says whether it was actually useful",
+    }
 
 
 @tool(empty={"users": []}, label="list_users")

@@ -1055,3 +1055,37 @@ def test_eval_reports_whether_the_labels_are_really_about_provenance(tmp_path):
     assert out["provenance_auc"] >= 0.9, (
         f"the fixture's two populations should separate perfectly: {out['provenance_auc']}"
     )
+
+
+def test_the_ordering_weight_is_reported_alongside_its_human_only_value(tmp_path):
+    """The prose caveat said the training was synthetic; it did not say
+    synthetic labels decide the ORDER almost outright.
+
+    Measured on the live database: four of five personas have zero human
+    clicks and still hand 91% of their ordering to click terms -- one of them
+    on 30 bootstrap rows, whose labels are a threshold on the very embedding
+    being ranked. Disclosed rather than changed: the weight is what it is.
+    """
+    from attestation.db import get_db
+    from attestation.rank import ranking_quality, record_click
+
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO users(name, interests) VALUES ('synthetic-only', 'science')")
+    conn.execute("INSERT INTO feeds(title, url) VALUES ('f', 'http://f')")
+    for i in range(30):
+        conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (1, ?, 'http://x', ?, ?)",
+            (f"t{i}", f"s{i}", f"h{i}"),
+        )
+    conn.commit()
+    user_id = conn.execute("SELECT id FROM users WHERE name='synthetic-only'").fetchone()["id"]
+    for i in range(30):
+        record_click(conn, user_id, i + 1, useful=(i % 2 == 0), source="simulated")
+
+    quality = ranking_quality(conn, user_id)
+    assert quality["blend_weight"] > 0.8, quality
+    assert quality["blend_weight_if_human_only"] == 0.0, (
+        "a persona with no human clicks does not report that its human-only"
+        f" weight would be zero: {quality}"
+    )

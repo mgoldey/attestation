@@ -604,6 +604,24 @@ def evaluate_user(conn, user_id: int, n_holdout: int = 5) -> dict | None:
     }
 
 
+def _blend_disclosure(total: int, real: int) -> dict:
+    """How much of the ORDERING the click terms won, and on what.
+
+    The prose caveat says the training is synthetic; it did not say synthetic
+    labels decide the order almost outright. Measured: four of five personas
+    have zero human clicks and still hand 91% of their ordering to click terms
+    -- one of them on 30 bootstrap rows, whose labels are a threshold on the
+    very embedding being ranked.
+
+    Reported rather than changed. The weight is what it is, and the fix for an
+    undisclosed quantity is to disclose it.
+    """
+    out = {"blend_weight": round(blend_weight(total), 2)}
+    if real != total:
+        out["blend_weight_if_human_only"] = round(blend_weight(real), 2)
+    return out
+
+
 def ranking_quality(conn, user_id: int) -> dict:
     """How much to trust the ordering, stated up front.
 
@@ -651,6 +669,15 @@ def ranking_quality(conn, user_id: int) -> dict:
     if total:
         out["real_clicks"] = real
         out["synthetic_clicks"] = total - real
+        # How much of the ORDERING the click terms won, and how much they would
+        # have won on human clicks alone. The prose caveat says the training is
+        # synthetic; it did not say synthetic labels decide the order almost
+        # outright. Measured: four of five personas have zero human clicks and
+        # still hand 91% of their ordering to click terms -- one of them on 30
+        # bootstrap rows, whose labels are a threshold on the very embedding
+        # being ranked. Reported rather than changed: the weight is what it is,
+        # and a reader can now see it.
+        out.update(_blend_disclosure(total, real))
     if not active:
         if total > 0:
             # Terse: this rides on every ranked response. It was 363 chars of

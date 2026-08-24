@@ -646,10 +646,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 def cmd_eval(args: argparse.Namespace) -> int:
     from attestation.rank import evaluate_user, get_user
+    from attestation.simulate import source_skew_caveat
 
     with open_db(args.db) as conn:
         user = get_user(conn, args.user)
         result = evaluate_user(conn, user["id"]) if user else None
+        skew = source_skew_caveat(conn, user["id"]) if user else None
     if result is None:
         # Nonzero, like every other failure path here. "I could not measure
         # this" is not the answer the command exists to produce, and a script
@@ -682,6 +684,14 @@ def cmd_eval(args: argparse.Namespace) -> int:
         f"  ({result['n_splits']}-fold over {result['n_clicks']} clicks)"
     )
     print(f"  measures {result['measures']}")
+    # The repo's own skew warning, routed to the number it warns about. It says
+    # verbatim "rate some items from that feed as not-useful before trusting an
+    # evaluation score", computes correctly, and fires at 94% on this database
+    # -- and its only caller was feed.simulate_feedback, a one-shot write tool.
+    # The right warning existed and never reached the score.
+    if skew:
+        print(f"  WARNING: {skew}")
+
     provenance = result.get("provenance_auc")
     if provenance is not None and provenance >= result["auc"]:
         # The number above is not measuring what it appears to. Printed
