@@ -483,15 +483,38 @@ tools; the router is the reliable path when the question is phrased in the
 reader's own words rather than yours.
 
 **Present each item as one line: a linked title, then source and topic.**
+**Use YOUR SURFACE's link syntax -- copy the matching line, not the first one.**
 
 ```
+Markdown client / terminal:
 1. [LogicIF: Towards Complex Logic Instruction Following](https://arxiv.org/abs/2508.09125)
    arXiv cs.LG · language-models, reasoning
+
+Slack:
+1. <https://arxiv.org/abs/2508.09125|LogicIF: Towards Complex Logic Instruction Following>
+   arXiv cs.LG · language-models, reasoning
+
+Unknown surface -- bare url, every client autolinks it:
+1. LogicIF: Towards Complex Logic Instruction Following
+   https://arxiv.org/abs/2508.09125 — arXiv cs.LG · language-models, reasoning
 ```
 
 Nothing else. Do not restate `item_id`, `content_type` or `n_tags` in prose --
 they are there for your next tool call, not for the reader. Do not reproduce
 the JSON.
+
+Slack `mrkdwn` renders `[title](url)` as literal text, so a reader there asked
+for their feed, got five Markdown links, and replied "the links weren't
+clickable" -- every url was present and none of them worked. Telegram wants
+HTML (`<a href="...">`) or MarkdownV2. Measured on gemma4:e2b: with a single
+Markdown example above this paragraph, the model copied it into Slack 5 times
+out of 5 and the prose here changed nothing -- a worked example outweighs a
+rule about it, so the block now shows one line per surface.
+
+**List every item the tool returned.** "What should I read first?" is answered
+by the ORDER, not by truncating to one. Measured on gemma4:e2b against a
+five-item payload: with the presentation rule alone it rendered one item and
+dropped four; told to list them all, five of five.
 
 **If a response is too long to render, say so in one sentence and show
 fewer.** Do not apologise, do not re-render the same payload in another
