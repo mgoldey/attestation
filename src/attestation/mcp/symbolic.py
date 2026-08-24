@@ -11,6 +11,7 @@ from typing import Annotated
 
 from pydantic import Field
 
+from attestation.mcp._shared import Bounds, Operation
 from attestation.symbolic import MAX_TIMEOUT, run_isolated
 
 # Every key any sym op can return, so a failure carries the same shape as a
@@ -90,7 +91,7 @@ def register(mcp) -> None:
 
     @mcp.tool(name="sym.integrate")
     def sym_integrate(
-        expr: str, symbol: str | None = None, bounds: list | None = None, timeout: Timeout = 10
+        expr: str, symbol: str | None = None, bounds: Bounds = None, timeout: Timeout = 10
     ) -> dict:
         """Integrate an expression, indefinitely or over `bounds` as [low, high].
 
@@ -101,7 +102,10 @@ def register(mcp) -> None:
 
     @mcp.tool(name="sym.derivation")
     def sym_derivation(
-        expr: str, operation: str = "integrate", symbol: str | None = None, timeout: Timeout = 10
+        expr: str,
+        operation: Operation = "integrate",
+        symbol: str | None = None,
+        timeout: Timeout = 10,
     ) -> dict:
         """Show the steps of a derivation.
 
@@ -154,7 +158,7 @@ def _sym_differentiate(
 
 
 def _sym_integrate(
-    expr: str, symbol: str | None = None, bounds: list | None = None, timeout: Timeout = 10
+    expr: str, symbol: str | None = None, bounds: Bounds = None, timeout: Timeout = 10
 ) -> dict:
     return _call("op_integrate", {"expr": expr, "symbol": symbol, "bounds": bounds}, timeout)
 

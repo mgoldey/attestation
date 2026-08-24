@@ -6,7 +6,7 @@ after a split.
 """
 
 import logging
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field
 
@@ -98,3 +98,38 @@ __all__ = ["ranking_quality"]
 # both reached a tool body before these existed.
 ItemId = Annotated[int, Field(ge=1, description="row id from a previous result")]
 SinceDays = Annotated[int | None, Field(ge=1, le=3650, description="lookback window in days")]
+
+
+# Anything but "integrate" fell to an else branch and DIFFERENTIATED:
+# `operation="factorize"` returned 2*x with ok=true. A Literal makes it a
+# client-side reject instead.
+Operation = Annotated[
+    Literal["integrate", "differentiate"],
+    Field(description="Which derivation to trace. Rule-by-rule steps exist only for integrate."),
+]
+
+
+# Exactly two, or None for indefinite. `[1,2,3]` dropped the extras silently
+# and `[1]` handed the caller "IndexError: list index out of range".
+Bounds = Annotated[
+    list | None,
+    Field(min_length=2, max_length=2, description="[low, high]; omit for an indefinite integral."),
+]
+
+
+# Closed string vocabularies live here for the same reason the numeric bounds
+# do: Limit, SinceDays, ItemId and Timeout are declared once and inherited, so
+# every bounded NUMBER on the surface rejects correctly. There was no such home
+# for a closed STRING set, so content_type and metric got Literals from whoever
+# wrote those tools while verdict and operation did not.
+
+
+# The closed set from claims.VerdictKind, as a schema constraint rather than a
+# runtime one. `verdict="banana"` returned ok=true with a message summarising
+# all 7 claims and `claims: []` -- the two halves of one payload disagreeing,
+# so a model relaying the message reports contradicted claims it cannot show.
+# A Literal makes it a client-side reject naming the valid values.
+Verdict = Annotated[
+    Literal["supported", "contradicted", "unsupported", "ambiguous", "stale", "uncited"] | None,
+    Field(description="Show only claims with this verdict."),
+]

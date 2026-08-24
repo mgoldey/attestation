@@ -15,7 +15,7 @@ from typing import Annotated
 from pydantic import Field
 
 from attestation import ledger
-from attestation.mcp._shared import MAX_LIST_LIMIT, Limit
+from attestation.mcp._shared import MAX_LIST_LIMIT, Limit, Verdict
 from attestation.mcp._tool import ToolError, open_db, tool
 
 # Ten, not twenty. Even without source_path, 20 rows emitted 4576 chars against
@@ -159,7 +159,7 @@ def register(mcp) -> None:
         return _coverage(path)
 
     @mcp.tool(name="runs.claims_check")
-    def claims_check(path: str | None = None, verdict: str | None = None) -> dict:
+    def claims_check(path: str | None = None, verdict: Verdict = None) -> dict:
         """Verify numeric claims written in Markdown against runs in the ledger.
 
         Omit `path` to check every Markdown file under the configured research

@@ -280,3 +280,60 @@ def test_a_type_error_inside_a_body_does_not_escape_the_envelope():
     assert out["ok"] is False
     assert "value" in out, "the failure envelope must still match the success shape"
     assert "traceback" not in out["message"].lower()
+
+
+def test_closed_vocabularies_are_schema_constraints_not_silent_defaults():
+    """An invalid value from a CLOSED set must be a client-side reject, not a
+    confident answer to a different question.
+
+    `sym.derivation(operation="factorize")` returned `2*x` with ok=true --
+    anything but "integrate" fell through to an else branch and differentiated.
+    `runs.claims_check(verdict="banana")` returned ok=true with a message
+    summarising all 7 claims and `claims: []`, so a model relaying the message
+    reports contradicted claims it cannot show.
+
+    Goes through call_tool, NOT the `_impl` functions: those bypass pydantic,
+    which is exactly why a prior audit reported two already-constrained
+    parameters as broken and missed these.
+    """
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.mcp import register_all
+
+    mcp = FastMCP("audit")
+    register_all(mcp)
+    schemas = {t.name: t.inputSchema for t in asyncio.run(mcp.list_tools())}
+
+    def allowed(tool: str, param: str) -> set[str]:
+        spec = schemas[tool]["properties"][param]
+        for branch in (spec, *spec.get("anyOf", [])):
+            if "enum" in branch:
+                return set(branch["enum"])
+        return set()
+
+    assert allowed("sym.derivation", "operation") == {"integrate", "differentiate"}, (
+        "sym.derivation.operation is not a closed set in the schema"
+    )
+    assert allowed("runs.claims_check", "verdict") == {
+        "supported",
+        "contradicted",
+        "unsupported",
+        "ambiguous",
+        "stale",
+        "uncited",
+    }, "runs.claims_check.verdict is not a closed set in the schema"
+
+    # Bounds carry their arity, so [1] and [1,2,3] are rejects rather than an
+    # IndexError and a silently-dropped extra.
+    bounds = schemas["sym.integrate"]["properties"]["bounds"]
+    branches = (bounds, *bounds.get("anyOf", []))
+    assert any(b.get("minItems") == 2 and b.get("maxItems") == 2 for b in branches), (
+        f"sym.integrate.bounds does not require exactly two values: {bounds}"
+    )
+
+    # An empty interests string embeds to nothing (CLAUDE.md).
+    for tool_name in ("feed.persona_create", "feed.persona_update"):
+        spec = schemas[tool_name]["properties"]["interests"]
+        assert spec.get("minLength") == 1, f"{tool_name}.interests accepts an empty string: {spec}"

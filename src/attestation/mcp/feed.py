@@ -38,6 +38,15 @@ from attestation.mcp.personas import (
 )
 from attestation.rank import record_click
 
+# CLAUDE.md states the invariant: "an empty interests string embeds to
+# nothing". Autocreate seeds a new reader from the corpus's top tags precisely
+# to avoid it, and the explicit-create path had no guard -- `name=""` was
+# refused while `interests=""` created a persona whose ranking has nothing to
+# start from.
+Interests = Annotated[
+    str, Field(min_length=1, description="What this reader wants to follow, in their own words.")
+]
+
 
 def register(mcp) -> None:
     """Attach every feed.* tool to the server."""
@@ -121,7 +130,7 @@ def register(mcp) -> None:
         return _list_users()
 
     @mcp.tool(name="feed.persona_create")
-    def create_persona(name: str, interests: str) -> dict:
+    def create_persona(name: str, interests: Interests) -> dict:
         """Create a reader persona from a name and an interests description.
 
         Ranking starts from the interests text and personalizes from the first
@@ -131,7 +140,7 @@ def register(mcp) -> None:
         return _create_persona(name, interests)
 
     @mcp.tool(name="feed.persona_update")
-    def update_persona(name: str, interests: str) -> dict:
+    def update_persona(name: str, interests: Interests) -> dict:
         """Replace a persona's interests text; re-steers ranking immediately."""
         return _update_persona(name, interests)
 
@@ -652,6 +661,37 @@ def _semantic_hits(conn, embedder, query: str, k: int) -> dict[int, float]:
     return {rid: sim for rid, sim in sims.items() if sim >= best * RELEVANCE_FLOOR}
 
 
+def _resolved_tag(conn, tag: str | None) -> str | None:
+    """A caller's tag turned into one the corpus actually uses, or a refusal.
+
+    The tag vocabulary is database content, so it cannot be a schema Literal --
+    it needs a runtime check with a message, which is what the kg namespace
+    already does. This had neither: `tag="large language model"` and
+    `tag="LARGE-LANGUAGE-MODELS"` both returned `ok:true, "0 item(s) filtered"`
+    against 1,072 matching items, and "0 items" reads as a fact about the
+    archive rather than a spelling problem.
+
+    canonical() is identity for anything with spaces or capitals; resolve_query
+    handles exactly those, and is what every kg lookup uses.
+    """
+    if not tag:
+        return tag
+    from attestation.kg import canonical, resolve_query
+
+    # Every STORED tag, not the graph's concepts. build_graph drops tags used
+    # fewer than MIN_TAG_USES times, so filtering on graph membership refused
+    # rare-but-real tags -- a search for a concept mentioned once is a
+    # legitimate search, and this is a filter, not a graph query.
+    stored = {canonical(r["tag"]) for r in conn.execute("SELECT DISTINCT tag FROM item_tags")}
+    resolved = resolve_query(tag, {name: () for name in stored})
+    if resolved not in stored:
+        raise ToolError(
+            f"{tag!r} is not a tag in this corpus;"
+            " call kg.concepts(prefix=...) for the names it does use"
+        )
+    return resolved
+
+
 def _passes_filters(item, needle: str, similarity: dict, tag, content_type) -> bool:
     """Whether an item survives the query and the explicit filters.
 
@@ -728,6 +768,7 @@ def _search_feed(
     from attestation.rank import SEARCH_CANDIDATES, literal_candidates, rank_items
 
     limit = clamp_limit(limit)
+    tag = _resolved_tag(conn, tag)
     clicked = {
         r["item_id"]
         for r in conn.execute("SELECT item_id FROM clicks WHERE user_id = ?", (user_row["id"],))

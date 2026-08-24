@@ -572,3 +572,44 @@ def test_a_literal_hit_survives_the_candidate_bound(search_db, monkeypatch):
         "an item reachable only as a literal match was dropped by the candidate"
         f" bound -- got {urls}"
     )
+
+
+def test_a_tag_the_corpus_does_not_use_is_refused_not_answered_with_zero(search_db):
+    """`tag="large language model"` and `tag="LARGE-LANGUAGE-MODELS"` both
+    returned `ok:true, "0 item(s) filtered"` against 1,072 matching items.
+    "0 items" reads as a fact about the archive, not a spelling problem.
+
+    The tag vocabulary is database content, so it cannot be a schema Literal --
+    it needs a runtime check with a message, which every kg lookup already had
+    and this did not. canonical() is identity for anything with spaces or
+    capitals; resolve_query handles exactly those.
+    """
+    import sqlite3
+
+    from attestation.db import get_db
+
+    conn = get_db(search_db)
+    conn.row_factory = sqlite3.Row
+    # Two items sharing the concept: enough for MIN_TAG_USES and an edge.
+    ids = [r["id"] for r in conn.execute("SELECT id FROM items ORDER BY id LIMIT 2")]
+    for item_id in ids:
+        for tag in ("large-language-models", "transformers"):
+            conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, ?)", (item_id, tag))
+    conn.commit()
+    conn.close()
+
+    hyphenated = feed_mod._search_feed("ana", "", tag="large-language-models", limit=5)
+    assert hyphenated["ok"], hyphenated["message"]
+    assert hyphenated["items"], "the fixture did not build a taggable corpus"
+
+    for spelling in ("large language model", "LARGE-LANGUAGE-MODELS"):
+        out = feed_mod._search_feed("ana", "", tag=spelling, limit=5)
+        assert out["ok"], f"{spelling!r} was refused: {out['message']}"
+        assert len(out["items"]) == len(hyphenated["items"]), (
+            f"{spelling!r} returned {len(out['items'])} items where the canonical"
+            f" spelling returned {len(hyphenated['items'])}"
+        )
+
+    unknown = feed_mod._search_feed("ana", "", tag="definitely-not-a-concept", limit=5)
+    assert unknown["ok"] is False, "an unknown tag returned a successful empty result"
+    assert "kg.concepts" in unknown["message"], unknown["message"]
