@@ -11,7 +11,7 @@ metadata:
     related_skills: []
 ---
 
-# Science Recommendations
+# Research provenance
 
 Use this skill when the user asks about their science/research feed, wants
 today's recommended papers, or wants to give feedback on an item ("mark that
@@ -69,7 +69,7 @@ its one-line reason and fix that before proceeding — do not retry blindly.
 If the engine server needs to be started manually:
 
 ```bash
-cd /home/matt/attestation && uv run attest serve &
+cd "${HERMES_RSS_PROJECT_DIR:-<checkout>}" && uv run attest serve &
 ```
 
 This uses the default DB resolution (see below), which finds the
@@ -83,7 +83,7 @@ other hermes-agent skill state rather than inside the project checkout. DB
 path resolution order (see `resolve_db_path` in `src/attestation/db.py`):
 
 1. explicit `--db <path>` flag
-2. `RSS_DB` env var
+2. `ATTEST_DB` env var (`RSS_DB`, the pre-rename name, still works)
 3. `~/.hermes/skills/research-provenance/data/hermes.db`, if that file
    already exists
 4. `./hermes.db` (cwd-relative fallback for ad hoc/dev use)
@@ -91,8 +91,8 @@ path resolution order (see `resolve_db_path` in `src/attestation/db.py`):
 ### Running without a local checkout (uvx)
 
 If `src/attestation/skills/research-provenance/scripts/setup.sh` doesn't find a local
-project checkout at `HERMES_RSS_PROJECT_DIR` (default
-`/home/matt/attestation`), it looks for a `science_recommendations.repo_url`
+project checkout at `HERMES_RSS_PROJECT_DIR` (default: the checkout the
+script itself lives in), it looks for a `science_recommendations.repo_url`
 key in `~/.hermes/config.yaml`:
 
 ```yaml
@@ -119,7 +119,7 @@ Where each piece of attestation config lives, and who writes it:
 
 | Setting | Store | Written by |
 |---|---|---|
-| `LLM_BASE_URL`, `LLM_API_KEY`, `CHAT_MODEL`, `EMBED_MODEL`, `EMBED_DIMS`, `RSS_DB` | `<checkout>/.env` (real env wins) | `attest install` step 3 / user edit |
+| `LLM_BASE_URL`, `LLM_API_KEY`, `CHAT_MODEL`, `EMBED_MODEL`, `EMBED_DIMS`, `ATTEST_DB` | `<checkout>/.env` (real env wins) | `attest install` step 3 / user edit |
 | `mcp_servers.attestation` | `~/.hermes/config.yaml` | `hermes mcp add` (install step 6) |
 | `agent.reasoning_overrides.<model>` | `~/.hermes/config.yaml` | `hermes config set` (install step 8) |
 | live DB | `~/.hermes/skills/research-provenance/data/hermes.db` | engine (resolve_db_path default) |
@@ -718,7 +718,7 @@ Two tools exist because real feedback is scarce:
   invokes an LLM and can be slow. Never let a slow `/explanation` call block
   presenting the feed or confirming a click — those two are independent of it.
 - If any call fails to connect, the engine server is probably not running:
-  rerun `scripts/setup.sh` or `cd /home/matt/attestation && uv run attest serve &`.
+  rerun `scripts/setup.sh` or `cd "${HERMES_RSS_PROJECT_DIR:-<checkout>}" && uv run attest serve &`.
 
 ### When the tools change under you
 

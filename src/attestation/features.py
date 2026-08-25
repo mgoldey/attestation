@@ -13,6 +13,8 @@ from typing import Literal
 import numpy as np
 from pydantic import BaseModel, Field, field_validator
 
+from attestation.llm import BackendUnreachable, backend_unreachable
+
 log = logging.getLogger(__name__)
 
 CONTENT_TYPES = ("paper", "survey", "announcement", "release", "blog", "other")
@@ -167,7 +169,11 @@ def tag_one_item(conn, item: sqlite3.Row, chat_fn, vocab: list[str], model_name:
             out = chat_fn(_tag_prompt(item, vocab), ItemTags.model_json_schema())
             parsed = ItemTags.model_validate(out)
             break
-        except Exception:
+        except Exception as exc:
+            if backend_unreachable(exc):
+                # A dead socket is not this item's fault, and retrying it is
+                # pointless: hand the run the decision to stop.
+                raise BackendUnreachable(str(exc)) from exc
             log.debug("tagging attempt failed for item %s", item["id"], exc_info=True)
     if parsed is None:
         return False
@@ -250,7 +256,18 @@ def run_tagging(conn, chat_fn=None, limit: int | None = None) -> dict:
     with tqdm(rows, desc="tagging", unit="item", disable=None) as bar:
         for item in bar:
             before = conn.total_changes
-            if tag_one_item(conn, item, chat_fn, vocab, model_name):
+            try:
+                tagged = tag_one_item(conn, item, chat_fn, vocab, model_name)
+            except BackendUnreachable:
+                # One dead socket would otherwise cost a retry per item for the
+                # whole batch and print `failed: N` with the cause -- Ollama is
+                # not running -- nowhere in sight. Stop, and say so once.
+                stats["chat_down"] = True
+                log.warning(
+                    "chat model unreachable; stopping -- untagged items wait for the next run"
+                )
+                break
+            if tagged:
                 stats["tagged"] += 1
                 if conn.total_changes != before:
                     fresh = [

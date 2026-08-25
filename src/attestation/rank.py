@@ -351,6 +351,16 @@ def _candidate_items(
     return conn.execute(sql, params).fetchall()
 
 
+class EmbedderUnavailable(RuntimeError):
+    """The embedder is down and there is no cached vector to fall back on.
+
+    Its own type so the web server can tell this expected, cold-start
+    condition apart from a bug: the profile-vector cache is in-process
+    memory, so a freshly started `attest serve` is cold for every reader and
+    this is the FIRST thing a new user hits when Ollama is not running yet.
+    """
+
+
 def _profile_vector(conn, embedder, user_id: int, interests_text: str) -> np.ndarray:
     """Cached profile embedding: recompute only when interests text changes.
 
@@ -375,7 +385,7 @@ def _profile_vector(conn, embedder, user_id: int, interests_text: str) -> np.nda
                 user_id,
             )
             return cached[1]
-        raise RuntimeError(
+        raise EmbedderUnavailable(
             f"no cached profile vector for user_id={user_id} and embedder is unavailable"
         ) from None
 

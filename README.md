@@ -40,7 +40,7 @@ pure local computation over files that already exist. This uses the sweep in
 
 ```bash
 git clone <this repo> ~/attestation && cd ~/attestation && uv sync
-export RSS_DB=/tmp/attest-demo.db
+export ATTEST_DB=/tmp/attest-demo.db
 
 uv run attest runs scan --root examples/workspace
 uv run attest runs compare kdsweep
@@ -58,7 +58,11 @@ winner: kdsweep_t4
           cannot separate configuration from run-to-run variance
 
 7 claim(s): 1 contradicted, 5 supported, 1 unsupported
+1 malformed
 ```
+
+`attest claims` exits 1 on a contradiction (so it can gate a commit), which is
+why a `&&` chain stops there.
 
 Every tracker ranks arms. The second caveat — this ranking cannot separate
 configuration from noise — is the part that earns its keep, and the
@@ -247,12 +251,12 @@ for anyone who wants to wire a piece up by hand.
 
 ### 1. Register the MCP server (one-time)
 
-From anywhere (uses this checkout's path; adjust if you cloned elsewhere):
+From the checkout root (the `--project` path is what gets recorded):
 
 ```bash
 hermes mcp add attestation \
   --command uv \
-  --args run --project /home/matt/attestation attest-mcp
+  --args run --project "$PWD" attest-mcp
 ```
 
 This writes an `mcp_servers.attestation` block into `~/.hermes/config.yaml`:
@@ -261,7 +265,7 @@ This writes an `mcp_servers.attestation` block into `~/.hermes/config.yaml`:
 mcp_servers:
   attestation:
     command: uv
-    args: [run, --project, /home/matt/attestation, attest-mcp]
+    args: [run, --project, /path/to/attestation, attest-mcp]
     enabled: true
 ```
 
@@ -484,7 +488,7 @@ created before the rename. Every entry point (CLI, web server, MCP server)
 resolves the DB the same way (`resolve_db_path()` in `src/attestation/db.py`):
 
 1. explicit `--db <path>` flag
-2. `RSS_DB` env var
+2. `ATTEST_DB` env var (`RSS_DB`, its pre-rename name, is still honoured)
 3. `~/.hermes/skills/science-recommendations/data/hermes.db`, if it exists
 4. `./hermes.db` (cwd-relative fallback for ad hoc/dev use)
 
@@ -664,7 +668,7 @@ or it refuses to open the database at all — `attest browse` handles that.
     uv run attest ingest [--feeds feeds.toml] [--db hermes.db]
     uv run attest tag [--limit N]           # LLM-tag untagged items (topics + content type)
     uv run attest serve [--port 8899]
-    uv run attest eval --user matt          # holdout AUC (noisy at small n)
+    uv run attest eval --user <persona>     # holdout AUC (noisy at small n)
     uv run attest kg-report [--min-size 3]  # graph health metrics + topic clusters
     uv run attest runs scan                 # read experiment runs from $RESEARCH_ROOT
     uv run attest runs compare <family>     # rank the arms of a sweep, with caveats
@@ -683,51 +687,3 @@ or it refuses to open the database at all — `attest browse` handles that.
     uv run ruff check .                     # lint (E, F, W, I, BLE; line length 100)
     uv run ty check                         # type check
     uv run radon cc -s -n C src/attestation      # complexity report (empty = nothing worse than B)
-
-## Live smoke test notes
-
-Verified against real feeds and a real local Ollama instance on 2026-08-04
-(2x GTX 1080 8GB). `uv run attest ingest` against `feeds.toml`'s 7 feeds
-succeeded with zero feed failures: `{'added': 889, 'skipped': 616,
-'failed_feeds': 0}`.
-
-The default chat model `gemma4:12b` partially CPU-offloads on this GPU class
-and took ~94s for a single `/explanation` call — usable but slow. Setting
-`CHAT_MODEL=hermes3:8b` brought that down to ~5.7s on a warm model;
-this is the model used for the demo runbook (see `DEMO.md`). Both models
-fit resident simultaneously with `OLLAMA_MAX_LOADED_MODELS=2`.
-
-## Publishing the skill to a registry
-
-These are account-mutating / network-mutating actions — run them yourself
-when ready. Investigated on the installed `hermes-agent v0.20.0` via
-`hermes skills publish --help` and reading
-`~/.hermes/hermes-agent/hermes_cli/skills_hub.py` (read-only — no publish
-was executed):
-
-- `hermes skills publish <skill_path> --to github --repo <owner/repo>`
-  requires either `GITHUB_TOKEN` set in `~/.hermes/.env`, or `gh auth
-  login` having been run. It also runs a self-scan (`skills_guard.scan_skill`)
-  and refuses to publish anything with a "dangerous" verdict.
-- `--to clawhub` is **not yet supported** by this version — it just prints
-  "Submit manually at https://clawhub.ai/submit".
-- `SKILL.md` must have a non-empty `description` in its YAML frontmatter
-  (ours does).
-
-**Run these yourself, in order, once you're ready:**
-
-```bash
-# 1. Push this repo to a real remote (replace with your actual remote/URL).
-git remote add origin <your-attestation-remote-url>
-git push -u origin main   # or your default branch
-
-# 2. Set science_recommendations.repo_url in ~/.hermes/config.yaml to that
-#    remote's HTTPS URL so setup.sh's uvx fallback (see above) can find it.
-
-# 3. Publish the skill directory to a GitHub-backed skill registry.
-#    Requires GITHUB_TOKEN in ~/.hermes/.env, or `gh auth login` already done.
-hermes skills publish src/attestation/skills/research-provenance --to github --repo <owner/skills-repo>
-```
-
-ClawHub has no CLI publish path yet in v0.20.0 — submit manually at
-https://clawhub.ai/submit if you want it listed there.

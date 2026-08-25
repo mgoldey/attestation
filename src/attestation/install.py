@@ -272,7 +272,7 @@ def step_first_data(check: bool = False, yes: bool = False, now: bool = False) -
 
     db_path = resolve_db_path(None)
     # get_db() runs CREATE TABLE, so opening an absent database would make
-    # --check write a ~90KB file (in cwd, when RSS_DB is unset). Report
+    # --check write a ~90KB file (in cwd, when ATTEST_DB is unset). Report
     # instead: a database that does not exist trivially has no items.
     if not Path(db_path).exists():
         if check:

@@ -11,8 +11,9 @@ from fastapi.staticfiles import StaticFiles
 
 from attestation.db import get_db
 from attestation.explain import explain
-from attestation.llm import default_chat_fn
+from attestation.llm import base_url, default_chat_fn
 from attestation.rank import (
+    EmbedderUnavailable,
     autocreate_user,
     get_user,
     rank_items,
@@ -115,6 +116,17 @@ PAGE = env.from_string("""<!doctype html>
 # `{"user":"ann\",...}`, which htmx cannot parse, so both vote buttons
 # silently stopped working for that persona. `reader()` auto-creates a persona
 # from /?user=, so a typo reaches it with no setup.
+# Rendered in the feed slot when the embedder is down and this reader has no
+# cached profile vector -- the state every reader is in on a fresh `attest
+# serve` before Ollama is up, since rank.py's cache is in-process memory. It
+# used to be a bare "Internal Server Error" with a traceback in the log; this
+# says what `attest ingest` says for the same condition.
+EMBEDDER_DOWN = env.from_string("""<div id="feed">
+<p class="caveat">embedding model unreachable at {{ url }} -- is ollama running?
+(<code>attest install --check</code> diagnoses this.) The feed cannot be ranked
+until it is back; reload once it is.</p>
+</div>""")
+
 FRAGMENT = env.from_string("""<div id="feed">
 {% if quality and quality.caveat %}
 <p class="caveat">{{ quality.caveat }}</p>
@@ -253,7 +265,10 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
     def render_list(user_name: str, request: Request) -> str:
         conn = connection()
         user = reader(user_name, request)
-        items = rank_items(conn, embedder, user["id"])[:LIST_LIMIT]
+        try:
+            items = rank_items(conn, embedder, user["id"])[:LIST_LIMIT]
+        except EmbedderUnavailable:
+            return EMBEDDER_DOWN.render(url=base_url())
         return FRAGMENT.render(
             items=items,
             user=user_name,

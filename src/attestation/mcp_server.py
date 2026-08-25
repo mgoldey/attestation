@@ -4,7 +4,7 @@ The tools themselves live in `attestation.mcp`, one module per domain. This
 file is the entry point and nothing else.
 
 Each tool opens its own short-lived DB connection via resolve_db_path(None), so
-this process stays stateless between calls and honours RSS_DB like the CLI and
+this process stays stateless between calls and honours ATTEST_DB like the CLI and
 web server do. The embedder is constructed lazily and shared across calls --
 it is just an httpx client.
 """

@@ -13,7 +13,7 @@ __pycache__/
 
 # Local demo recordings: a 5.5MB .webm plus stills, never committed. Kept out
 # of the repo so a clone stays small -- a binary that large is permanent
-# history once added. Host it externally and link from DEMO.md if it needs to
+# history once added. Host it externally and link from the README if it needs to
 # be shared.
 demo/
 
@@ -21,3 +21,9 @@ demo/
 dist/
 build/
 .mutate-backup/
+
+# Process logs from the superpowers plugin (design/plan transcripts) and a uv
+# cache left by a run with HOME pointed at a fake path: both sat untracked-but-
+# unignored, one `git add .` from becoming permanent history.
+.superpowers/
+nonexistent-home/

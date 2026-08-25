@@ -1,5 +1,7 @@
 from argparse import Namespace
 
+import pytest
+
 from attestation.cli import build_parser, cmd_bootstrap_persona, cmd_eval, main
 from attestation.db import get_db
 
@@ -666,3 +668,32 @@ def test_an_unusable_database_path_is_a_sentence_not_a_traceback(tmp_path, capsy
     main(["runs", "list"])
     assert fresh.exists(), "a not-yet-existing directory is a first run, not an error"
     assert sqlite3.connect(str(fresh)) is not None
+
+
+def test_tag_command_names_the_cause_when_the_chat_backend_is_down(tmp_path, capsys, monkeypatch):
+    """`{'tagged': 0, 'failed': 2}` is honest but says nothing about why.
+    ingest names the cause and points at the doctor; tag does the same, and
+    exits non-zero even though no item "failed" -- none was attempted."""
+    import attestation.features
+
+    db = tmp_path / "t.db"
+    get_db(db).close()
+    monkeypatch.setattr(
+        attestation.features,
+        "run_tagging",
+        lambda conn, limit=None: {"tagged": 0, "failed": 0, "chat_down": True},
+    )
+    assert main(["tag", "--db", str(db)]) == 1
+    streams = capsys.readouterr()
+    text = streams.out + streams.err
+    assert "unreachable" in text
+    assert "install --check" in text
+
+
+def test_version_flag_reports_the_installed_version(capsys):
+    from importlib.metadata import version
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0
+    assert f"attest {version('attestation')}" in capsys.readouterr().out

@@ -419,3 +419,28 @@ def test_the_vocabulary_is_not_re_read_for_every_item(tmp_path):
         f"tag_vocabulary ran {calls['n']} times for 12 items that minted no new"
         " tag -- the per-item re-read is back"
     )
+
+
+def test_run_tagging_stops_at_an_unreachable_backend_and_says_so(tmp_path):
+    """With Ollama down, `attest tag --limit 2` printed
+    `{'tagged': 0, 'failed': 2, 'model': ...}` and nothing else: each item
+    "failed" after a retry against a dead socket, and the cause was invisible.
+    ingest already sorts this case out (`embedder_down`). Tagging gets the same
+    treatment: stop at the first connection failure, report it, and leave the
+    rest untagged for the next run rather than timing out once per item.
+    """
+    import httpx
+
+    conn = get_db(tmp_path / "t.db")
+    add_item(conn, "first")
+    add_item(conn, "second")
+    calls = []
+
+    def chat_fn(messages, schema):
+        calls.append(1)
+        raise httpx.ConnectError("connection refused")
+
+    stats = run_tagging(conn, chat_fn=chat_fn)
+    assert stats["chat_down"] is True
+    assert stats["tagged"] == 0
+    assert len(calls) == 1, "a dead socket was retried, or a second item was attempted"

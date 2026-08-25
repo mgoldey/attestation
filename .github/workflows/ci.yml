@@ -37,6 +37,15 @@ jobs:
       - name: uv.lock is in sync with pyproject.toml
         run: uv lock --check
 
+      - name: complexity ratchet (radon)
+        run: uv run python scripts/check_complexity.py
+
+      - name: bandit (security)
+        run: uv run bandit -q -c pyproject.toml -r src/attestation --severity-level medium
+
+      - name: xenon (maintainability)
+        run: uv run xenon --max-modules B --max-average A src/attestation
+
       - name: pytest
         run: uv run pytest -q
 

@@ -414,7 +414,8 @@ def resolve_db_path(explicit: str | None) -> Path:
     """Resolve the hermes.db path with this precedence:
 
     1. `explicit` (the --db flag, when the caller actually passed one)
-    2. `RSS_DB` env var, when set
+    2. `ATTEST_DB` env var, when set -- or `RSS_DB`, its pre-rename name, which
+       stays honoured so no existing cron line or MCP entry breaks
     3. the co-located skill data dir (~/.hermes/skills/science-recommendations/data/hermes.db),
        but only if that file already exists
     4. ./hermes.db (cwd-relative default)
@@ -422,7 +423,7 @@ def resolve_db_path(explicit: str | None) -> Path:
     if explicit is not None:
         return Path(explicit)
 
-    env_db = os.environ.get("RSS_DB")
+    env_db = os.environ.get("ATTEST_DB") or os.environ.get("RSS_DB")
     if env_db:
         return Path(env_db)
 

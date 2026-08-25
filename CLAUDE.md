@@ -10,7 +10,7 @@ IMPORTANT: Prefer retrieval-led reasoning over pre-training-led reasoning for an
 
 ```
 [Project Docs Index]|root: .
-|.:{README.md,DEMO.md,CLAUDE.md,pyproject.toml,datasette.yml,.pre-commit-config.yaml,.env.sample,LICENSE}
+|.:{README.md,CLAUDE.md,pyproject.toml,datasette.yml,.pre-commit-config.yaml,.env.sample,LICENSE}
 |src/attestation:{__init__.py,implicit.py,personas.py,cli.py,mcp_server.py,server.py,db.py,rank.py,embed.py,llm.py,ingest.py,feeds.py,features.py,explain.py,kg.py,ledger.py,claims.py,citations.py,corpus.py,symbolic.py,symbolic_ops.py,simulate.py,ports.py,install.py,emit.py,feeds.toml,feed_candidates.toml,kg_aliases.toml}
 |src/attestation/mcp:{__init__.py,_tool.py,_shared.py,ask.py,citation.py,claims_tools.py,disclosure.py,feed.py,knowledge.py,personas.py,provenance.py,routing.py,subscriptions.py,symbolic.py}
 |evals:{run_tagging_eval.py,tagging_cases.json}|examples:{README.md,workspace/}
@@ -52,7 +52,7 @@ before trusting a benchmark number or writing a regression guard.
 |Ranking honesty: _ranking_quality() reports classifier_active + caveat|surface it rather than letting a reader assume the ranker learned something
 |Candidates: _candidate_items(conn,user_id,since_days,*,exclude_clicked)|since_days=None + exclude_clicked=False = search_feed semantics (older/already-rated items are legitimate hits)
 |Storage: db.py SQLite + sqlite-vec|tables: users,feeds,items,clicks,engagement,explanations,item_features,item_tags,runs,run_metrics,corpora,corpus_splits (12 APPLICATION tables — kg_* dropped 2026-08-21, and migration 004 drops them from existing DBs too)|plus item_vectors (a vec0 VIRTUAL table) and its four shadow tables, so a fresh file has 17 — Datasette refuses to open the DB without the sqlite-vec extension loaded
-|DB path: resolve_db_path() precedence = explicit --db → RSS_DB env → ~/.hermes/skills/science-recommendations/data/hermes.db (only if it exists) → ./hermes.db
+|DB path: resolve_db_path() precedence = explicit --db → ATTEST_DB env (RSS_DB, the pre-rename name, as fallback) → ~/.hermes/skills/science-recommendations/data/hermes.db (only if it exists) → ./hermes.db
 |Feeds: DB is source of truth; feeds.toml seeds first ingest only (sync_feeds uses INSERT OR IGNORE, no-op afterwards)|add_feed is register-only — fetch happens on next ingest, never inline
 |Graph: kg.build_graph(assignments) is PURE — takes (item_id, tag) pairs, not a conn; kg.tag_assignments(conn) reads them|concepts = tags with uses ≥ MIN_TAG_USES(2), edges = co-occurrence ≥ MIN_EDGE_WEIGHT(2)|order is load-bearing: canonical() aliases → frequency filter → co-occurrence, tested DB-free|kg_nodes/kg_edges/kg_meta were DELETED 2026-08-21: nothing read them, and the 8 kg tool answers were byte-identical before and after
 |Ledger: ledger.scan()→RunRecord/Metric from artifacts|compare() emits _caveats() rather than silent verdicts|adapters in ledger_adapters/ read nested result structures
@@ -93,7 +93,7 @@ before trusting a benchmark number or writing a regression guard.
   mutating `uv.lock` as a side effect.
 - The pytest hook is ~70s and worth it: this repo's recurring failure mode has
   been tests that pass against the bug they were written to catch. CI runs the
-  same five gates on Linux and macOS across Python 3.12 and 3.13, plus a wheel
+  same eight gates on Linux and macOS across Python 3.12 and 3.13, plus a wheel
   smoke test, so a bypassed hook is caught on push rather than never.
 - Line length 100; ruff lint selects `E,F,W,I,BLE,RUF100`. `RUF100` reports a
   `noqa` that no longer suppresses anything — the per-file-ignores in

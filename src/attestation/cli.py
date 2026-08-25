@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import os
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 import httpx
@@ -42,7 +43,7 @@ def open_db(db_arg: str | None):
         path.parent.mkdir(parents=True, exist_ok=True)
         conn = get_db(path)
     except (OSError, sqlite3.Error) as exc:
-        # A typo in RSS_DB, or a cwd the user cannot write, printed 18 lines of
+        # A typo in ATTEST_DB, or a cwd the user cannot write, printed 18 lines of
         # traceback ending in "unable to open database file" -- which does not
         # say WHICH file, and so does not say which typo. Every other failure
         # in this CLI is a sentence; this one was the exception because it fired
@@ -68,13 +69,14 @@ def fail(message: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="attest")
+    p.add_argument("--version", action="version", version=f"attest {version('attestation')}")
     sub = p.add_subparsers(dest="command", required=True)
 
     def add_db(sp):
         sp.add_argument(
             "--db",
             default=None,
-            help="DB path. Resolution order if omitted: RSS_DB env var > "
+            help="DB path. Resolution order if omitted: ATTEST_DB (or RSS_DB) env var > "
             "~/.hermes/skills/science-recommendations/data/hermes.db (if it exists) > ./hermes.db",
         )
 
@@ -627,10 +629,21 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 def cmd_tag(args: argparse.Namespace) -> int:
     import attestation.features
+    from attestation.llm import base_url
 
     with open_db(args.db) as conn:
         stats = attestation.features.run_tagging(conn, limit=args.limit)
     print(stats)
+    if stats.get("chat_down"):
+        # Same words ingest uses for the same condition. The stats dict alone
+        # said `failed: 2` and left the cause -- Ollama is not running -- to be
+        # guessed.
+        print(
+            f"chat model unreachable at {base_url()} -- is ollama running?"
+            " (`attest install --check` diagnoses this)",
+            file=sys.stderr,
+        )
+        return 1
     return 1 if (stats["tagged"] == 0 and stats["failed"] > 0) else 0
 
 

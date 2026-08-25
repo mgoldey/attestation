@@ -644,3 +644,18 @@ def test_the_dead_kg_tables_are_dropped_from_an_existing_database(tmp_path):
         f"dead knowledge-graph tables survived the migration: {sorted(tables)}"
     )
     conn.close()
+
+
+def test_resolve_db_path_honours_attest_db(tmp_path, monkeypatch):
+    """ATTEST_DB is the documented name. RSS_DB predates the rename to attestation
+    and names the ledger after a feed reader; it stays honoured (below) so no
+    existing cron line or MCP entry breaks, but a stranger types ATTEST_DB."""
+    monkeypatch.delenv("RSS_DB", raising=False)
+    monkeypatch.setenv("ATTEST_DB", str(tmp_path / "attest.db"))
+    assert resolve_db_path(None) == tmp_path / "attest.db"
+
+
+def test_resolve_db_path_attest_db_wins_over_the_legacy_rss_db(tmp_path, monkeypatch):
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "legacy.db"))
+    monkeypatch.setenv("ATTEST_DB", str(tmp_path / "attest.db"))
+    assert resolve_db_path(None) == tmp_path / "attest.db"

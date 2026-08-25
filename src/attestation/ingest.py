@@ -11,7 +11,7 @@ from pathlib import Path
 
 import feedparser
 
-from attestation.llm import DEFAULT_BASE_URL
+from attestation.llm import DEFAULT_BASE_URL, backend_unreachable
 
 log = logging.getLogger(__name__)
 
@@ -167,7 +167,7 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
             # the actual cause is that Ollama is not running. Measured: with the
             # backend down this printed one full httpx traceback PER FEED --
             # 22 of them, ~880 lines -- every one headed "feed failed: <url>".
-            if _is_embedder_down(exc):
+            if backend_unreachable(exc):
                 if not stats.get("embedder_down"):
                     stats["embedder_down"] = True
                     log.warning(
@@ -182,16 +182,3 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
             # expected condition trains people to ignore the output.
             log.warning("feed failed: %s -- %s: %s", feed["url"], type(exc).__name__, exc)
     return stats
-
-
-def _is_embedder_down(exc: BaseException) -> bool:
-    """Whether this failure means the embedding backend is unreachable.
-
-    Matched on the transport exception rather than on message text: httpx
-    raises ConnectError/ConnectTimeout for a refused or unanswered socket,
-    which is exactly the "Ollama is not running" case and is not something a
-    malformed feed can produce -- `parse` never opens a socket to the backend.
-    """
-    import httpx
-
-    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))

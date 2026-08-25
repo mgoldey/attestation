@@ -435,3 +435,47 @@ def test_hostile_feed_text_renders_inert(tmp_path, fake_embedder):
 
     Scan().feed(html)
     assert not injected, f"feed content became live markup: {injected}"
+
+
+def test_cold_start_with_the_embedder_down_renders_a_message_not_a_500(tmp_path, fake_embedder):
+    """`attest serve` before Ollama is up answered GET / with a bare
+    "Internal Server Error".
+
+    rank.py's profile-vector cache is in-process memory, so "embedder down ->
+    serve the cached vector" only covers a backend that dies mid-life; a
+    freshly started server is cold for every reader. Measured against a copy
+    of the live database: 500 in 0.08s, `RuntimeError: no cached profile
+    vector for user_id=1 and embedder is unavailable`. The page has to say
+    what `attest ingest` already says in the same situation.
+    """
+    db_path = tmp_path / "t.db"
+    conn = get_db(db_path)
+    cur = conn.execute(
+        "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+        " VALUES (NULL, 'item', 'http://x', 's', 'h')"
+    )
+    conn.execute(
+        "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+        (cur.lastrowid, fake_embedder.embed_document("item", "s").tobytes()),
+    )
+    conn.commit()
+    conn.close()
+
+    class DownEmbedder:
+        def embed_query(self, text):
+            raise RuntimeError("connection refused")
+
+        def embed_document(self, title, text):
+            raise RuntimeError("connection refused")
+
+    app = create_app(db_path, embedder=DownEmbedder(), chat_fn=lambda m, s: {"text": "w"})
+    tc = TestClient(app)
+
+    page = tc.get("/")
+    assert page.status_code == 200
+    assert "unreachable" in page.text
+    assert "install --check" in page.text
+
+    fragment = tc.get("/list?user=reader")
+    assert fragment.status_code == 200
+    assert "unreachable" in fragment.text

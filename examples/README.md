@@ -6,7 +6,7 @@ wrong.
 
 ```bash
 export RESEARCH_ROOT=$PWD/examples/workspace
-export RSS_DB=/tmp/attest-example.db
+export ATTEST_DB=/tmp/attest-example.db
 
 uv run attest runs scan --root examples/workspace
 uv run attest runs list
@@ -26,10 +26,13 @@ two of the arms being ranked.
 
 **`retrieval-ablation/`** — arms that did **not** all see the same data.
 `rank_method_dense2` trained on `beir-nfcorpus` while the others used
-`msmarco-dev`. `ndcg_at_10` also has no declared direction, so
-`runs compare rank-method` refuses to rank rather than guessing which way is
-better. Both are the ledger's rules holding: never rank an undeclared metric,
-never silently compare across corpora.
+`msmarco-dev`. `runs compare rank-method` ranks it — `ndcg` has a declared
+direction — and then says the winner saw a different corpus from the rest, so
+the number may not be comparable. To see the other rule, ask for a metric with
+no declared direction: `runs compare rank-method --metric n_records` refuses
+to rank rather than guessing which way is better. Both are the ledger's rules
+holding: never rank an undeclared metric, never silently compare across
+corpora.
 
 **`planned_colbert.yaml`** — a config with no result. It is recorded as a
 specification with no metrics rather than being given an invented number.
