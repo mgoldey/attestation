@@ -491,12 +491,13 @@ def _restrict_db_files(path: Path) -> None:
 def get_db(path: str | Path) -> sqlite3.Connection:
     """Open (creating if absent) the SQLite store at `path`.
 
-    Demo personas (SEED_USERS) are seeded only the first time this database
-    file is created, never on subsequent opens -- otherwise a persona removed
-    via delete_persona would be resurrected by the very next tool call, since
-    every MCP tool opens its own connection. Callers that want to guarantee
-    seed data exists (installer, demo setup) should call seed_demo_users()
-    explicitly.
+    Never seeds personas. A new database is EMPTY, so the web UI's first
+    screen is the onboarding form and an agent's first `feed.list` creates
+    the reader it names. Demo personas (SEED_USERS) exist only when asked
+    for: `attest bootstrap-persona <demo name>` creates the one it is given,
+    and seed_demo_users() plants all three. Seeding on creation put the
+    author's own persona in every stranger's database; seeding on every open
+    resurrected personas the reader had deleted.
     """
     path = Path(path)
     is_new = not path.exists()
@@ -528,7 +529,6 @@ def get_db(path: str | Path) -> sqlite3.Connection:
         conn.execute(_vec_schema(dims))
     conn.commit()
     if is_new:
-        seed_demo_users(conn)
         # Again after the first commit: WAL mode creates -wal and -shm lazily,
         # so they did not exist for the pass above.
         _restrict_db_files(path)

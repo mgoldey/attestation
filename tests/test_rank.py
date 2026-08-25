@@ -2,8 +2,8 @@ import hashlib
 
 import numpy as np
 import pytest
+from conftest import seeded_db
 
-from attestation.db import get_db
 from attestation.rank import (
     RankedItem,
     avg_ranks,
@@ -56,7 +56,7 @@ def test_ranks_lower_is_better():
 
 
 def test_cold_start_no_clicks_uses_profile(tmp_path, fake_embedder):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     seed_corpus(conn, fake_embedder)
     user_id = get_user_id(conn, "researcher")
     result = rank_items(conn, fake_embedder, user_id)
@@ -66,7 +66,7 @@ def test_cold_start_no_clicks_uses_profile(tmp_path, fake_embedder):
 
 
 def test_classifier_guard_single_class(tmp_path, fake_embedder):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder)
     user_id = get_user_id(conn, "researcher")
     for i in ids[:4]:  # four clicks, ALL positive -> one class
@@ -78,7 +78,7 @@ def test_classifier_guard_single_class(tmp_path, fake_embedder):
 
 
 def test_clicked_items_excluded(tmp_path, fake_embedder):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder)
     user_id = get_user_id(conn, "researcher")
     conn.execute("INSERT INTO clicks(user_id, item_id, useful) VALUES (?, ?, 1)", (user_id, ids[0]))
@@ -87,7 +87,7 @@ def test_clicked_items_excluded(tmp_path, fake_embedder):
 
 
 def test_recency_window(tmp_path, fake_embedder):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     add_item(conn, fake_embedder, "fresh", days_ago=1)
     add_item(conn, fake_embedder, "stale", days_ago=40)
     result = rank_items(conn, fake_embedder, get_user_id(conn, "researcher"))
@@ -96,7 +96,7 @@ def test_recency_window(tmp_path, fake_embedder):
 
 def test_clicks_shift_ranking(tmp_path, fake_embedder):
     """After mixed clicks, classifier blends in and changes the order."""
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder, n=30)
     user_id = get_user_id(conn, "researcher")
     before = [r.item_id for r in rank_items(conn, fake_embedder, user_id)]
@@ -110,7 +110,7 @@ def test_clicks_shift_ranking(tmp_path, fake_embedder):
 
 
 def test_persona_ordering_differs(tmp_path, fake_embedder):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     seed_corpus(conn, fake_embedder, n=15)
     chem = rank_items(conn, fake_embedder, get_user_id(conn, "bench-chemist"))
     ml = rank_items(conn, fake_embedder, get_user_id(conn, "ml-engineer"))
@@ -118,7 +118,7 @@ def test_persona_ordering_differs(tmp_path, fake_embedder):
 
 
 def test_bootstrap_persona_writes_clicks(tmp_path, fake_embedder):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     seed_corpus(conn, fake_embedder, n=40)
     n = bootstrap_persona(conn, fake_embedder, "bench-chemist", k=30)
     assert n == 30
@@ -129,7 +129,7 @@ def test_bootstrap_persona_writes_clicks(tmp_path, fake_embedder):
 
 
 def test_evaluate_user_insufficient_data(tmp_path, fake_embedder):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     seed_corpus(conn, fake_embedder, n=5)
     assert evaluate_user(conn, get_user_id(conn, "researcher")) is None
 
@@ -139,7 +139,7 @@ def test_evaluate_user_excludes_bootstrap_leakage(tmp_path, fake_embedder):
     embedding the classifier trains on (argsort(X @ profile_vec)), so scoring
     over them is a tautological AUC of 1.0, not a measurement. evaluate_user
     must exclude source='bootstrap' clicks rather than report that leaked 1.0."""
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     seed_corpus(conn, fake_embedder, n=60)
     user_id = get_user_id(conn, "bench-chemist")
     bootstrap_persona(conn, fake_embedder, "bench-chemist", k=30)
@@ -152,7 +152,7 @@ def test_evaluate_user_mixed_real_clicks_returns_a_labelled_score(tmp_path, fake
     """A persona with genuinely mixed non-bootstrap clicks (interleaved labels,
     not a label-sorted run) yields a real AUC instead of tripping the
     single-class-tail guard that leave-last-N-out was vulnerable to."""
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     item_ids = seed_corpus(conn, fake_embedder, n=40)
     user_id = get_user_id(conn, "researcher")
     # Alternate useful/not-useful so the tail is never single-class regardless
@@ -187,7 +187,7 @@ class SpyEmbedder:
 def test_profile_vector_cached_across_calls(tmp_path, fake_embedder):
     """Second rank_items call for the same user + unchanged interests must not
     re-embed the profile text."""
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     seed_corpus(conn, fake_embedder)
     user_id = get_user_id(conn, "researcher")
     spy = SpyEmbedder(fake_embedder)
@@ -201,7 +201,7 @@ def test_profile_vector_cached_across_calls(tmp_path, fake_embedder):
 
 def test_profile_vector_survives_embedder_failure_after_warm_call(tmp_path, fake_embedder):
     """Once the profile vector is cached, an embedder outage must not break ranking."""
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     seed_corpus(conn, fake_embedder)
     user_id = get_user_id(conn, "researcher")
 
@@ -234,7 +234,7 @@ def _tag_item(conn, item_id, content_type, tags):
 def test_downvoted_tag_sinks_similar_item_even_single_class(tmp_path, fake_embedder):
     """Covers two spec behaviors: downvoted-tag demotion, and only-downvotes users
     (single-class history disables the classifier but NOT the pref term)."""
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder, n=40)
     user_id = get_user_id(conn, "researcher")
     for i in ids[:3]:  # three items share a tag+type; the third is the survivor
@@ -258,7 +258,7 @@ def test_downvoted_tag_sinks_similar_item_even_single_class(tmp_path, fake_embed
 
 def test_clicks_without_feature_data_leave_profile_order_intact(tmp_path, fake_embedder):
     """Pref term must not inject tie-break noise when no feature key has click data."""
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder)
     user_id = get_user_id(conn, "researcher")
     conn.execute("INSERT INTO clicks(user_id, item_id, useful) VALUES (?, ?, 0)", (user_id, ids[0]))
@@ -269,7 +269,7 @@ def test_clicks_without_feature_data_leave_profile_order_intact(tmp_path, fake_e
 
 
 def test_no_clicks_ranking_unchanged_by_tags(tmp_path, fake_embedder):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder)
     user_id = get_user_id(conn, "researcher")
     baseline = [r.item_id for r in rank_items(conn, fake_embedder, user_id)]
@@ -278,7 +278,7 @@ def test_no_clicks_ranking_unchanged_by_tags(tmp_path, fake_embedder):
 
 
 def test_ranked_items_carry_tags_and_content_type(tmp_path, fake_embedder):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder)
     user_id = get_user_id(conn, "researcher")
     _tag_item(conn, ids[0], "paper", ["dft", "catalysis"])
@@ -299,7 +299,7 @@ def test_avg_ranks_ties_share_mean_rank():
 def test_partial_tie_neutral_items_keep_profile_relative_order(tmp_path, fake_embedder):
     """With avg_ranks, items sharing the neutral pref score keep their profile-order
     relative to each other even while a downvoted-tag item carries real pref signal."""
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder)
     user_id = get_user_id(conn, "researcher")
     _tag_item(conn, ids[0], "announcement", ["junk"])
@@ -313,10 +313,9 @@ def test_partial_tie_neutral_items_keep_profile_relative_order(tmp_path, fake_em
 
 
 def test_record_click_writes_source_and_rejects_invalid(tmp_path):
-    from attestation.db import get_db
     from attestation.rank import record_click
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     uid = get_user_id(conn, "researcher")
     conn.execute(
         "INSERT INTO items(id, feed_id, title, url, summary, content_hash)"
@@ -342,10 +341,9 @@ def test_record_click_writes_source_and_rejects_invalid(tmp_path):
 
 
 def test_create_user_returns_id_and_rejects_duplicates(tmp_path):
-    from attestation.db import get_db
     from attestation.rank import create_user, get_user
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
 
     uid = create_user(conn, "newbie", "protein folding, cryo-EM")
 
@@ -360,10 +358,9 @@ def test_create_user_returns_id_and_rejects_duplicates(tmp_path):
 
 def test_candidate_items_can_include_clicked_and_drop_window(tmp_path, fake_embedder):
     """search_feed needs both: default behavior must be unchanged."""
-    from attestation.db import get_db
     from attestation.rank import _candidate_items, record_click
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     user_id = get_user_id(conn, "researcher")
     # one recent item, one far outside the default 14-day window
     for i, published in ((1, "datetime('now')"), (2, "datetime('now', '-400 days')")):
@@ -385,10 +382,9 @@ def test_candidate_items_can_include_clicked_and_drop_window(tmp_path, fake_embe
 
 
 def test_record_click_defaults_to_ui(tmp_path):
-    from attestation.db import get_db
     from attestation.rank import record_click
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     uid = get_user_id(conn, "researcher")
     conn.execute(
         "INSERT INTO items(id, feed_id, title, url, summary, content_hash)"
@@ -430,7 +426,7 @@ def test_rank_items_beyond_sqlite_variable_limit(tmp_path, monkeypatch):
     this fast: the vector math is the same regardless of dimensionality."""
     monkeypatch.setenv("EMBED_DIMS", "16")
     embedder = _SmallDimsFakeEmbedder(dims=16)
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     n = 32766 + 500
     rng = np.random.default_rng(0)
     rows = []
@@ -475,7 +471,7 @@ def test_updating_interests_evicts_the_cached_profile_vector(tmp_path, fake_embe
 
     db = tmp_path / "t.db"
     monkeypatch.setenv("RSS_DB", str(db))  # the tool resolves its own connection
-    conn = get_db(db)
+    conn = seeded_db(db)
     conn.execute("INSERT INTO users(name, interests) VALUES ('ana', 'quantum chemistry')")
     conn.commit()
     user_id = conn.execute("SELECT id FROM users WHERE name='ana'").fetchone()["id"]
@@ -488,7 +484,7 @@ def test_updating_interests_evicts_the_cached_profile_vector(tmp_path, fake_embe
     conn.close()
     feed_mod._update_persona("ana", "medieval poetry")
 
-    conn = get_db(db)
+    conn = seeded_db(db)
     assert (rank._db_identity(conn), user_id) not in rank._PROFILE_VEC_CACHE, (
         "update_persona must evict; otherwise the embedder-down fallback serves "
         "a vector computed from the interests text the user just replaced"
@@ -524,7 +520,7 @@ def test_one_click_does_not_reorder_the_whole_feed(tmp_path, fake_embedder):
     of this item's keys has the reader touched at all". And it fired at
     n_clicks > 0, so one observation moved every candidate.
     """
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     conn.execute("INSERT INTO users(name, interests) VALUES ('ana', 'protein folding')")
     for i in range(1, 61):
         cur = conn.execute(
@@ -567,7 +563,7 @@ def test_the_preference_term_waits_for_both_classes(tmp_path, fake_embedder):
     """
     from attestation.rank import _preference_ready
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     conn.execute("INSERT INTO users(name, interests) VALUES ('ana', 'x')")
     for i in range(1, 31):
         conn.execute(
@@ -605,10 +601,9 @@ def test_the_preference_term_waits_for_both_classes(tmp_path, fake_embedder):
 def _mixed_history(tmp_path, embedder, sources):
     """A user whose clicks come from the given provenance sources, alternating
     useful/not-useful so the classifier's single-class guard never fires."""
-    from attestation.db import get_db
     from attestation.rank import create_user
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     user_id = create_user(conn, "mixed", "machine learning")
     for i, source in enumerate(sources):
         item_id = add_item(conn, embedder, f"item {i}")
@@ -726,7 +721,7 @@ def test_ranking_quality_stays_small_enough_to_ship_in_every_envelope(tmp_path, 
     assert quality["real_clicks"] == 1, "the split survives on a history with clicks"
     assert quality["synthetic_clicks"] == 1
 
-    conn2 = get_db(tmp_path / "empty.db")
+    conn2 = seeded_db(tmp_path / "empty.db")
     empty_user = create_user(conn2, "nobody", "machine learning")
     empty = ranking_quality(conn2, empty_user)
     assert empty["clicks"] == 0
@@ -784,10 +779,9 @@ def test_the_since_days_window_is_not_confused_by_the_date_separator(tmp_path, f
     Measured on the live database: a 12-day window returned 3120 items where
     2494 qualify -- 626 wrongly included, 25% too many.
     """
-    from attestation.db import get_db
     from attestation.rank import create_user, rank_items
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     user_id = create_user(conn, "ana", "machine learning")
     assert user_id
 
@@ -824,12 +818,11 @@ def test_a_persona_lookup_is_case_insensitive(tmp_path):
     A person typing their own name with different capitalisation is the same
     person. Case-preserving on write, case-insensitive on lookup.
     """
-    from attestation.db import get_db
     from attestation.rank import create_user, get_user
 
     # A fresh database is seeded with demo personas including `matt`, so use
     # a name of our own to keep the assertion about case and nothing else.
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     create_user(conn, "ada", "machine learning")
 
     assert get_user(conn, "Ada") is not None, "a capitalised name missed the persona"
@@ -842,10 +835,9 @@ def test_creating_a_persona_that_differs_only_in_case_is_refused(tmp_path):
     spelling silently shadows the first."""
     import pytest
 
-    from attestation.db import get_db
     from attestation.rank import create_user
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     create_user(conn, "ada", "machine learning")
 
     with pytest.raises(ValueError):
@@ -870,15 +862,14 @@ def test_two_threads_creating_one_persona_do_not_both_raise(tmp_path):
     """
     import concurrent.futures
 
-    from attestation.db import get_db
     from attestation.rank import autocreate_user
 
     db = tmp_path / "t.db"
-    get_db(db).commit()
+    seeded_db(db).commit()
 
     def create(_):
         try:
-            autocreate_user(get_db(db), "freshreader")
+            autocreate_user(seeded_db(db), "freshreader")
             return None
         except Exception as exc:  # noqa: BLE001 -- the point is what leaks out
             return f"{type(exc).__name__}: {exc}"
@@ -887,7 +878,9 @@ def test_two_threads_creating_one_persona_do_not_both_raise(tmp_path):
         errors = [e for e in pool.map(create, range(12)) if e]
 
     assert not errors, f"{len(errors)} of 12 concurrent autocreates raised: {errors[0]}"
-    rows = get_db(db).execute("SELECT COUNT(*) FROM users WHERE name = 'freshreader'").fetchone()[0]
+    rows = (
+        seeded_db(db).execute("SELECT COUNT(*) FROM users WHERE name = 'freshreader'").fetchone()[0]
+    )
     assert rows == 1, f"{rows} personas created for one name"
 
 
@@ -937,10 +930,9 @@ def test_eval_reports_what_it_actually_measured(tmp_path, fake_embedder):
     The fix is not a better estimator; it is saying which term was scored, so a
     reader does not take it for the whole.
     """
-    from attestation.db import get_db
     from attestation.rank import create_user, evaluate_user
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     user_id = create_user(conn, "ana", "machine learning")
     for i in range(1, 25):
         item = add_item(conn, fake_embedder, f"item {i}")
@@ -993,10 +985,9 @@ def test_both_classes_present_is_not_the_same_as_trained_on_both(tmp_path):
     Measured: that classifier's probabilities over 1000 items span 0.31-0.80
     with std 0.057, which is a near-constant dressed as a trained model.
     """
-    from attestation.db import get_db
     from attestation.rank import ranking_quality
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     user_id = _skewed_history(conn, "skewed", n=200, minority=1)
 
     quality = ranking_quality(conn, user_id)
@@ -1005,7 +996,7 @@ def test_both_classes_present_is_not_the_same_as_trained_on_both(tmp_path):
     assert "1 not-useful" in quality["caveat"], quality["caveat"]
 
     # Enough of the minority class and the caveat correctly goes away.
-    balanced = get_db(tmp_path / "b.db")
+    balanced = seeded_db(tmp_path / "b.db")
     fine = _skewed_history(balanced, "fine", n=200, minority=20)
     assert not ranking_quality(balanced, fine).get("caveat"), (
         "a well-balanced history is being caveated"
@@ -1025,10 +1016,9 @@ def test_eval_reports_whether_the_labels_are_really_about_provenance(tmp_path):
     """
     import numpy as np
 
-    from attestation.db import get_db
     from attestation.rank import evaluate_user, record_click
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     conn.execute("INSERT INTO users(name, interests) VALUES ('split', 'science')")
     conn.execute("INSERT INTO feeds(title, url) VALUES ('f', 'http://f')")
     # Two separable populations: harvested positives in one region of the
@@ -1066,10 +1056,9 @@ def test_the_ordering_weight_is_reported_alongside_its_human_only_value(tmp_path
     on 30 bootstrap rows, whose labels are a threshold on the very embedding
     being ranked. Disclosed rather than changed: the weight is what it is.
     """
-    from attestation.db import get_db
     from attestation.rank import ranking_quality, record_click
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     conn.execute("INSERT INTO users(name, interests) VALUES ('synthetic-only', 'science')")
     conn.execute("INSERT INTO feeds(title, url) VALUES ('f', 'http://f')")
     for i in range(30):

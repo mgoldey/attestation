@@ -1,7 +1,7 @@
 import pytest
+from conftest import seeded_db
 from pydantic import ValidationError
 
-from attestation.db import get_db
 from attestation.features import (
     ItemTags,
     pref_scores_for_items,
@@ -50,7 +50,7 @@ def test_itemtags_rejects_bad_output(bad):
 
 
 def test_tag_one_item_writes_features_and_tags(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     item_id = add_item(conn, "DFT paper")
     ok = tag_one_item(conn, get_item_row(conn, item_id), good_chat_fn, [], "testmodel")
     assert ok is True
@@ -66,7 +66,7 @@ def test_tag_one_item_writes_features_and_tags(tmp_path):
 
 
 def test_tag_one_item_retries_once_then_succeeds(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     item_id = add_item(conn, "flaky")
     calls = {"n": 0}
 
@@ -81,7 +81,7 @@ def test_tag_one_item_retries_once_then_succeeds(tmp_path):
 
 
 def test_tag_one_item_gives_up_after_retry_writes_nothing(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     item_id = add_item(conn, "hopeless")
 
     def bad_chat_fn(messages, schema):
@@ -99,7 +99,7 @@ def test_tag_one_item_gives_up_after_retry_writes_nothing(tmp_path):
 
 
 def test_vocab_appears_in_prompt(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     item_id = add_item(conn, "vocab check")
     seen = {}
 
@@ -112,7 +112,7 @@ def test_vocab_appears_in_prompt(tmp_path):
 
 
 def test_tag_vocabulary_orders_by_use(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     ids = [add_item(conn, f"i{n}") for n in range(3)]
     for i in ids:
         conn.execute("INSERT INTO item_tags(item_id, tag) VALUES (?, 'common')", (i,))
@@ -122,7 +122,7 @@ def test_tag_vocabulary_orders_by_use(tmp_path):
 
 
 def test_run_tagging_tags_all_untagged_then_is_idempotent(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     for n in range(3):
         add_item(conn, f"item {n}")
     stats = run_tagging(conn, chat_fn=good_chat_fn)
@@ -216,7 +216,7 @@ def test_run_tagging_reports_the_model_it_used(tmp_path, monkeypatch):
     change cannot split one run across two models.
     """
     monkeypatch.setenv("CHAT_MODEL", "test-model:1b")
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     for n in range(3):
         add_item(conn, f"item {n}")
 
@@ -228,7 +228,7 @@ def test_run_tagging_reports_the_model_it_used(tmp_path, monkeypatch):
 
 
 def test_run_tagging_newest_first_and_limit(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     old = add_item(conn, "old", days_ago=5)
     new = add_item(conn, "new", days_ago=0)
     stats = run_tagging(conn, chat_fn=good_chat_fn, limit=1)
@@ -238,7 +238,7 @@ def test_run_tagging_newest_first_and_limit(tmp_path):
 
 
 def test_run_tagging_counts_failures_and_continues(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     add_item(conn, "will-fail")
     add_item(conn, "will-succeed")
 
@@ -252,7 +252,7 @@ def test_run_tagging_counts_failures_and_continues(tmp_path):
 
 
 def test_new_tags_enter_vocabulary_within_a_run(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     add_item(conn, "first", days_ago=0)
     add_item(conn, "second", days_ago=1)
     prompts = []
@@ -286,7 +286,7 @@ def _matt(conn):
 
 
 def test_pref_neutral_with_no_data(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     a = add_item(conn, "a")  # untagged, no feed -> no keys at all
     b = add_item(conn, "b")
     _tag(conn, b, "paper", ["dft"])  # tagged but user has no clicks
@@ -296,7 +296,7 @@ def test_pref_neutral_with_no_data(tmp_path):
 
 
 def test_downvoted_tag_scores_below_neutral(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     uid = _matt(conn)
     bad1, bad2, candidate, control = (add_item(conn, t) for t in ("bad1", "bad2", "cand", "ctrl"))
     for i in (bad1, bad2, candidate):
@@ -311,7 +311,7 @@ def test_downvoted_tag_scores_below_neutral(tmp_path):
 
 
 def test_upvotes_score_above_neutral_and_mix_averages(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     uid = _matt(conn)
     liked, candidate = add_item(conn, "liked"), add_item(conn, "cand")
     _tag(conn, liked, "paper", ["dft"])
@@ -321,7 +321,7 @@ def test_upvotes_score_above_neutral_and_mix_averages(tmp_path):
 
 
 def test_source_key_used_when_feed_present(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     uid = _matt(conn)
     conn.execute("INSERT INTO feeds(id, url, title) VALUES (7, 'http://f', 'Feed7')")
 
@@ -339,7 +339,7 @@ def test_source_key_used_when_feed_present(tmp_path):
 
 
 def test_scores_are_per_user(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     uid = _matt(conn)
     other = conn.execute("SELECT id FROM users WHERE name = 'ml-engineer'").fetchone()["id"]
     a, b = add_item(conn, "a"), add_item(conn, "b")
@@ -353,7 +353,7 @@ def test_tag_vocabulary_excludes_non_topic_tags(tmp_path):
     """The prompt tells the model not to emit provenance tags, so suggesting
     them as vocabulary would work against it. They are low-use today, but a
     corpus with more release notes would push them into the top slots."""
-    conn = get_db(tmp_path / "v.db")
+    conn = seeded_db(tmp_path / "v.db")
     for i, tags in enumerate(
         [["nature", "biology"]] * 5 + [["release", "pytorch"]] * 4 + [["genomics"]], start=1
     ):
@@ -386,7 +386,7 @@ def test_the_vocabulary_is_not_re_read_for_every_item(tmp_path):
     """
     from attestation import features
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     for i in range(12):
         add_item(conn, f"item-{i}", days_ago=i)
     # An established tag: already used by an item that is not in this run.
@@ -431,7 +431,7 @@ def test_run_tagging_stops_at_an_unreachable_backend_and_says_so(tmp_path):
     """
     import httpx
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     add_item(conn, "first")
     add_item(conn, "second")
     calls = []

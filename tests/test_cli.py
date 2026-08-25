@@ -1,6 +1,7 @@
 from argparse import Namespace
 
 import pytest
+from conftest import seeded_db
 
 from attestation.cli import build_parser, cmd_bootstrap_persona, cmd_eval, main
 from attestation.db import get_db
@@ -23,7 +24,7 @@ def test_eval_insufficient_data_message(tmp_path, capsys):
     """Nonzero: "I could not measure this" is a failure to produce the answer
     the command exists for, and every other CLI failure path exits 1."""
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
     rc = main(["eval", "--db", str(db), "--user", "researcher"])
     assert rc == 1
     assert "insufficient" in capsys.readouterr().err.lower()
@@ -84,7 +85,7 @@ def test_tag_command_prints_stats(tmp_path, capsys, monkeypatch):
     import attestation.features
 
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
     monkeypatch.setattr(
         attestation.features, "run_tagging", lambda conn, limit=None: {"tagged": 0, "failed": 0}
     )
@@ -97,7 +98,7 @@ def test_tag_command_exit_1_on_total_failure(tmp_path, monkeypatch):
     import attestation.features
 
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
     monkeypatch.setattr(
         attestation.features, "run_tagging", lambda conn, limit=None: {"tagged": 0, "failed": 3}
     )
@@ -150,7 +151,7 @@ def test_kg_report_runs_on_an_empty_database(tmp_path, capsys):
     for and it is unchanged.
     """
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
 
     rc = main(["kg-report", "--db", str(db)])
 
@@ -178,7 +179,7 @@ def test_runs_scan_without_a_root_explains_rather_than_crashing(tmp_path, monkey
     mean is worse than saying which variable to set."""
     monkeypatch.delenv("RESEARCH_ROOT", raising=False)
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
 
     rc = main(["runs", "--db", str(db), "scan"])
 
@@ -188,7 +189,7 @@ def test_runs_scan_without_a_root_explains_rather_than_crashing(tmp_path, monkey
 
 def test_runs_list_before_scan_directs_the_user(tmp_path, capsys):
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
 
     rc = main(["runs", "--db", str(db), "list"])
 
@@ -208,7 +209,7 @@ def test_claims_with_no_annotations_shows_the_format(tmp_path, capsys):
     """A checker that just says "0 claims" teaches nothing; the first run is
     exactly when the format needs explaining."""
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
     (tmp_path / "doc.md").write_text("# no claims here\n")
 
     rc = main(["claims", "--db", str(db), str(tmp_path)])
@@ -220,7 +221,7 @@ def test_claims_with_no_annotations_shows_the_format(tmp_path, capsys):
 def test_cmd_eval_directly_with_plain_namespace(tmp_path, capsys):
     """cmd_* handlers are unit-testable on their own -- no parser needed."""
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
 
     rc = cmd_eval(Namespace(db=str(db), user="researcher"))
 
@@ -232,7 +233,7 @@ def test_cmd_bootstrap_persona_directly_with_plain_namespace(tmp_path, capsys, m
     import attestation.rank
 
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
     monkeypatch.setattr(attestation.rank, "bootstrap_persona", lambda conn, embedder, name, k: 7)
 
     rc = cmd_bootstrap_persona(Namespace(db=str(db), name="bench-chemist", k=10))
@@ -244,7 +245,7 @@ def test_cmd_bootstrap_persona_directly_with_plain_namespace(tmp_path, capsys, m
 def test_claims_exits_nonzero_on_a_contradiction(tmp_path, capsys):
     """A document asserting something false should be able to fail a commit."""
     db = tmp_path / "t.db"
-    conn = get_db(db)
+    conn = seeded_db(db)
     conn.execute("INSERT INTO runs(project, name, source_path) VALUES ('p', 'r', '/tmp/x')")
     conn.execute("INSERT INTO run_metrics(run_id, metric, value) VALUES (1, 'wer', 0.9)")
     conn.commit()
@@ -385,7 +386,7 @@ def test_eval_for_an_unknown_user_exits_nonzero(tmp_path, capsys):
     is the only failure path in this CLI that did.
     """
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
 
     rc = main(["eval", "--db", str(db), "--user", "definitely-not-a-persona"])
 
@@ -398,7 +399,7 @@ def test_eval_with_a_real_measurement_still_exits_zero(tmp_path, capsys, monkeyp
     import attestation.rank
 
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
     # evaluate_user returns a labelled dict now, not a bare float: the number
     # covers the click classifier only, and saying so is the point.
     monkeypatch.setattr(
@@ -426,7 +427,7 @@ def test_bootstrap_persona_for_an_unknown_name_does_not_traceback(tmp_path, caps
     fix and return 1.
     """
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
 
     rc = main(["bootstrap-persona", "--db", str(db), "no-such-persona"])
 
@@ -448,10 +449,8 @@ def test_backup_writes_a_restorable_copy(tmp_path, monkeypatch, capsys):
     """
     import sqlite3
 
-    from attestation.db import get_db
-
     db = tmp_path / "src.db"
-    conn = get_db(db)
+    conn = seeded_db(db)
     conn.execute("INSERT INTO users(name, interests) VALUES ('ada', 'analysis')")
     conn.commit()
     # The connection stays OPEN. Closing it checkpoints the WAL, which put the
@@ -475,10 +474,9 @@ def test_backup_writes_a_restorable_copy(tmp_path, monkeypatch, capsys):
 def test_backup_refuses_an_existing_destination(tmp_path, capsys):
     """Silently replacing the previous backup is one keystroke from having
     none. Exit non-zero and say so."""
-    from attestation.db import get_db
 
     db = tmp_path / "src.db"
-    get_db(db).commit()
+    seeded_db(db).commit()
     dest = tmp_path / "b.db"
     dest.write_text("not empty")
 
@@ -500,10 +498,9 @@ def test_kg_report_on_an_empty_graph_says_what_to_do(tmp_path, capsys):
     The house pattern is already set by `attest runs list`, which says "no runs
     recorded -- run `attest runs scan` first". This makes the graph match it.
     """
-    from attestation.db import get_db
 
     db = tmp_path / "t.db"
-    get_db(db).commit()
+    seeded_db(db).commit()
 
     rc = main(["kg-report", "--db", str(db)])
     err = capsys.readouterr().err
@@ -516,10 +513,9 @@ def test_kg_report_on_an_empty_graph_says_what_to_do(tmp_path, capsys):
 
 def test_kg_report_still_reports_a_populated_graph(tmp_path, capsys):
     """The empty-state branch must not swallow a real report."""
-    from attestation.db import get_db
 
     db = tmp_path / "t.db"
-    conn = get_db(db)
+    conn = seeded_db(db)
     for i in range(6):
         cur = conn.execute(
             "INSERT INTO items(feed_id, title, url, summary, content_hash)"
@@ -547,10 +543,9 @@ def test_failures_are_reported_on_stderr_not_stdout(tmp_path, capsys, monkeypatc
     error text to jq. Exit codes are for programs; streams are how the program
     tells data apart from complaint.
     """
-    from attestation.db import get_db
 
     db = tmp_path / "t.db"
-    get_db(db).commit()
+    seeded_db(db).commit()
     monkeypatch.setenv("RSS_DB", str(db))
 
     rc = main(["runs", "list"])
@@ -573,10 +568,9 @@ def test_kg_report_on_an_empty_graph_fails_like_its_siblings(tmp_path, capsys, m
     "here is your graph", which is the same defect the six other sites were
     fixed for.
     """
-    from attestation.db import get_db
 
     db = tmp_path / "t.db"
-    get_db(db).commit()
+    seeded_db(db).commit()
     monkeypatch.setenv("RSS_DB", str(db))
 
     rc = main(["kg-report"])
@@ -677,7 +671,7 @@ def test_tag_command_names_the_cause_when_the_chat_backend_is_down(tmp_path, cap
     import attestation.features
 
     db = tmp_path / "t.db"
-    get_db(db).close()
+    seeded_db(db).close()
     monkeypatch.setattr(
         attestation.features,
         "run_tagging",
@@ -697,3 +691,31 @@ def test_version_flag_reports_the_installed_version(capsys):
         main(["--version"])
     assert exc.value.code == 0
     assert f"attest {version('attestation')}" in capsys.readouterr().out
+
+
+def test_bootstrap_persona_creates_its_demo_persona_on_a_fresh_database(tmp_path, monkeypatch):
+    """A fresh database has no personas, so the README's
+    `attest bootstrap-persona bench-chemist` must create the demo persona it
+    names before writing its pseudo-clicks -- otherwise the documented demo
+    command fails on the database `attest install` just created."""
+    import attestation.rank
+    from attestation.db import SEED_USERS
+
+    db = tmp_path / "t.db"
+    get_db(db).close()
+    monkeypatch.setattr(attestation.rank, "bootstrap_persona", lambda conn, embedder, name, k: 7)
+
+    assert main(["bootstrap-persona", "--db", str(db), "bench-chemist"]) == 0
+    conn = seeded_db(db)
+    row = conn.execute("SELECT interests FROM users WHERE name = 'bench-chemist'").fetchone()
+    conn.close()
+    assert row is not None
+    assert row["interests"] == SEED_USERS["bench-chemist"]
+
+
+def test_bootstrap_persona_unknown_name_names_the_demo_personas(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    get_db(db).close()
+    assert main(["bootstrap-persona", "--db", str(db), "no-such-persona"]) == 1
+    out = capsys.readouterr().out
+    assert "bench-chemist" in out, "the fix is to name a demo persona; say which exist"

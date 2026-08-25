@@ -155,9 +155,10 @@ uv run attest serve             # http://127.0.0.1:8899
 ```
 
 The first screen asks who is reading and what about -- ranking starts from
-that interests text alone. Three demo personas (`researcher`, `bench-chemist`,
-`ml-engineer`) are seeded so the per-identity ranking has something to show
-before you have clicked anything; delete them when you are done comparing.
+that interests text alone, and a new database has no personas until someone
+answers. To compare per-identity ranking before you have clicked anything,
+`attest bootstrap-persona bench-chemist` (or `ml-engineer`, `researcher`)
+creates that demo persona and gives it pseudo-clicks.
 Click ✓/✗ on items; the feed retrains and re-ranks on every click. Switch users
 in the nav to see the same feed ranked per-identity.
 

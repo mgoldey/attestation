@@ -60,3 +60,18 @@ class FakeEmbedder:
 @pytest.fixture
 def fake_embedder():
     return FakeEmbedder()
+
+
+def seeded_db(path):
+    """get_db plus the three demo personas.
+
+    get_db creates an EMPTY database (see its docstring); the tests that
+    exercise ranking, digests and the web UI need personas to rank for, and
+    most were written when get_db seeded them itself. INSERT OR IGNORE, so
+    reopening through this helper is as safe as reopening through get_db.
+    """
+    from attestation.db import get_db, seed_demo_users
+
+    conn = get_db(path)
+    seed_demo_users(conn)
+    return conn

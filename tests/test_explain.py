@@ -1,9 +1,11 @@
+from conftest import seeded_db
+
 from attestation.db import get_db
 from attestation.explain import explain
 
 
 def setup_db(tmp_path):
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")  # personas 1-3 exist; clicks reference user 1
     conn.execute(
         "INSERT INTO items(feed_id, title, summary, content_hash)"
         " VALUES (NULL, 'Attention Is Enough', 'a paper', 'h1')"
@@ -30,7 +32,7 @@ def test_explain_unknown_user_is_handled_quietly(tmp_path, caplog):
     conn = setup_db(tmp_path)
 
     with caplog.at_level(logging.WARNING, logger="attestation.explain"):
-        # user 99 does not exist; get_db seeds ids 1-3 only
+        # user 99 does not exist; seeded_db plants ids 1-3 only
         assert explain(conn, user_id=99, item_id=1, chat_fn=good_chat) is None
 
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR], (
@@ -99,7 +101,7 @@ def test_a_persona_with_interests_skips_profile_synthesis(tmp_path):
     a persona with no interests text, not the default path.
     """
     conn = get_db(tmp_path / "t.db")
-    conn.execute("DELETE FROM users")  # get_db seeds demo personas at id 1..3
+    # get_db creates an EMPTY database; this test makes its own persona
     conn.execute(
         "INSERT INTO users(id, name, interests) VALUES (1, 'ana', 'protein folding, cryo-EM')"
     )
@@ -127,7 +129,7 @@ def test_a_persona_with_no_interests_still_gets_a_synthesized_profile(tmp_path):
     """The fallback has to keep working -- an agent-created persona may have
     an empty interests string and only clicks to go on."""
     conn = get_db(tmp_path / "t.db")
-    conn.execute("DELETE FROM users")  # get_db seeds demo personas at id 1..3
+    # get_db creates an EMPTY database; this test makes its own persona
     conn.execute("INSERT INTO users(id, name, interests) VALUES (1, 'ana', '')")
     conn.execute(
         "INSERT INTO items(id, feed_id, title, url, summary, content_hash)"

@@ -1,7 +1,7 @@
 import pytest
+from conftest import seeded_db
 
 from attestation import mcp_server
-from attestation.db import get_db
 from attestation.mcp import _shared
 
 
@@ -16,7 +16,7 @@ def _patch_env_db(tmp_path, monkeypatch):
 @pytest.fixture
 def seeded_conn(_patch_env_db, fake_embedder, monkeypatch):
     """Seed the env-pointed DB with items + vectors, patch the module-level embedder."""
-    conn = get_db(_patch_env_db)
+    conn = seeded_db(_patch_env_db)
     for i in range(15):
         cur = conn.execute(
             "INSERT INTO items(feed_id, title, url, summary, content_hash)"
@@ -79,21 +79,21 @@ class TestListFeed:
 
 
 def test_record_feedback_records_agent_source(seeded_conn):
-    from attestation.db import get_db, resolve_db_path
+    from attestation.db import resolve_db_path
 
     out = mcp_server._record_feedback_impl("researcher", 1, True)
     assert out["ok"] is True
 
-    conn = get_db(resolve_db_path(None))
+    conn = seeded_db(resolve_db_path(None))
     row = conn.execute("SELECT source FROM clicks WHERE item_id = 1").fetchone()
     assert row["source"] == "agent"
     conn.close()
 
 
 def test_remove_feed_without_confirm_mutates_nothing(seeded_conn):
-    from attestation.db import get_db, resolve_db_path
+    from attestation.db import resolve_db_path
 
-    conn = get_db(resolve_db_path(None))
+    conn = seeded_db(resolve_db_path(None))
     conn.execute("INSERT INTO feeds(id, url, title) VALUES (77, 'http://x/rss', 'X')")
     conn.commit()
     conn.close()
@@ -102,7 +102,7 @@ def test_remove_feed_without_confirm_mutates_nothing(seeded_conn):
 
     assert out["ok"] is False
     assert "confirm" in out["message"]
-    conn = get_db(resolve_db_path(None))
+    conn = seeded_db(resolve_db_path(None))
     assert conn.execute("SELECT COUNT(*) n FROM feeds WHERE id = 77").fetchone()["n"] == 1
     conn.close()
 
@@ -124,7 +124,7 @@ def test_create_and_update_persona(seeded_conn):
 
 
 def test_destructive_tools_refuse_without_confirm(seeded_conn):
-    from attestation.db import get_db, resolve_db_path
+    from attestation.db import resolve_db_path
 
     mcp_server._create_persona_impl("victim", "x")
     mcp_server._record_feedback_impl("victim", 1, True)
@@ -132,13 +132,13 @@ def test_destructive_tools_refuse_without_confirm(seeded_conn):
     assert mcp_server._delete_persona_impl("victim", confirm=False)["ok"] is False
     assert mcp_server._reset_feedback_impl("victim", confirm=False)["ok"] is False
 
-    conn = get_db(resolve_db_path(None))
+    conn = seeded_db(resolve_db_path(None))
     assert conn.execute("SELECT COUNT(*) n FROM users WHERE name = 'victim'").fetchone()["n"] == 1
     assert conn.execute("SELECT COUNT(*) n FROM clicks").fetchone()["n"] == 1
     conn.close()
 
     assert mcp_server._reset_feedback_impl("victim", confirm=True)["ok"] is True
-    conn = get_db(resolve_db_path(None))
+    conn = seeded_db(resolve_db_path(None))
     assert conn.execute("SELECT COUNT(*) n FROM clicks").fetchone()["n"] == 0
     # persona itself survives a reset
     assert conn.execute("SELECT COUNT(*) n FROM users WHERE name = 'victim'").fetchone()["n"] == 1
@@ -163,7 +163,7 @@ def test_search_feed_finds_already_rated_items(seeded_conn):
 def test_search_feed_matches_summary_only(seeded_conn, fake_embedder):
     """The needle appears only in the summary, never in any seeded title --
     proves search_feed matches against summary text, not title alone."""
-    conn = get_db(seeded_conn)
+    conn = seeded_db(seeded_conn)
     cur = conn.execute(
         "INSERT INTO items(feed_id, title, url, summary, content_hash)"
         " VALUES (NULL, 'unrelated headline', 'http://x', ?, 'hash-summary-only')",
@@ -199,10 +199,10 @@ def test_search_feed_nonpositive_limit_is_clamped(seeded_conn):
 def test_delete_persona_does_not_leak_explanations_to_a_recreated_id(seeded_conn):
     """users.id is a reused rowid: deleting alice and recreating a persona at
     the same id must not hand the new persona alice's cached explanation."""
-    from attestation.db import get_db, resolve_db_path
+    from attestation.db import resolve_db_path
 
     mcp_server._create_persona_impl("alice", "quantum chemistry")
-    conn = get_db(resolve_db_path(None))
+    conn = seeded_db(resolve_db_path(None))
     alice_id = conn.execute("SELECT id FROM users WHERE name = 'alice'").fetchone()["id"]
     conn.execute(
         "INSERT INTO explanations(user_id, item_id, text) VALUES (?, 1, 'alice-only text')",
@@ -214,7 +214,7 @@ def test_delete_persona_does_not_leak_explanations_to_a_recreated_id(seeded_conn
     out = mcp_server._delete_persona_impl("alice", confirm=True)
     assert out["ok"] is True
 
-    conn = get_db(resolve_db_path(None))
+    conn = seeded_db(resolve_db_path(None))
     remaining = conn.execute(
         "SELECT COUNT(*) n FROM explanations WHERE user_id = ?", (alice_id,)
     ).fetchone()["n"]
@@ -223,7 +223,7 @@ def test_delete_persona_does_not_leak_explanations_to_a_recreated_id(seeded_conn
 
     # a new persona landing on the same reused id must see no explanations
     mcp_server._create_persona_impl("bob", "unrelated interests")
-    conn = get_db(resolve_db_path(None))
+    conn = seeded_db(resolve_db_path(None))
     bob_id = conn.execute("SELECT id FROM users WHERE name = 'bob'").fetchone()["id"]
     assert bob_id == alice_id, "test assumes SQLite reused the freed rowid"
     bob_explanations = conn.execute(
@@ -236,9 +236,9 @@ def test_delete_persona_does_not_leak_explanations_to_a_recreated_id(seeded_conn
 def test_delete_highest_rowid_item_leaves_no_stale_item_vectors_row(seeded_conn):
     """items.id is a reused rowid: deleting the highest-id item must also drop
     its item_vectors row so a future item can't inherit a stale vector."""
-    from attestation.db import get_db, resolve_db_path
+    from attestation.db import resolve_db_path
 
-    conn = get_db(resolve_db_path(None))
+    conn = seeded_db(resolve_db_path(None))
     highest_id = conn.execute("SELECT MAX(id) m FROM items").fetchone()["m"]
 
     conn.execute("DELETE FROM items WHERE id = ?", (highest_id,))
@@ -303,7 +303,7 @@ def test_propose_interests_folds_tags_the_way_autocreate_does(tmp_path, monkeypa
     docstring documents fixing exactly this feedback loop.
     """
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     for i, tag in enumerate(
         ["llm"] * 6 + ["language-models"] * 5 + ["machinelearning"] * 4 + ["evaluation"] * 3,
         start=1,

@@ -723,10 +723,15 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
 
 def cmd_bootstrap_persona(args: argparse.Namespace) -> int:
+    from attestation.db import SEED_USERS
     from attestation.embed import Embedder
-    from attestation.rank import bootstrap_persona
+    from attestation.rank import bootstrap_persona, create_user, get_user
 
     with open_db(args.db) as conn:
+        # A new database has no personas. The demo ones exist only when asked
+        # for by name, and this command is how the README asks.
+        if args.name in SEED_USERS and get_user(conn, args.name) is None:
+            create_user(conn, args.name, SEED_USERS[args.name])
         try:
             n = bootstrap_persona(conn, Embedder(), args.name, k=args.k)
         except ValueError as exc:
@@ -739,7 +744,8 @@ def cmd_bootstrap_persona(args: argparse.Namespace) -> int:
             print(
                 f"  known personas: {', '.join(names)}"
                 if names
-                else "  no personas exist yet -- `attest install` seeds the demo ones"
+                else "  no personas exist yet -- name a demo persona to create it:"
+                f" {', '.join(SEED_USERS)}"
             )
             return 1
     print(f"wrote {n} pseudo-clicks for {args.name}")

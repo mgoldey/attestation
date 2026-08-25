@@ -1,4 +1,5 @@
 import pytest
+from conftest import seeded_db
 from fastapi.testclient import TestClient
 
 from attestation.db import get_db
@@ -8,7 +9,7 @@ from attestation.server import create_app
 @pytest.fixture
 def client(tmp_path, fake_embedder):
     db_path = tmp_path / "t.db"
-    conn = get_db(db_path)
+    conn = seeded_db(db_path)
     for i in range(25):
         cur = conn.execute(
             "INSERT INTO items(feed_id, title, url, summary, content_hash)"
@@ -94,7 +95,7 @@ def test_unknown_user_explanation_returns_404(client):
 
 def test_xss_title_is_escaped(tmp_path, fake_embedder):
     db_path = tmp_path / "xss.db"
-    conn = get_db(db_path)
+    conn = seeded_db(db_path)
     payload = '<img src=x onerror="alert(1)">'
     cur = conn.execute(
         "INSERT INTO items(feed_id, title, url, summary, content_hash)"
@@ -143,7 +144,7 @@ def test_click_no_origin_still_allowed(client):
 
 def test_list_renders_tag_badges(tmp_path, fake_embedder):
     db_path = tmp_path / "badge.db"
-    conn = get_db(db_path)
+    conn = seeded_db(db_path)
     cur = conn.execute(
         "INSERT INTO items(feed_id, title, url, summary, content_hash)"
         " VALUES (NULL, 'tagged item', 'http://x', 's', 'h-badge')"
@@ -215,7 +216,7 @@ def test_unknown_user_is_created_not_404ed(client):
 
     from attestation.rank import get_user
 
-    conn = get_db(client.db_path)
+    conn = seeded_db(client.db_path)
     row = get_user(conn, "brand-new-reader")
     assert row is not None
     # Seeded with something, not left blank: the interests text IS the profile
@@ -241,7 +242,7 @@ def test_cross_origin_get_does_not_create_a_persona(client):
 
     from attestation.rank import get_user
 
-    conn = get_db(client.db_path)
+    conn = seeded_db(client.db_path)
     assert get_user(conn, "drive-by-reader") is None, "a cross-origin GET created a persona"
 
 
@@ -273,7 +274,7 @@ def test_same_origin_get_still_creates_a_persona(client):
 
     from attestation.rank import get_user
 
-    conn = get_db(client.db_path)
+    conn = seeded_db(client.db_path)
     assert get_user(conn, "same-origin-newcomer") is not None
 
 
@@ -364,7 +365,7 @@ def test_one_hostile_feed_entry_cannot_inflate_the_page(tmp_path, fake_embedder)
     it only because they clip independently at MAX_TITLE_CHARS, so the two
     readers of the same row disagreed about whether the row was safe.
     """
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     conn.execute("INSERT INTO users(name, interests) VALUES ('v', 'science')")
     conn.execute("INSERT INTO feeds(title, url) VALUES (?, 'http://f')", ("F" * 100_000,))
     huge = "A" * 2_000_000
@@ -396,7 +397,7 @@ def test_hostile_feed_text_renders_inert(tmp_path, fake_embedder):
     a vulnerability that is not there."""
     from html.parser import HTMLParser
 
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     conn.execute("INSERT INTO users(name, interests) VALUES ('v', 'science')")
     conn.execute("INSERT INTO feeds(title, url) VALUES ('f', 'http://f')")
     payloads = [
@@ -453,7 +454,7 @@ def test_cold_start_with_the_embedder_down_renders_a_message_not_a_500(tmp_path,
     what `attest ingest` already says in the same situation.
     """
     db_path = tmp_path / "t.db"
-    conn = get_db(db_path)
+    conn = seeded_db(db_path)
     cur = conn.execute(
         "INSERT INTO items(feed_id, title, url, summary, content_hash)"
         " VALUES (NULL, 'item', 'http://x', 's', 'h')"
@@ -486,7 +487,7 @@ def test_cold_start_with_the_embedder_down_renders_a_message_not_a_500(tmp_path,
 
 
 def _users(db_path):
-    conn = get_db(db_path)
+    conn = get_db(db_path)  # raw: a probe must not plant the personas it counts
     try:
         return [r["name"] for r in conn.execute("SELECT name FROM users ORDER BY name")]
     finally:
@@ -506,7 +507,7 @@ def test_index_without_a_user_opens_the_first_persona_and_creates_nothing(client
 
 
 def test_index_with_no_personas_offers_onboarding(client):
-    conn = get_db(client.db_path)
+    conn = seeded_db(client.db_path)
     conn.execute("DELETE FROM users")
     conn.commit()
     conn.close()
@@ -526,7 +527,7 @@ def test_onboarding_creates_the_persona_and_opens_its_feed(client):
     )
     assert resp.status_code == 303
     assert resp.headers["location"] == "/?user=ada"
-    conn = get_db(client.db_path)
+    conn = seeded_db(client.db_path)
     row = conn.execute("SELECT interests FROM users WHERE name = 'ada'").fetchone()
     conn.close()
     assert row["interests"] == "graph theory, spectral methods"
@@ -547,3 +548,14 @@ def test_onboarding_is_reachable_from_the_nav_when_personas_exist(client):
     form = client.get("/onboard")
     assert form.status_code == 200
     assert 'action="/personas"' in form.text
+
+
+def test_a_fresh_database_opens_on_the_onboarding_form(tmp_path, fake_embedder):
+    """Not a fallback after deleting demo personas: the first screen."""
+    db_path = tmp_path / "fresh.db"
+    get_db(db_path).close()
+    app = create_app(db_path, embedder=fake_embedder, chat_fn=lambda m, s: {"text": "w"})
+    resp = TestClient(app).get("/")
+    assert resp.status_code == 200
+    assert 'action="/personas"' in resp.text
+    assert _users(db_path) == []

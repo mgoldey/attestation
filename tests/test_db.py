@@ -32,17 +32,22 @@ def test_get_db_pragmas(tmp_path):
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
-def test_seed_users_idempotent(tmp_path):
+def test_a_fresh_database_has_no_personas(tmp_path):
+    """get_db used to plant SEED_USERS on creation, so a new install's first
+    screen was a stranger's demo profile and the web UI's onboarding form could
+    never be the first thing anyone saw. Seeding is explicit now:
+    seed_demo_users(), or `attest bootstrap-persona <demo name>`."""
     path = tmp_path / "test.db"
     get_db(path).close()
-    conn = get_db(path)  # second open must not duplicate
-    users = conn.execute("SELECT name, interests FROM users ORDER BY name").fetchall()
-    assert [u["name"] for u in users] == ["bench-chemist", "ml-engineer", "researcher"]
-    assert all(u["interests"] for u in users)
+    conn = get_db(path)
+    assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
 
 
 def test_click_unique_per_user_item(tmp_path):
+    from attestation.db import seed_demo_users
+
     conn = get_db(tmp_path / "test.db")
+    seed_demo_users(conn)  # clicks reference user_id 1; a fresh database has none
     conn.execute("INSERT INTO items(feed_id, title, content_hash) VALUES (NULL, 't', 'h')")
     conn.execute("INSERT INTO clicks(user_id, item_id, useful) VALUES (1, 1, 1)")
     import pytest
@@ -215,8 +220,11 @@ def test_deleted_persona_stays_deleted_across_reopen(tmp_path):
     every open, so a deleted seed persona (e.g. 'bench-chemist') came back on
     the very next connection -- which every MCP tool opens fresh.
     """
+    from attestation.db import seed_demo_users
+
     path = tmp_path / "personas.db"
     conn = get_db(path)
+    seed_demo_users(conn)
     names_before = {r["name"] for r in conn.execute("SELECT name FROM users")}
     assert "bench-chemist" in names_before
 
@@ -236,6 +244,7 @@ def test_seed_demo_users_is_explicit_and_idempotent(tmp_path):
     from attestation.db import seed_demo_users
 
     conn = get_db(tmp_path / "explicit.db")
+    seed_demo_users(conn)
     conn.execute("DELETE FROM users WHERE name = ?", ("ml-engineer",))
     conn.commit()
 

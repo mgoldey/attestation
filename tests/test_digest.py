@@ -1,9 +1,9 @@
 """Digest: the ranked feed grouped by topic."""
 
 import pytest
+from conftest import seeded_db
 
 from attestation import mcp_server
-from attestation.db import get_db
 from attestation.mcp import _shared
 from attestation.mcp import feed as feed_mod
 from attestation.rank import RankedItem
@@ -11,7 +11,7 @@ from attestation.rank import RankedItem
 
 def seed(db_path, clicks=((1, 1),), n_items=6):
     """Items tagged so they fall into two distinct concept clusters."""
-    conn = get_db(db_path)
+    conn = seeded_db(db_path)
     clusters = [["alpha", "beta", "gamma"], ["delta", "epsilon", "zeta"]]
     for i in range(1, n_items + 1):
         conn.execute(
@@ -234,7 +234,7 @@ def test_the_digest_message_counts_what_it_actually_shipped(tmp_path, monkeypatc
     asserts the MESSAGE reports the total, so this bug passed its own guard.
     """
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
-    conn = get_db(tmp_path / "t.db")
+    conn = seeded_db(tmp_path / "t.db")
     conn.execute("INSERT INTO users(name, interests) VALUES ('ana', 'machine learning')")
     for i in range(1, 21):
         conn.execute(

@@ -22,8 +22,8 @@ Two rules follow, and they are different:
 import json
 
 import pytest
+from conftest import seeded_db
 
-from attestation.db import get_db
 from attestation.mcp import _shared
 from attestation.mcp import feed as feed_mod
 
@@ -139,7 +139,7 @@ MAX_DIGEST_RESPONSE_CHARS = _digest_budget()
 def stocked(tmp_path, monkeypatch, fake_embedder):
     db = tmp_path / "t.db"
     monkeypatch.setenv("RSS_DB", str(db))
-    conn = get_db(db)
+    conn = seeded_db(db)
     conn.execute("INSERT INTO users(name, interests) VALUES ('ana', 'machine learning')")
     conn.execute("INSERT INTO feeds(url, title) VALUES ('http://x', 'arXiv cs.LG')")
     for i in range(1, 41):
@@ -202,7 +202,7 @@ def test_the_default_feed_fits_with_the_worst_case_caveat(stocked):
     a fix. The guard must exercise the most expensive ranking_quality a real
     user can produce.
     """
-    conn = get_db(stocked)
+    conn = seeded_db(stocked)
     user_id = conn.execute("SELECT id FROM users WHERE name = 'ana'").fetchone()[0]
     # Bootstrap-heavy and single-class: the longest caveat the code can emit.
     for item_id in range(1, 31):
@@ -246,7 +246,7 @@ def test_search_is_bounded_with_the_worst_case_caveat(stocked):
     """Same trap as the feed guard: `stocked` has no clicks, so this measured
     ranking_quality's cheapest branch. Every budget test needs the most
     expensive realistic input, not a convenient one."""
-    conn = get_db(stocked)
+    conn = seeded_db(stocked)
     user_id = conn.execute("SELECT id FROM users WHERE name = 'ana'").fetchone()[0]
     for item_id in range(1, 31):
         conn.execute(
@@ -403,7 +403,7 @@ def test_router_answers_are_bounded_by_title_length(stocked):
     budget three rounds running: a string on a hot path whose length is a
     property of the data rather than of the code.
     """
-    conn = get_db(stocked)
+    conn = seeded_db(stocked)
     conn.execute(
         "UPDATE items SET title = ?",
         ("A Remarkably Long Paper Title " * 12,),  # 360 chars, > the live max
@@ -465,7 +465,7 @@ def test_the_item_budget_is_at_least_what_the_field_caps_permit(stocked):
     # to each other is self-consistent and toothless: with `url` left uncapped
     # in _item_row the arithmetic above still passed, because both sides came
     # from the same numbers. Drive a row whose every field exceeds its cap.
-    conn = get_db(stocked)
+    conn = seeded_db(stocked)
     conn.execute(
         "UPDATE items SET title = ?, url = ?",
         ("T" * 500, "https://example.com/" + "p" * 500),
@@ -530,7 +530,7 @@ def test_read_does_not_pay_for_the_title_twice(stocked):
     never reads for content -- `message` is the envelope's one-line status,
     not a second copy of the payload.
     """
-    conn = get_db(stocked)
+    conn = seeded_db(stocked)
     conn.execute("UPDATE items SET title = ?", ("T" * 400,))
     conn.commit()
     conn.close()
@@ -553,7 +553,7 @@ def test_the_digest_is_bounded_by_total_items_not_by_topic_count(stocked):
     So the bound is on total items across topics AND unclustered, which is what
     the reader actually has to render.
     """
-    conn = get_db(stocked)
+    conn = seeded_db(stocked)
     user_id = conn.execute("SELECT id FROM users WHERE name = 'ana'").fetchone()[0]
     # Spread items across many distinct tags so clustering produces both
     # several topics and an unclustered remainder.
@@ -743,7 +743,7 @@ def test_no_tool_exceeds_the_hard_ceiling_when_actually_driven(stocked):
     # both round-11 regressions -- because the graph had two clusters and the
     # ledger no runs. A census driven against toy data is the cheap-fixture
     # failure one level up.
-    conn = get_db(stocked)
+    conn = seeded_db(stocked)
     for group in range(12):
         for member in range(60):
             conn.execute(
@@ -858,7 +858,7 @@ def test_a_message_that_counts_must_count_what_shipped(stocked):
     """
     import re
 
-    conn = get_db(stocked)
+    conn = seeded_db(stocked)
     user_id = conn.execute("SELECT id FROM users WHERE name = 'ana'").fetchone()[0]
     for item_id in range(1, 21):
         conn.execute(

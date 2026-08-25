@@ -1,7 +1,7 @@
 import pytest
+from conftest import seeded_db
 
 from attestation import feeds
-from attestation.db import get_db
 
 
 class FakeParsed:
@@ -22,7 +22,7 @@ def _parse_bad(url):
 
 @pytest.fixture
 def conn(tmp_path):
-    c = get_db(tmp_path / "t.db")
+    c = seeded_db(tmp_path / "t.db")
     yield c
     c.close()
 
@@ -126,11 +126,10 @@ def test_two_subscriptions_to_one_url_do_not_both_error(tmp_path):
     import concurrent.futures
     from types import SimpleNamespace
 
-    from attestation.db import get_db
     from attestation.feeds import add_feed
 
     db = tmp_path / "t.db"
-    get_db(db).commit()
+    seeded_db(db).commit()
 
     def parse(_url):
         return SimpleNamespace(
@@ -140,7 +139,7 @@ def test_two_subscriptions_to_one_url_do_not_both_error(tmp_path):
 
     def subscribe(_):
         try:
-            return add_feed(get_db(db), "http://example.invalid/feed", parse=parse)
+            return add_feed(seeded_db(db), "http://example.invalid/feed", parse=parse)
         except Exception as exc:  # noqa: BLE001 -- the point is what leaks out
             return {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
 
@@ -149,5 +148,5 @@ def test_two_subscriptions_to_one_url_do_not_both_error(tmp_path):
 
     failed = [r["message"] for r in results if not r["ok"]]
     assert not failed, f"{len(failed)} of 8 concurrent subscribes failed: {failed[0]}"
-    rows = get_db(db).execute("SELECT COUNT(*) FROM feeds").fetchone()[0]
+    rows = seeded_db(db).execute("SELECT COUNT(*) FROM feeds").fetchone()[0]
     assert rows == 1, f"{rows} feed rows for one url"
