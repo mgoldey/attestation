@@ -982,3 +982,89 @@ def test_every_tool_that_returns_a_url_tells_the_agent_to_show_it():
         if not instructs:
             silent.append(name)
     assert not silent, f"these tools return a url but never tell the agent to show it: {silent}"
+
+
+def test_no_doc_quotes_a_stale_attestation_tool_count():
+    """Two docs had guards; the drift moved to the docs that did not.
+
+    CLAUDE.md and README each got a test after each was caught claiming 37
+    tools against a live 46. The lesson did not generalise: on 2026-08-24
+    `docs/architecture/research-profile.md` still said "attestation MCP | one
+    combined server, 41 tools", and `docs/measurement-lessons.md` -- a file
+    written that same day ABOUT numbers going stale -- quoted 46 and 22 in
+    prose with nothing pinning either.
+
+    So this guard is keyed off the docs tree rather than a list of filenames:
+    a new doc is covered the day it is written, which is the failure mode the
+    per-file tests kept having.
+
+    Only attestation's own counts are asserted. `research-profile.md` also
+    cites 67/27/40 for Hermes' whole tool budget and `filament`'s share of it
+    -- real numbers about another system, which a naive "every integer near
+    the word tools" check would report as failures forever.
+    """
+    import asyncio
+    import re
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.mcp import register_all
+
+    server = FastMCP("doc-count-check")
+    register_all(server)
+    live_total = len(asyncio.run(server.list_tools()))
+
+    root = SRC.parent.parent
+    docs = [p for p in (root / "docs").rglob("*.md") if "superpowers" not in p.parts]
+    docs += [root / "README.md", root / "CLAUDE.md"]
+
+    # A count is attestation's only when the sentence says so. The nearby
+    # words are what disambiguate it from Hermes' 67 or filament's 40.
+    # The word "tools" is always required: dropping it to catch a bare "the
+    # full 46" matched "all 711 matches" and "claims 127" instead. A count
+    # that omits the noun is unguardable by pattern, so the docs say it.
+    OURS = re.compile(
+        r"(?:attestation|attest-mcp|MCP surface|live surface|the full)"
+        r"\D{0,40}?(\d+)\s+tools"
+        r"|(\d+)\s+tools?\b(?=\D{0,40}?(?:attestation|attest-mcp))",
+        re.I,
+    )
+    stale = []
+    for path in docs:
+        if not path.exists():
+            continue
+        for line in path.read_text().splitlines():
+            for match in OURS.finditer(line):
+                claimed = int(next(g for g in match.groups() if g))
+                if claimed != live_total:
+                    stale.append(
+                        f"{path.relative_to(root)}: claims {claimed}, live is {live_total}"
+                    )
+    assert not stale, "stale attestation tool counts:\n  " + "\n  ".join(stale)
+
+    # Per-surface counts drift independently of the total, and CLAUDE.md warns
+    # these "MOVE". A doc citing ATTEST_TOOLS=<surface> with a number is making
+    # a checkable claim; the total-guard above cannot see it.
+    import os
+
+    for path in docs:
+        if not path.exists():
+            continue
+        for match in re.finditer(r"ATTEST_TOOLS=(\w+)\D{0,60}?\((\d+)\s+tools\)", path.read_text()):
+            surface, claimed = match.group(1), int(match.group(2))
+            previous = os.environ.get("ATTEST_TOOLS"), os.environ.get("ATTEST_EXPAND")
+            os.environ["ATTEST_TOOLS"], os.environ["ATTEST_EXPAND"] = surface, "1"
+            try:
+                scoped = FastMCP(f"surface-{surface}")
+                register_all(scoped)
+                actual = len(asyncio.run(scoped.list_tools()))
+            finally:
+                for key, value in zip(("ATTEST_TOOLS", "ATTEST_EXPAND"), previous):
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+            assert claimed == actual, (
+                f"{path.relative_to(root)}: ATTEST_TOOLS={surface} claims {claimed} "
+                f"tools, live surface has {actual}"
+            )
