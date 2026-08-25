@@ -3,10 +3,11 @@
 import sqlite3
 import threading
 from pathlib import Path
+from urllib.parse import quote
 
 import jinja2
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from attestation.db import get_db
@@ -15,6 +16,7 @@ from attestation.llm import base_url, default_chat_fn
 from attestation.rank import (
     EmbedderUnavailable,
     autocreate_user,
+    create_user,
     get_user,
     rank_items,
     ranking_quality,
@@ -100,6 +102,7 @@ PAGE = env.from_string("""<!doctype html>
 {% for u in users %}
  <a class="user-btn {{ 'active' if u == user else '' }}" href="/?user={{ u }}">{{ u }}</a>
 {% endfor %}
+ <a class="user-btn" href="/onboard">+ new reader</a>
 </nav>
 <div id="feed-wrap">
 {{ feed_content | safe }}
@@ -116,6 +119,24 @@ PAGE = env.from_string("""<!doctype html>
 # `{"user":"ann\",...}`, which htmx cannot parse, so both vote buttons
 # silently stopped working for that persona. `reader()` auto-creates a persona
 # from /?user=, so a typo reaches it with no setup.
+# The form a reader fills in to exist. Rendered in the feed slot when the
+# database has no personas at all, and at /onboard from the nav otherwise.
+# Before this, `/` defaulted to a persona named after the author and created
+# it on the spot for whoever opened the page: a stranger's first screen was
+# someone else's reading profile. Ranking starts from the interests text
+# alone, so that is the one thing worth asking for.
+ONBOARD = env.from_string("""<div id="feed">
+<h2>Who is reading?</h2>
+<form method="post" action="/personas">
+ <p><label>Name <input name="name" required autofocus></label></p>
+ <p><label>What do you read about?<br>
+  <textarea name="interests" rows="3" cols="60" required
+   placeholder="e.g. retrieval and ranking, quantum chemistry, evaluation methodology"></textarea>
+ </label></p>
+ <p><button type="submit">Start reading</button></p>
+</form>
+</div>""")
+
 # Rendered in the feed slot when the embedder is down and this reader has no
 # cached profile vector -- the state every reader is in on a fresh `attest
 # serve` before Ollama is up, since rank.py's cache is in-process memory. It
@@ -276,15 +297,34 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
             quality=ranking_quality(conn, user["id"]),
         )
 
+    def persona_names() -> list[str]:
+        return [r["name"] for r in connection().execute("SELECT name FROM users ORDER BY name")]
+
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request, user: str = Query("matt")):
+    def index(request: Request, user: str | None = Query(None)):
+        users = persona_names()
+        if user is None:
+            if not users:
+                return PAGE.render(users=users, user=None, feed_content=ONBOARD.render())
+            user = users[0]
         # creates the reader if new, and only from a same-origin page; see reader()
         feed_content = render_list(user, request)
-        users = [r["name"] for r in connection().execute("SELECT name FROM users ORDER BY name")]
-        return PAGE.render(users=users, user=user, feed_content=feed_content)
+        return PAGE.render(users=persona_names(), user=user, feed_content=feed_content)
+
+    @app.get("/onboard", response_class=HTMLResponse)
+    def onboard():
+        return PAGE.render(users=persona_names(), user=None, feed_content=ONBOARD.render())
+
+    @app.post("/personas", dependencies=[Depends(require_same_origin)])
+    def create_persona(name: str = Form(...), interests: str = Form(...)):
+        try:
+            create_user(connection(), name.strip(), interests.strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(f"/?user={quote(name.strip())}", status_code=303)
 
     @app.get("/list", response_class=HTMLResponse)
-    def list_view(request: Request, user: str = Query("matt")):
+    def list_view(request: Request, user: str = Query(...)):
         return render_list(user, request)
 
     @app.post("/clicks", response_class=HTMLResponse, dependencies=[Depends(require_same_origin)])

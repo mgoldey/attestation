@@ -37,7 +37,7 @@ def test_seed_users_idempotent(tmp_path):
     get_db(path).close()
     conn = get_db(path)  # second open must not duplicate
     users = conn.execute("SELECT name, interests FROM users ORDER BY name").fetchall()
-    assert [u["name"] for u in users] == ["bench-chemist", "matt", "ml-engineer"]
+    assert [u["name"] for u in users] == ["bench-chemist", "ml-engineer", "researcher"]
     assert all(u["interests"] for u in users)
 
 
@@ -174,7 +174,7 @@ def test_migration_adds_source_to_existing_clicks_db(tmp_path):
           clicked_at TEXT NOT NULL DEFAULT (datetime('now')),
           UNIQUE(user_id, item_id)
         );
-        INSERT INTO users(id, name) VALUES (1, 'matt');
+        INSERT INTO users(id, name) VALUES (1, 'researcher');
         INSERT INTO items(id, title, content_hash) VALUES (1, 'a', 'h1'), (2, 'b', 'h2');
         INSERT INTO clicks(user_id, item_id, useful) VALUES (1, 1, 1), (1, 2, 0);
         """
@@ -227,7 +227,7 @@ def test_deleted_persona_stays_deleted_across_reopen(tmp_path):
     reopened = get_db(path)
     names_after = {r["name"] for r in reopened.execute("SELECT name FROM users")}
     assert "bench-chemist" not in names_after
-    assert names_after == {"matt", "ml-engineer"}
+    assert names_after == {"researcher", "ml-engineer"}
     reopened.close()
 
 
@@ -241,7 +241,7 @@ def test_seed_demo_users_is_explicit_and_idempotent(tmp_path):
 
     seed_demo_users(conn)
     names = {r["name"] for r in conn.execute("SELECT name FROM users")}
-    assert names == {"matt", "bench-chemist", "ml-engineer"}
+    assert names == {"researcher", "bench-chemist", "ml-engineer"}
 
     # calling again must not duplicate or raise
     seed_demo_users(conn)

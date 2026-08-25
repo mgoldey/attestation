@@ -30,7 +30,7 @@ def client(tmp_path, fake_embedder):
 
 def test_index_renders_users_and_feed(client):
     html = client.get("/").text
-    assert "bench-chemist" in html and "ml-engineer" in html and "matt" in html
+    assert "bench-chemist" in html and "ml-engineer" in html and "researcher" in html
     assert "item 0" in html
 
 
@@ -41,31 +41,35 @@ def test_list_fragment_per_user_differs(client):
 
 
 def test_click_rerenders_without_clicked_item(client):
-    html = client.get("/list", params={"user": "matt"}).text
+    html = client.get("/list", params={"user": "researcher"}).text
     first_id = html.split('data-item-id="')[1].split('"')[0]
-    after = client.post("/clicks", data={"user": "matt", "item_id": first_id, "useful": "1"}).text
+    after = client.post(
+        "/clicks", data={"user": "researcher", "item_id": first_id, "useful": "1"}
+    ).text
     assert f'data-item-id="{first_id}"' not in after
 
 
 def test_first_click_all_one_class_no_500(client):
     """Regression for the single-class crash blocker."""
     for _ in range(3):
-        html = client.get("/list", params={"user": "matt"}).text
+        html = client.get("/list", params={"user": "researcher"}).text
         item_id = html.split('data-item-id="')[1].split('"')[0]
-        resp = client.post("/clicks", data={"user": "matt", "item_id": item_id, "useful": "1"})
+        resp = client.post(
+            "/clicks", data={"user": "researcher", "item_id": item_id, "useful": "1"}
+        )
         assert resp.status_code == 200
 
 
 def test_explanation_endpoint(client):
-    html = client.get("/list", params={"user": "matt"}).text
+    html = client.get("/list", params={"user": "researcher"}).text
     item_id = html.split('data-item-id="')[1].split('"')[0]
-    resp = client.get("/explanation", params={"user": "matt", "item_id": item_id})
+    resp = client.get("/explanation", params={"user": "researcher", "item_id": item_id})
     assert resp.status_code == 200
     assert resp.text == "why"
 
 
 def test_lazy_explanations_limited_to_top_20(client):
-    html = client.get("/list", params={"user": "matt"}).text
+    html = client.get("/list", params={"user": "researcher"}).text
     assert html.count('hx-get="/explanation') == 20  # 25 items seeded, only top 20 lazy-load
 
 
@@ -118,22 +122,22 @@ def test_known_good_title_renders_in_live_markup(client):
 
 
 def test_click_cross_origin_rejected(client):
-    html = client.get("/list", params={"user": "matt"}).text
+    html = client.get("/list", params={"user": "researcher"}).text
     first_id = html.split('data-item-id="')[1].split('"')[0]
     resp = client.post(
         "/clicks",
-        data={"user": "matt", "item_id": first_id, "useful": "1"},
+        data={"user": "researcher", "item_id": first_id, "useful": "1"},
         headers={"Origin": "https://evil.example"},
     )
     assert resp.status_code == 403
-    after = client.get("/list", params={"user": "matt"}).text
+    after = client.get("/list", params={"user": "researcher"}).text
     assert f'data-item-id="{first_id}"' in after
 
 
 def test_click_no_origin_still_allowed(client):
-    html = client.get("/list", params={"user": "matt"}).text
+    html = client.get("/list", params={"user": "researcher"}).text
     first_id = html.split('data-item-id="')[1].split('"')[0]
-    resp = client.post("/clicks", data={"user": "matt", "item_id": first_id, "useful": "1"})
+    resp = client.post("/clicks", data={"user": "researcher", "item_id": first_id, "useful": "1"})
     assert resp.status_code == 200
 
 
@@ -157,7 +161,7 @@ def test_list_renders_tag_badges(tmp_path, fake_embedder):
     conn.commit()
     conn.close()
     app = create_app(db_path, embedder=fake_embedder, chat_fn=lambda m, s: {"text": "why"})
-    resp = TestClient(app).get("/list", params={"user": "matt"})
+    resp = TestClient(app).get("/list", params={"user": "researcher"})
     assert resp.status_code == 200
     assert '<span class="tag type">paper</span>' in resp.text
     assert '<span class="tag">dft</span>' in resp.text
@@ -173,7 +177,7 @@ def test_feed_shows_the_ranking_caveat_when_the_classifier_is_silent(client):
     ranked list, so a reader had no way to tell a cold-start order from a
     learned one.
     """
-    html = client.get("/list", params={"user": "matt"}).text
+    html = client.get("/list", params={"user": "researcher"}).text
     assert "classifier" in html.lower(), "no honesty caveat rendered"
 
 
@@ -186,13 +190,13 @@ def test_caveat_tracks_the_ranker_state_rather_than_being_static(client):
     clicks, and claiming a trained ranker there would be the same dishonesty
     in the other direction.
     """
-    html = client.get("/list", params={"user": "matt"}).text
+    html = client.get("/list", params={"user": "researcher"}).text
     assert "classifier OFF" in html
     ids = [int(s.split('"')[0]) for s in html.split('data-item-id="')[1:]]
-    client.post("/clicks", data={"user": "matt", "item_id": ids[0], "useful": "1"})
-    client.post("/clicks", data={"user": "matt", "item_id": ids[1], "useful": "0"})
+    client.post("/clicks", data={"user": "researcher", "item_id": ids[0], "useful": "1"})
+    client.post("/clicks", data={"user": "researcher", "item_id": ids[1], "useful": "0"})
 
-    after = client.get("/list", params={"user": "matt"}).text
+    after = client.get("/list", params={"user": "researcher"}).text
     assert "classifier OFF" not in after
     assert "weakly trained" in after
 
@@ -251,7 +255,7 @@ def test_cross_origin_get_for_an_existing_user_still_reads(client):
     """
     resp = client.get(
         "/list",
-        params={"user": "matt"},
+        params={"user": "researcher"},
         headers={"Origin": "https://evil.example"},
     )
     assert resp.status_code == 200, resp.text
@@ -337,7 +341,7 @@ def test_concurrent_requests_do_not_share_one_connection(client):
     import concurrent.futures
 
     def fetch(i):
-        # A NEW reader, not an existing one. This test originally used "matt",
+        # A NEW reader, not an existing one. This test originally used "researcher",
         # the single case that passes: autocreate never fires, so it exercised
         # the interleaved-cursor half and missed the check-then-insert half
         # entirely -- on the first page load for a new reader, which is what
@@ -479,3 +483,67 @@ def test_cold_start_with_the_embedder_down_renders_a_message_not_a_500(tmp_path,
     fragment = tc.get("/list?user=reader")
     assert fragment.status_code == 200
     assert "unreachable" in fragment.text
+
+
+def _users(db_path):
+    conn = get_db(db_path)
+    try:
+        return [r["name"] for r in conn.execute("SELECT name FROM users ORDER BY name")]
+    finally:
+        conn.close()
+
+
+def test_index_without_a_user_opens_the_first_persona_and_creates_nothing(client):
+    """`/` defaulted to `Query("researcher")`: a stranger opening the UI on a fresh
+    database got a persona named after this project's author, created on
+    the spot. With no `?user=`, open the first persona that exists."""
+    before = _users(client.db_path)
+    html = client.get("/").text
+    assert before, "fixture seeds demo personas"
+    assert f'class="user-btn active" href="/?user={before[0]}"' in html
+    assert "item 0" in html
+    assert _users(client.db_path) == before
+
+
+def test_index_with_no_personas_offers_onboarding(client):
+    conn = get_db(client.db_path)
+    conn.execute("DELETE FROM users")
+    conn.commit()
+    conn.close()
+
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert 'action="/personas"' in resp.text
+    assert 'name="interests"' in resp.text
+    assert _users(client.db_path) == [], "rendering the form must not create a persona"
+
+
+def test_onboarding_creates_the_persona_and_opens_its_feed(client):
+    resp = client.post(
+        "/personas",
+        data={"name": "ada", "interests": "graph theory, spectral methods"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/?user=ada"
+    conn = get_db(client.db_path)
+    row = conn.execute("SELECT interests FROM users WHERE name = 'ada'").fetchone()
+    conn.close()
+    assert row["interests"] == "graph theory, spectral methods"
+
+
+def test_onboarding_refuses_a_name_that_already_exists(client):
+    first = _users(client.db_path)[0]
+    resp = client.post(
+        "/personas", data={"name": first, "interests": "anything"}, follow_redirects=False
+    )
+    assert resp.status_code == 400
+    assert first in resp.text
+
+
+def test_onboarding_is_reachable_from_the_nav_when_personas_exist(client):
+    html = client.get("/").text
+    assert 'href="/onboard"' in html
+    form = client.get("/onboard")
+    assert form.status_code == 200
+    assert 'action="/personas"' in form.text

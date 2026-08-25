@@ -11,7 +11,7 @@ def test_parser_subcommands():
     for argv in (
         ["ingest"],
         ["serve", "--port", "9000"],
-        ["eval", "--user", "matt"],
+        ["eval", "--user", "researcher"],
         ["warmup"],
         ["bootstrap-persona", "bench-chemist", "-k", "10"],
         ["kg-report"],
@@ -24,7 +24,7 @@ def test_eval_insufficient_data_message(tmp_path, capsys):
     the command exists for, and every other CLI failure path exits 1."""
     db = tmp_path / "t.db"
     get_db(db).close()
-    rc = main(["eval", "--db", str(db), "--user", "matt"])
+    rc = main(["eval", "--db", str(db), "--user", "researcher"])
     assert rc == 1
     assert "insufficient" in capsys.readouterr().err.lower()
 
@@ -222,7 +222,7 @@ def test_cmd_eval_directly_with_plain_namespace(tmp_path, capsys):
     db = tmp_path / "t.db"
     get_db(db).close()
 
-    rc = cmd_eval(Namespace(db=str(db), user="matt"))
+    rc = cmd_eval(Namespace(db=str(db), user="researcher"))
 
     assert rc == 1
     assert "insufficient" in capsys.readouterr().err.lower()
@@ -412,7 +412,7 @@ def test_eval_with_a_real_measurement_still_exits_zero(tmp_path, capsys, monkeyp
         },
     )
 
-    rc = main(["eval", "--db", str(db), "--user", "matt"])
+    rc = main(["eval", "--db", str(db), "--user", "researcher"])
 
     assert rc == 0
     assert "0.750" in capsys.readouterr().out

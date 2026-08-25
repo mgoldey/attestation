@@ -37,7 +37,7 @@ def seeded_conn(_patch_env_db, fake_embedder, monkeypatch):
 
 class TestListFeed:
     def test_returns_items_with_required_keys(self, seeded_conn):
-        result = mcp_server._list_feed_impl("matt", limit=5)
+        result = mcp_server._list_feed_impl("researcher", limit=5)
         assert "items" in result
         assert len(result["items"]) == 5
         for item in result["items"]:
@@ -51,11 +51,11 @@ class TestListFeed:
             } <= set(item.keys()), item
 
     def test_respects_limit(self, seeded_conn):
-        result = mcp_server._list_feed_impl("matt", limit=3)
+        result = mcp_server._list_feed_impl("researcher", limit=3)
         assert len(result["items"]) == 3
 
     def test_limit_capped_at_50(self, seeded_conn):
-        result = mcp_server._list_feed_impl("matt", limit=9999)
+        result = mcp_server._list_feed_impl("researcher", limit=9999)
         # only 15 items seeded, so this also proves the cap didn't error / blow up
         assert len(result["items"]) <= 50
         assert len(result["items"]) == 15
@@ -81,7 +81,7 @@ class TestListFeed:
 def test_record_feedback_records_agent_source(seeded_conn):
     from attestation.db import get_db, resolve_db_path
 
-    out = mcp_server._record_feedback_impl("matt", 1, True)
+    out = mcp_server._record_feedback_impl("researcher", 1, True)
     assert out["ok"] is True
 
     conn = get_db(resolve_db_path(None))
@@ -261,31 +261,31 @@ class TestNonsenseArguments:
     """
 
     def test_a_negative_window_is_refused_not_silently_empty(self, seeded_conn):
-        out = mcp_server._list_feed_impl("matt", since_days=-30)
+        out = mcp_server._list_feed_impl("researcher", since_days=-30)
         assert out["ok"] is False
         assert "since_days" in out["message"]
         assert out["items"] == []
 
     def test_a_zero_limit_is_refused_rather_than_answered_with_one(self, seeded_conn):
         """Clamping 0 up to 1 answers a question nobody asked."""
-        out = mcp_server._list_feed_impl("matt", limit=0)
+        out = mcp_server._list_feed_impl("researcher", limit=0)
         assert out["ok"] is False
         assert "limit" in out["message"]
 
     def test_a_negative_limit_is_refused(self, seeded_conn):
-        out = mcp_server._list_feed_impl("matt", limit=-5)
+        out = mcp_server._list_feed_impl("researcher", limit=-5)
         assert out["ok"] is False
         assert "limit" in out["message"]
 
     def test_an_oversized_limit_is_capped_not_refused(self, seeded_conn):
         """Asking for more than the cap is a reasonable request with a
         reasonable answer -- unlike asking for zero or a negative window."""
-        out = mcp_server._list_feed_impl("matt", limit=100000)
+        out = mcp_server._list_feed_impl("researcher", limit=100000)
         assert out["ok"] is True
         assert len(out["items"]) <= 50
 
     def test_search_rejects_the_same_nonsense(self, seeded_conn):
-        assert mcp_server._search_feed_impl("matt", "x", limit=0)["ok"] is False
+        assert mcp_server._search_feed_impl("researcher", "x", limit=0)["ok"] is False
 
 
 def test_propose_interests_folds_tags_the_way_autocreate_does(tmp_path, monkeypatch):

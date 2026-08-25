@@ -58,7 +58,7 @@ def test_ranks_lower_is_better():
 def test_cold_start_no_clicks_uses_profile(tmp_path, fake_embedder):
     conn = get_db(tmp_path / "t.db")
     seed_corpus(conn, fake_embedder)
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
     result = rank_items(conn, fake_embedder, user_id)
     assert len(result) == 20
     assert isinstance(result[0], RankedItem)
@@ -68,7 +68,7 @@ def test_cold_start_no_clicks_uses_profile(tmp_path, fake_embedder):
 def test_classifier_guard_single_class(tmp_path, fake_embedder):
     conn = get_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder)
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
     for i in ids[:4]:  # four clicks, ALL positive -> one class
         conn.execute("INSERT INTO clicks(user_id, item_id, useful) VALUES (?, ?, 1)", (user_id, i))
     X = np.stack([fake_embedder.embed_document(f"item {i}", "") for i in range(3)])
@@ -80,7 +80,7 @@ def test_classifier_guard_single_class(tmp_path, fake_embedder):
 def test_clicked_items_excluded(tmp_path, fake_embedder):
     conn = get_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder)
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
     conn.execute("INSERT INTO clicks(user_id, item_id, useful) VALUES (?, ?, 1)", (user_id, ids[0]))
     result = rank_items(conn, fake_embedder, user_id)
     assert ids[0] not in [r.item_id for r in result]
@@ -90,7 +90,7 @@ def test_recency_window(tmp_path, fake_embedder):
     conn = get_db(tmp_path / "t.db")
     add_item(conn, fake_embedder, "fresh", days_ago=1)
     add_item(conn, fake_embedder, "stale", days_ago=40)
-    result = rank_items(conn, fake_embedder, get_user_id(conn, "matt"))
+    result = rank_items(conn, fake_embedder, get_user_id(conn, "researcher"))
     assert [r.title for r in result] == ["fresh"]
 
 
@@ -98,7 +98,7 @@ def test_clicks_shift_ranking(tmp_path, fake_embedder):
     """After mixed clicks, classifier blends in and changes the order."""
     conn = get_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder, n=30)
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
     before = [r.item_id for r in rank_items(conn, fake_embedder, user_id)]
     for i in ids[:5]:
         conn.execute("INSERT INTO clicks(user_id, item_id, useful) VALUES (?, ?, 1)", (user_id, i))
@@ -131,7 +131,7 @@ def test_bootstrap_persona_writes_clicks(tmp_path, fake_embedder):
 def test_evaluate_user_insufficient_data(tmp_path, fake_embedder):
     conn = get_db(tmp_path / "t.db")
     seed_corpus(conn, fake_embedder, n=5)
-    assert evaluate_user(conn, get_user_id(conn, "matt")) is None
+    assert evaluate_user(conn, get_user_id(conn, "researcher")) is None
 
 
 def test_evaluate_user_excludes_bootstrap_leakage(tmp_path, fake_embedder):
@@ -154,7 +154,7 @@ def test_evaluate_user_mixed_real_clicks_returns_a_labelled_score(tmp_path, fake
     single-class-tail guard that leave-last-N-out was vulnerable to."""
     conn = get_db(tmp_path / "t.db")
     item_ids = seed_corpus(conn, fake_embedder, n=40)
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
     # Alternate useful/not-useful so the tail is never single-class regardless
     # of insertion order -- this is the "naturally label-sorted rating
     # session" failure mode the leave-last-N-out split fell into.
@@ -189,7 +189,7 @@ def test_profile_vector_cached_across_calls(tmp_path, fake_embedder):
     re-embed the profile text."""
     conn = get_db(tmp_path / "t.db")
     seed_corpus(conn, fake_embedder)
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
     spy = SpyEmbedder(fake_embedder)
 
     rank_items(conn, spy, user_id)
@@ -203,7 +203,7 @@ def test_profile_vector_survives_embedder_failure_after_warm_call(tmp_path, fake
     """Once the profile vector is cached, an embedder outage must not break ranking."""
     conn = get_db(tmp_path / "t.db")
     seed_corpus(conn, fake_embedder)
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
 
     # warm the cache
     warm = rank_items(conn, fake_embedder, user_id)
@@ -236,7 +236,7 @@ def test_downvoted_tag_sinks_similar_item_even_single_class(tmp_path, fake_embed
     (single-class history disables the classifier but NOT the pref term)."""
     conn = get_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder, n=40)
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
     for i in ids[:3]:  # three items share a tag+type; the third is the survivor
         _tag_item(conn, i, "announcement", ["junk"])
     downvoted = ids[:2] + ids[3:21]  # 20 downvotes, ALL useful=0 -> single class
@@ -260,7 +260,7 @@ def test_clicks_without_feature_data_leave_profile_order_intact(tmp_path, fake_e
     """Pref term must not inject tie-break noise when no feature key has click data."""
     conn = get_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder)
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
     conn.execute("INSERT INTO clicks(user_id, item_id, useful) VALUES (?, ?, 0)", (user_id, ids[0]))
     with_click = [r.item_id for r in rank_items(conn, fake_embedder, user_id)]
     conn.execute("DELETE FROM clicks WHERE user_id = ?", (user_id,))
@@ -271,7 +271,7 @@ def test_clicks_without_feature_data_leave_profile_order_intact(tmp_path, fake_e
 def test_no_clicks_ranking_unchanged_by_tags(tmp_path, fake_embedder):
     conn = get_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder)
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
     baseline = [r.item_id for r in rank_items(conn, fake_embedder, user_id)]
     _tag_item(conn, ids[0], "paper", ["dft"])
     assert [r.item_id for r in rank_items(conn, fake_embedder, user_id)] == baseline
@@ -280,7 +280,7 @@ def test_no_clicks_ranking_unchanged_by_tags(tmp_path, fake_embedder):
 def test_ranked_items_carry_tags_and_content_type(tmp_path, fake_embedder):
     conn = get_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder)
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
     _tag_item(conn, ids[0], "paper", ["dft", "catalysis"])
     result = rank_items(conn, fake_embedder, user_id)
     by_id = {r.item_id: r for r in result}
@@ -301,7 +301,7 @@ def test_partial_tie_neutral_items_keep_profile_relative_order(tmp_path, fake_em
     relative to each other even while a downvoted-tag item carries real pref signal."""
     conn = get_db(tmp_path / "t.db")
     ids = seed_corpus(conn, fake_embedder)
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
     _tag_item(conn, ids[0], "announcement", ["junk"])
     conn.execute("INSERT INTO clicks(user_id, item_id, useful) VALUES (?, ?, 0)", (user_id, ids[0]))
     with_click = [r.item_id for r in rank_items(conn, fake_embedder, user_id)]
@@ -317,7 +317,7 @@ def test_record_click_writes_source_and_rejects_invalid(tmp_path):
     from attestation.rank import record_click
 
     conn = get_db(tmp_path / "t.db")
-    uid = get_user_id(conn, "matt")
+    uid = get_user_id(conn, "researcher")
     conn.execute(
         "INSERT INTO items(id, feed_id, title, url, summary, content_hash)"
         " VALUES (1, NULL, 't', 'u', 's', 'h')"
@@ -364,7 +364,7 @@ def test_candidate_items_can_include_clicked_and_drop_window(tmp_path, fake_embe
     from attestation.rank import _candidate_items, record_click
 
     conn = get_db(tmp_path / "t.db")
-    user_id = get_user_id(conn, "matt")
+    user_id = get_user_id(conn, "researcher")
     # one recent item, one far outside the default 14-day window
     for i, published in ((1, "datetime('now')"), (2, "datetime('now', '-400 days')")):
         conn.execute(
@@ -389,7 +389,7 @@ def test_record_click_defaults_to_ui(tmp_path):
     from attestation.rank import record_click
 
     conn = get_db(tmp_path / "t.db")
-    uid = get_user_id(conn, "matt")
+    uid = get_user_id(conn, "researcher")
     conn.execute(
         "INSERT INTO items(id, feed_id, title, url, summary, content_hash)"
         " VALUES (1, NULL, 't', 'u', 's', 'h')"
@@ -450,7 +450,7 @@ def test_rank_items_beyond_sqlite_variable_limit(tmp_path, monkeypatch):
     conn.commit()
 
     result = rank_items(
-        conn, embedder, get_user_id(conn, "matt"), since_days=None, exclude_clicked=False
+        conn, embedder, get_user_id(conn, "researcher"), since_days=None, exclude_clicked=False
     )
 
     assert len(result) == n

@@ -282,7 +282,7 @@ def _click(conn, user_id, item_id, useful):
 
 
 def _matt(conn):
-    return conn.execute("SELECT id FROM users WHERE name = 'matt'").fetchone()["id"]
+    return conn.execute("SELECT id FROM users WHERE name = 'researcher'").fetchone()["id"]
 
 
 def test_pref_neutral_with_no_data(tmp_path):

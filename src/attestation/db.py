@@ -368,9 +368,9 @@ def _vec_schema(dims: int) -> str:
 
 
 SEED_USERS = {
-    "matt": (
-        "LLM systems, retrieval and ranking, ML infrastructure, quantum chemistry, "
-        "open-weight models, evaluation methodology, Rust and Python engineering"
+    "researcher": (
+        "reproducibility, evaluation methodology, scientific computing, "
+        "retrieval and ranking, open-weight models, research tooling"
     ),
     "bench-chemist": (
         "organic synthesis, reaction mechanisms, catalysis, spectroscopy, "
@@ -434,7 +434,7 @@ def resolve_db_path(explicit: str | None) -> Path:
 
 
 def seed_demo_users(conn: sqlite3.Connection) -> None:
-    """Insert the three hardcoded demo personas (matt, bench-chemist, ml-engineer).
+    """Insert the three hardcoded demo personas (researcher, bench-chemist, ml-engineer).
 
     INSERT OR IGNORE, so calling this against a database that already has
     these rows (or rows a researcher has since deleted and doesn't want back)

@@ -154,6 +154,10 @@ Once installed:
 uv run attest serve             # http://127.0.0.1:8899
 ```
 
+The first screen asks who is reading and what about -- ranking starts from
+that interests text alone. Three demo personas (`researcher`, `bench-chemist`,
+`ml-engineer`) are seeded so the per-identity ranking has something to show
+before you have clicked anything; delete them when you are done comparing.
 Click ✓/✗ on items; the feed retrains and re-ranks on every click. Switch users
 in the nav to see the same feed ranked per-identity.
 

@@ -75,7 +75,7 @@ def test_items_group_under_the_cluster_their_tags_match(db, monkeypatch):
         ),
     )
 
-    out = mcp_server._digest_impl("matt")
+    out = mcp_server._digest_impl("researcher")
 
     assert out["ok"] is True
     labels = {t["label"] for t in out["topics"]}
@@ -92,7 +92,7 @@ def test_an_item_matching_no_cluster_is_reported_not_dropped(db, monkeypatch):
         _fake_ranked_items([_item(9, ["nothing-matches-this"], title="orphan")]),
     )
 
-    out = mcp_server._digest_impl("matt")
+    out = mcp_server._digest_impl("researcher")
 
     assert out["topics"] == []
     assert [i["item_id"] for i in out["unclustered"]] == [9]
@@ -104,7 +104,7 @@ def test_per_topic_truncates_but_n_total_stays_true(db, monkeypatch):
     items = [_item(i, ["alpha", "beta"]) for i in range(1, 6)]
     monkeypatch.setattr(feed_mod, "ranked_items", _fake_ranked_items(items))
 
-    out = mcp_server._digest_impl("matt", per_topic=2)
+    out = mcp_server._digest_impl("researcher", per_topic=2)
 
     assert len(out["topics"][0]["items"]) == 2
     assert out["topics"][0]["n_total"] == 5
@@ -118,7 +118,7 @@ def test_single_class_clicks_report_the_classifier_as_inactive(db, monkeypatch):
     seed(db, clicks=((1, 1), (2, 1), (3, 1)))
     monkeypatch.setattr(feed_mod, "ranked_items", _fake_ranked_items([_item(1, ["alpha"])]))
 
-    quality = mcp_server._digest_impl("matt")["ranking_quality"]
+    quality = mcp_server._digest_impl("researcher")["ranking_quality"]
 
     assert quality["classifier_active"] is False
     assert quality["clicks"] == 3
@@ -129,7 +129,7 @@ def test_both_classes_activate_the_classifier(db, monkeypatch):
     seed(db, clicks=((1, 1), (2, 0)))
     monkeypatch.setattr(feed_mod, "ranked_items", _fake_ranked_items([_item(1, ["alpha"])]))
 
-    quality = mcp_server._digest_impl("matt")["ranking_quality"]
+    quality = mcp_server._digest_impl("researcher")["ranking_quality"]
 
     assert quality["classifier_active"] is True
     assert "WITHOUT" not in quality.get("caveat", "")
@@ -139,7 +139,7 @@ def test_empty_feed_preserves_success_path_keys(db, monkeypatch):
     seed(db)
     monkeypatch.setattr(feed_mod, "ranked_items", _fake_ranked_items([]))
 
-    out = mcp_server._digest_impl("matt")
+    out = mcp_server._digest_impl("researcher")
 
     assert out["ok"] is False
     assert out["topics"] == [] and out["unclustered"] == []
@@ -169,8 +169,8 @@ def test_digest_is_deterministic(db, monkeypatch):
     items = [_item(i, ["alpha", "beta"]) for i in range(1, 4)]
     monkeypatch.setattr(feed_mod, "ranked_items", _fake_ranked_items(items))
 
-    first = mcp_server._digest_impl("matt")
-    second = mcp_server._digest_impl("matt")
+    first = mcp_server._digest_impl("researcher")
+    second = mcp_server._digest_impl("researcher")
 
     assert [t["label"] for t in first["topics"]] == [t["label"] for t in second["topics"]]
 
@@ -200,7 +200,7 @@ def test_days_reaches_the_ranker(db, monkeypatch):
     monkeypatch.setattr(_shared, "rank_items", fake_rank)
     monkeypatch.setattr(_shared, "get_embedder", lambda: object())
 
-    mcp_server._digest_impl("matt", days=30)
+    mcp_server._digest_impl("researcher", days=30)
 
     assert seen["since_days"] == 30
 
@@ -217,7 +217,7 @@ def test_list_feed_keeps_its_default_window(db, monkeypatch):
     monkeypatch.setattr(_shared, "rank_items", fake_rank)
     monkeypatch.setattr(_shared, "get_embedder", lambda: object())
 
-    mcp_server._list_feed_impl("matt", limit=5)
+    mcp_server._list_feed_impl("researcher", limit=5)
 
     assert seen["since_days"] == 14
 
