@@ -31,8 +31,8 @@ fail() {
 }
 
 # Read skill config key `science_recommendations.repo_url` from ~/.hermes/config.yaml,
-# if present. Empty string if the file, key, or `yq` itself is missing — this is an
-# optional convenience, never a hard dependency.
+# if present -- an override for forks. Empty string if the file, key, or `yq`
+# itself is missing, in which case the published repo is used.
 read_repo_url() {
   if [ -f "${HERMES_CONFIG}" ] && command -v yq >/dev/null 2>&1; then
     yq -r '.science_recommendations.repo_url // ""' "${HERMES_CONFIG}" 2>/dev/null
@@ -44,8 +44,7 @@ read_repo_url() {
 # uv on PATH
 command -v uv >/dev/null 2>&1 || fail "uv is not on PATH — install uv (https://docs.astral.sh/uv/) and retry"
 
-# Project dir exists locally; if not, fall back to uvx-from-git when a repo_url
-# is configured, otherwise fail with instructions to clone.
+# Project dir exists locally; if not, fall back to uvx-from-git.
 if [ -n "${PROJECT_DIR}" ] && [ -d "${PROJECT_DIR}" ]; then
   exec uv run --project "${PROJECT_DIR}" attest install --yes
 fi
@@ -55,13 +54,10 @@ fi
 _where="${PROJECT_DIR:-no local checkout found}"
 
 REPO_URL="$(read_repo_url)"
-if [ -n "${REPO_URL}" ]; then
-  echo "${_where} — using uvx --from git+${REPO_URL} instead." >&2
-  # NOTE: the pyproject package name is `attestation` and its console script is
-  # `attest` ([project.scripts] attest = "attestation.cli:main") — uvx takes
-  # the package via --from and the executable name as the command, so this is
-  # `uvx --from git+<repo_url> attest ...`.
-  exec uvx --from "git+${REPO_URL}" attest install --yes
-fi
-
-fail "${_where} and no science_recommendations.repo_url configured in ${HERMES_CONFIG} — clone it: git clone <attestation-repo-url> ~/attestation && cd ~/attestation && uv sync, or set science_recommendations.repo_url to a attestation git URL"
+REPO_URL="${REPO_URL:-https://github.com/mgoldey/attestation}"
+echo "${_where} — using uvx --from git+${REPO_URL} instead." >&2
+# NOTE: the pyproject package name is `attestation` and its console script is
+# `attest` ([project.scripts] attest = "attestation.cli:main") — uvx takes
+# the package via --from and the executable name as the command, so this is
+# `uvx --from git+<repo_url> attest ...`.
+exec uvx --from "git+${REPO_URL}" attest install --yes

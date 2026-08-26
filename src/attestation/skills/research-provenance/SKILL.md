@@ -50,7 +50,7 @@ bash ${HERMES_SKILL_DIR}/scripts/setup.sh
 ```
 
 `setup.sh` is a thin delegator: it resolves a local checkout (or falls back
-to `uvx --from git+<repo_url> attest install --yes` — see below) and execs
+to `uvx --from git+https://github.com/mgoldey/attestation attest install --yes` — see below) and execs
 `uv run attest install --yes`. You can also run the installer directly from
 the project dir:
 
@@ -92,24 +92,24 @@ path resolution order (see `resolve_db_path` in `src/attestation/db.py`):
 
 If `src/attestation/skills/research-provenance/scripts/setup.sh` doesn't find a local
 project checkout at `HERMES_RSS_PROJECT_DIR` (default: the checkout the
-script itself lives in), it looks for a `science_recommendations.repo_url`
-key in `~/.hermes/config.yaml`:
+script itself lives in), it runs the installer straight from git with no
+clone step:
+
+```bash
+uvx --from git+https://github.com/mgoldey/attestation attest install --yes
+```
+
+A `science_recommendations.repo_url` key in `~/.hermes/config.yaml` overrides
+that URL, for a fork:
 
 ```yaml
 science_recommendations:
-  repo_url: https://github.com/<owner>/attestation
-```
-
-When that's set, setup.sh runs the installer straight from git with no
-clone step, e.g.:
-
-```bash
-uvx --from git+https://github.com/<owner>/attestation attest install --yes
+  repo_url: https://github.com/<you>/attestation
 ```
 
 The package name (`attestation`) and its console-script name (`attest`)
 differ — `uvx --from <package>` takes the *package*, and the trailing word is
-the *executable*, so the invocation is `uvx --from git+<repo_url> attest
+the *executable*, so the invocation is `uvx --from git+https://github.com/mgoldey/attestation attest
 ...`, not `... attestation ...`. `uvx --from . attestation` (wrong) fails with
 "An executable named `attestation` is not provided by package `attestation`".
 

@@ -39,7 +39,7 @@ pure local computation over files that already exist. This uses the sweep in
 `examples/workspace`:
 
 ```bash
-git clone <this repo> ~/attestation && cd ~/attestation && uv sync
+git clone https://github.com/mgoldey/attestation ~/attestation && cd ~/attestation && uv sync
 export ATTEST_DB=/tmp/attest-demo.db
 
 uv run attest runs scan --root examples/workspace
@@ -116,27 +116,20 @@ found — wires up the MCP server, the skill copy, the reasoning override,
 and the refresh cron job. Re-running it repairs whatever's missing; nothing
 it does is destructive.
 
-From a local clone — this is the path that works today:
+From a local clone:
 
 ```bash
-git clone <this repo> ~/attestation
+git clone https://github.com/mgoldey/attestation ~/attestation
 cd ~/attestation
 uv sync
 uv run attest install
 ```
 
-**There is no published remote yet**, so the no-checkout `uvx --from git+...`
-form below cannot work until there is one. It is recorded here so the URL has
-one place to change, not as a command to run:
+Or with no checkout at all:
 
 ```bash
-# Only once this repo has a reachable remote:
-REPO_URL=https://github.com/<owner>/attestation
-uvx --from "git+$REPO_URL" attest install
+uvx --from git+https://github.com/mgoldey/attestation attest install
 ```
-
-Same for `setup.sh`'s uvx fallback and `science_recommendations.repo_url` in
-the hermes-agent section — all three inherit whatever that URL becomes.
 
 Add `--check` to see what's missing without changing anything (exits 1 on
 gaps — useful in scripts), and `--yes` to skip the confirmation prompt for
@@ -214,11 +207,11 @@ per-request pinning the native API used to provide.
 
 #### No-checkout alternative (uvx-from-git)
 
-Once the repo has a reachable remote, the engine runs without cloning:
+The engine runs without cloning:
 
 ```bash
-uvx --from git+<REPO_URL> attest ingest
-uvx --from git+<REPO_URL> attest serve
+uvx --from git+https://github.com/mgoldey/attestation attest ingest
+uvx --from git+https://github.com/mgoldey/attestation attest serve
 ```
 
 Note the package is `attestation` but its console script is `attest`
@@ -470,16 +463,17 @@ Re-run that copy whenever the skill changes in this repo — the installed copy
 does not track the checkout (`attest install` does this sync for you, see
 "One-liner" above). The skill's `scripts/setup.sh` is a thin delegator to
 `attest install --yes`: it resolves the checkout (or falls back to
-`uvx --from git+<repo_url> attest install --yes` when no local checkout is
+`uvx --from git+https://github.com/mgoldey/attestation attest install --yes` when no local checkout is
 found) and lets the installer handle models, `.env`, first ingest, MCP/skill/
 cron wiring. It reads `HERMES_RSS_PROJECT_DIR` (defaulting to the checkout the
-script itself lives in) to find the checkout, and falls back to
-`uvx --from git+<repo_url>` when a
-`science_recommendations.repo_url` key is set in `~/.hermes/config.yaml`:
+script itself lives in) to find the checkout, and otherwise falls back to
+`uvx --from git+https://github.com/mgoldey/attestation`. A
+`science_recommendations.repo_url` key in `~/.hermes/config.yaml` overrides
+that URL, for a fork:
 
 ```yaml
 science_recommendations:
-  repo_url: https://github.com/<owner>/attestation
+  repo_url: https://github.com/<you>/attestation
 ```
 
 ### 5. Shared database
