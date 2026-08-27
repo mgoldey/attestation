@@ -26,9 +26,9 @@ What makes this honest rather than "run DSPy and keep the winner":
   records dev scores measured afterwards through the real ChatClient, not
   through DSPy.
 * Shipping is a separate decision. This writes a candidate. Whether it may
-  replace the hand-written prompt is transfer_matrix.py's call: beats the
-  baseline on the optimizer's model AND on two others, with no wider a
-  spread across them than the hand-written prompt has.
+  replace the current default is transfer_matrix.py's call: not worse than
+  the baseline on the optimizer's model, better on two others, with no wider
+  a spread across them than the baseline has.
 
 Budget: `--max-metric-calls` bounds student-model calls. One full pass over
 the train split costs len(train) calls (~5s each on gemma4:e2b with the

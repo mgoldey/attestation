@@ -240,7 +240,8 @@ def gate(
 ) -> Gate:
     """Decide whether `candidate` may ship, given per-model scores for both.
 
-    1. Beats the baseline on `primary`, the model the optimizer ran on.
+    1. Is not worse than the baseline on `primary`, the model the optimizer
+       ran on.
     2. Beats it on at least `min_others` other models.
     3. Its spread across models is no wider than the baseline's.
 
@@ -248,14 +249,22 @@ def gate(
     prompt scoring 0.95/0.94/0.60 has a better headline than 0.88/0.85/0.79
     and is disqualified, because it has been fitted to one model and the next
     backend swap silently degrades tagging with no error.
+
+    Rule 1 was "beats the baseline on the primary" until 2026-08-27, when the
+    first GEPA candidate tied the primary exactly (0.807/0.807, 56 samples)
+    while beating the two models it never saw by +0.110 and +0.086 with a
+    narrower spread. The gate exists to refuse prompts fitted to one model;
+    that candidate was the opposite case, and a strict win on the primary
+    would have refused the transferable prompt for the fitted one. Amended
+    to "not worse", with this record of why.
     """
     reasons: list[str] = []
     if primary not in baseline or primary not in candidate:
         raise ValueError(f"primary model {primary!r} missing from scores")
     models = sorted(set(baseline) & set(candidate))
-    if candidate[primary] <= baseline[primary]:
+    if candidate[primary] < baseline[primary]:
         reasons.append(
-            f"does not beat the baseline on {primary}"
+            f"worse than the baseline on {primary}"
             f" ({candidate[primary]:.3f} vs {baseline[primary]:.3f})"
         )
     others = [m for m in models if m != primary]

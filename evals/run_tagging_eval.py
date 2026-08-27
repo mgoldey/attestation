@@ -11,8 +11,8 @@ Each case targets one such failure and says which in its `note`.
 Not a pytest test: it needs a live model, takes minutes, and is
 non-deterministic. It is a measurement tool, run deliberately.
 
-    uv run python evals/run_tagging_eval.py                        # hand-written prompt, dev split
-    uv run python evals/run_tagging_eval.py --artifact evals/prompts/strict.json
+    uv run python evals/run_tagging_eval.py                          # shipped default, dev split
+    uv run python evals/run_tagging_eval.py --artifact evals/prompts/hand-written.json
     uv run python evals/run_tagging_eval.py --split all --repeat 3   # stability
     uv run python evals/run_tagging_eval.py --model hermes3:8b       # transfer
 
@@ -35,7 +35,11 @@ from attestation.llm import ChatClient, chat_model
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--artifact", default=None, help="prompt artifact JSON; default = hand-written")
+    ap.add_argument(
+        "--artifact",
+        default=None,
+        help="prompt artifact JSON; default = the shipped DEFAULT_TAG_INSTRUCTION",
+    )
     ap.add_argument("--split", default="dev", choices=["train", "dev", "all"])
     ap.add_argument("--repeat", type=int, default=1, help="runs per case, for stability")
     ap.add_argument("--model", default=None)

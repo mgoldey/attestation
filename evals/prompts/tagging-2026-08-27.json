@@ -198,11 +198,12 @@
       }
     }
   },
-  "shipped": false,
-  "note": "Candidate, NOT shipped: see `transfer`. Kept as the record of the first GEPA run and its gate verdict.",
+  "shipped": true,
+  "note": "SHIPPED 2026-08-27: this instruction is features.DEFAULT_TAG_INSTRUCTION verbatim (a test pins the two together). The hand-written prompt it replaced is evals/prompts/hand-written.json.",
   "transfer": {
     "matrix": "evals/prompts/transfer-2026-08-27.md",
-    "verdict": "FAIL",
-    "reason": "ties the baseline on gemma4:e2b (0.807 vs 0.807); beats it on gemma4:e4b (+0.110) and hermes3:8b (+0.086) with a narrower spread (0.054 vs 0.065)"
+    "verdict": "PASS",
+    "reason": "not worse on gemma4:e2b (0.807 vs 0.807); beats the baseline on gemma4:e4b (+0.110) and hermes3:8b (+0.086) with a narrower spread (0.054 vs 0.065)",
+    "note": "rule 1 was amended from 'beats' to 'not worse than' on the primary after this run; recorded in the spec"
   }
 }

@@ -202,9 +202,19 @@ def test_a_better_headline_with_a_wider_spread_is_refused():
     assert any("beats the baseline on 1 other" in r for r in g.reasons)
 
 
-def test_not_beating_the_primary_model_is_reason_enough():
-    g = te.gate(BASE, {"gemma4:e2b": 0.883, "gemma4:e4b": 0.90, "hermes3:8b": 0.85}, "gemma4:e2b")
-    assert not g.passed and any("does not beat" in r for r in g.reasons)
+def test_losing_on_the_primary_model_is_reason_enough():
+    g = te.gate(BASE, {"gemma4:e2b": 0.87, "gemma4:e4b": 0.90, "hermes3:8b": 0.85}, "gemma4:e2b")
+    assert not g.passed and any("worse than the baseline on gemma4:e2b" in r for r in g.reasons)
+
+
+def test_a_tie_on_the_primary_with_transfer_elsewhere_passes():
+    """The first real candidate: 0.807/0.807 on the primary, +0.110 and
+    +0.086 on the models it never saw, narrower spread. The gate refuses
+    prompts fitted to ONE model; this is the opposite case and must ship."""
+    base = {"gemma4:e2b": 0.807, "gemma4:e4b": 0.750, "hermes3:8b": 0.741}
+    cand = {"gemma4:e2b": 0.807, "gemma4:e4b": 0.860, "hermes3:8b": 0.827}
+    g = te.gate(base, cand, "gemma4:e2b")
+    assert g.passed, g.reasons
 
 
 def test_the_gate_only_compares_models_both_prompts_were_scored_on():

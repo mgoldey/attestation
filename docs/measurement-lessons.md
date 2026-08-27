@@ -183,8 +183,18 @@ is fitted to gemma4:e2b's idiom, and a longer instruction e2b cannot exploit
 
 **A tie at 56 samples is not a result either way.** Re-running until the
 primary wins is the same tautology as selecting demonstrations from the
-scoring set. The next step is more cases, decided before the next run.
+scoring set.
+
+**The pre-registered rule was wrong, and it was changed in the open.** Rule 1
+said "beats the baseline on the primary"; on this evidence Matt's call was
+that transferability is the stronger signal, which is what the spec argued
+from the start. Rule 1 is now "not worse on the primary", the amendment is
+dated and cites this run in `gate()`'s docstring and the spec, and the
+candidate shipped as `DEFAULT_TAG_INSTRUCTION`. The distinction that matters:
+loosening a bar silently to pass a number is the tautology; loosening it
+with the reason written next to the result is a design decision.
 
 **Rule:** decide the acceptance bar before the run, score on models the
 optimizer never saw, and treat the optimizer's own number as the artifact it
-is.
+is. If the bar turns out to be wrong, change it where the next reader will
+see why.

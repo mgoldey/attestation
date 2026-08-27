@@ -25,12 +25,19 @@ from attestation.features import (
 VOCAB = ["quantum-chemistry", "transformers"]
 
 
-def test_the_default_render_is_the_hand_written_prompt_verbatim():
+SHIPPED = Path(__file__).resolve().parents[1] / "evals" / "prompts" / "tagging-2026-08-27.json"
+
+
+def test_the_default_is_the_shipped_artifact_verbatim():
+    """The default is embedded in features.py because evals/ is not in the
+    wheel; this pins the embedded text to the artifact whose transfer matrix
+    justified it, so neither can drift from the other."""
     msgs = tag_messages("T", "S", VOCAB)
     assert [m["role"] for m in msgs] == ["system", "user"]
     assert msgs[0]["content"] == DEFAULT_TAG_INSTRUCTION
-    assert DEFAULT_TAG_INSTRUCTION.startswith("You label science-feed items.")
-    assert "Tag the SUBJECT MATTER only." in DEFAULT_TAG_INSTRUCTION
+    shipped = json.loads(SHIPPED.read_text())
+    assert shipped["shipped"] is True
+    assert DEFAULT_TAG_INSTRUCTION == shipped["instruction"]
     assert (
         msgs[1]["content"]
         == "Existing vocabulary: quantum-chemistry, transformers\n\nTitle: T\nSummary: S"

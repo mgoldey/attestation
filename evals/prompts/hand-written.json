@@ -1,0 +1,11 @@
+{
+  "instruction": "You label science-feed items. Reply with JSON: content_type (one of paper, survey, announcement, release, blog, other) and tags: 1-4 short lowercase-hyphenated topic tags. Strongly prefer tags from the existing vocabulary; invent a new tag only if nothing in it fits. Tag the SUBJECT MATTER only. Never tag where the item came from (nature, arxiv, science-feed) or what kind of post it is (release, announcement, newsletter) -- the publication is already recorded, and the kind of post is content_type.",
+  "demos": [],
+  "optimizer": "hand-written",
+  "why": "The original prompt, tuned by reading outputs on gemma4:e2b; the default until 2026-08-27. Kept runnable as the baseline the first GEPA candidate was gated against.",
+  "scores_dev_2runs_2026-08-27": {
+    "gemma4:e2b": 0.807,
+    "gemma4:e4b": 0.75,
+    "hermes3:8b": 0.741
+  }
+}

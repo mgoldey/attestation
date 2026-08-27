@@ -6,9 +6,10 @@
         --models gemma4:e2b,hermes3:8b
 
 Prints prompt x model -> dev score, the spread across models for each
-prompt, and the gate verdict for every candidate against the hand-written
-baseline (tagging_eval.gate). Writes the same as Markdown so the decision
-is committed beside the artifact and readable later.
+prompt, and the gate verdict for every candidate against the baseline --
+whatever DEFAULT_TAG_INSTRUCTION currently is (tagging_eval.gate). Writes the
+same as Markdown so the decision is committed beside the artifact and
+readable later.
 
 This is the acceptance test, and it is transfer rather than score on
 purpose: this project's premise is that LLM_BASE_URL points anywhere, so a
