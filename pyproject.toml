@@ -60,6 +60,13 @@ dev = [
     "datasette-vega>=0.6",
     "pre-commit>=3.7",
 ]
+# dspy is the offline prompt optimizer (evals/optimize_tagging.py). It pulls
+# ~30 packages including litellm and boto3, so it is its own group: neither
+# `uv sync` nor CI installs it, and nothing under src/ may import it
+# (tests/test_tag_prompt.py enforces that). Run with `uv run --group optimize`.
+optimize = [
+    "dspy>=3.3",
+]
 
 [build-system]
 requires = ["hatchling"]

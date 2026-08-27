@@ -160,3 +160,31 @@ surfaced only while testing something else.
 
 **Rule:** reproduce the symptom against the live payload before theorising
 about the layer that produced it.
+
+---
+
+## 5. An optimizer memorizes; only a held-out model tells you it happened
+
+DSPy GEPA on the tagging prompt (2026-08-27; full record in
+`docs/superpowers/specs/2026-08-23-dspy-prompt-optimization-design.md`).
+
+**The train number lied in the usual way.** 23 train cases, 300 metric calls:
+0.790 → 0.902 inside the optimizer. Through the production client on the
+28 held-out dev cases: 0.819 → 0.824. The instruction it wrote is 8× longer
+and quotes tags from specific train items back as "rules".
+
+**Transfer told the truth the primary model could not.** Scored on three
+models, twice per case: the candidate *tied* the model it was tuned on
+(0.807 / 0.807) and beat the two it never saw by +0.110 and +0.086. The
+pre-registered gate failed it on the tie, and stays as written. The finding
+underneath is the hypothesis the spec started from: the hand-written prompt
+is fitted to gemma4:e2b's idiom, and a longer instruction e2b cannot exploit
+(§2: length is zero-sum on a 2B model) is exactly what larger models can.
+
+**A tie at 56 samples is not a result either way.** Re-running until the
+primary wins is the same tautology as selecting demonstrations from the
+scoring set. The next step is more cases, decided before the next run.
+
+**Rule:** decide the acceptance bar before the run, score on models the
+optimizer never saw, and treat the optimizer's own number as the artifact it
+is.

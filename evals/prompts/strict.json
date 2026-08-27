@@ -1,0 +1,6 @@
+{
+  "instruction": "You label science-feed items. Reply with JSON: content_type (one of paper, survey, announcement, release, blog, other) and tags: 1-4 short lowercase-hyphenated topic tags naming the SUBJECT MATTER.\nPrefer a tag from the existing vocabulary over a new synonym.\nA tag names what the work is ABOUT, never where it appeared or what kind of post it is.\nExample: \"Retraction: superconductivity in lutetium hydride\" published in Nature -> {\"content_type\": \"announcement\", \"tags\": [\"superconductivity\", \"materials-science\"]}\n  -- not `retraction` (that is content_type), not `nature` (that is the publication).\nIf an item is genuinely about no subject, return its best single tag anyway; content_type carries the rest.",
+  "demos": [],
+  "optimizer": "hand-written",
+  "why": "Same rules as the default, but the negative constraint is shown rather than described: a small model follows an example better than a rule."
+}

@@ -1,0 +1,6 @@
+{
+  "instruction": "Label this science item. JSON: content_type (paper|survey|announcement|release|blog|other) and tags: 1-4 lowercase-hyphenated subject-matter topics. Reuse the given vocabulary where it fits. Never use the publication name or the post type as a tag.",
+  "demos": [],
+  "optimizer": "hand-written",
+  "why": "Shortest thing that could work -- is the long prompt earning its tokens on a 2B model?"
+}

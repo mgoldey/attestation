@@ -1,6 +1,7 @@
 [
   {
     "id": "paper-lm",
+    "split": "dev",
     "title": "Scaling Laws for Mixture-of-Experts Language Models",
     "summary": "We train 42 MoE language models from 100M to 7B parameters and derive empirical scaling laws relating expert count, active parameters and validation loss. We find the optimal expert count grows sublinearly.",
     "content_type": "paper",
@@ -16,10 +17,13 @@
       "preprint",
       "paper",
       "announcement"
-    ]
+    ],
+    "vocab_should_reuse": [],
+    "note": "ordinary paper: content_type and a topic; never the venue"
   },
   {
     "id": "survey-rag",
+    "split": "dev",
     "title": "A Survey of Retrieval-Augmented Generation",
     "summary": "This survey reviews 180 papers on retrieval-augmented generation, organising them by retriever architecture, fusion strategy and evaluation methodology. We identify open problems.",
     "content_type": "survey",
@@ -34,10 +38,13 @@
       "survey",
       "arxiv",
       "preprint"
-    ]
+    ],
+    "vocab_should_reuse": [],
+    "note": "a review of 180 papers is a survey, and `survey` is not a topic"
   },
   {
     "id": "release-pytorch",
+    "split": "dev",
     "title": "PyTorch 2.9 Released",
     "summary": "PyTorch 2.9 is now available. This release adds improved compile times, better ROCm support, and a new distributed checkpointing API.",
     "content_type": "release",
@@ -52,10 +59,13 @@
       "announcement",
       "news",
       "update"
-    ]
+    ],
+    "vocab_should_reuse": [],
+    "note": "a software release: topic is the software, not the fact of release"
   },
   {
     "id": "announcement-grant",
+    "split": "dev",
     "title": "NSF Announces $50M for AI Research Institutes",
     "summary": "The National Science Foundation announced funding for five new AI research institutes focused on trustworthy systems and climate modeling.",
     "content_type": "announcement",
@@ -70,10 +80,13 @@
       "news",
       "press-release",
       "nsf"
-    ]
+    ],
+    "vocab_should_reuse": [],
+    "note": "funding news: `nsf` is the source, not the subject"
   },
   {
     "id": "blog-debug",
+    "split": "dev",
     "title": "How I Debugged a 3am Kernel Panic",
     "summary": "A walkthrough of tracking down a race condition in a custom CUDA kernel using compute-sanitizer and a lot of coffee.",
     "content_type": "blog",
@@ -87,10 +100,13 @@
     "must_not": [
       "blog",
       "news"
-    ]
+    ],
+    "vocab_should_reuse": [],
+    "note": "personal war story is a blog; topics are the tools, not `debugging story`"
   },
   {
     "id": "trap-nature",
+    "split": "dev",
     "title": "Structure of the human nucleolar rRNA processing complex",
     "summary": "Published in Nature. We report cryo-EM structures of the human small-subunit processome at 2.8 angstrom resolution, revealing how rRNA folding is coupled to assembly.",
     "content_type": "paper",
@@ -107,10 +123,13 @@
       "paper",
       "preprint",
       "science"
-    ]
+    ],
+    "vocab_should_reuse": [],
+    "note": "the publication name is provenance, not a topic (pulled `nature` into the biology cluster)"
   },
   {
     "id": "trap-retraction",
+    "split": "dev",
     "title": "Retraction: Room-temperature superconductivity in nitrogen-doped lutetium hydride",
     "summary": "The authors retract this paper following an investigation that found the electrical resistance data could not be reproduced.",
     "content_type": "announcement",
@@ -125,10 +144,13 @@
       "nature",
       "announcement",
       "news"
-    ]
+    ],
+    "vocab_should_reuse": [],
+    "note": "a retraction is an announcement about a subject; `retraction` itself is a post type"
   },
   {
     "id": "acronym-crispr",
+    "split": "dev",
     "title": "CRISPR-Cas12a base editing in primary T cells",
     "summary": "We achieve 78% base editing efficiency in primary human T cells using an engineered Cas12a variant, with no detectable off-target edits by GUIDE-seq.",
     "content_type": "paper",
@@ -142,15 +164,19 @@
     "must_not": [
       "paper",
       "arxiv"
-    ]
+    ],
+    "vocab_should_reuse": [],
+    "note": "capitalised acronyms must survive normalisation as tags"
   },
   {
     "id": "vocab-reuse",
+    "split": "dev",
     "title": "Sparse attention patterns in long-context transformers",
     "summary": "We analyse attention sparsity in models with 128k context windows and show that 90% of attention mass concentrates on 5% of positions.",
     "content_type": "paper",
     "should_include_any": [
       "attention",
+      "attention-mechanisms",
       "transformers",
       "long-context",
       "sparsity"
@@ -160,12 +186,14 @@
       "arxiv"
     ],
     "vocab_should_reuse": [
-      "attention",
+      "attention-mechanisms",
       "transformers"
-    ]
+    ],
+    "note": "an item the vocabulary already covers must reuse it rather than mint a synonym"
   },
   {
     "id": "empty-ok",
+    "split": "dev",
     "title": "Weekly Newsletter #47",
     "summary": "This week: three links, a job board update, and a reminder that the conference deadline is Friday.",
     "content_type": "other",
@@ -176,6 +204,946 @@
       "announcement",
       "update",
       "conference"
-    ]
+    ],
+    "vocab_should_reuse": [],
+    "note": "an item about nothing gets content_type other and no invented topic"
+  },
+  {
+    "id": "bait-modular-bootstrap",
+    "split": "train",
+    "title": "Descending into the Modular Bootstrap",
+    "summary": "We study the modular bootstrap for two-dimensional conformal field theories, deriving bounds on the gap in the spectrum of primary operators by descending through the space of modular-invariant partition functions. The bounds sharpen previous results at large central charge.",
+    "content_type": "paper",
+    "should_include_any": [
+      "conformal-field-theory",
+      "bootstrap",
+      "mathematical-physics",
+      "physics",
+      "string-theory",
+      "high-energy-physics"
+    ],
+    "must_not": [
+      "machine-learning",
+      "deep-learning",
+      "optimization",
+      "representation-learning",
+      "arxiv"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged deep-learning, machine-learning, optimization, representation-learning. 'Bootstrap' and 'descending' are not ML words here."
+  },
+  {
+    "id": "bait-tddfrt",
+    "split": "dev",
+    "title": "Is the TDDFRT representation of a molecular electronic transition unique?",
+    "summary": "We study the time-dependent density-functional response theory representation of molecular electronic transitions through the one-body reduced difference density matrix, and show that the functional expression used in the literature does not determine that object uniquely.",
+    "content_type": "paper",
+    "should_include_any": [
+      "quantum-chemistry",
+      "density-functional-theory",
+      "tddft",
+      "excited-states",
+      "molecular-physics",
+      "electronic-structure"
+    ],
+    "must_not": [
+      "representation-learning",
+      "machine-learning",
+      "optimization"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: 'representation' in the title became representation-learning."
+  },
+  {
+    "id": "bait-ice-core",
+    "split": "train",
+    "title": "A global atmospheric methane record from a tropical ice core",
+    "summary": "We present a continuous record of atmospheric methane over the last 1,500 years reconstructed from air trapped in a tropical Andean ice core, and compare it with polar records to constrain the interhemispheric gradient and its sources.",
+    "content_type": "paper",
+    "should_include_any": [
+      "climate",
+      "paleoclimate",
+      "ice-cores",
+      "methane",
+      "atmospheric-chemistry",
+      "glaciology",
+      "climate-science"
+    ],
+    "must_not": [
+      "forecasting",
+      "time-series",
+      "machine-learning",
+      "optimization"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: a paleoclimate reconstruction was tagged forecasting because it is a time series."
+  },
+  {
+    "id": "bait-cyclone",
+    "split": "dev",
+    "title": "AIFS-TC: A simple correction competitive with the operational frontier for tropical cyclone intensity",
+    "summary": "We show that a simple statistical correction applied to a machine-learning weather model's tropical cyclone forecasts closes most of the intensity gap to operational dynamical systems, evaluated on three seasons of best-track data.",
+    "content_type": "paper",
+    "should_include_any": [
+      "weather-forecasting",
+      "forecasting",
+      "tropical-cyclones",
+      "meteorology",
+      "climate",
+      "atmospheric-science"
+    ],
+    "must_not": [
+      "agentic-workflows",
+      "reasoning",
+      "large-language-models",
+      "natural-language-processing"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged agentic-workflows; 'AI' in a weather paper is not an agent."
+  },
+  {
+    "id": "bait-care-robots",
+    "split": "train",
+    "title": "Human-Centered Reflections on Care Robots: A Comparative Study of Caregiver Perspectives",
+    "summary": "Through interviews with 42 professional and family caregivers in two countries, we compare expectations of robots in elder care, finding that trust hinges on transparency about capability limits rather than on task performance.",
+    "content_type": "paper",
+    "should_include_any": [
+      "robotics",
+      "healthcare",
+      "human-robot-interaction",
+      "human-factors",
+      "elder-care",
+      "care-robots"
+    ],
+    "must_not": [
+      "reinforcement-learning",
+      "optimization",
+      "agentic-workflows",
+      "large-language-models",
+      "machine-learning"
+    ],
+    "vocab_should_reuse": [],
+    "note": "a qualitative interview study; 'robots' does not make it reinforcement learning."
+  },
+  {
+    "id": "bait-optical-computing",
+    "split": "dev",
+    "title": "Degree-of-polarization modulation for high-dimensional optical computing",
+    "summary": "We demonstrate that modulating the degree of polarization of light provides an additional computational dimension for optical matrix-vector multiplication, and realise a spatially programmable optical processor with 64 independent channels.",
+    "content_type": "paper",
+    "should_include_any": [
+      "optical-computing",
+      "photonics",
+      "optics",
+      "polarization",
+      "analog-computing"
+    ],
+    "must_not": [
+      "machine-learning",
+      "deep-learning",
+      "optimization",
+      "representation-learning"
+    ],
+    "vocab_should_reuse": [],
+    "note": "hardware that COMPUTES is not machine learning; a photonics paper must not be pulled into the ML cluster."
+  },
+  {
+    "id": "bait-optimizer-state",
+    "split": "train",
+    "title": "Delayed Optimizer-State Transport Shapes Short-Horizon Training Decisions",
+    "summary": "We analyse how lag in transporting optimizer state across a pipeline-parallel training run biases learning-rate and batch-size choices made from short-horizon loss curves, and propose a correction that recovers long-horizon rankings of configurations.",
+    "content_type": "paper",
+    "should_include_any": [
+      "optimization",
+      "training-dynamics",
+      "deep-learning",
+      "optimizers",
+      "distributed-training",
+      "hyperparameters"
+    ],
+    "must_not": [
+      "reinforcement-learning",
+      "agentic-workflows"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged reinforcement-learning; 'decisions' and 'horizon' are not RL words here, and optimization IS correct."
+  },
+  {
+    "id": "bait-tensegrity",
+    "split": "dev",
+    "title": "Impact-resistant, autonomous robots inspired by tensegrity architecture",
+    "summary": "Nature Machine Intelligence, Published online: 10 August 2026; doi:10.1038/s42256-026-01280-2 Johnson et al. demonstrate an autonomous three-bar tensegrity robot capable of robust locomotion across varied terrains even after extreme impacts, including a 5.7-m drop onto asphalt.",
+    "content_type": "paper",
+    "should_include_any": [
+      "robotics",
+      "soft-robotics",
+      "tensegrity",
+      "locomotion",
+      "mechanical-design"
+    ],
+    "must_not": [
+      "agentic-workflows",
+      "optimization",
+      "machine-learning",
+      "large-language-models",
+      "nature"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged agentic-workflows, machine-learning, optimization; a mechanical robot paper from a journal with 'Machine Intelligence' in its name."
+  },
+  {
+    "id": "bait-solar-policy",
+    "split": "train",
+    "title": "Accelerating the Adoption of Residential Solar Power Systems: Policy Analysis using a Dynamic Structural Model",
+    "summary": "Governments encourage household photovoltaic adoption through rebates and tax credits. We estimate a dynamic structural model of household adoption on eight years of utility data and use it to compare the cost-effectiveness of rebate schedules.",
+    "content_type": "paper",
+    "should_include_any": [
+      "economics",
+      "energy-policy",
+      "solar-energy",
+      "policy-analysis",
+      "structural-models",
+      "renewable-energy"
+    ],
+    "must_not": [
+      "machine-learning",
+      "deep-learning",
+      "optimization",
+      "reasoning",
+      "agentic-workflows"
+    ],
+    "vocab_should_reuse": [],
+    "note": "an economics paper on cs.LG: 'model' means an econometric model."
+  },
+  {
+    "id": "bait-quanta-muon",
+    "split": "dev",
+    "title": "Physicists Solve a Big Quantum Mystery. Now, Old Results Don't Add Up.",
+    "summary": "New calculations seem to have put a 25-year-old particle physics puzzle to rest. But they've also created a clash with other experimental results. The post first appeared on Quanta Magazine",
+    "content_type": "other",
+    "should_include_any": [
+      "particle-physics",
+      "physics",
+      "muon",
+      "standard-model",
+      "quantum-electrodynamics",
+      "quantum-physics"
+    ],
+    "must_not": [
+      "evaluation-metrics",
+      "reasoning",
+      "machine-learning",
+      "optimization"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged evaluation-metrics and reasoning. Science journalism is content_type other: the taxonomy has no news, and a magazine feature is not a blog."
+  },
+  {
+    "id": "bait-mint-transactions",
+    "split": "dev",
+    "title": "MINT: A Universal Zero-Shot Predictor for Transaction Data",
+    "summary": "Banks analyse sequential transaction data for fraud prevention, credit risk and personalisation. We train a foundation model on transaction sequences that transfers zero-shot to new banks and tasks without fine-tuning, and evaluate it on four institutions' data.",
+    "content_type": "paper",
+    "should_include_any": [
+      "foundation-models",
+      "financial-transactions",
+      "zero-shot-learning",
+      "tabular-data",
+      "fraud-detection",
+      "finance",
+      "sequence-modeling"
+    ],
+    "must_not": [
+      "natural-language-processing",
+      "reasoning",
+      "large-language-models"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged llm, nlp, reasoning. A sequence model over transactions is not a language model."
+  },
+  {
+    "id": "reuse-machine-learning",
+    "split": "train",
+    "title": "Continual-Learning Physics-Informed Neural Networks for Parameterized Partial Differential Equations",
+    "summary": "We train physics-informed neural networks that adapt to new parameter regimes of a PDE family without forgetting earlier ones, using a replay buffer of collocation points, and evaluate on Burgers and Navier-Stokes benchmarks.",
+    "content_type": "paper",
+    "should_include_any": [
+      "physics-informed-neural-networks",
+      "continual-learning",
+      "partial-differential-equations",
+      "scientific-machine-learning",
+      "machine-learning"
+    ],
+    "must_not": [
+      "machinelearning",
+      "ml",
+      "physics-informed"
+    ],
+    "vocab_should_reuse": [
+      "machine-learning"
+    ],
+    "note": "LIVE FAILURE: minted machinelearning (463 uses) beside machine-learning (1033), splitting the hub."
+  },
+  {
+    "id": "reuse-large-language-models",
+    "split": "dev",
+    "title": "Quantization Effects on Biomedical LLM Reliability",
+    "summary": "We quantize four biomedical language models to 8 and 4 bits and measure calibration and factual consistency on clinical question answering, finding that 4-bit quantization degrades reliability far more than accuracy.",
+    "content_type": "paper",
+    "should_include_any": [
+      "quantization",
+      "large-language-models",
+      "biomedical-nlp",
+      "reliability",
+      "model-compression",
+      "calibration"
+    ],
+    "must_not": [
+      "llm",
+      "llms"
+    ],
+    "vocab_should_reuse": [
+      "large-language-models"
+    ],
+    "note": "the vocabulary says large-language-models; llm is the deprecated spelling the graph merges away."
+  },
+  {
+    "id": "reuse-reinforcement-learning",
+    "split": "train",
+    "title": "Reinforcing Multi-Turn Reasoning in LLM Agents via Fine-Grained Reward Structure",
+    "summary": "We train language-model agents on multi-turn tool-use tasks with per-step rewards derived from verifier feedback rather than a single terminal reward, and show faster convergence and higher success on held-out environments.",
+    "content_type": "paper",
+    "should_include_any": [
+      "reinforcement-learning",
+      "reasoning",
+      "agentic-workflows",
+      "large-language-models",
+      "reward-design"
+    ],
+    "must_not": [
+      "rl",
+      "rlhf"
+    ],
+    "vocab_should_reuse": [
+      "reinforcement-learning"
+    ],
+    "note": "an item squarely inside the vocabulary must reuse it; rl is an abbreviation the graph does not merge."
+  },
+  {
+    "id": "reuse-diffusion-models",
+    "split": "train",
+    "title": "Just on Time: Token-Level Early Stopping for Diffusion Language Models",
+    "summary": "Diffusion language models denoise all positions for a fixed number of steps. We show that most tokens converge early and propose a per-token stopping criterion that halves inference cost at equal quality on three benchmarks.",
+    "content_type": "paper",
+    "should_include_any": [
+      "diffusion-models",
+      "language-models",
+      "large-language-models",
+      "inference",
+      "early-stopping",
+      "efficient-inference"
+    ],
+    "must_not": [
+      "diffusion",
+      "diffusion-llms",
+      "dlm"
+    ],
+    "vocab_should_reuse": [
+      "diffusion-models"
+    ],
+    "note": "diffusion-models is in the vocabulary; a truncated or novel spelling fragments it."
+  },
+  {
+    "id": "survey-graph-foundation",
+    "split": "dev",
+    "title": "A Comprehensive Survey of Graph Foundation Models",
+    "summary": "We review over 200 papers on foundation models for graph-structured data, organising them by pretraining objective, graph tokenisation and downstream adaptation, and identify open problems in scaling and evaluation.",
+    "content_type": "survey",
+    "should_include_any": [
+      "graph-neural-networks",
+      "foundation-models",
+      "graph-learning",
+      "graph-representation-learning"
+    ],
+    "must_not": [
+      "survey",
+      "gnn",
+      "gnns"
+    ],
+    "vocab_should_reuse": [
+      "graph-neural-networks"
+    ],
+    "note": "a survey inside the vocabulary: content_type survey, tag reuse, no 'survey' tag."
+  },
+  {
+    "id": "paper-benchmark-not-survey",
+    "split": "train",
+    "title": "ChemDIRT: A Diversified Instruction, Representation, and Task Benchmark for Robust Chemistry-LLM Evaluation",
+    "summary": "Existing chemistry benchmarks provide a narrow view of model capability. We introduce a benchmark of 12,000 items varying instruction phrasing, molecular representation and task type, and show that reported performance of six models drops by up to 30 points under representation changes.",
+    "content_type": "paper",
+    "should_include_any": [
+      "chemistry",
+      "large-language-models",
+      "benchmarks",
+      "evaluation-metrics",
+      "evaluation",
+      "cheminformatics"
+    ],
+    "must_not": [
+      "survey",
+      "representation-learning"
+    ],
+    "vocab_should_reuse": [],
+    "note": "a benchmark paper evaluates models; it is a paper, not a survey, and 'Representation' in the title is molecular representation."
+  },
+  {
+    "id": "chem-chiral-perovskite",
+    "split": "train",
+    "title": "Chirality Transfer to the Magnetic Sublattice in the Hybrid Perovskite (R)-/(S)-3-Fluoropyrrolidinium Copper(II) Chloride",
+    "summary": "Incorporating chiral organic cations into hybrid materials can make the inorganic sublattice chiroptically active. We report a two-dimensional magnetic chiral metal halide perovskite with Cu-Cl layers separated by 3-fluoropyrrolidinium cations and show chirality transfer to the magnetic ordering.",
+    "content_type": "paper",
+    "should_include_any": [
+      "materials-science",
+      "perovskites",
+      "magnetism",
+      "chirality",
+      "chiral-materials",
+      "solid-state-chemistry"
+    ],
+    "must_not": [
+      "machine-learning",
+      "deep-learning",
+      "optimization",
+      "representation-learning"
+    ],
+    "vocab_should_reuse": [],
+    "note": "a chem-ph paper with no ML content at all; the ML-heavy vocabulary must not leak onto it."
+  },
+  {
+    "id": "chem-carbene-gold",
+    "split": "dev",
+    "title": "Unravelling carbene moiety role in the N-heterocyclic carbene-phosphinidenes coordination chemistry: bonding and reactivity in gold chemistry",
+    "summary": "The coordination properties of N-heterocyclic carbene-phosphinidene ligands depend strongly on the carbene moiety. We systematically compare bonding and reactivity across 13 NHCP gold hydride complexes bearing different classes of NHCs.",
+    "content_type": "paper",
+    "should_include_any": [
+      "coordination-chemistry",
+      "organometallic-chemistry",
+      "ligands",
+      "gold-chemistry",
+      "chemistry",
+      "chemical-bonding"
+    ],
+    "must_not": [
+      "machine-learning",
+      "deep-learning",
+      "optimization",
+      "representation-learning"
+    ],
+    "vocab_should_reuse": [],
+    "note": "organometallic chemistry; a long technical title must still yield chemistry tags."
+  },
+  {
+    "id": "chem-double-hybrid-dft",
+    "split": "train",
+    "title": "Self-consistent double-hybrid density functional theory via one-body second-order Møller-Plesset perturbation theory and projection-based embedding",
+    "summary": "We present self-consistent one-body double-hybrid DFT, in which the one-body MP2 perturbation potential is embedded in the generalized Kohn-Sham framework so orbitals are optimized in the presence of MP2-level correlation, and combine it with projection-based embedding.",
+    "content_type": "paper",
+    "should_include_any": [
+      "density-functional-theory",
+      "quantum-chemistry",
+      "perturbation-theory",
+      "electronic-structure",
+      "computational-chemistry"
+    ],
+    "must_not": [
+      "machinelearning",
+      "machine-learning",
+      "representation-learning",
+      "optimization"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged machinelearning; 'optimized orbitals' is not ML optimization."
+  },
+  {
+    "id": "chem-fock-space-vmc",
+    "split": "dev",
+    "title": "Importance-Reweighted Fock-Space Variational Monte Carlo",
+    "summary": "Fock-space variational Monte Carlo evaluates variational quantities by sampling discrete many-body configurations. We introduce importance reweighting that leaves the variational objective unchanged while reducing estimator variance for ab initio electronic Hamiltonians.",
+    "content_type": "paper",
+    "should_include_any": [
+      "quantum-chemistry",
+      "monte-carlo",
+      "variational-monte-carlo",
+      "electronic-structure",
+      "quantum-many-body"
+    ],
+    "must_not": [
+      "molecular-dynamics",
+      "machine-learning",
+      "reinforcement-learning"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged molecular-dynamics; Monte Carlo sampling of electronic states is not MD."
+  },
+  {
+    "id": "chem-amide-synthesis",
+    "split": "train",
+    "title": "Amide synthesis via molecular shuffling of carboxylic acids",
+    "summary": "Nature Communications, Published online: 25 August 2026; doi:10.1038/s41467-026-77092-0 The amide bond represents the most fundamental functional group in chemistry and biology. Herein, the authors report an approach to amide synthesis that relies on molecular shuffling of carboxylic acid functional group.",
+    "content_type": "paper",
+    "should_include_any": [
+      "organic-synthesis",
+      "organic-chemistry",
+      "synthesis",
+      "amides",
+      "chemistry",
+      "synthetic-methodology"
+    ],
+    "must_not": [
+      "molecular-dynamics",
+      "material-science",
+      "materials-science",
+      "machine-learning",
+      "nature"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged molecular-dynamics and material-science on an organic methodology paper."
+  },
+  {
+    "id": "chem-nitrogen-reduction",
+    "split": "dev",
+    "title": "Artificial photosynthetic reduction of nitrogen to ammonia at room temperature using natural seawater",
+    "summary": "Nature Chemistry, Published online: 25 August 2026; doi:10.1038/s41557-026-02218-2 Ammonia production is responsible for 1.8% of greenhouse gas emissions. Now it has been shown that artificial photosynthesis, coupling nitrogen reduction to water oxidation, can proceed efficiently and with high selectivity in seawater or under ambient air.",
+    "content_type": "paper",
+    "should_include_any": [
+      "catalysis",
+      "electrochemistry",
+      "photocatalysis",
+      "ammonia-synthesis",
+      "nitrogen-fixation",
+      "chemistry",
+      "energy"
+    ],
+    "must_not": [
+      "nature",
+      "machine-learning",
+      "optimization",
+      "biology"
+    ],
+    "vocab_should_reuse": [],
+    "note": "'photosynthetic' is a chemistry process here, not biology; the venue name is provenance."
+  },
+  {
+    "id": "mat-kesterite-films",
+    "split": "train",
+    "title": "Molecular coordination achieves uniform kesterite absorber film for efficient solar modules",
+    "summary": "Nature Materials, Published online: 03 August 2026; doi:10.1038/s41563-026-02703-6 Uniform large-area kesterite Cu2ZnSn(S,Se)4 thin films have been hard to prepare. Molecular-level regulation of metal-organic coordination achieves uniform selenization and crystallization over 10 cm2, enabling efficient solar modules.",
+    "content_type": "paper",
+    "should_include_any": [
+      "thin-films",
+      "solar-cells",
+      "materials-science",
+      "photovoltaics",
+      "kesterite",
+      "semiconductors"
+    ],
+    "must_not": [
+      "optimization",
+      "machine-learning",
+      "nature"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged optimization because the film was 'optimized'."
+  },
+  {
+    "id": "mat-tandem-news",
+    "split": "train",
+    "title": "Vaporization trick enables 'tandem' solar cells to be made at lower temperatures",
+    "summary": "Nature, Published online: 26 August 2026; doi:10.1038/d41586-026-02469-6 A clever approach for evaporating a compound used to make perovskite semiconductors tackles a vexing challenge in scaling up next-generation solar cells.",
+    "content_type": "other",
+    "should_include_any": [
+      "solar-cells",
+      "perovskites",
+      "materials-science",
+      "photovoltaics",
+      "thin-films"
+    ],
+    "must_not": [
+      "nature",
+      "machine-learning",
+      "optimization"
+    ],
+    "vocab_should_reuse": [],
+    "note": "a Nature NEWS piece (d41586 doi, journalistic headline) about a paper is not itself a paper: content_type other."
+  },
+  {
+    "id": "paper-electron-interferometry",
+    "split": "dev",
+    "title": "Atomic-scale double-slit interferometry with a focused electron probe",
+    "summary": "Nature, Published online: 19 August 2026; doi:10.1038/s41586-026-10914-9 Double-slit interferometry at the atomic scale is demonstrated using scanning transmission electron microscopy, with interference fringes generated by a focused electron beam encountering two silicon atomic columns 1.36 A apart.",
+    "content_type": "paper",
+    "should_include_any": [
+      "electron-microscopy",
+      "interferometry",
+      "physics",
+      "quantum-physics",
+      "materials-characterization",
+      "microscopy"
+    ],
+    "must_not": [
+      "nature",
+      "machine-learning",
+      "optimization",
+      "simulation"
+    ],
+    "vocab_should_reuse": [],
+    "note": "a research article in the same feed as the news piece; the doi prefix and abstract style are the difference."
+  },
+  {
+    "id": "bio-protein-nanocage",
+    "split": "train",
+    "title": "A permeable protein nanocage enables facile cargo loading and cytosolic protein delivery",
+    "summary": "Nature Communications, Published online: 14 August 2026; doi:10.1038/s41467-026-76849-x Cytosolic delivery of therapeutic proteins remains a challenge. Here, the authors report a permeable encapsulin-based protein nanocage and use it to develop a modular nanocarrier for cytosolic protein delivery.",
+    "content_type": "paper",
+    "should_include_any": [
+      "protein-engineering",
+      "drug-delivery",
+      "nanocages",
+      "protein-delivery",
+      "structural-biology",
+      "biology",
+      "nanomedicine"
+    ],
+    "must_not": [
+      "nature",
+      "machine-learning",
+      "optimization"
+    ],
+    "vocab_should_reuse": [],
+    "note": "protein engineering; the tag should name the field, not the venue."
+  },
+  {
+    "id": "bio-unnatural-base-pairs",
+    "split": "dev",
+    "title": "Quantifying replication fidelity of unnatural base pairs using nanopore sequencing",
+    "summary": "Nature Communications, Published online: 25 August 2026; doi:10.1038/s41467-026-76964-9 Expanded DNA alphabets can be replicated by polymerases, but with higher error rates than standard DNA. Here the authors develop a high-throughput sequencing approach to quantify the replication fidelity of unnatural base pairs.",
+    "content_type": "paper",
+    "should_include_any": [
+      "synthetic-biology",
+      "dna-replication",
+      "nanopore-sequencing",
+      "genomics",
+      "sequencing",
+      "xenobiology"
+    ],
+    "must_not": [
+      "nature",
+      "machine-learning",
+      "natural-language-processing",
+      "evaluation-metrics"
+    ],
+    "vocab_should_reuse": [],
+    "note": "'fidelity' and 'quantifying' are not evaluation-metrics; this is wet-lab genomics."
+  },
+  {
+    "id": "bio-federated-ecg",
+    "split": "train",
+    "title": "Hybrid Quantum-inspired Kolmogorov-Arnold Networks for Privacy-Aware Federated Biosignal Learning",
+    "summary": "ECG recordings are sensitive, limiting centralized training. We train quantum-inspired Kolmogorov-Arnold networks under federated learning across simulated hospital clients and report classification accuracy competitive with centralized baselines at lower communication cost.",
+    "content_type": "paper",
+    "should_include_any": [
+      "federated-learning",
+      "ecg",
+      "biosignals",
+      "kolmogorov-arnold-networks",
+      "healthcare",
+      "privacy",
+      "medical-ai"
+    ],
+    "must_not": [
+      "natural-language-processing",
+      "biology",
+      "nlp"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged biology and nlp. ECG classification is healthcare ML, not biology, and nothing here is language."
+  },
+  {
+    "id": "blog-hf-transformersjs",
+    "split": "train",
+    "title": "How to Use Transformers.js in a Chrome Extension",
+    "summary": "",
+    "content_type": "blog",
+    "should_include_any": [
+      "transformers-js",
+      "javascript",
+      "browser-ml",
+      "web-development",
+      "on-device-inference",
+      "in-browser-inference"
+    ],
+    "must_not": [
+      "hugging-face",
+      "huggingface",
+      "blog",
+      "transformers"
+    ],
+    "vocab_should_reuse": [],
+    "note": "HF blog items arrive with an EMPTY summary: classify from the title alone. hugging-face is the source, and transformers here is a JS library, not the architecture."
+  },
+  {
+    "id": "release-hf-accelerate",
+    "split": "dev",
+    "title": "Introducing 🤗 Accelerate",
+    "summary": "",
+    "content_type": "release",
+    "should_include_any": [
+      "distributed-training",
+      "pytorch",
+      "accelerate",
+      "deep-learning-frameworks",
+      "training-infrastructure",
+      "multi-gpu"
+    ],
+    "must_not": [
+      "hugging-face",
+      "huggingface",
+      "optimization",
+      "llm",
+      "release"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged huggingface, llm, optimization. 'Introducing X' with no summary is a release; the topic is what X does."
+  },
+  {
+    "id": "release-llm-anthropic",
+    "split": "train",
+    "title": "llm-anthropic 0.26",
+    "summary": "Release: llm-anthropic 0.26 Includes new features enabled by LLM 0.32: new models, and server-side tools for WebSearch, WebFetch, CodeExecution and MCP available through LLM's -T interface or Python tools=. The previous -o web_search options have been removed in favor of -T WebSearch.",
+    "content_type": "release",
+    "should_include_any": [
+      "llm-cli",
+      "large-language-models",
+      "tool-use",
+      "python-tooling",
+      "command-line-tools",
+      "developer-tools"
+    ],
+    "must_not": [
+      "anthropic",
+      "release",
+      "update",
+      "announcement"
+    ],
+    "vocab_should_reuse": [],
+    "note": "a plugin release note: the vendor name is provenance, like a journal."
+  },
+  {
+    "id": "blog-willison-ai-writing",
+    "split": "dev",
+    "title": "There are no lossless transformations of natural-language text",
+    "summary": "Sophie Alpert shares her internal policy on acceptable use of AI writing by engineers. It's a short read and really good. If you choose to have LLMs help massage your writing, one rule seems crucial: you must stand behind every idea and every sentence in your docs.",
+    "content_type": "blog",
+    "should_include_any": [
+      "ai-writing",
+      "technical-writing",
+      "large-language-models",
+      "writing",
+      "engineering-culture",
+      "ai-assisted-writing"
+    ],
+    "must_not": [
+      "reasoning",
+      "safety",
+      "natural-language-processing",
+      "blog"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged reasoning, safety, nlp. A short opinion post about writing policy; 'natural-language' in the title is not NLP research."
+  },
+  {
+    "id": "blog-willison-incident",
+    "split": "train",
+    "title": "Now we have a timeline of the OpenAI accidental attack against Hugging Face",
+    "summary": "OpenAI gave a last-minute presentation at Black Hat about the Hugging Face incident. The video is short and information dense and provides full details of what happened inside OpenAI. I've used it to construct the timeline below.",
+    "content_type": "blog",
+    "should_include_any": [
+      "security",
+      "incident-response",
+      "ai-security",
+      "infrastructure",
+      "postmortem",
+      "supply-chain-security"
+    ],
+    "must_not": [
+      "huggingface",
+      "hugging-face",
+      "ai",
+      "blog"
+    ],
+    "vocab_should_reuse": [],
+    "note": "the company named in the title is the victim, not the topic; security is."
+  },
+  {
+    "id": "other-hn-starbase",
+    "split": "dev",
+    "title": "Starbase, LA",
+    "summary": "Article URL: https://www.spacex.com/sites/starbase-la Comments URL: https://news.ycombinator.com/item?id=49436822 Points: 273 # Comments: 511",
+    "content_type": "other",
+    "should_include_any": [
+      "spaceflight",
+      "space-exploration",
+      "spacex",
+      "aerospace",
+      "urban-planning",
+      "space-industry"
+    ],
+    "must_not": [
+      "hacker-news",
+      "news",
+      "project-status",
+      "machine-learning"
+    ],
+    "vocab_should_reuse": [],
+    "note": "Hacker News items carry only URL/points metadata as summary; a corporate page is content_type other, and 'points' are not a topic."
+  },
+  {
+    "id": "other-hn-hepatitis",
+    "split": "train",
+    "title": "England set to be one of the first countries to eliminate hepatitis C",
+    "summary": "Article URL: https://www.bbc.com/news/articles/c75gk620r22o Comments URL: https://news.ycombinator.com/item?id=49257377 Points: 415 # Comments: 290",
+    "content_type": "other",
+    "should_include_any": [
+      "public-health",
+      "hepatitis-c",
+      "epidemiology",
+      "medicine",
+      "health",
+      "infectious-disease"
+    ],
+    "must_not": [
+      "news",
+      "machine-learning",
+      "ai",
+      "hacker-news"
+    ],
+    "vocab_should_reuse": [],
+    "note": "a BBC news article via HN: content_type other, topic public health."
+  },
+  {
+    "id": "blog-hn-backyard-office",
+    "split": "dev",
+    "title": "Building a backyard office, the build and cost breakdown",
+    "summary": "Article URL: https://www.imkylelambert.com/articles/building-a-backyard-office-the-build-and-cost-breakdown Comments URL: https://news.ycombinator.com/item?id=49434645 Points: 246 # Comments: 179",
+    "content_type": "blog",
+    "should_include_any": [
+      "construction",
+      "diy",
+      "home-building",
+      "woodworking",
+      "cost-analysis",
+      "home-office"
+    ],
+    "must_not": [
+      "optimization",
+      "news",
+      "blog",
+      "machine-learning"
+    ],
+    "vocab_should_reuse": [],
+    "note": "a personal site build log is a blog, and it is about nothing in the science vocabulary."
+  },
+  {
+    "id": "blog-hn-ai-leadership",
+    "split": "train",
+    "title": "Working with AI Feels More Like Leadership Than Coding",
+    "summary": "Article URL: https://allen.bargi.org/notes/working-with-ai-feels-like-leadership/ Comments URL: https://news.ycombinator.com/item?id=49309451 Points: 200 # Comments: 140",
+    "content_type": "blog",
+    "should_include_any": [
+      "ai-assisted-programming",
+      "software-engineering",
+      "developer-experience",
+      "leadership",
+      "working-with-ai",
+      "developer-productivity"
+    ],
+    "must_not": [
+      "agentic-workflows",
+      "blog",
+      "news",
+      "reasoning"
+    ],
+    "vocab_should_reuse": [],
+    "note": "an essay about how it feels to delegate to AI tools; not a paper on agent workflows."
+  },
+  {
+    "id": "announcement-correction",
+    "split": "dev",
+    "title": "Author Correction: Cretaceous bird from Brazil informs the evolution of the avian skull and brain",
+    "summary": "Nature, Published online: 13 August 2026; doi:10.1038/s41586-026-10960-3 Author Correction: Cretaceous bird from Brazil informs the evolution of the avian skull and brain",
+    "content_type": "announcement",
+    "should_include_any": [
+      "paleontology",
+      "evolution",
+      "avian-evolution",
+      "birds",
+      "biology",
+      "evolutionary-biology"
+    ],
+    "must_not": [
+      "correction",
+      "author-correction",
+      "nature",
+      "announcement",
+      "skull-brain"
+    ],
+    "vocab_should_reuse": [],
+    "note": "a correction notice is an announcement about a subject, exactly like the retraction case; the corrected paper's topic is the tag."
+  },
+  {
+    "id": "other-nature-opinion",
+    "split": "train",
+    "title": "Lab leaders should follow football's lead and have coaching qualifications",
+    "summary": "Nature, Published online: 04 August 2026; doi:10.1038/d41586-026-02427-2 Lab leaders should follow football's lead and have coaching qualifications",
+    "content_type": "other",
+    "should_include_any": [
+      "research-culture",
+      "leadership",
+      "mentorship",
+      "science-policy",
+      "academia",
+      "lab-management"
+    ],
+    "must_not": [
+      "football",
+      "nature",
+      "paper",
+      "machine-learning"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged football. An opinion column (d41586 doi, no abstract) about running a lab; the analogy is not the subject."
+  },
+  {
+    "id": "paper-liquidity-audit",
+    "split": "train",
+    "title": "Liquidity-Based Audit of Algorithmic Trading Strategies",
+    "summary": "We show that net demand for liquidity by algorithmic strategies is identifiable from trade and price history alone, with no knowledge of the strategy's signal or optimization problem, via an exact multi-period regret decomposition that recovers the Kyle informed-trader/market-maker dichotomy from observables.",
+    "content_type": "paper",
+    "should_include_any": [
+      "algorithmic-trading",
+      "market-microstructure",
+      "finance",
+      "quantitative-finance",
+      "econometrics"
+    ],
+    "must_not": [
+      "causal-inference",
+      "forecasting",
+      "machinelearning",
+      "machine-learning",
+      "optimization"
+    ],
+    "vocab_should_reuse": [],
+    "note": "LIVE FAILURE: tagged causal-inference, forecasting, machinelearning, optimization. A finance theory paper; 'optimization problem' appears only to say it is NOT needed."
   }
 ]

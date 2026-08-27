@@ -5,10 +5,14 @@ validated, and skips (never blocks) on failure. Nothing in this module runs
 on the rank path except pure-SQL/numpy preference scoring.
 """
 
+import dataclasses
 import itertools
+import json
 import logging
+import os
 import sqlite3
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal, cast
 
 import numpy as np
 from pydantic import BaseModel, Field, field_validator
@@ -133,40 +137,120 @@ def tag_vocabulary(conn: sqlite3.Connection, limit: int = 150) -> list[str]:
     return [tag for tag, _ in ranked[: max(0, int(limit))]]
 
 
-def _tag_prompt(item: sqlite3.Row, vocab: list[str]) -> list[dict]:
+DEFAULT_TAG_INSTRUCTION = (
+    "You label science-feed items. Reply with JSON: content_type"
+    " (one of paper, survey, announcement, release, blog, other)"
+    " and tags: 1-4 short lowercase-hyphenated topic tags."
+    " Strongly prefer tags from the existing vocabulary; invent a"
+    " new tag only if nothing in it fits."
+    " Tag the SUBJECT MATTER only. Never tag where the item came"
+    " from (nature, arxiv, science-feed) or what kind of post it"
+    " is (release, announcement, newsletter) -- the publication is"
+    " already recorded, and the kind of post is content_type."
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class TagPrompt:
+    """A tagging prompt as data: an instruction and optional demonstrations.
+
+    Produced offline by the optimizer (evals/optimize_tagging.py) and loaded
+    here; the library never optimizes. `source` names the file it came from
+    so a tagging run can report which prompt produced its tags, the way it
+    reports which model did.
+    """
+
+    instruction: str
+    demos: tuple[dict, ...] = ()
+    source: str | None = None
+
+
+def load_tag_prompt(path: str | Path) -> TagPrompt:
+    """Read a prompt artifact, validating the parts the renderer relies on.
+
+    A demo is rendered verbatim as an assistant turn, so a malformed one --
+    a content_type the schema rejects, a tag the validator would strip -- would
+    teach the model the exact output the run then discards. Refuse it here,
+    before any model call.
+    """
+    body = json.loads(Path(path).read_text())
+    instruction = body.get("instruction")
+    if not isinstance(instruction, str) or not instruction.strip():
+        raise ValueError(f"{path}: 'instruction' must be a non-empty string")
+    demos = body.get("demos", [])
+    if not isinstance(demos, list):
+        raise ValueError(f"{path}: 'demos' must be a list")
+    for i, demo in enumerate(demos):
+        if not isinstance(demo, dict):
+            raise ValueError(f"{path}: demo {i} is not an object")
+        fields = cast(dict[str, Any], demo)
+        missing = {"title", "summary", "content_type", "tags"} - set(fields)
+        if missing:
+            raise ValueError(f"{path}: demo {i} lacks {sorted(missing)}")
+        tags = list(fields["tags"])
+        parsed = ItemTags.model_validate({"content_type": fields["content_type"], "tags": tags})
+        if list(parsed.tags) != tags:
+            raise ValueError(f"{path}: demo {i} tags {tags} would be normalized to {parsed.tags}")
+    return TagPrompt(instruction=instruction, demos=tuple(demos), source=str(path))
+
+
+def tag_prompt_from_env() -> TagPrompt | None:
+    """`attest tag` uses the artifact ATTEST_TAG_PROMPT names, else the
+    hand-written prompt. Artifacts come from evals/optimize_tagging.py."""
+    path = os.environ.get("ATTEST_TAG_PROMPT")
+    return load_tag_prompt(path) if path else None
+
+
+def tag_messages(
+    title: str, summary: str, vocab: list[str], prompt: TagPrompt | None = None
+) -> list[dict]:
+    """The ONE renderer of the tagging prompt.
+
+    The eval harness, the optimizer's transfer test and `attest tag` all call
+    this, so a score is always a score of the prompt that actually runs. With
+    `prompt=None` the output is the hand-written prompt, byte for byte.
+    Demonstrations render as prior user/assistant turns without the
+    vocabulary line: 150 tags repeated per demo would spend more prompt on
+    the examples than on the item.
+    """
+    instruction = prompt.instruction if prompt else DEFAULT_TAG_INSTRUCTION
+    messages: list[dict] = [{"role": "system", "content": instruction}]
+    for demo in prompt.demos if prompt else ():
+        messages.append(
+            {"role": "user", "content": f"Title: {demo['title']}\nSummary: {demo['summary']}"}
+        )
+        answer = {"content_type": demo["content_type"], "tags": list(demo["tags"])}
+        messages.append({"role": "assistant", "content": json.dumps(answer)})
     vocab_line = ", ".join(vocab) if vocab else "(none yet)"
-    return [
-        {
-            "role": "system",
-            "content": (
-                "You label science-feed items. Reply with JSON: content_type"
-                " (one of paper, survey, announcement, release, blog, other)"
-                " and tags: 1-4 short lowercase-hyphenated topic tags."
-                " Strongly prefer tags from the existing vocabulary; invent a"
-                " new tag only if nothing in it fits."
-                " Tag the SUBJECT MATTER only. Never tag where the item came"
-                " from (nature, arxiv, science-feed) or what kind of post it"
-                " is (release, announcement, newsletter) -- the publication is"
-                " already recorded, and the kind of post is content_type."
-            ),
-        },
+    messages.append(
         {
             "role": "user",
             "content": (
-                f"Existing vocabulary: {vocab_line}\n\n"
-                f"Title: {item['title']}\nSummary: {item['summary'][:1000]}"
+                f"Existing vocabulary: {vocab_line}\n\nTitle: {title}\nSummary: {summary[:1000]}"
             ),
-        },
-    ]
+        }
+    )
+    return messages
 
 
-def tag_one_item(conn, item: sqlite3.Row, chat_fn, vocab: list[str], model_name: str) -> bool:
+def _tag_prompt(item: sqlite3.Row, vocab: list[str], prompt: TagPrompt | None = None) -> list[dict]:
+    return tag_messages(item["title"], item["summary"], vocab, prompt)
+
+
+def tag_one_item(
+    conn,
+    item: sqlite3.Row,
+    chat_fn,
+    vocab: list[str],
+    model_name: str,
+    prompt: TagPrompt | None = None,
+) -> bool:
     """One LLM call (plus one retry) -> item_features + item_tags rows.
     False = skipped."""
     parsed = None
     for _ in range(2):  # one retry, per spec
         try:
-            out = chat_fn(_tag_prompt(item, vocab), ItemTags.model_json_schema())
+            out = chat_fn(_tag_prompt(item, vocab, prompt), ItemTags.model_json_schema())
             parsed = ItemTags.model_validate(out)
             break
         except Exception as exc:
@@ -241,7 +325,15 @@ def run_tagging(conn, chat_fn=None, limit: int | None = None) -> dict:
     # the wrong model (e.g. a standalone script that never called load_env and
     # silently got DEFAULT_CHAT_MODEL) looked identical to a correct one.
     model_name = chat_model()
-    stats = {"tagged": 0, "failed": 0, "model": model_name}
+    # Same reasoning for the prompt: resolved once, reported, and a broken
+    # artifact refuses here rather than failing every item against the model.
+    prompt = tag_prompt_from_env()
+    stats = {
+        "tagged": 0,
+        "failed": 0,
+        "model": model_name,
+        "prompt": prompt.source if prompt else "default",
+    }
     # disable=None -> bar only on a TTY; cron/pytest logs stay clean
     # Re-read only when this item minted a tag the vocabulary did not have.
     # The per-item call was a full GROUP BY over item_tags plus a canonical()
@@ -257,7 +349,7 @@ def run_tagging(conn, chat_fn=None, limit: int | None = None) -> dict:
         for item in bar:
             before = conn.total_changes
             try:
-                tagged = tag_one_item(conn, item, chat_fn, vocab, model_name)
+                tagged = tag_one_item(conn, item, chat_fn, vocab, model_name, prompt)
             except BackendUnreachable:
                 # One dead socket would otherwise cost a retry per item for the
                 # whole batch and print `failed: N` with the cause -- Ollama is

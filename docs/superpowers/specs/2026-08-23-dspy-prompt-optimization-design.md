@@ -1,7 +1,11 @@
 # DSPy prompt optimization, with transfer as the acceptance test
 
 **Date:** 2026-08-23
-**Status:** proposed
+**Status:** implemented 2026-08-27. The optimizer ran, the gate refused its
+output, and that refusal is the result — see "What happened" at the end.
+Deviations from the design: instruction-only (the demonstration pool could
+not be built honestly, exactly as the spec anticipated), and a `train`/`dev`
+split inside `tagging_cases.json` in place of a separate held-out file.
 **Kind:** design. Names the problem, the measurement, and the refusal conditions.
 
 ## Problem
@@ -114,3 +118,64 @@ This design fails and should be abandoned if:
   strengthen the transfer claim and it contradicts the offline guarantee for
   anyone running the optimizer — probably opt-in behind the same flag shape as
   `ATTEST_CITATION_WEB`.
+
+## What happened (2026-08-27)
+
+**First the cases.** 10 could not support optimization, so the file grew to
+51 (23 train / 28 dev; the original ten stay in dev so the number above
+stays comparable). The new cases were drawn from the real feeds and the
+personas' interests, and the largest family targets what the live corpus
+actually shows: generic top-of-vocabulary tags on off-vocabulary items — a
+conformal-field-theory paper tagged `deep-learning, machine-learning,
+optimization, representation-learning`. The eval's vocabulary is now the
+live top-40, frozen, because that failure depends on the real vocabulary's
+shape. Hand-written prompt on all 51: gemma4:e2b 0.830, gemma4:e4b 0.703,
+hermes3:8b 0.711.
+
+**Then the plumbing.** `features.tag_messages` became the one renderer;
+`attest tag`, the eval, the optimizer's DSPy adapter and the transfer
+matrix all call it, so every score is of the prompt that ships.
+`ATTEST_TAG_PROMPT` loads an artifact. `dspy` sits in its own `optimize`
+group and a test asserts nothing under `src/` names it.
+
+**Then GEPA** (student gemma4:e2b, reflection gemma4:12b, 300 metric calls,
+train split only). It took 2h35m, not 30 minutes: two unrelated jobs held 9
+of the 16 GB of VRAM, so both models ran partly on CPU. Train score rose
+0.790 → 0.902 inside DSPy; through the production client, train 0.808 →
+0.891 and **dev 0.819 → 0.824**. The instruction it wrote is 4246
+characters against the hand-written 502, and it memorizes train items —
+`llm-cli`/`tool-use`/`command-line-tools`, `lab-management`/`research-
+culture`/`mentorship`, `algorithmic-trading`, "Chrome extension →
+`web-development`" are all lifted from specific train cases.
+
+**Then the gate** (dev split, 2 runs per case):
+
+| prompt | gemma4:e2b | gemma4:e4b | hermes3:8b | spread |
+|---|---|---|---|---|
+| hand-written | 0.807 | 0.750 | 0.741 | 0.065 |
+| tagging-2026-08-27 | 0.807 | 0.860 | 0.827 | 0.054 |
+
+**Verdict: FAIL**, on rule 1 alone — it does not *beat* the baseline on the
+model it was optimized for; it ties it. Rules 2 and 3 pass, and pass
+convincingly: +0.110 and +0.086 on the other two models, with a narrower
+spread. The artifact is committed with `shipped: false` and the gate is
+unchanged. Loosening `>` to `>=` after seeing the number is the move this
+spec exists to prevent.
+
+Two things this says that the design did not predict:
+
+1. The hypothesis was right in a way that the hand-written prompt hid. The
+   biggest gains were on the models the prompt was NOT tuned on. The
+   hand-written prompt is fitted to gemma4:e2b's idiom; a longer,
+   rule-listing instruction that e2b cannot exploit (measurement-lessons §2:
+   length is zero-sum on a 2B model) is exactly what e4b and hermes3 can.
+2. A tie on the primary at 56 samples is inside sampling noise (production
+   samples at the default temperature). Re-running until it passes would be
+   the tautology again. The honest next step is the one the spec named:
+   more cases, and a bigger dev split, before another run.
+
+An open question for whoever runs this next: rule 1 as written demands a
+strict win on the primary. "Not worse on the primary, better on two others,
+no wider spread" is a defensible bar too — it is the bar this candidate
+clears — but changing it is a design decision to take BEFORE the next run,
+not a reading of this one.
