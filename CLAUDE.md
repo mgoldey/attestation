@@ -100,6 +100,10 @@ before trusting a benchmark number or writing a regression guard.
   `noqa` that no longer suppresses anything — the per-file-ignores in
   `pyproject.toml` spent this repo's first release pointing at `src/hermes/`,
   a path that had not existed since the rename, silently enforcing nothing.
+  Markdown is `extend-exclude`d from ruff: 0.16 formats Python fences in
+  `*.md` by default, the pre-commit hook only ever ran on Python files, and
+  CI's `ruff format --check .` failed on five design specs the first time it
+  ran (2026-08-28). The specs align comments in their fences on purpose.
 - Requires Python ≥3.12. Local models via Ollama; nothing leaves the machine.
 - `dspy` lives in the `optimize` dependency group (`uv run --group optimize
   python evals/optimize_tagging.py`), which `uv sync` and CI do not install;

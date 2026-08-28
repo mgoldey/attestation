@@ -90,6 +90,12 @@ addopts = "-m 'not live_model'"
 
 [tool.ruff]
 line-length = 100
+# Ruff >= 0.16 formats Python fences inside Markdown by default (`*.md` is in
+# its default `include`). The design specs under docs/ align trailing comments
+# in their fences on purpose, and the pre-commit hook only ever ran on Python
+# files, so the first `ruff format --check .` in CI failed on five specs that
+# no local gate had ever touched. Prose is not formatted code: leave it alone.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "BLE", "RUF100"]
