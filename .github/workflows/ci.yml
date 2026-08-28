@@ -93,3 +93,26 @@ jobs:
           assert p.is_file(), 'attestation/feeds.toml missing from installed wheel'
           print('feeds.toml present in wheel:', p)
           "
+
+  flows:
+    name: example flows (offline)
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies (with the examples group)
+        run: uv sync --all-extras --dev --group examples
+
+      - name: Every flow, against the stub model server
+        # The demonstration in examples/flows, end to end: the MLflow family,
+        # the persona eval, and every MCP tool over stdio. No Ollama, no
+        # network. Its numbers are about the stub and say so; the point is
+        # that the flows cannot rot.
+        run: uv run python examples/flows/run_all.py --offline
