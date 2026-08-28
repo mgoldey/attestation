@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 from pathlib import Path
 
+import pytest
 from mcp.server.fastmcp import FastMCP
 
 from attestation.mcp import register_all
@@ -78,3 +79,42 @@ def test_envelope_check_accepts_the_contract_and_rejects_shape_drift():
         )
         is None
     )
+
+
+@pytest.mark.parametrize("surface", ("feed", "provenance", "knowledge", "symbolic"))
+def test_surface_for_agrees_with_what_each_spawn_actually_registers(monkeypatch, surface):
+    """Per surface, not only in the union.
+
+    `surface_for` decides which spawn calls which tool, and a tool it maps to
+    the wrong surface is silently absent from the matrix rather than failing.
+    Matching a `.tools` tool on the first segment of every prefix did exactly
+    that: knowledge's prefixes are {"kg", "feed.search", "cite"}, so
+    "feed.search" made surface_for("feed.tools") claim knowledge, which serves
+    only kg.tools. The union test could not see it, because the feed spawn
+    covered feed.tools.
+    """
+    m = _flow()
+    planned = {c[0] for c in m.CALLS if surface in m.surface_for(c[0])}
+    served = _served(monkeypatch, surface)
+    assert planned == served, (
+        f"{surface}: planned-not-served {sorted(planned - served)},"
+        f" served-not-planned {sorted(served - planned)}"
+    )
+
+
+def test_the_unrestricted_spawn_serves_no_disclosure_tool(monkeypatch):
+    """`<ns>.tools` registers ONLY under ATTEST_TOOLS, so planning one for the
+    full spawn would plan a call that can never be listed."""
+    m = _flow()
+    planned = {c[0] for c in m.CALLS if "full" in m.surface_for(c[0])}
+    assert planned == _served(monkeypatch)
+    assert not any(t.endswith(".tools") for t in planned)
+
+
+def test_a_planned_tool_the_server_does_not_list_is_a_failed_row():
+    """Skipping it silently is the drift the flow exists to catch."""
+    m = _flow()
+    rows = asyncio.run(m._call_all(None, "feed", set(), {}))
+    missing = [r for r in rows if r["tool"] == "feed.list"]
+    assert missing and missing[0]["problem"]
+    assert "did not list it" in missing[0]["problem"]

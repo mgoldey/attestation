@@ -16,6 +16,13 @@ def _stub():
     return mod
 
 
+def _common():
+    spec = importlib.util.spec_from_file_location("flows_common", FLOWS / "_common.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def test_embeddings_are_deterministic_and_dims_wide():
     s = _stub()
     a = s.embed_text("photoredox catalysis at the bench", 256)
@@ -108,3 +115,35 @@ def test_server_speaks_both_endpoints():
         assert json.loads(body["choices"][0]["message"]["content"])["text"]
     finally:
         server.shutdown()
+
+
+def test_the_stub_tags_every_corpus_item_without_failing_ItemTags():
+    """`ItemTags` is the schema `run_tagging` validates against, and the stub
+    answers it from words taken out of the item -- so a corpus item holding a
+    long compound token could produce tags that fail TAG_PATTERN
+    (`^[a-z0-9][a-z0-9-]{0,31}$`) and be dropped, or, if every tag failed, fail
+    the item outright and leave the offline flow's graph empty.
+
+    Whether that happens is a property of THIS corpus, so it is asserted over
+    the real corpus rather than a hand-written string: mcp_e2e.py's kg.* calls
+    are only meaningful if tagging populated the graph.
+    """
+    from attestation.features import ItemTags
+
+    s, c = _stub(), _common()
+    entries = c.corpus_entries()
+    assert len(entries) >= 40, "the corpus shrank; this test is about its real shape"
+    schema = ItemTags.model_json_schema()
+    for entry in entries:
+        messages = [
+            {"role": "system", "content": "Tag this item with two to four topic tags."},
+            {
+                "role": "user",
+                "content": f"Title: {entry['title']}\nSummary: {entry['summary']}",
+            },
+        ]
+        tagged = ItemTags.model_validate(s.answer(schema, messages))
+        # Not merely valid: a validator that dropped every tag would still
+        # validate (ItemTags keeps the item and returns []), and an item with
+        # no tags contributes nothing to the graph.
+        assert tagged.tags, f"no usable tags for {entry['title']!r}"

@@ -121,15 +121,24 @@ SURFACES = ("feed", "provenance", "knowledge", "symbolic", None)
 
 
 def surface_for(tool: str) -> set[str]:
+    """Which spawns list this tool.
+
+    Mirrors `mcp._allowed`: the server matches a tool's FULL name against the
+    prefix set, or its bare namespace. Matching a `.tools` tool on the first
+    segment of every prefix instead was wrong in one direction that mattered
+    -- knowledge's prefixes are {"kg", "feed.search", "cite"}, so
+    "feed.search".split(".")[0] made surface_for("feed.tools") claim
+    {"feed", "knowledge"} while the knowledge agent serves only kg.tools. The
+    flow then skipped a tool it claimed to cover, which is the drift it
+    exists to catch.
+    """
     from attestation.mcp import AGENT_SURFACES
 
+    # The four `<ns>.tools` register only under ATTEST_TOOLS, so they are never
+    # part of the unrestricted spawn.
     out = {"full"} if not tool.endswith(".tools") else set()
     for name, surface in AGENT_SURFACES.items():
-        if any(tool == p or tool.startswith(p + ".") for p in surface.prefixes):
-            out.add(name)
-        if tool.endswith(".tools") and tool.split(".")[0] in {
-            p.split(".")[0] for p in surface.prefixes
-        }:
+        if tool in surface.prefixes or tool.split(".", 1)[0] in surface.prefixes:
             out.add(name)
     return out
 
@@ -182,49 +191,87 @@ async def run_surface(surface: str | None, env: dict, ctx: dict) -> list[dict]:
         command="uv", args=["run", "--project", str(_common.REPO_ROOT), "attest-mcp"], env=spawn_env
     )
     label = surface or "full"
-    rows = []
-    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
-        await session.initialize()
-        listed = {t.name for t in (await session.list_tools()).tools}
-        for tool, arguments, expect in CALLS:
-            if label not in surface_for(tool) or tool not in listed:
-                continue
-            t0 = time.perf_counter()
-            try:
-                result = await session.call_tool(tool, _resolve(arguments, ctx))
-                payload = json.loads(result.content[0].text) if result.content else {}
-                if result.isError and "ok" not in payload:
-                    payload = {
-                        "ok": False,
-                        "message": result.content[0].text if result.content else "error",
-                    }
-            except Exception as exc:  # noqa: BLE001 -- one bad call is one row, and the row says why
-                payload = {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
-            problem = check_envelope(payload, expect)
-            rows.append(
-                {
-                    "surface": label,
-                    "tool": tool,
-                    "expect": expect,
-                    "ok": payload.get("ok"),
-                    "problem": problem,
-                    "message": _prose(payload)[:160],
-                    "seconds": round(time.perf_counter() - t0, 2),
-                }
-            )
-            _learn(tool, payload, ctx)
-        rows.append(
-            {
-                "surface": label,
-                "tool": "<list_tools>",
-                "expect": "ok",
-                "ok": True,
-                "problem": None,
-                "message": f"{len(listed)} tools",
-                "seconds": 0.0,
-            }
-        )
+    rows: list[dict] = []
+    try:
+        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+            await session.initialize()
+            listed = {t.name for t in (await session.list_tools()).tools}
+            rows += await _call_all(session, label, listed, ctx)
+    except Exception as exc:  # noqa: BLE001 -- a surface that will not start is one row saying so
+        # The docstring promises a matrix, and render() needs at least one row
+        # to size its columns: a server that fails to start used to traceback
+        # out of main() instead of reporting which surface died and why.
+        rows.append(_row(label, "<spawn>", False, "ok", f"server did not start: {exc}", 0.0))
     return rows
+
+
+async def _call_all(session, label: str, listed: set[str], ctx: dict) -> list[dict]:
+    """Every scripted call this surface is meant to serve, in order."""
+    rows = []
+    for tool, arguments, expect in CALLS:
+        if label not in surface_for(tool):
+            continue
+        if tool not in listed:
+            # NOT `continue`. Skipping a planned-but-unserved tool silently is
+            # exactly the drift this flow exists to catch: surface_for said
+            # this spawn lists it and the spawn did not, so one of the two is
+            # wrong and the matrix has to say so.
+            rows.append(
+                _row(
+                    label,
+                    tool,
+                    None,
+                    expect,
+                    f"planned for {label} but the server did not list it",
+                    0.0,
+                )
+            )
+            continue
+        t0 = time.perf_counter()
+        try:
+            result = await session.call_tool(tool, _resolve(arguments, ctx))
+            payload = json.loads(result.content[0].text) if result.content else {}
+            if result.isError and "ok" not in payload:
+                payload = {
+                    "ok": False,
+                    "message": result.content[0].text if result.content else "error",
+                }
+        except Exception as exc:  # noqa: BLE001 -- one bad call is one row, and the row says why
+            payload = {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
+        rows.append(
+            _row(
+                label,
+                tool,
+                payload.get("ok"),
+                expect,
+                check_envelope(payload, expect),
+                round(time.perf_counter() - t0, 2),
+                _prose(payload)[:160],
+            )
+        )
+        _learn(tool, payload, ctx)
+    rows.append(_row(label, "<list_tools>", True, "ok", None, 0.0, f"{len(listed)} tools"))
+    return rows
+
+
+def _row(
+    surface: str,
+    tool: str,
+    ok: bool | None,
+    expect: str | None,
+    problem: str | None,
+    seconds: float,
+    message: str = "",
+) -> dict:
+    return {
+        "surface": surface,
+        "tool": tool,
+        "expect": expect,
+        "ok": ok,
+        "problem": problem,
+        "message": message,
+        "seconds": seconds,
+    }
 
 
 def _learn(tool: str, payload: dict, ctx: dict) -> None:
