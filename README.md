@@ -72,6 +72,18 @@ artifact it came from.
 `examples/README.md` walks through the rest. When you want the feed, the
 knowledge graph, or tagging, keep reading — those need a model server.
 
+## Demonstrations
+
+```bash
+uv run --group examples python examples/flows/run_all.py --offline
+```
+
+Ninety seconds, no Ollama and no network: forty labelled items scored for two
+personas, every MCP tool driven over stdio, and four MLflow arms trained and
+read back by the ledger. [`examples/flows/README.md`](examples/flows/README.md)
+explains each flow; `examples/flows/RESULTS.md` records what the live run
+measured.
+
 ## Feed ranking
 
 The original core, still here. An agent orchestrator for personalized feed
