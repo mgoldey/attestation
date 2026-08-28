@@ -32,6 +32,8 @@ def corpus_entries() -> list[dict]:
             "title": e.get("title", ""),
             "summary": e.get("summary", ""),
             "link": e.get("link", ""),
+            "updated": e.get("updated"),
+            "published": e.get("published"),
         }
         for e in parsed.entries
     ]

@@ -54,3 +54,11 @@ def test_feeds_toml_points_at_the_corpus(tmp_path):
     path = c.write_feeds_toml(tmp_path)
     text = path.read_text()
     assert str(c.CORPUS_DIR / "labelled.xml") in text
+
+
+def test_entries_carry_no_date_so_the_demo_cannot_decay():
+    """Ingest sets published to now when the entry has none, and the feed's
+    14-day default window would otherwise empty this fixture in September."""
+    for e in _common().corpus_entries():
+        assert e["updated"] is None, e["guid"]
+        assert e["published"] is None, e["guid"]

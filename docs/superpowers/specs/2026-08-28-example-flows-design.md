@@ -95,6 +95,16 @@ stable `id` (the guid) and a `link`. It is hand-written, not scraped: the
 labels are the point, and labels on real abstracts would be an opinion about
 somebody else's paper.
 
+**Amended 2026-08-28: the entries carry no date.** They originally each had
+an `<updated>` in August 2026, which made the demonstration decay: `feed.list`
+and `rank_items` default to a fourteen-day window, so the fixture would have
+shown fewer items every week and none at all by mid-September, with no test
+going red. The entry-level `<updated>` elements were removed (the feed-level
+one stays), so `run_ingest` falls back to `COALESCE(?, datetime('now'))` and
+every ingest dates the corpus to now. `test_flows_fixture.py` asserts no entry
+carries a date. `mcp_e2e.py` still passes `since_days: 3650` on `feed.list`
+for the same reason, which remains a valid argument.
+
 `labels.json` maps each guid to a verdict per persona. Every item has a
 label for both personas; roughly a third are positive for exactly one,
 some are negative for both, none is positive for both. `personas.toml`
