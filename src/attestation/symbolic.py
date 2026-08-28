@@ -237,10 +237,27 @@ def truncate(text: str) -> str:
     return f"{text[:MAX_RESULT_CHARS]} … [truncated, {len(text)} chars total]"
 
 
-def _worker(queue, fn_name: str, payload: dict) -> None:
-    """Child-process entry point. Sets its own memory cap before importing work."""
+def _cap_memory() -> bool:
+    """Best-effort address-space cap on the child. Returns whether it took.
+
+    Linux honours RLIMIT_AS. macOS returns EINVAL for it, which Python raises
+    as ValueError("current limit exceeds maximum limit") -- and because the
+    call sat inside _worker's try, its `except ValueError` (meant for parser
+    errors) shipped that string as the answer to every symbolic call on the
+    first macOS CI run (2026-08-28). A refused cap leaves run_isolated's
+    timeout as the bound, which is the only one that holds everywhere.
+    """
     try:
         resource.setrlimit(resource.RLIMIT_AS, (MEMORY_LIMIT_BYTES, MEMORY_LIMIT_BYTES))
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def _worker(queue, fn_name: str, payload: dict) -> None:
+    """Child-process entry point. Caps its own memory (best-effort) before importing work."""
+    _cap_memory()
+    try:
         from attestation import symbolic_ops
 
         value = getattr(symbolic_ops, fn_name)(payload)

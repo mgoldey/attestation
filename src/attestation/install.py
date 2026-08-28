@@ -587,31 +587,54 @@ def _refresh_script_content(root: Path) -> str:
         f'LOCK="{lock}"\n'
         'mkdir -p "$(dirname "$LOCK")"\n'
         'exec 9>"$LOCK"\n'
-        "if ! flock -n 9; then\n"
-        '  echo "[$(date -Is)] SKIP: previous run still holding lock"\n'
-        "  exit 0\n"
+        # flock(1) is util-linux; macOS has none. There `if ! flock -n 9`
+        # saw exit 127, took the SKIP branch and exited 0: the script never
+        # ran a step and cron reported success every tick. Python's fcntl
+        # takes the same flock(2) on the same inherited fd 9, so the shell
+        # holds it until exit exactly as with flock(1).
+        #
+        # Contention is exit 75 and ONLY 75 (EX_TEMPFAIL): the first draft of
+        # this fallback treated any non-zero as "held", and a python3 that
+        # was a pyenv shim dying under cron's bare env skipped silently the
+        # same way the missing flock had. 0 runs, 75 skips, anything else is
+        # a loud failure.
+        "if command -v flock >/dev/null 2>&1; then\n"
+        "  flock -n -E 75 9; locked=$?\n"
+        "elif command -v python3 >/dev/null 2>&1; then\n"
+        "  python3 -c 'import fcntl, sys\n"
+        "try:\n"
+        "    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+        "except BlockingIOError:\n"
+        "    sys.exit(75)'; locked=$?\n"
+        "else\n"
+        "  locked=127\n"
         "fi\n"
+        'case "$locked" in\n'
+        "  0) ;;\n"
+        '  75) echo "[$(date -Iseconds)] SKIP: previous run still holding lock"; exit 0 ;;\n'
+        '  *) echo "[$(date -Iseconds)] FAILED: could not take the overlap lock (flock/python3 exit $locked)"; exit 1 ;;\n'
+        "esac\n"
         "\n"
-        f'echo "[$(date -Is)] refresh start"\n'
+        f'echo "[$(date -Iseconds)] refresh start"\n'
         "\n"
         # Ingest is deterministic and needs no chat model; it must succeed.
         f"if uv run {CLI_NAME} ingest >/dev/null; then\n"
-        '  echo "[$(date -Is)] ingest ok"\n'
+        '  echo "[$(date -Iseconds)] ingest ok"\n'
         "else\n"
         "  rc=$?\n"
-        '  echo "[$(date -Is)] ingest FAILED (exit $rc)"\n'
+        '  echo "[$(date -Iseconds)] ingest FAILED (exit $rc)"\n'
         '  exit "$rc"\n'
         "fi\n"
         "\n"
         # Tagging needs Ollama. A cold model is a degraded run, not a broken one.
         f"if uv run {CLI_NAME} tag >/dev/null; then\n"
-        '  echo "[$(date -Is)] tag ok"\n'
+        '  echo "[$(date -Iseconds)] tag ok"\n'
         "else\n"
-        '  echo "[$(date -Is)] tag FAILED (exit $?) -- items remain untagged,"\n'
-        '  echo "[$(date -Is)] will retry next run"\n'
+        '  echo "[$(date -Iseconds)] tag FAILED (exit $?) -- items remain untagged,"\n'
+        '  echo "[$(date -Iseconds)] will retry next run"\n'
         "fi\n"
         "\n"
-        f'echo "[$(date -Is)] refresh done"\n'
+        f'echo "[$(date -Iseconds)] refresh done"\n'
     )
 
 

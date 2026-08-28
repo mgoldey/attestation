@@ -177,6 +177,26 @@ def test_caret_is_exponentiation_not_xor():
     assert str(parse_safe("x**2 + 2*x")) == "x**2 + 2*x"
 
 
+def test_a_refused_memory_cap_is_not_reported_as_the_result(monkeypatch):
+    """macOS returns EINVAL for setrlimit(RLIMIT_AS), which Python raises as
+    ValueError('current limit exceeds maximum limit') -- and the worker's
+    `except ValueError`, meant for parser errors, shipped that as the answer
+    to every symbolic call (first macOS CI run, 2026-08-28). The cap is
+    best-effort; the subprocess timeout is the bound that always holds."""
+    import queue
+
+    def refuse(*_args):
+        raise ValueError("current limit exceeds maximum limit")
+
+    monkeypatch.setattr(symbolic.resource, "setrlimit", refuse)
+    q = queue.Queue()
+
+    symbolic._worker(q, "op_simplify", {"expr": "x + x"})
+
+    out = q.get_nowait()
+    assert out["ok"] is True, out["error"]
+
+
 def test_a_caret_power_tower_is_refused_by_the_sandbox_not_the_parser():
     """Making `^` mean exponentiation makes `9^9^9` as expensive as `9**9**9`.
 

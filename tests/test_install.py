@@ -7,6 +7,7 @@ fixture in conftest.py; tests that need `.env.sample` write it under tmp_path.
 """
 
 import os
+import pathlib
 import subprocess
 import sys
 from pathlib import Path
@@ -879,9 +880,7 @@ def test_refresh_script_skips_when_a_previous_run_still_holds_the_lock(tmp_path,
     assert m, "generated script must declare a LOCK path"
     lock = pathlib.Path(m.group(1))
     lock.parent.mkdir(parents=True, exist_ok=True)
-    holder = subprocess.Popen(
-        ["/usr/bin/flock", "-x", str(lock), "-c", "sleep 5"],
-    )
+    holder = _hold_lock(lock)
     try:
         import time
 
@@ -895,6 +894,99 @@ def test_refresh_script_skips_when_a_previous_run_still_holds_the_lock(tmp_path,
     assert "SKIP" in second.stdout, f"expected a SKIP line, got: {second.stdout!r}"
 
 
+def _hold_lock(lock):
+    """A process holding flock(2) on `lock` for 5s -- what a slow refresh
+    looks like from the next tick. Python's fcntl rather than /usr/bin/flock,
+    which is util-linux and does not exist on macOS."""
+    import subprocess
+    import sys
+
+    body = (
+        "import fcntl, sys, time\n"
+        f"f = open({str(lock)!r}, 'w')\n"
+        "fcntl.flock(f, fcntl.LOCK_EX)\n"
+        "time.sleep(5)\n"
+    )
+    return subprocess.Popen([sys.executable, "-c", body])
+
+
+def _path_without(tmp_path, *missing):
+    """A bin dir holding only the tools the refresh script needs, minus
+    `missing`, so a test can run the script on a machine that lacks one."""
+    # Not shutil.which: this module's autouse fixture patches it to answer
+    # /usr/bin/uv for every name. Scan cron's own PATH instead.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for tool in ("bash", "sh", "date", "mkdir", "dirname", "python3", "sleep"):
+        if tool in missing:
+            continue
+        real = next(
+            (c for c in (f"/usr/bin/{tool}", f"/bin/{tool}") if os.access(c, os.X_OK)), None
+        )
+        assert real, f"{tool} must exist on the host to build a restricted PATH"
+        (bindir / tool).symlink_to(real)
+    return str(bindir)
+
+
+def test_refresh_script_takes_the_lock_without_flock(tmp_path, monkeypatch):
+    """flock(1) is util-linux: macOS has no /usr/bin/flock. There the guard
+    `if ! flock -n 9` saw exit 127, took the SKIP branch and exited 0 -- the
+    script never ran a single step and cron reported success every tick
+    (first macOS CI run, 2026-08-28). The overlap guard must work, and must
+    still skip a contended lock, on a PATH with no flock at all."""
+    import subprocess
+    import time
+
+    script, _, env, marker = _refresh_harness(
+        tmp_path, "#!/bin/sh\necho ran >> {marker}\n", monkeypatch
+    )
+    env = {**env, "PATH": _path_without(tmp_path, "flock")}
+
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "SKIP" not in proc.stdout, f"uncontended lock was reported as held: {proc.stdout!r}"
+    assert marker.read_text().splitlines() == ["ran", "ran"], "both steps must run"
+
+    import re as _re
+
+    lock = pathlib.Path(_re.search(r'^LOCK="([^"]+)"$', script.read_text(), _re.M).group(1))
+    holder = _hold_lock(lock)
+    try:
+        time.sleep(0.5)
+        second = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+    finally:
+        holder.kill()
+        holder.wait()
+
+    assert second.returncode == 0 and "SKIP" in second.stdout, second.stdout
+
+
+@pytest.mark.parametrize("helper", ["missing", "broken"])
+def test_refresh_script_fails_loudly_when_it_cannot_take_the_lock(tmp_path, monkeypatch, helper):
+    """The first draft of the no-flock fallback read ANY non-zero exit from the
+    lock helper as "held" -- and a python3 that was a pyenv shim dying under
+    cron's bare env skipped silently, exactly like the missing flock had.
+    A helper that is absent or crashes is a failure cron must see, never a SKIP."""
+    import subprocess
+
+    script, _, env, marker = _refresh_harness(
+        tmp_path, "#!/bin/sh\necho ran >> {marker}\n", monkeypatch
+    )
+    bindir = pathlib.Path(_path_without(tmp_path, "flock", "python3"))
+    if helper == "broken":
+        (bindir / "python3").write_text("#!/bin/sh\nexit 1\n")
+        (bindir / "python3").chmod(0o755)
+    env = {**env, "PATH": str(bindir)}
+
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+
+    assert proc.returncode != 0, f"a lock that cannot be taken must fail: {proc.stdout!r}"
+    assert "SKIP" not in proc.stdout, proc.stdout
+    assert "FAILED" in proc.stdout, proc.stdout
+    assert not marker.exists(), "no step may run without the overlap guard"
+
+
 def test_refresh_script_logs_what_it_did(tmp_path):
     """Regression: the generated script sent both steps to /dev/null, so a
     silent no-op and a healthy run were indistinguishable after the fact.
@@ -906,6 +998,9 @@ def test_refresh_script_logs_what_it_did(tmp_path):
     proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
 
     assert proc.returncode == 0, proc.stderr
+    # A healthy run writes nothing to stderr. macOS's BSD date rejected the
+    # GNU-only `date -Is` on every timestamp line, and nothing else noticed.
+    assert proc.stderr == "", f"a tool complained during a healthy run: {proc.stderr!r}"
     out = proc.stdout
     assert "ingest" in out and "tag" in out, f"each step must be traceable: {out!r}"
 
