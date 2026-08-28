@@ -8,6 +8,7 @@ it, so a score is always a score OF the prompt that runs.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -165,9 +166,16 @@ def test_run_tagging_refuses_a_broken_artifact_before_touching_the_model(tmp_pat
 def test_dspy_never_enters_the_library():
     """The optimizer is an offline dev tool; `attest tag` must run without it.
     The spec's refusal condition: if dspy cannot be kept out of the runtime
-    import path, the design is abandoned."""
+    import path, the design is abandoned.
+
+    mlflow is the same kind of optional dependency
+    (examples/flows/training/train_mlflow.py): the ledger READS mlruns/
+    directories (ledger_adapters/generic.py's `_mlflow_runs`, named as such
+    in comments and the `adapter="mlflow"` label) without ever importing the
+    library that writes them, so this checks for an import, not the word."""
     src = Path(__file__).resolve().parents[1] / "src" / "attestation"
-    offenders = [
-        str(p.relative_to(src)) for p in src.rglob("*.py") if "dspy" in p.read_text().lower()
-    ]
-    assert offenders == []
+    files = list(src.rglob("*.py"))
+    for name in ("dspy", "mlflow"):
+        pattern = re.compile(rf"^\s*(import|from)\s+{name}\b", re.MULTILINE)
+        offenders = [str(p.relative_to(src)) for p in files if pattern.search(p.read_text())]
+        assert offenders == [], f"{name} imported under src/: {offenders}"

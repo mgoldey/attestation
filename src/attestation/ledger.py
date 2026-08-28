@@ -463,9 +463,7 @@ ADAPTER_CAVEATS: dict[str, str] = {
     ),
     "mlflow": (
         "read by the mlflow adapter: each metric is the FINAL line of its"
-        " metrics file, not the curve and not the best step. The adapter has"
-        " never been run against a real mlruns directory -- it is built from the"
-        " published layout and fixtures"
+        " metrics file, not the curve and not the best step"
     ),
 }
 

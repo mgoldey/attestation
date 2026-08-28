@@ -1,14 +1,18 @@
 """W&B and MLflow local artifact directories, read through `generic`.
 
-**These fixtures were transcribed from published examples, not observed.**
-There is no wandb/ or mlruns/ directory on the machine this was written on
-(`find ~ -maxdepth 4 -type d \\( -name wandb -o -name mlruns \\)` returned
-nothing), so every layout below comes from the tools' own documentation:
+**These fixtures were transcribed from published examples, not observed --
+except for MLflow.** The MLflow reader was run against a real directory on
+2026-08-28 (examples/flows/training/mlruns, written by mlflow-skinny 3.x via
+train_mlflow.py) and read four runs with final values and steps; run_name did
+land in meta.yaml as documented, so no fallback to tags/mlflow.runName was
+needed. tests/test_examples.py pins that committed directory directly. The
+W&B fixtures below are still transcribed, not observed -- there was no wandb/
+on the machine this was written on (`find ~ -maxdepth 4 -type d -name wandb`
+returned nothing), so that layout still comes from the tool's own
+documentation:
 
   W&B run directory layout:
     https://docs.wandb.ai/guides/track/save-restore
-  MLflow local filesystem store layout:
-    https://mlflow.org/docs/latest/tracking.html#backend-stores
 
 That is a real weakness. `CLAUDE.md` names this repo's recurring failure mode
 as "tests that pass against the bug they were written to catch", and a fixture

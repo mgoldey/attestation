@@ -67,6 +67,10 @@ dev = [
 optimize = [
     "dspy>=3.3",
 ]
+# mlflow-skinny (no UI stack) for examples/flows/training/train_mlflow.py.
+# The ledger READS mlruns/ (ledger_adapters/generic.py); nothing under src/
+# imports mlflow, and tests/test_tag_prompt.py asserts it.
+examples = ["mlflow-skinny>=2.20"]
 
 [build-system]
 requires = ["hatchling"]

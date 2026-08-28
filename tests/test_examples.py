@@ -141,3 +141,50 @@ def test_the_readme_quickstart_runs_without_a_model_server(tmp_path, monkeypatch
     assert out["counts"].get("contradicted") == 1, (
         f"README promises a contradicted verdict from this exact file: {out['counts']}"
     )
+
+
+TRAINING = pathlib.Path(__file__).resolve().parent.parent / "examples" / "flows" / "training"
+
+
+def test_the_committed_mlflow_directory_is_read_as_four_arms_of_one_family(tmp_path):
+    """The tracker reader was written against documented layouts and said so
+    in capitals. examples/flows/training/mlruns is the output of a real
+    mlflow-skinny run (train_mlflow.py, 2026-08-28), committed so this test
+    needs no mlflow: this is the first real directory it has read."""
+    conn = get_db(tmp_path / "t.db")
+    out = ledger.scan(conn, TRAINING.parent, project="training")
+    assert out["scanned"] == {"training": 4}, out
+    rows = conn.execute(
+        "SELECT name, family, adapter FROM runs WHERE project = 'training' ORDER BY name"
+    ).fetchall()
+    assert {r["family"] for r in rows} == {"c_sweep"}
+    assert {r["adapter"] for r in rows} == {"mlflow"}
+    metrics = conn.execute(
+        "SELECT DISTINCT metric FROM run_metrics rm JOIN runs r ON r.id = rm.run_id"
+        " WHERE r.project = 'training'"
+    ).fetchall()
+    assert {m["metric"] for m in metrics} >= {
+        "accuracy",
+        "precision",
+        "recall",
+        "auc",
+        "train_loss",
+    }
+    steps = conn.execute(
+        "SELECT step FROM run_metrics rm JOIN runs r ON r.id = rm.run_id"
+        " WHERE r.project = 'training' AND rm.metric = 'train_loss'"
+    ).fetchall()
+    assert all(s["step"] == 9 for s in steps), "final value of a ten-step curve, step recorded"
+
+
+def test_the_mlflow_family_compares_and_its_findings_carry_one_contradiction(tmp_path):
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, TRAINING.parent, project="training")
+    result = ledger.compare(conn, "c_sweep", metric="auc", project="training")
+    assert result["winner"], result
+    parsed, errors = claims.parse_file(TRAINING / "FINDINGS.md")
+    assert not errors
+    verdicts = [claims.check_claim(conn, c) for c in parsed]
+    kinds = [v.verdict for v in verdicts]
+    assert kinds.count(claims.VerdictKind.CONTRADICTED) == 1, kinds
+    assert kinds.count(claims.VerdictKind.SUPPORTED) == 4, kinds

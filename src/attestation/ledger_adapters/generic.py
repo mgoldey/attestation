@@ -466,12 +466,17 @@ def diagnose_empty(root: Path) -> str:
 # produces the layout, and the user does not pick the name. That is why these
 # live here rather than as named adapters -- see ledger_adapters/__init__.py.
 #
-# NEITHER READER HAS BEEN RUN AGAINST A REAL DIRECTORY. There was no wandb/ or
-# mlruns/ on the machine where they were written, so both are built from the
-# tools' published layouts and tested against transcribed fixtures. They are
-# plausible, not verified. If you have a real one, point this at it: the shape-
-# tolerance tests in tests/test_tracker_adapters.py say what should happen when
-# the layout differs, but only a real library proves what it actually does.
+# The MLflow reader was run against a real directory on 2026-08-28
+# (examples/flows/training/mlruns, written by mlflow-skinny 3.x via
+# train_mlflow.py) and read four runs with final values and steps. The
+# only surprise: mlflow-skinny 3.x refuses a `file:` tracking URI unless
+# MLFLOW_ALLOW_FILE_STORE=true is set (the local filesystem backend is in
+# maintenance mode upstream); run_name did land in meta.yaml as documented,
+# so no fallback to tags/mlflow.runName was needed. The W&B reader has
+# still not been -- it remains built from the tool's published layout and
+# tested only against a transcribed fixture; the shape-tolerance tests in
+# tests/test_tracker_adapters.py say what should happen when the layout
+# differs, but only a real library proves what it actually does.
 TRACKER_DIRS = ("wandb", "mlruns")
 
 # Recorded on every RunRecord this module's convention-based reader produces,

@@ -3,8 +3,11 @@
 **Date:** 2026-08-22
 **Status:** implemented 2026-08-23 in `984cc20`. Deviations: none. The
 MLflow open question resolved as written -- final values, not curves.
-Neither reader has yet run against a real directory; see the module
-docstring in `ledger_adapters/generic.py`.
+Neither reader had run against a real directory until 2026-08-28, when
+`examples/flows/training/train_mlflow.py` produced a real `mlruns/`
+(mlflow-skinny 3.x) that the reader scanned successfully -- run_name landed
+in meta.yaml as documented. The W&B reader has still not run against a real
+directory; see the module docstring in `ledger_adapters/generic.py`.
 **Roadmap:** spec 3 of `2026-08-21-architecture-roadmap.md`
 **Depends on:** nothing. The adapter seam already exists.
 
