@@ -962,22 +962,29 @@ def test_refresh_script_takes_the_lock_without_flock(tmp_path, monkeypatch):
     assert second.returncode == 0 and "SKIP" in second.stdout, second.stdout
 
 
-@pytest.mark.parametrize("helper", ["missing", "broken"])
+@pytest.mark.parametrize("helper", ["flock", "python3"])
 def test_refresh_script_fails_loudly_when_it_cannot_take_the_lock(tmp_path, monkeypatch, helper):
     """The first draft of the no-flock fallback read ANY non-zero exit from the
     lock helper as "held" -- and a python3 that was a pyenv shim dying under
     cron's bare env skipped silently, exactly like the missing flock had.
-    A helper that is absent or crashes is a failure cron must see, never a SKIP."""
+    A helper that crashes is a failure cron must see, never a SKIP.
+
+    The broken helper is a shim in $HOME/.local/bin, which the script puts
+    FIRST on its own PATH. A "helper entirely absent" case cannot be staged:
+    the script also bakes in /usr/local/bin, and macOS keeps a python.org
+    python3 there, so the first version of this test ran fine on that runner.
+    """
     import subprocess
 
-    script, _, env, marker = _refresh_harness(
+    script, home, env, marker = _refresh_harness(
         tmp_path, "#!/bin/sh\necho ran >> {marker}\n", monkeypatch
     )
-    bindir = pathlib.Path(_path_without(tmp_path, "flock", "python3"))
-    if helper == "broken":
-        (bindir / "python3").write_text("#!/bin/sh\nexit 1\n")
-        (bindir / "python3").chmod(0o755)
-    env = {**env, "PATH": str(bindir)}
+    shim = home / ".local" / "bin" / helper
+    shim.write_text("#!/bin/sh\nexit 1\n")
+    shim.chmod(0o755)
+    # The python3 case needs no flock to prefer; the flock shim shadows
+    # whatever the host has.
+    env = {**env, "PATH": _path_without(tmp_path, "flock")}
 
     proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
 
