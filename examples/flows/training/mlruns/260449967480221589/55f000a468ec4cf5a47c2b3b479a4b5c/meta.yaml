@@ -1,0 +1,14 @@
+artifact_uri: file:./mlruns/260449967480221589/55f000a468ec4cf5a47c2b3b479a4b5c/artifacts
+end_time: 1787956425969
+entry_point_name: ''
+experiment_id: '260449967480221589'
+lifecycle_stage: active
+run_id: 55f000a468ec4cf5a47c2b3b479a4b5c
+run_name: c_sweep
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1787956425919
+status: 3
+tags: []
+user_id: flows

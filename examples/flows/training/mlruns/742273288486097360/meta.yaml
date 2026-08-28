@@ -1,9 +1,0 @@
-artifact_location: file:///home/matt/attestation/examples/flows/training/mlruns/742273288486097360
-creation_time: 1787955611438
-effective_trace_archival_retention: null
-experiment_id: '742273288486097360'
-last_update_time: 1787955611438
-lifecycle_stage: active
-name: flows
-trace_location: null
-workspace: default

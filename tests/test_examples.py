@@ -6,6 +6,7 @@ an audience. These tests are cheap and they pin the behaviour the README
 promises, including the three deliberately-wrong claims.
 """
 
+import importlib.util
 import pathlib
 
 import pytest
@@ -146,6 +147,24 @@ def test_the_readme_quickstart_runs_without_a_model_server(tmp_path, monkeypatch
 TRAINING = pathlib.Path(__file__).resolve().parent.parent / "examples" / "flows" / "training"
 
 
+def _train_mlflow():
+    spec = importlib.util.spec_from_file_location("train_mlflow", TRAINING / "train_mlflow.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _c_sweep_result(C, auc, run_id="deadbeef01234567"):
+    return {
+        "C": C,
+        "run_id": run_id,
+        "accuracy": auc,
+        "precision": auc,
+        "recall": auc,
+        "auc": auc,
+    }
+
+
 def test_the_committed_mlflow_directory_is_read_as_four_arms_of_one_family(tmp_path):
     """The tracker reader was written against documented layouts and said so
     in capitals. examples/flows/training/mlruns is the output of a real
@@ -188,3 +207,63 @@ def test_the_mlflow_family_compares_and_its_findings_carry_one_contradiction(tmp
     kinds = [v.verdict for v in verdicts]
     assert kinds.count(claims.VerdictKind.CONTRADICTED) == 1, kinds
     assert kinds.count(claims.VerdictKind.SUPPORTED) == 4, kinds
+
+
+def test_the_committed_mlruns_carries_no_personal_or_machine_attribution():
+    """train_mlflow.py's scrub() strips what mlflow writes by default -- the
+    reader (_mlflow_runs) never touches any of it. This is the guard that
+    keeps a future regeneration honest: forget to call scrub() and this
+    fails before the fixture is committed with a real name and a real
+    machine path in it, which is exactly the class of content this repo has
+    previously rewritten history to remove."""
+    forbidden = ("/home/", "matt", "github.com", "mlflow.user")
+    offenders = []
+    for path in TRAINING.joinpath("mlruns").rglob("*"):
+        if not path.is_file():
+            continue
+        text = path.read_text(errors="replace")
+        hits = [needle for needle in forbidden if needle in text or needle in path.name]
+        if hits:
+            offenders.append((str(path.relative_to(TRAINING)), hits))
+    assert not offenders, offenders
+
+
+def test_write_findings_refuses_to_write_a_demo_that_would_not_contradict(tmp_path):
+    """A regeneration under a different sklearn or seed can shift the four
+    real AUCs close enough to the deliberately-wrong claim (best - 0.05) that
+    it would land inside claim tolerance and be SUPPORTED, not CONTRADICTED --
+    silently breaking the one thing FINDINGS.md exists to demonstrate. This
+    must fail loudly before anything is written, not commit a broken demo."""
+    tm = _train_mlflow()
+    results = [
+        _c_sweep_result(0.01, 0.90, "aaaaaaaa1111"),
+        _c_sweep_result(0.1, 0.92, "bbbbbbbb2222"),
+        _c_sweep_result(1.0, 0.95, "cccccccc3333"),
+        # best - 0.05 == 0.90 exactly: the "deliberately wrong" claim would
+        # match this arm's own real value.
+        _c_sweep_result(10.0, 0.95, "dddddddd4444"),
+    ]
+    with pytest.raises(ValueError, match="CONTRADICTED"):
+        tm.write_findings(tmp_path / "FINDINGS.md", results, project="training")
+    assert not (tmp_path / "FINDINGS.md").exists(), "must not write a broken demo"
+
+
+def test_write_findings_writes_five_claims_one_under_the_wrong_heading(tmp_path):
+    tm = _train_mlflow()
+    results = [
+        _c_sweep_result(0.01, 0.90, "aaaaaaaa1111"),
+        _c_sweep_result(0.1, 0.93, "bbbbbbbb2222"),
+        _c_sweep_result(1.0, 0.97, "cccccccc3333"),
+        _c_sweep_result(10.0, 0.99, "dddddddd4444"),
+    ]
+    out = tmp_path / "FINDINGS.md"
+    tm.write_findings(out, results, project="training")
+    lines = out.read_text().splitlines()
+    parsed, errors = claims.parse_file(out)
+    assert not errors
+    assert len(parsed) == 5
+    heading_line = next(
+        i for i, line in enumerate(lines, start=1) if line.startswith("### Deliberately wrong")
+    )
+    wrong_claims = [c for c in parsed if c.line > heading_line]
+    assert len(wrong_claims) == 1

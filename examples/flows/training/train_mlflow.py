@@ -7,11 +7,23 @@ arm logs its params and its held-out accuracy, precision, recall and AUC
 to a local MLflow file store, plus a ten-step train_loss curve so the
 ledger's "last line of each metric file" rule meets a real multi-line
 file. run_name is the family name: that is how the ledger groups arms.
+The curve comes from a surrogate SGDClassifier fit incrementally alongside
+the LogisticRegression -- mlflow has no incremental API for the latter, and
+the reported accuracy/precision/recall/auc are always the LogisticRegression's,
+never the surrogate's.
 
 The mlruns/ this writes is committed beside it: it is the first real MLflow
 directory the ledger reader has read, and tests/test_examples.py pins it
-without needing mlflow installed. Regenerating changes the run ids and is
-a deliberate act.
+without needing mlflow installed. Regenerating changes the run ids and is a
+deliberate act -- running with no --out deletes and rewrites the committed
+mlruns/ and FINDINGS.md in place.
+
+mlflow also writes personal attribution and machine-specific absolute paths
+(tags/mlflow.user, the git remote URL, this machine's home directory in
+every artifact_uri) that this repo does not commit -- the reader
+(_mlflow_runs) reads only lifecycle_stage, run_name, metrics/*, params/*, so
+scrubbing them costs the reader nothing. `scrub()` below removes them after
+training.
 
     uv run --group examples python examples/flows/training/train_mlflow.py
     uv run attest runs scan --root examples/flows --project training
@@ -24,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -33,11 +46,64 @@ FAMILY = "c_sweep"
 ARMS = (0.01, 0.1, 1.0, 10.0)
 HERE = Path(__file__).resolve().parent
 
+# Half of the last displayed decimal place in write_findings' `.4f` claim
+# values -- wide enough to absorb the float/rounded-string gap, far tighter
+# than the deliberately-wrong claim's 0.05 offset.
+CLAIM_TOL = 0.00005
+
 # mlflow-skinny 3.x refuses a `file:` tracking URI unless this is set --
 # the local filesystem backend is in maintenance mode upstream, not removed.
 # Set before `import mlflow` reads it, so the documented one-line command
 # needs no extra environment variable.
 os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+
+# Tag files that carry who ran this and from where, not anything the reader
+# uses. mlflow.runName (the family) and mlflow.source.type (LOCAL vs. a
+# tracked job) are the only ones _mlflow_runs-adjacent tooling could ever
+# want; the rest -- user, and every git.* identifying this machine's clone
+# and its remote -- are deleted outright rather than genericised, since a
+# placeholder invites someone to "restore" them from their own machine.
+_SCRUB_TAGS = {
+    "mlflow.user",
+    "mlflow.source.name",
+    "mlflow.source.git.branch",
+    "mlflow.source.git.commit",
+    "mlflow.source.git.repoURL",
+}
+_URI_FIELD_RE = re.compile(
+    r"^(artifact_uri|artifact_location): file://(?P<path>/\S*)$", re.MULTILINE
+)
+
+
+def scrub(tracking_dir: Path) -> None:
+    """Strip attribution and machine-specific paths mlflow writes by default.
+
+    The reader (_mlflow_runs in ledger_adapters/generic.py) reads only
+    lifecycle_stage, run_name, metrics/*, params/* from meta.yaml and the run
+    directory -- never artifact_uri, never a tag other than run_name. Nothing
+    here is load-bearing for the ledger; committing it anyway would put a
+    real person's name, this machine's home directory, and this repo's git
+    remote into version control, which is exactly the class of content this
+    repo has previously rewritten history to remove.
+    """
+    tracking_dir = tracking_dir.resolve()
+    for tags_dir in tracking_dir.glob("*/*/tags"):
+        for name in _SCRUB_TAGS:
+            (tags_dir / name).unlink(missing_ok=True)
+
+    def _relativize(match: re.Match) -> str:
+        # Whatever mlflow appended (a run's own "/artifacts", nothing for an
+        # experiment's own directory) is preserved -- only the machine-specific
+        # prefix up to tracking_dir is replaced with a path relative to it.
+        field, absolute = match.group(1), Path(match.group("path"))
+        rel = os.path.relpath(absolute, tracking_dir)
+        return f"{field}: file:./mlruns/{rel}"
+
+    for meta_path in tracking_dir.glob("**/meta.yaml"):
+        text = meta_path.read_text()
+        scrubbed = _URI_FIELD_RE.sub(_relativize, text)
+        scrubbed = re.sub(r"^user_id: .*$", "user_id: flows", scrubbed, flags=re.MULTILINE)
+        meta_path.write_text(scrubbed)
 
 
 def train(tracking_dir: Path, seed: int = 0) -> list[dict]:
@@ -83,8 +149,28 @@ def train(tracking_dir: Path, seed: int = 0) -> list[dict]:
 
 
 def write_findings(path: Path, results: list[dict], project: str) -> None:
-    """One claim per arm, plus one deliberately stale, under its own heading."""
+    """One claim per arm, plus one deliberately stale, under its own heading.
+
+    Raises ValueError if the deliberately-wrong claim happens to land within
+    CLAIM_TOL of any arm's real AUC -- under a different sklearn version or a
+    different seed the four real values shift, and nothing else checks that
+    the demo still yields exactly one contradiction. Committing a FINDINGS.md
+    whose "deliberately wrong" claim turned out to be supported would silently
+    break the exact thing this file exists to demonstrate; failing loudly here
+    means that regeneration stops before anything is written, not after.
+    """
     best = max(results, key=lambda r: r["auc"])
+    stale = best["auc"] - 0.05
+    for r in results:
+        if abs(stale - r["auc"]) <= CLAIM_TOL:
+            raise ValueError(
+                f"the deliberately-wrong claim (auc={stale:.4f}) landed within"
+                f" CLAIM_TOL={CLAIM_TOL} of arm C={r['C']}'s real auc={r['auc']:.4f}"
+                " -- it would be SUPPORTED instead of CONTRADICTED. Regeneration"
+                " produced values too close together for the demo to work;"
+                " widen the offset in write_findings or pick a different seed."
+            )
+
     lines = [
         "# c_sweep findings",
         "",
@@ -97,15 +183,14 @@ def write_findings(path: Path, results: list[dict], project: str) -> None:
         name = f"{FAMILY}/{r['run_id'][:8]}"
         # value= is the AUC rounded to 4 places for the prose; claims.DEFAULT_TOL
         # is effectively exact (1e-9), so a rounded number needs tol= to say so
-        # -- half of the last displayed decimal place, wider than any float
-        # rounding at that precision but far tighter than the deliberately
-        # wrong claim's 0.05 offset below.
+        # -- CLAIM_TOL is wider than any float rounding at that precision but
+        # far tighter than the deliberately wrong claim's 0.05 offset below,
+        # which the check above just confirmed holds.
         lines.append(
             f"- C={r['C']}: AUC {r['auc']:.4f}, precision {r['precision']:.4f},"
             f" recall {r['recall']:.4f}"
-            f" <!-- claim: {project}/{name} metric=auc value={r['auc']:.4f} tol=0.00005 -->"
+            f" <!-- claim: {project}/{name} metric=auc value={r['auc']:.4f} tol={CLAIM_TOL:.5f} -->"
         )
-    stale = best["auc"] - 0.05
     lines += [
         "",
         "### Deliberately wrong claim, for the demo",
@@ -123,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--out", type=Path, default=HERE, help="directory to hold mlruns/ and FINDINGS.md"
     )
-    ap.add_argument("--json", type=Path)
+    ap.add_argument("--json", type=Path, help="also write a machine-readable summary here")
     args = ap.parse_args(argv)
 
     t0 = time.perf_counter()
@@ -131,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     if tracking.exists():
         shutil.rmtree(tracking)
     results = train(tracking)
+    scrub(tracking)
     write_findings(args.out / "FINDINGS.md", results, project=args.out.name)
     elapsed = time.perf_counter() - t0
 

@@ -1,0 +1,9 @@
+artifact_location: file:./mlruns/260449967480221589
+creation_time: 1787956425776
+effective_trace_archival_retention: null
+experiment_id: '260449967480221589'
+last_update_time: 1787956425776
+lifecycle_stage: active
+name: flows
+trace_location: null
+workspace: default
