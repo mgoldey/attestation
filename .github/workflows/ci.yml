@@ -9,6 +9,14 @@ jobs:
   gates:
     name: gates (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    env:
+      # macos-latest ships a python.org framework build at
+      # /Library/Frameworks/Python.framework, and uv picks it over its own
+      # managed CPython when the version matches. That build has no
+      # sqlite3 loadable-extension support, so sqlite-vec cannot load and
+      # db.get_db() dies at conn.enable_load_extension (254 failures on the
+      # first CI run, 2026-08-28). uv's managed builds enable it on every OS.
+      UV_PYTHON_PREFERENCE: only-managed
     strategy:
       fail-fast: false
       matrix:

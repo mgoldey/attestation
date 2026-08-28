@@ -158,6 +158,11 @@ def test_models_present_when_ollama_reports_latest_tag(monkeypatch):
             ("ollama", "list"): _ollama_list_ok(models="embeddinggemma:latest\nhermes3:8b\n")
         },
     )
+    # Both guards that step_models runs BEFORE `ollama list`. Without these the
+    # test measured the machine it ran on: green here because a daemon answers
+    # on localhost:11434, SKIPPED on every CI runner (first CI run, 2026-08-28).
+    monkeypatch.setattr(install.shutil, "which", lambda name: "/usr/local/bin/ollama")
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
 
     result = install.step_models(check=True)
 
