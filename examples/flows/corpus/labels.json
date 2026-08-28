@@ -1,0 +1,162 @@
+{
+  "urn:flows:chem-01": {
+    "bench-chemist": true,
+    "ml-engineer": false
+  },
+  "urn:flows:chem-02": {
+    "bench-chemist": true,
+    "ml-engineer": false
+  },
+  "urn:flows:chem-03": {
+    "bench-chemist": true,
+    "ml-engineer": false
+  },
+  "urn:flows:chem-04": {
+    "bench-chemist": true,
+    "ml-engineer": false
+  },
+  "urn:flows:chem-05": {
+    "bench-chemist": true,
+    "ml-engineer": false
+  },
+  "urn:flows:chem-06": {
+    "bench-chemist": true,
+    "ml-engineer": false
+  },
+  "urn:flows:chem-07": {
+    "bench-chemist": true,
+    "ml-engineer": false
+  },
+  "urn:flows:chem-08": {
+    "bench-chemist": true,
+    "ml-engineer": false
+  },
+  "urn:flows:chem-09": {
+    "bench-chemist": true,
+    "ml-engineer": false
+  },
+  "urn:flows:chem-10": {
+    "bench-chemist": true,
+    "ml-engineer": false
+  },
+  "urn:flows:chem-11": {
+    "bench-chemist": true,
+    "ml-engineer": false
+  },
+  "urn:flows:chem-12": {
+    "bench-chemist": true,
+    "ml-engineer": false
+  },
+  "urn:flows:mlsys-01": {
+    "bench-chemist": false,
+    "ml-engineer": true
+  },
+  "urn:flows:mlsys-02": {
+    "bench-chemist": false,
+    "ml-engineer": true
+  },
+  "urn:flows:mlsys-03": {
+    "bench-chemist": false,
+    "ml-engineer": true
+  },
+  "urn:flows:mlsys-04": {
+    "bench-chemist": false,
+    "ml-engineer": true
+  },
+  "urn:flows:mlsys-05": {
+    "bench-chemist": false,
+    "ml-engineer": true
+  },
+  "urn:flows:mlsys-06": {
+    "bench-chemist": false,
+    "ml-engineer": true
+  },
+  "urn:flows:mlsys-07": {
+    "bench-chemist": false,
+    "ml-engineer": true
+  },
+  "urn:flows:mlsys-08": {
+    "bench-chemist": false,
+    "ml-engineer": true
+  },
+  "urn:flows:mlsys-09": {
+    "bench-chemist": false,
+    "ml-engineer": true
+  },
+  "urn:flows:mlsys-10": {
+    "bench-chemist": false,
+    "ml-engineer": true
+  },
+  "urn:flows:mlsys-11": {
+    "bench-chemist": false,
+    "ml-engineer": true
+  },
+  "urn:flows:mlsys-12": {
+    "bench-chemist": false,
+    "ml-engineer": true
+  },
+  "urn:flows:other-01": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:other-02": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:other-03": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:other-04": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:other-05": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:other-06": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:other-07": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:other-08": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:bait-01": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:bait-02": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:bait-03": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:bait-04": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:bait-05": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:bait-06": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:bait-07": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  },
+  "urn:flows:bait-08": {
+    "bench-chemist": false,
+    "ml-engineer": false
+  }
+}

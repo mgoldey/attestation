@@ -1,0 +1,327 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>flows fixture</title>
+  <id>urn:flows:feed</id>
+  <updated>2026-08-20T00:00:00Z</updated>
+
+  <entry>
+    <id>urn:flows:chem-01</id>
+    <title>Photoredox C–H alkylation of unactivated arenes with alkyl bromides</title>
+    <link href="https://example.org/flows/chem-01"/>
+    <updated>2026-08-01T09:00:00Z</updated>
+    <summary>A visible-light photoredox protocol couples unactivated arenes with primary and secondary alkyl bromides at room temperature. The reaction tolerates esters, free alcohols and basic heterocycles, runs on gram scale in a flow reactor, and the mechanism is supported by radical-clock and Stern–Volmer studies.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:chem-02</id>
+    <title>Nickel-catalysed cross-coupling of secondary alkyl chlorides with aryl zinc reagents</title>
+    <link href="https://example.org/flows/chem-02"/>
+    <updated>2026-08-01T09:15:00Z</updated>
+    <summary>A bipyridine-ligated nickel catalyst couples unactivated secondary alkyl chlorides with aryl zinc reagents while preserving stereochemistry at the alkyl centre in most substrates. Kinetic studies and radical-clock probes point to a fast oxidative addition step rather than a long-lived alkyl radical, and the method is demonstrated on a gram-scale flow setup.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:chem-03</id>
+    <title>Electrochemical Shono oxidation for scalable amine synthesis</title>
+    <link href="https://example.org/flows/chem-03"/>
+    <updated>2026-08-02T09:00:00Z</updated>
+    <summary>An undivided electrochemical cell with a graphite anode performs Shono-type oxidation of cyclic carbamates to generate N-acyliminium ions in situ, which are trapped by silyl enol ethers to give substituted pyrrolidines. The protocol avoids stoichiometric chemical oxidants and has been run continuously for 48 hours in a flow cell without electrode fouling.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:chem-04</id>
+    <title>Total synthesis of (-)-pallambins C and D via a transannular Diels–Alder</title>
+    <link href="https://example.org/flows/chem-04"/>
+    <updated>2026-08-02T09:30:00Z</updated>
+    <summary>A twelve-step total synthesis constructs the tetracyclic core of pallambins C and D using a transannular Diels–Alder reaction on a macrocyclic triene to set three contiguous stereocentres in one operation. Late-stage oxidation-state adjustment and a chemoselective lactonisation complete the synthesis in 4.2% overall yield.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:chem-05</id>
+    <title>Continuous-flow Buchwald–Hartwig amination with immobilised palladium</title>
+    <link href="https://example.org/flows/chem-05"/>
+    <updated>2026-08-03T09:00:00Z</updated>
+    <summary>A packed-bed reactor with silica-immobilised palladium nanoparticles performs Buchwald–Hartwig amination of aryl bromides with secondary amines at residence times under three minutes. Metal leaching stays below 0.5 ppm across 200 hours of continuous operation, and the reactor is compatible with a wide range of phosphine ligands dosed as a co-stream.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:chem-06</id>
+    <title>Mechanistic study of copper-catalysed Chan–Lam coupling under aerobic conditions</title>
+    <link href="https://example.org/flows/chem-06"/>
+    <updated>2026-08-03T09:30:00Z</updated>
+    <summary>Kinetic isotope effects and in situ EPR spectroscopy establish that Chan–Lam coupling of arylboronic acids with anilines proceeds through a Cu(III) intermediate rather than a radical chain pathway under the standard aerobic conditions. The finding rationalises why electron-poor boronic acids give consistently lower yields and suggests a ligand modification that recovers them.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:chem-07</id>
+    <title>Iridium-catalysed asymmetric hydrogenation of tetrasubstituted enamides</title>
+    <link href="https://example.org/flows/chem-07"/>
+    <updated>2026-08-04T09:00:00Z</updated>
+    <summary>A chiral phosphine-oxazoline iridium catalyst hydrogenates tetrasubstituted enamides that are unreactive under standard rhodium-DuPhos conditions, delivering the saturated amines in up to 98% ee. Deuterium-labelling experiments locate the enantiodetermining step at coordination of the enamide rather than at hydride transfer.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:chem-08</id>
+    <title>Flow-chemistry route to a key fragment for a kinase inhibitor programme</title>
+    <link href="https://example.org/flows/chem-08"/>
+    <updated>2026-08-04T09:30:00Z</updated>
+    <summary>A three-step telescoped flow sequence converts a commercial pyrazole into a boronate fragment used in a kinase inhibitor programme, replacing a five-day batch process with 40 minutes of total residence time. In-line IR monitoring triggers automatic quench of the unstable organolithium intermediate, removing the need for cryogenic batch handling.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:chem-09</id>
+    <title>Directed C–H borylation of pyridines using a removable Lewis acid auxiliary</title>
+    <link href="https://example.org/flows/chem-09"/>
+    <updated>2026-08-05T09:00:00Z</updated>
+    <summary>Coordinating pyridine nitrogen to a boron Lewis acid auxiliary redirects iridium-catalysed C–H borylation to the normally unreactive C3 position, and the auxiliary is removed under mild aqueous conditions after the borylation step. The method gives complementary regioselectivity to existing directed metalation approaches on eleven substituted pyridines.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:chem-10</id>
+    <title>Optimisation of a Negishi coupling for a pilot-plant campaign using design of experiments</title>
+    <link href="https://example.org/flows/chem-10"/>
+    <updated>2026-08-05T09:30:00Z</updated>
+    <summary>A response-surface design of experiments campaign identifies catalyst loading and temperature as the dominant factors controlling protodehalogenation byproduct in a Negishi coupling slated for pilot-plant scale-up. The optimised conditions cut byproduct formation from 6% to under 0.3% while holding conversion above 99% at the ton scale.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:chem-11</id>
+    <title>Photocatalytic decarboxylative allylation using an organic dye catalyst</title>
+    <link href="https://example.org/flows/chem-11"/>
+    <updated>2026-08-06T09:00:00Z</updated>
+    <summary>An acridinium organic photocatalyst promotes decarboxylative allylation of redox-active esters with allyl sulfones under blue LED irradiation, replacing an iridium photocatalyst used in the original protocol. Reaction quantum yield measurements and radical trapping experiments support a chain mechanism that explains the reaction's tolerance to catalyst loadings below 0.5 mol%.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:chem-12</id>
+    <title>Stereoretentive Suzuki coupling of secondary alkylboronates</title>
+    <link href="https://example.org/flows/chem-12"/>
+    <updated>2026-08-06T09:30:00Z</updated>
+    <summary>A palladium catalyst bearing a bulky trialkylphosphine ligand couples secondary alkylboronates with aryl iodides with full retention of configuration at the boron-bearing carbon. The reaction proceeds through a rapid transmetalation that outcompetes epimerisation, and eighteen examples spanning cyclic and acyclic substrates are reported at consistently high stereoretention.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:mlsys-01</id>
+    <title>Overlapping gradient all-reduce with backward computation in PyTorch FSDP</title>
+    <link href="https://example.org/flows/mlsys-01"/>
+    <updated>2026-08-01T10:00:00Z</updated>
+    <summary>We measure how much of the backward pass can hide collective communication when sharding a 7B parameter model across 64 GPUs. Bucketing gradients by layer group recovers 18% step time; mixed-precision reduce in bf16 recovers a further 6% with no loss in evaluation accuracy.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:mlsys-02</id>
+    <title>INT4 weight-only quantisation with a learned per-channel clipping range</title>
+    <link href="https://example.org/flows/mlsys-02"/>
+    <updated>2026-08-02T10:00:00Z</updated>
+    <summary>A per-channel clipping range learned during a short calibration pass reduces the perplexity gap between INT4 weight-only quantisation and the bf16 baseline from 0.41 to 0.09 on a 13B model. Inference throughput on a single A100 increases 2.7x over the unquantised model with the custom dequantise-and-matmul kernel.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:mlsys-03</id>
+    <title>Continuous batching for transformer inference under bursty request arrival</title>
+    <link href="https://example.org/flows/mlsys-03"/>
+    <updated>2026-08-02T10:30:00Z</updated>
+    <summary>Replacing static request batching with continuous batching that admits and evicts sequences at every decode step raises median throughput 3.1x under a bursty Poisson arrival trace, while keeping p99 latency within 12% of the unloaded baseline. The scheduler tracks per-sequence KV-cache memory to avoid the eviction storms that static batching causes under load.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:mlsys-04</id>
+    <title>A data loader that prefetches sharded parquet with async double buffering</title>
+    <link href="https://example.org/flows/mlsys-04"/>
+    <updated>2026-08-03T10:00:00Z</updated>
+    <summary>An async double-buffered data loader overlaps parquet shard decompression with GPU compute, closing a 22% data-starvation gap observed on an 8-GPU training node reading from network storage. The loader exposes the same iterator interface as the existing PyTorch DataLoader, so the change to a training script is a one-line swap.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:mlsys-05</id>
+    <title>Deterministic evaluation harness for comparing checkpoints across training restarts</title>
+    <link href="https://example.org/flows/mlsys-05"/>
+    <updated>2026-08-03T10:30:00Z</updated>
+    <summary>Non-deterministic kernel selection in cuDNN was found to shift downstream evaluation accuracy by up to 0.6 points between otherwise identical runs, confounding small ablations. Pinning kernel algorithms and seeding the data loader's shuffle independently of the model RNG makes evaluation scores reproducible to four decimal places across restarts.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:mlsys-06</id>
+    <title>Pipeline-parallel schedule that interleaves microbatches to cut bubble time</title>
+    <link href="https://example.org/flows/mlsys-06"/>
+    <updated>2026-08-04T10:00:00Z</updated>
+    <summary>An interleaved pipeline schedule assigns each device multiple non-contiguous model chunks, cutting pipeline bubble time from 34% to 11% of step time on a 32-stage pipeline. The change requires no additional activation memory beyond the standard 1F1B schedule and is validated on both dense and mixture-of-experts architectures.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:mlsys-07</id>
+    <title>Fused attention kernel reduces memory traffic for long-context inference</title>
+    <link href="https://example.org/flows/mlsys-07"/>
+    <updated>2026-08-04T10:30:00Z</updated>
+    <summary>A fused kernel that keeps the attention softmax and the value matmul in shared memory avoids materialising the full attention matrix in HBM, cutting memory traffic by 4.3x at a 32k context length. End-to-end decode latency on a 34B model drops 38% relative to the unfused implementation with no change to numerical outputs.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:mlsys-08</id>
+    <title>Elastic checkpointing that resumes distributed training after a node failure in under a minute</title>
+    <link href="https://example.org/flows/mlsys-08"/>
+    <updated>2026-08-05T10:00:00Z</updated>
+    <summary>An elastic checkpointing scheme writes optimiser shards asynchronously to local NVMe and replicates only the delta since the last snapshot to a backup node, cutting recovery time after a single-node failure from eleven minutes to 47 seconds on a 256-GPU training job. The scheme is evaluated across three simulated failure rates representative of a large shared cluster.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:mlsys-09</id>
+    <title>Mixed-precision optimiser state compression halves memory footprint on trainer nodes</title>
+    <link href="https://example.org/flows/mlsys-09"/>
+    <updated>2026-08-05T10:30:00Z</updated>
+    <summary>Storing Adam's second-moment estimate in a dynamically-scaled 8-bit format instead of fp32 halves optimiser memory on each trainer node, enabling a 30B model to train without activation offload on the same hardware. Loss curves track the fp32 baseline within noise across a 50,000-step run.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:mlsys-10</id>
+    <title>Speculative decoding with a draft model trained on the target model's own rejections</title>
+    <link href="https://example.org/flows/mlsys-10"/>
+    <updated>2026-08-06T10:00:00Z</updated>
+    <summary>Fine-tuning the draft model on tokens the target model previously rejected during speculative decoding raises the average accepted run length from 2.1 to 3.4 tokens, giving a further 1.4x decode speedup over a draft model trained only on generic text. The gain holds across three target model sizes without retraining the target.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:mlsys-11</id>
+    <title>Profiling GPU kernel launch overhead in small-batch inference serving</title>
+    <link href="https://example.org/flows/mlsys-11"/>
+    <updated>2026-08-06T10:30:00Z</updated>
+    <summary>At batch size one, kernel launch overhead accounts for 41% of end-to-end latency on a transformer decoder layer, dominated by the many small elementwise operations in layer normalisation and the residual add. Fusing these into a single custom kernel removes the overhead and cuts single-request latency by 26% with no accuracy change.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:mlsys-12</id>
+    <title>A reproducible training harness that pins every random seed touched by a distributed run</title>
+    <link href="https://example.org/flows/mlsys-12"/>
+    <updated>2026-08-07T10:00:00Z</updated>
+    <summary>A training harness centralises every source of randomness — data shuffling, dropout, initialisation, and NCCL's collective ordering — behind a single derived seed per rank, closing the last sources of run-to-run variance found in an audit of a 128-GPU training pipeline. Two independent runs from the same seed now produce bitwise-identical loss curves for the first 500 steps.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:other-01</id>
+    <title>Seasonal migration of coral reef fish tracked with acoustic telemetry</title>
+    <link href="https://example.org/flows/other-01"/>
+    <updated>2026-08-02T08:00:00Z</updated>
+    <summary>Three years of acoustic tagging on a Pacific atoll show that parrotfish move between lagoon and fore-reef habitats on a lunar cycle. The pattern is strongest in adults and weakens where fishing pressure is high, which has consequences for the placement of no-take zones.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:other-02</id>
+    <title>A faint debris disk detected around a nearby M-dwarf with coronagraphic imaging</title>
+    <link href="https://example.org/flows/other-02"/>
+    <updated>2026-08-08T08:00:00Z</updated>
+    <summary>Ground-based coronagraphic imaging resolves a faint, asymmetric debris disk around a nearby M-dwarf, with a brightness asymmetry consistent with dynamical sculpting by an unseen low-mass planet. The disk's inferred age and dust temperature are compared against evolutionary models for low-mass pre-main-sequence stars.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:other-03</id>
+    <title>Sovereign bond spreads and central bank forward guidance during disinflation episodes</title>
+    <link href="https://example.org/flows/other-03"/>
+    <updated>2026-08-09T08:00:00Z</updated>
+    <summary>A panel study of twelve emerging-market economies finds that credible forward guidance narrows sovereign bond spreads faster during disinflation episodes than the pace of actual rate cuts alone would predict. The effect is largest where the central bank has an established track record of meeting its own inflation targets.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:other-04</id>
+    <title>Case-marking syncretism in a previously undocumented Trans-New-Guinea language</title>
+    <link href="https://example.org/flows/other-04"/>
+    <updated>2026-08-10T08:00:00Z</updated>
+    <summary>Fieldwork on a previously undocumented Trans-New-Guinea language describes a case-marking system in which ergative and instrumental morphology have merged into a single syncretic suffix, a pattern rare among the language family's otherwise well-documented members. The paper situates the merger within a broader typological account of syncretism under morphological erosion.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:other-05</id>
+    <title>Deep-sea hydrothermal vent community recovery a decade after a mining disturbance trial</title>
+    <link href="https://example.org/flows/other-05"/>
+    <updated>2026-08-11T08:00:00Z</updated>
+    <summary>Ten years after an experimental seafloor mining disturbance trial at a Pacific hydrothermal vent field, tubeworm colonies have returned to roughly 60% of pre-disturbance biomass while the mobile fauna community remains compositionally distinct from undisturbed reference sites. The results inform ongoing debate over recovery timelines used in deep-sea mining environmental impact assessments.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:other-06</id>
+    <title>Wage growth pass-through to services inflation across the euro area since 2019</title>
+    <link href="https://example.org/flows/other-06"/>
+    <updated>2026-08-12T08:00:00Z</updated>
+    <summary>Sector-level wage and price data across nine euro-area economies show that pass-through from negotiated wage growth to services inflation has strengthened since 2019, particularly in labour-intensive sectors with low import exposure. The finding is used to revisit assumptions embedded in several central banks' wage-price spiral models.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:other-07</id>
+    <title>Transit-timing variations reveal a third planet in a compact resonant chain</title>
+    <link href="https://example.org/flows/other-07"/>
+    <updated>2026-08-13T08:00:00Z</updated>
+    <summary>Transit-timing variations in a two-planet system observed over six years reveal a third, previously undetected low-mass planet locked in a three-body resonant chain with its neighbours. Dynamical modelling of the timing residuals constrains the new planet's mass to within 15% despite it never producing a detectable transit of its own.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:other-08</id>
+    <title>Vowel harmony loss correlates with contact intensity across an Andean dialect continuum</title>
+    <link href="https://example.org/flows/other-08"/>
+    <updated>2026-08-14T08:00:00Z</updated>
+    <summary>A survey of vowel harmony across forty varieties along an Andean dialect continuum finds that harmony erosion correlates more strongly with measured contact intensity with a neighbouring unrelated language than with geographic distance from the presumed point of origin. The result is offered as evidence for contact-driven simplification over purely internal drift in this language family.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:bait-01</id>
+    <title>AI is transforming science: a perspective</title>
+    <link href="https://example.org/flows/bait-01"/>
+    <updated>2026-08-02T11:00:00Z</updated>
+    <summary>Machine learning is reshaping how research is done across every discipline. This perspective surveys the opportunities and challenges that artificial intelligence brings to the scientific enterprise and calls for interdisciplinary collaboration to realise its promise.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:bait-02</id>
+    <title>Announcing a new open dataset for the research community</title>
+    <link href="https://example.org/flows/bait-02"/>
+    <updated>2026-08-09T11:00:00Z</updated>
+    <summary>We are pleased to release a new dataset intended to accelerate research across a wide range of scientific domains. The dataset was assembled with input from the community and is freely available for download, and we invite researchers everywhere to build on it.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:bait-03</id>
+    <title>A new tool to help researchers work faster</title>
+    <link href="https://example.org/flows/bait-03"/>
+    <updated>2026-08-10T11:00:00Z</updated>
+    <summary>Today we are releasing a new tool designed to make researchers more productive. The tool streamlines a common part of the research workflow and has already been adopted by early users who report significant time savings, and feedback from the community will guide future development.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:bait-04</id>
+    <title>The future of scientific discovery in the age of intelligent systems</title>
+    <link href="https://example.org/flows/bait-04"/>
+    <updated>2026-08-11T11:00:00Z</updated>
+    <summary>Intelligent systems are poised to change the pace and shape of scientific discovery over the coming decade. This piece reflects on what the shift might mean for researchers and institutions and argues that the community should prepare now rather than later for the changes ahead.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:bait-05</id>
+    <title>Five ways artificial intelligence is accelerating research today</title>
+    <link href="https://example.org/flows/bait-05"/>
+    <updated>2026-08-12T11:00:00Z</updated>
+    <summary>From literature review to experiment design, artificial intelligence is already changing how researchers work day to day. This roundup highlights five broad areas where the impact is being felt and offers general thoughts on where the trend may be heading next.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:bait-06</id>
+    <title>A new platform for collaborative science, launched today</title>
+    <link href="https://example.org/flows/bait-06"/>
+    <updated>2026-08-13T11:00:00Z</updated>
+    <summary>We are excited to announce the launch of a new platform aimed at making collaborative science easier for teams everywhere. The platform brings together several existing workflows into one place and is now open for researchers to sign up and start using immediately.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:bait-07</id>
+    <title>Why open science matters more than ever</title>
+    <link href="https://example.org/flows/bait-07"/>
+    <updated>2026-08-14T11:00:00Z</updated>
+    <summary>Open science practices are becoming increasingly important as research grows more complex and collaborative. This opinion piece makes the case for wider adoption of open data and open methods and discusses general barriers that continue to slow progress across the field.</summary>
+  </entry>
+
+  <entry>
+    <id>urn:flows:bait-08</id>
+    <title>Reflections on a decade of rapid progress in research technology</title>
+    <link href="https://example.org/flows/bait-08"/>
+    <updated>2026-08-15T11:00:00Z</updated>
+    <summary>Looking back at the last ten years, research technology has changed dramatically across nearly every field of study. This reflective essay considers what drove the pace of change and offers broad, general predictions for what the next decade of research technology might bring.</summary>
+  </entry>
+
+</feed>

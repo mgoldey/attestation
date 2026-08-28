@@ -1,0 +1,14 @@
+# Two readers with disjoint interests. The strings are what a person would
+# type into the onboarding form; labels.json says which items each finds useful.
+
+[[personas]]
+name = "bench-chemist"
+interests = """Synthetic organic chemistry: total synthesis, C-H activation, photoredox and
+electrochemical catalysis, cross-coupling, flow chemistry, and practical
+methodology I can run at the bench. Reaction optimisation and mechanism."""
+
+[[personas]]
+name = "ml-engineer"
+interests = """Training and serving machine learning systems: distributed training, mixed
+precision, quantisation, inference latency, GPU kernels, data loaders,
+evaluation harnesses, and reproducibility of model training runs."""
