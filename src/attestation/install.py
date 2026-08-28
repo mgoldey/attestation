@@ -612,7 +612,8 @@ def _refresh_script_content(root: Path) -> str:
         'case "$locked" in\n'
         "  0) ;;\n"
         '  75) echo "[$(date -Iseconds)] SKIP: previous run still holding lock"; exit 0 ;;\n'
-        '  *) echo "[$(date -Iseconds)] FAILED: could not take the overlap lock (flock/python3 exit $locked)"; exit 1 ;;\n'
+        '  *) echo "[$(date -Iseconds)] FAILED: could not take the overlap lock"'
+        ' "(flock/python3 exit $locked)"; exit 1 ;;\n'
         "esac\n"
         "\n"
         f'echo "[$(date -Iseconds)] refresh start"\n'
