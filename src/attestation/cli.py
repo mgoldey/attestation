@@ -2,6 +2,7 @@
 
 import argparse
 import contextlib
+import inspect
 import os
 import sys
 from importlib.metadata import version
@@ -67,11 +68,62 @@ def fail(message: str) -> int:
     return 1
 
 
+# Every subcommand's one-line purpose, typed ONCE. build_parser reads from
+# this for `add_parser(..., help=HELP[name])`; `_documented` (below) reads
+# the same entry to set each `cmd_*` handler's docstring first line, so
+# `attest <cmd> --help` and `cmd_<name>.__doc__` share one string rather
+# than two that can drift apart -- the failure `test_a_subcommand_help_
+# describes_what_it_prints` exists to catch. `runs`'s sub-subcommands use a
+# dotted key ("runs.scan") since they are not top-level attest subcommands.
+HELP: dict[str, str] = {
+    "ingest": "fetch feeds, embed, store",
+    "tag": "LLM-tag untagged items (topic tags + content type)",
+    "serve": "run the web UI",
+    "eval": "cross-validated AUC for a persona's click classifier",
+    "warmup": "pin chat + embedding models in VRAM",
+    "reload": "restart running MCP servers so code edits take effect",
+    "backup": "write a consistent copy of the database",
+    "emit": "agent configs generated from the tool surfaces",
+    "kg-report": "knowledge-graph health + topic clusters",
+    "claims": "verify claims written in Markdown against runs",
+    "browse": "open the ledger in Datasette (read-only)",
+    "runs": "experiment ledger read from artifacts on disk",
+    "runs.scan": "re-read runs from a workspace directory",
+    "runs.list": "runs in the ledger",
+    "runs.compare": "rank the arms of an experiment family",
+    "runs.show": "one run in full",
+    "bootstrap-persona": "write pseudo-clicks for a persona",
+    "install": "idempotent setup + --check doctor mode",
+}
+
+
+def _documented(name: str):
+    """Decorator: set a `cmd_*` handler's docstring from `HELP[name]`.
+
+    Applied at the def site, so the docstring exists the moment the module
+    is imported -- unlike setting `__doc__` inside `build_parser`, which
+    would leave it `None` until that function is first called. `HELP[name]`
+    becomes the docstring's first line; any rationale already written below
+    it (the function's own literal docstring, holding only the rationale
+    body with no summary line -- see the functions below) is kept as the
+    paragraph(s) that follow, never retyped here.
+    """
+
+    def decorate(func):
+        """Apply to one `cmd_*` function: derive its `__doc__` and return it
+        unchanged otherwise -- this is a docstring rewrite, not a wrapper."""
+        body = inspect.cleandoc(func.__doc__ or "")
+        func.__doc__ = HELP[name] + (f"\n\n{body}" if body else "")
+        return func
+
+    return decorate
+
+
 def build_parser() -> argparse.ArgumentParser:
-    """Assemble every `attest` subcommand, each `help=` reused verbatim as its
-    handler's one-line docstring (see the `test_help_matches_docstring`
-    family in test_cli.py) so `--help` and `cmd_<name>.__doc__` cannot drift
-    the way `eval --help` once did (see `test_a_subcommand_help_describes_
+    """Assemble every `attest` subcommand, each `help=` read from `HELP`
+    rather than retyped (see `HELP` and `_documented` above), so `--help`
+    and `cmd_<name>.__doc__` share one string and cannot drift the way
+    `eval --help` once did (see `test_a_subcommand_help_describes_
     what_it_prints`)."""
     p = argparse.ArgumentParser(prog="attest")
     p.add_argument("--version", action="version", version=f"attest {version('attestation')}")
@@ -86,49 +138,49 @@ def build_parser() -> argparse.ArgumentParser:
             "~/.hermes/skills/science-recommendations/data/hermes.db (if it exists) > ./hermes.db",
         )
 
-    sp = sub.add_parser("ingest", help="fetch feeds, embed, store")
+    sp = sub.add_parser("ingest", help=HELP["ingest"])
     add_db(sp)
     sp.add_argument("--feeds", default=_default_feeds_path())
     sp.set_defaults(func=cmd_ingest)
 
-    sp = sub.add_parser("tag", help="LLM-tag untagged items (topic tags + content type)")
+    sp = sub.add_parser("tag", help=HELP["tag"])
     add_db(sp)
     sp.add_argument("--limit", type=int, default=None, help="max items to tag this run")
     sp.set_defaults(func=cmd_tag)
 
-    sp = sub.add_parser("serve", help="run the web UI")
+    sp = sub.add_parser("serve", help=HELP["serve"])
     add_db(sp)
     sp.add_argument("--port", type=int, default=8899)
     sp.set_defaults(func=cmd_serve)
 
-    sp = sub.add_parser("eval", help="cross-validated AUC for a persona's click classifier")
+    sp = sub.add_parser("eval", help=HELP["eval"])
     add_db(sp)
     sp.add_argument("--user", required=True)
     sp.set_defaults(func=cmd_eval)
 
-    sp = sub.add_parser("warmup", help="pin chat + embedding models in VRAM")
+    sp = sub.add_parser("warmup", help=HELP["warmup"])
     sp.set_defaults(func=cmd_warmup)
 
-    sp = sub.add_parser("reload", help="restart running MCP servers so code edits take effect")
+    sp = sub.add_parser("reload", help=HELP["reload"])
     sp.set_defaults(func=cmd_reload)
 
-    sp = sub.add_parser("backup", help="write a consistent copy of the database")
+    sp = sub.add_parser("backup", help=HELP["backup"])
     add_db(sp)
     sp.add_argument("dest", help="path to write; must not already exist")
     sp.set_defaults(func=cmd_backup)
 
-    sp = sub.add_parser("emit", help="agent configs generated from the tool surfaces")
+    sp = sub.add_parser("emit", help=HELP["emit"])
     sp.add_argument(
         "--write", action="store_true", help="write the Claude agent files (default: report only)"
     )
     sp.set_defaults(func=cmd_emit)
 
-    sp = sub.add_parser("kg-report", help="knowledge-graph health + topic clusters")
+    sp = sub.add_parser("kg-report", help=HELP["kg-report"])
     add_db(sp)
     sp.add_argument("--min-size", type=int, default=3, help="smallest cluster to list")
     sp.set_defaults(func=cmd_kg_report)
 
-    sp = sub.add_parser("claims", help="verify claims written in Markdown against runs")
+    sp = sub.add_parser("claims", help=HELP["claims"])
     add_db(sp)
     sp.add_argument("path", nargs="?", help="file or directory (default: $RESEARCH_ROOT)")
     sp.add_argument("--verdict", help="show only this verdict")
@@ -139,45 +191,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp.set_defaults(func=cmd_claims)
 
-    sp = sub.add_parser("browse", help="open the ledger in Datasette (read-only)")
+    sp = sub.add_parser("browse", help=HELP["browse"])
     add_db(sp)
     sp.add_argument("--port", type=int, default=8898)
     sp.add_argument("--open", action="store_true", help="open a browser window")
     sp.set_defaults(func=cmd_browse)
 
-    sp = sub.add_parser("runs", help="experiment ledger read from artifacts on disk")
+    sp = sub.add_parser("runs", help=HELP["runs"])
     add_db(sp)
     runs_sub = sp.add_subparsers(dest="runs_command", required=True)
 
-    rp = runs_sub.add_parser("scan", help="re-read runs from a workspace directory")
+    rp = runs_sub.add_parser("scan", help=HELP["runs.scan"])
     rp.add_argument("--root", help="workspace dir (default: $RESEARCH_ROOT)")
     rp.add_argument("--project", help="scan only this project")
     rp.set_defaults(func=cmd_runs_scan)
 
-    rp = runs_sub.add_parser("list", help="runs in the ledger")
+    rp = runs_sub.add_parser("list", help=HELP["runs.list"])
     rp.add_argument("--project")
     rp.add_argument("--family")
     rp.add_argument("--limit", type=int, default=20)
     rp.set_defaults(func=cmd_runs_list)
 
-    rp = runs_sub.add_parser("compare", help="rank the arms of an experiment family")
+    rp = runs_sub.add_parser("compare", help=HELP["runs.compare"])
     rp.add_argument("family")
     rp.add_argument("--metric", help="default: the metric most arms share")
     rp.add_argument("--project", help="required when the family exists in more than one project")
     rp.set_defaults(func=cmd_runs_compare)
 
-    rp = runs_sub.add_parser("show", help="one run in full")
+    rp = runs_sub.add_parser("show", help=HELP["runs.show"])
     rp.add_argument("project")
     rp.add_argument("name")
     rp.set_defaults(func=cmd_runs_show)
 
-    sp = sub.add_parser("bootstrap-persona", help="write pseudo-clicks for a persona")
+    sp = sub.add_parser("bootstrap-persona", help=HELP["bootstrap-persona"])
     add_db(sp)
     sp.add_argument("name")
     sp.add_argument("-k", type=int, default=30)
     sp.set_defaults(func=cmd_bootstrap_persona)
 
-    sp = sub.add_parser("install", help="idempotent setup + --check doctor mode")
+    sp = sub.add_parser("install", help=HELP["install"])
     sp.add_argument("--check", action="store_true", help="detect only, change nothing")
     sp.add_argument("--yes", action="store_true", help="non-interactive consent")
     sp.add_argument("--now", action="store_true", help="also run the tag backfill inline")
@@ -293,9 +345,9 @@ def _emit_agent_files(root, write: bool) -> int:
     return 0
 
 
+@_documented("backup")
 def cmd_backup(args: argparse.Namespace) -> int:
-    """write a consistent copy of the database
-
+    """
     A single-file copy, exact and restorable -- exists because `cp hermes.db
     backup.db` is what an operator types and it silently drops the WAL -- the
     copy opens, looks intact, and is missing the newest writes. Five such
@@ -316,9 +368,9 @@ def cmd_backup(args: argparse.Namespace) -> int:
     return 0
 
 
+@_documented("emit")
 def cmd_emit(args: argparse.Namespace) -> int:
-    """agent configs generated from the tool surfaces
-
+    """
     Reports by default -- or with --write, produces -- the per-surface agent
     configs. Reporting is the default because nothing here overwrites: a
     difference between generated and on-disk is a fact the user acts on, not
@@ -352,9 +404,9 @@ def cmd_emit(args: argparse.Namespace) -> int:
     return _emit_agent_files(root, args.write)
 
 
+@_documented("reload")
 def cmd_reload(args: argparse.Namespace) -> int:
-    """restart running MCP servers so code edits take effect
-
+    """
     An MCP server is spawned once per session and never reloads. Both live
     servers here were once found running code five commits stale -- the Hermes
     gateway and a Claude Code session, against commits made hours later -- so
@@ -392,8 +444,8 @@ def cmd_reload(args: argparse.Namespace) -> int:
     return 0
 
 
+@_documented("warmup")
 def cmd_warmup(args: argparse.Namespace) -> int:
-    """pin chat + embedding models in VRAM"""
     import attestation.cli  # self-import so tests can monkeypatch attestation.cli.warmup
 
     attestation.cli.warmup()
@@ -417,8 +469,8 @@ def _citation_resolver():
     return citations.Resolver.from_env()
 
 
+@_documented("claims")
 def cmd_claims(args: argparse.Namespace) -> int:
-    """verify claims written in Markdown against runs"""
     from attestation import claims as claims_mod
     from attestation import ledger
 
@@ -467,8 +519,8 @@ def cmd_claims(args: argparse.Namespace) -> int:
     return 1 if bad else 0
 
 
+@_documented("browse")
 def cmd_browse(args: argparse.Namespace) -> int:
-    """open the ledger in Datasette (read-only)"""
     import shutil
     import subprocess
 
@@ -509,8 +561,8 @@ def cmd_browse(args: argparse.Namespace) -> int:
         return 0
 
 
+@_documented("runs.scan")
 def cmd_runs_scan(args: argparse.Namespace) -> int:
-    """re-read runs from a workspace directory"""
     from attestation import ledger
 
     with open_db(args.db) as conn:
@@ -534,8 +586,8 @@ def cmd_runs_scan(args: argparse.Namespace) -> int:
         return 0
 
 
+@_documented("runs.list")
 def cmd_runs_list(args: argparse.Namespace) -> int:
-    """runs in the ledger"""
     from attestation import ledger
 
     with open_db(args.db) as conn:
@@ -551,8 +603,8 @@ def cmd_runs_list(args: argparse.Namespace) -> int:
         return 0
 
 
+@_documented("runs.compare")
 def cmd_runs_compare(args: argparse.Namespace) -> int:
-    """rank the arms of an experiment family"""
     from attestation import ledger
 
     with open_db(args.db) as conn:
@@ -594,8 +646,8 @@ def cmd_runs_compare(args: argparse.Namespace) -> int:
         return 0
 
 
+@_documented("runs.show")
 def cmd_runs_show(args: argparse.Namespace) -> int:
-    """one run in full"""
     from attestation import ledger
 
     with open_db(args.db) as conn:
@@ -614,8 +666,8 @@ def cmd_runs_show(args: argparse.Namespace) -> int:
         return 0
 
 
+@_documented("kg-report")
 def cmd_kg_report(args: argparse.Namespace) -> int:
-    """knowledge-graph health + topic clusters"""
     from attestation import kg
 
     with open_db(args.db) as conn:
@@ -650,8 +702,8 @@ def cmd_kg_report(args: argparse.Namespace) -> int:
         return 0
 
 
+@_documented("ingest")
 def cmd_ingest(args: argparse.Namespace) -> int:
-    """fetch feeds, embed, store"""
     from attestation.embed import Embedder
     from attestation.ingest import run_ingest
 
@@ -661,8 +713,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+@_documented("tag")
 def cmd_tag(args: argparse.Namespace) -> int:
-    """LLM-tag untagged items (topic tags + content type)"""
     import attestation.features
     from attestation.llm import base_url
 
@@ -682,8 +734,8 @@ def cmd_tag(args: argparse.Namespace) -> int:
     return 1 if (stats["tagged"] == 0 and stats["failed"] > 0) else 0
 
 
+@_documented("serve")
 def cmd_serve(args: argparse.Namespace) -> int:
-    """run the web UI"""
     import uvicorn
 
     from attestation.db import resolve_db_path
@@ -693,8 +745,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+@_documented("eval")
 def cmd_eval(args: argparse.Namespace) -> int:
-    """cross-validated AUC for a persona's click classifier"""
     from attestation.rank import evaluate_user, get_user
     from attestation.simulate import source_skew_caveat
 
@@ -759,8 +811,8 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+@_documented("bootstrap-persona")
 def cmd_bootstrap_persona(args: argparse.Namespace) -> int:
-    """write pseudo-clicks for a persona"""
     from attestation.db import SEED_USERS
     from attestation.embed import Embedder
     from attestation.rank import bootstrap_persona, create_user, get_user
@@ -790,8 +842,8 @@ def cmd_bootstrap_persona(args: argparse.Namespace) -> int:
     return 0
 
 
+@_documented("install")
 def cmd_install(args: argparse.Namespace) -> int:
-    """idempotent setup + --check doctor mode"""
     import attestation.install
 
     return attestation.install.run_install(check=args.check, yes=args.yes, now=args.now)

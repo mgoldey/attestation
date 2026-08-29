@@ -3,7 +3,7 @@ from argparse import Namespace
 import pytest
 from conftest import seeded_db
 
-from attestation.cli import build_parser, cmd_bootstrap_persona, cmd_eval, main
+from attestation.cli import HELP, build_parser, cmd_bootstrap_persona, cmd_eval, main
 from attestation.db import get_db
 
 
@@ -783,4 +783,20 @@ def test_every_cmd_docstring_is_its_helps_first_line():
         first_line = (func.__doc__ or "").splitlines()[0] if func.__doc__ else None
         assert first_line == help_text, (
             f"attest {' '.join(path)}: docstring first line {first_line!r} != help {help_text!r}"
+        )
+
+
+def test_build_parser_help_strings_come_from_HELP():
+    """The other half of the one-source contract: `HELP` is not just a table
+    the docstrings happen to match, it is what `add_parser(..., help=...)`
+    itself reads. Walks the live parser tree the same way the test above
+    does, and asserts each subcommand's actual `help=` (what `attest --help`
+    prints) equals `HELP[dotted_name]` -- so a literal string slipped back
+    into an `add_parser` call, bypassing `HELP` entirely, is caught even
+    though it would still happen to match the docstring by coincidence."""
+    for path, help_text, _func in _leaf_commands(build_parser()):
+        key = ".".join(path)
+        assert key in HELP, f"attest {' '.join(path)}: no HELP entry for key {key!r}"
+        assert help_text == HELP[key], (
+            f"attest {' '.join(path)}: add_parser help={help_text!r} != HELP[{key!r}]={HELP[key]!r}"
         )
