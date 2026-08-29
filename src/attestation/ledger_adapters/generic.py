@@ -615,7 +615,8 @@ def _wandb_runs(root: Path, seen: set[str]) -> list[RunRecord]:
         meta = _load(meta_path) if meta_path.is_file() else None
         meta = meta if isinstance(meta, dict) else {}
 
-        # run-20260814_101133-a1b2c3d4 -> a1b2c3d4
+        # offline-run-20260814_101133-a1b2c3d4 -> a1b2c3d4 (also works for
+        # the older run-20260814_101133-a1b2c3d4 form -- both just split on "-")
         short_id = run_dir.name.rsplit("-", 1)[-1]
         program = str(meta.get("program") or "").rsplit("/", 1)[-1]
         stem = program[:-3] if program.endswith(".py") else program

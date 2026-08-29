@@ -9,7 +9,13 @@ reports the LogisticRegression's own held-out accuracy/auc as the run's
 summary -- the same split train_mlflow.py uses between a curve-producing
 surrogate and the metric that is actually reported). Run via:
 
-    WANDB_MODE=offline uv run --with wandb --with scikit-learn --no-project python generate.py
+    WANDB_MODE=offline uv run --with wandb==0.17.6 --with scikit-learn --no-project python generate.py
+
+The version pin matches the WANDB_VERSION constant below and is load-bearing,
+not cosmetic: offline materialisation regressed between releases (see that
+constant's comment and the finding two paragraphs down), and main() refuses
+to run under any other installed wandb version rather than silently produce
+a fixture this file cannot honestly describe.
 
 wandb.init(project="flows", name="lr_sweep", ...) four times, wandb.log for
 ten steps each, wandb.summary set to the final accuracy/auc, wandb.finish().
@@ -72,12 +78,14 @@ FAMILY = "lr_sweep"
 ARMS = (0.001, 0.01, 0.1, 1.0)
 HERE = Path(__file__).resolve().parent
 
-# The wandb version this fixture was produced with. Pinned (rather than the
-# unversioned `--with wandb` in the module docstring's command) because
-# offline materialisation regressed between releases: 0.17.x still writes
+# The wandb version this fixture was produced with, and the only one this
+# file will run under -- see _require_pinned_wandb_version(). Offline
+# materialisation regressed between releases: 0.17.x still writes
 # wandb-metadata.json to files/ in offline mode; by 0.29.0 files/ holds only
-# requirements.txt and even that is gone. The pin is applied in run.sh, not
-# here -- this file has no opinion on how it is invoked.
+# requirements.txt and even that is gone. The module docstring's `uv run`
+# command pins `wandb==WANDB_VERSION` for the same reason -- keep both in
+# sync by hand; the runtime check below is what actually enforces it rather
+# than letting the two drift silently.
 WANDB_VERSION = "0.17.6"
 
 # Keys wandb-metadata.json writes that identify this machine or this person.
@@ -207,6 +215,29 @@ def scrub(wandb_dir: Path) -> None:
         (wandb_dir / name).unlink(missing_ok=True)
 
 
+def _require_pinned_wandb_version(wandb_module) -> None:
+    """Refuse to run under any wandb but the one this file was verified against.
+
+    WANDB_VERSION is not decorative: offline materialisation regressed
+    between releases (see that constant's comment), so an unpinned or
+    differently-pinned wandb would silently produce a fixture this file's
+    own docstring no longer accurately describes -- files/ might hold no
+    wandb-metadata.json at all (0.29.0), which _decode_wandb_log cannot
+    compensate for since that file is written directly by wandb, not
+    decoded from the binary log. Failing loudly here, before any run is
+    created, is cheaper than debugging a mysteriously-empty fixture later.
+    """
+    if wandb_module.__version__ != WANDB_VERSION:
+        raise SystemExit(
+            f"generate.py was verified against wandb=={WANDB_VERSION} and refuses to"
+            f" run under wandb=={wandb_module.__version__}. Offline materialisation is"
+            f" not stable across wandb releases (see the module docstring's finding);"
+            f" install the pinned version, e.g.:\n\n"
+            f"    WANDB_MODE=offline uv run --with wandb=={WANDB_VERSION}"
+            f" --with scikit-learn --no-project python generate.py"
+        )
+
+
 def train(seed: int = 0) -> list[dict]:
     import numpy as np
     import wandb
@@ -215,6 +246,8 @@ def train(seed: int = 0) -> list[dict]:
     from sklearn.metrics import accuracy_score, roc_auc_score
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import StandardScaler
+
+    _require_pinned_wandb_version(wandb)
 
     X, y = load_breast_cancer(return_X_y=True)
     X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, stratify=y, random_state=seed)

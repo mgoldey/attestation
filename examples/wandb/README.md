@@ -116,9 +116,11 @@ caveat this reader carried since it was written.
 - `attest runs compare lr_sweep` (the sweep's own name) fails with "no family
   'lr_sweep'. Available: generate" — see *What it demonstrates* for why the
   family is the script name, not the W&B run name.
-- A `wandb/` regenerated with an unpinned `wandb` version may write nothing
-  at all to `files/`: see `generate.py`'s module docstring for the version
-  pin and why it matters.
+- `generate.py` refuses to run (exit 1, clear message) under any wandb
+  version but the one it was verified against — offline materialisation is
+  not stable across releases, so a version mismatch would otherwise
+  silently write a fixture with less in `files/` than this README
+  describes. See `generate.py`'s module docstring for why.
 
 ## Next
 
@@ -126,7 +128,7 @@ Regenerating the fixture is deliberate and explicit — it rewrites the
 committed `wandb/` in place with new run ids and timestamps:
 
 ```bash
-WANDB_MODE=offline uv run --with wandb --with scikit-learn --no-project python generate.py
+WANDB_MODE=offline uv run --with wandb==0.17.6 --with scikit-learn --no-project python generate.py
 ```
 
 The catalogue at `examples/README.md` lists the other golden paths, and
