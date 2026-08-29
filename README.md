@@ -80,17 +80,17 @@ for each. Twelve paths, grouped by prerequisite:
 
 **None — pure local computation:**
 
-- `workspace/` — the ledger and claim checker, three claims wrong on purpose
-- `flows/` — forty items scored, every MCP tool over stdio, four MLflow arms
-- `model-servers/` — `attest ingest`/`tag` against an in-process stub server
-- `mlflow/` — a real MLflow directory, four arms, one contradicted claim
-- `citations/` — a BibTeX library, a draft, one citation key that resolves nowhere
 - `agents/` — the install doctor, `attest emit`'s configs, one surface over stdio
-- `wandb/` — a real offline W&B run directory, four arms ranked
-- `sacred/` — a real Sacred `FileStorageObserver` directory, four arms ranked
+- `citations/` — a BibTeX library, a draft, one citation key that resolves nowhere
 - `dvc/` — a real `dvc repro` pipeline, four `foreach` arms ranked
-- `tensorflow/` — a real Keras/CSVLogger run, four learning-rate arms ranked
+- `flows/` — forty items scored, every MCP tool over stdio, four MLflow arms
 - `hydra/` — a real Hydra `--multirun` sweep, four arms ranked
+- `mlflow/` — a real MLflow directory, four arms, one contradicted claim
+- `model-servers/` — `attest ingest`/`tag` against an in-process stub server
+- `sacred/` — a real Sacred `FileStorageObserver` directory, four arms ranked
+- `tensorflow/` — a real Keras/CSVLogger run, four learning-rate arms ranked
+- `wandb/` — a real offline W&B run directory, four arms ranked
+- `workspace/` — the ledger and claim checker, three claims wrong on purpose
 
 **A model server at `LLM_BASE_URL`:**
 
@@ -619,12 +619,13 @@ published layouts, and some of what they assumed turned out to be wrong once
 run for real.
 
 One more grouping rule worth knowing: `family_of()` groups sibling runs by
-their shared filename prefix, so `dit_small_rope_crossattn` and
-`dit_small_rope_melmask` group under `dit_small_rope`. A **bare
-hyperparameter stem** with no separate prefix — `lr_0.001`, `lr_0.01` — has
-nowhere to strip down to, so the recognised token itself (`lr`) becomes the
-family, letting `attest runs compare lr` group a learning-rate sweep that has
-no shared name beyond the parameter varied.
+their shared filename prefix, hyphen-joined regardless of which separator the
+input used, so `dit_small_rope_crossattn` and `dit_small_rope_melmask` group
+under `dit-small-rope`. A **bare hyperparameter stem** with no separate
+prefix — `lr_0.001`, `lr_0.01` — has nowhere to strip down to, so the
+recognised token itself (`lr`) becomes the family, letting `attest runs
+compare lr` group a learning-rate sweep that has no shared name beyond the
+parameter varied.
 
 It reads the conventions research repos already use — `results/`, `logs/`,
 `configs/`, `outputs/`, `benchmarks/` holding JSON, JSONL, CSV, YAML or TOML —
@@ -766,3 +767,12 @@ score. That gate is genuinely sample-sensitive: a `repeat=2` run recorded
 (`evals/prompts/transfer-2026-08-28.md`) failed it on the same prompt and
 cases — sampling variance, not a regression, and the reason the gate's
 record is a committed, dated artifact rather than a claim in prose.
+
+## Documentation
+
+This README is the front door; it isn't split up by this change. Sending a
+patch, or want the reasoning a section here doesn't have room for? See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the gates and conventions,
+[`CHANGELOG.md`](CHANGELOG.md) for what's landed, and `uv run --group docs
+mkdocs serve` for a browsable site over the design specs, guides, and
+generated CLI/API reference under `docs/`.
