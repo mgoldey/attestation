@@ -104,6 +104,7 @@ nav:
       - Research profile: architecture/research-profile.md
       - Recommendation refinements: recommendation-refinements.md
       - hermes-agent research: hermes-agent-plugin-research.md
+      - Structure and integration points: architecture/structure-and-integration-points.md
   - Contributing: CONTRIBUTING.md
   - Changelog: CHANGELOG.md
 
