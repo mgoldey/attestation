@@ -471,6 +471,11 @@ ADAPTER_CAVEATS: dict[str, str] = {
         "read by the sacred adapter: each metric is the LAST value in"
         " metrics.json's series, not the curve and not the best step"
     ),
+    "dvc": (
+        "read by the dvc adapter: each metric file is a snapshot overwritten"
+        " on every `dvc repro`, not a curve -- there is no history of a"
+        " prior run's value once a stage reruns"
+    ),
 }
 
 

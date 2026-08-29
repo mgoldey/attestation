@@ -168,17 +168,19 @@ def test_dspy_never_enters_the_library():
     The spec's refusal condition: if dspy cannot be kept out of the runtime
     import path, the design is abandoned.
 
-    mlflow, wandb and sacred are the same kind of optional dependency
+    mlflow, wandb, sacred and dvc are the same kind of optional dependency
     (examples/flows/training/train_mlflow.py, examples/wandb/generate.py,
-    examples/sacred/generate.py): the ledger READS mlruns/, wandb/ and
-    sacred_runs/ directories (ledger_adapters/generic.py's `_mlflow_runs`,
-    `_wandb_runs` and `_sacred_runs`, named as such in comments and the
-    `adapter="mlflow"`/`adapter="wandb"`/`adapter="sacred"` labels) without
-    ever importing the libraries that write them, so this checks for an
-    import, not the word."""
+    examples/sacred/generate.py, examples/dvc/generate.sh): the ledger READS
+    mlruns/, wandb/, sacred_runs/ and dvc.yaml/dvc.lock (ledger_adapters/
+    generic.py's `_mlflow_runs`, `_wandb_runs`, `_sacred_runs` and
+    `_dvc_runs`, named as such in comments and the
+    `adapter="mlflow"`/`adapter="wandb"`/`adapter="sacred"`/`adapter="dvc"`
+    labels) without ever importing the libraries that write them -- dvc.yaml
+    and dvc.lock are hand-parsed YAML, not run through the `dvc` package at
+    all -- so this checks for an import, not the word."""
     src = Path(__file__).resolve().parents[1] / "src" / "attestation"
     files = list(src.rglob("*.py"))
-    for name in ("dspy", "mlflow", "wandb", "sacred"):
+    for name in ("dspy", "mlflow", "wandb", "sacred", "dvc"):
         pattern = re.compile(rf"^\s*(import|from)\s+{name}\b", re.MULTILINE)
         offenders = [str(p.relative_to(src)) for p in files if pattern.search(p.read_text())]
         assert offenders == [], f"{name} imported under src/: {offenders}"

@@ -861,6 +861,266 @@ def _sacred_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     return records
 
 
+# indent, key, inline-value (None when the value is a nested block on
+# following lines) -- the atom `_dvc_stages`/`_dvc_lock_stages` build a tree
+# from. Comments and blank lines are dropped; DVC's own writer never quotes
+# a plain scalar or emits flow-style mappings in these files, so a full YAML
+# grammar buys nothing a machine-written file needs.
+def _indented_lines(text: str) -> list[tuple[int, str, str | None]]:
+    out: list[tuple[int, str, str | None]] = []
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if stripped.startswith("- "):
+            out.append((indent, "-", stripped[2:].strip() or None))
+            continue
+        key, sep, value = stripped.partition(":")
+        if not sep:
+            continue
+        out.append((indent, key.strip(), value.strip() or None))
+    return out
+
+
+def _dvc_stages(dvc_yaml: Path) -> dict[str, dict]:
+    """`stages:` from `dvc.yaml`, only stages that declare `metrics:` (a
+    plain stage's own, or a `foreach`/`do` stage's).
+
+    A stage with no `metrics:` is a data-prep or training step with nothing
+    measured attached -- the same refusal the generic reader makes for a
+    config file with no result, so it is silently excluded rather than
+    reported as an empty run.
+
+    Returns `{stage_name: {"foreach": param_name | None, "params": [...],
+    "metrics": [...]}}`. `metrics` entries keep the literal `${item}` token
+    unexpanded for a foreach stage -- expansion happens in `_dvc_runs`, once
+    per item, not here.
+    """
+    lines = _indented_lines(dvc_yaml.read_text(errors="replace"))
+    stages: dict[str, dict] = {}
+    i = 0
+    # Find "stages:" at indent 0, then each direct child is one stage name.
+    while i < len(lines) and lines[i][:2] != (0, "stages"):
+        i += 1
+    i += 1
+    stage_indent = lines[i][0] if i < len(lines) else None
+    while i < len(lines) and lines[i][0] == stage_indent:
+        name = lines[i][1]
+        i += 1
+        body_indent = lines[i][0] if i < len(lines) and lines[i][0] > stage_indent else None
+        block: list[tuple[int, str, str | None]] = []
+        while i < len(lines) and (body_indent is None or lines[i][0] >= body_indent):
+            block.append(lines[i])
+            i += 1
+        stages[name] = _dvc_stage_body(block)
+    return {name: body for name, body in stages.items() if body["metrics"]}
+
+
+def _dvc_stage_body(block: list[tuple[int, str, str | None]]) -> dict:
+    """One stage's `foreach`/`params`/`metrics`, from a plain stage or from
+    inside its `do:` block -- both shapes are the same list of (indent, key,
+    value) lines, just nested one level deeper for `do:`."""
+    foreach = next((v for _, k, v in block if k == "foreach"), None)
+    # `foreach: ${lr}` -> "lr"
+    foreach_param = foreach.strip("${}") if foreach else None
+
+    def _list_after(key: str) -> list[str]:
+        for idx, (_, k, _) in enumerate(block):
+            if k == key:
+                out = []
+                for _, item_key, item_val in block[idx + 1 :]:
+                    if item_key != "-":
+                        break
+                    if item_val is not None:
+                        out.append(item_val)
+                return out
+        return []
+
+    return {
+        "foreach": foreach_param,
+        "params": _list_after("params"),
+        "metrics": [m.rstrip(":") for m in _list_after("metrics")],
+    }
+
+
+def _dvc_flow_list(text: str) -> list[str]:
+    """`[0.01, 0.1, 1, 10]` as its literal item tokens, unparsed -- DVC prints
+    `${item}` back into the command and the metric filename using the exact
+    text `params.yaml` wrote (`1`, not `1.0`), so this must not round-trip
+    through `float()`."""
+    inner = text.strip()
+    if inner.startswith("[") and inner.endswith("]"):
+        inner = inner[1:-1]
+        return [p.strip() for p in inner.split(",") if p.strip()]
+    return [inner] if inner else []
+
+
+def _dvc_params_yaml(params_yaml: Path) -> dict[str, str | list[str]]:
+    """Top-level `key: value` and `key: [a, b, c]` pairs from `params.yaml`.
+
+    Only top-level scalars and flow-style lists are read -- the two shapes
+    `dvc.yaml`'s `params:` stanza and `foreach: ${key}` actually reference.
+    A nested `params.yaml` (dot-path keys) is out of scope: `dvc.lock`'s own
+    recorded values, read by `_dvc_lock_params`, are the fallback either way.
+    """
+    out: dict[str, str | list[str]] = {}
+    for indent, key, value in _indented_lines(params_yaml.read_text(errors="replace")):
+        if indent == 0 and key != "-" and value is not None:
+            out[key] = _dvc_flow_list(value) if value.startswith("[") else value
+    return out
+
+
+def _dvc_lock_params(dvc_lock: Path) -> dict[str, dict[str, str]]:
+    """Each stage instance's recorded `params.yaml` values from `dvc.lock`.
+
+    `dvc.lock` nests as `stages: <name>: params: params.yaml: <key>: <value>`.
+    For an ordinary key this value is the scalar actually used; for the key a
+    `foreach` stage iterates over, DVC echoes `params.yaml`'s whole list
+    instead of the one item that stage ran with (it is quoting the same
+    source value for every instance of the sweep), so `_dvc_runs` overrides
+    that one key from the stage-instance name rather than trusting it here.
+    """
+    lines = _indented_lines(dvc_lock.read_text(errors="replace"))
+    result: dict[str, dict[str, str]] = {}
+    i = 0
+    while i < len(lines) and lines[i][:2] != (0, "stages"):
+        i += 1
+    i += 1
+    stage_indent = lines[i][0] if i < len(lines) else None
+    while i < len(lines) and lines[i][0] == stage_indent:
+        stage_name = lines[i][1]
+        i += 1
+        params: dict[str, str] = {}
+        depth = lines[i][0] if i < len(lines) and lines[i][0] > stage_indent else None
+        in_params_file = False
+        file_key_indent = None
+        while i < len(lines) and (depth is None or lines[i][0] >= depth):
+            indent, key, value = lines[i]
+            if key == "params" and value is None:
+                in_params_file = True
+            elif in_params_file and file_key_indent is None and value is None:
+                file_key_indent = indent  # the "params.yaml:" line itself
+            elif in_params_file and file_key_indent is not None:
+                if indent == file_key_indent + 2 and value is not None:
+                    params[key] = value
+                elif indent <= file_key_indent:
+                    in_params_file = False
+            i += 1
+        result[stage_name] = params
+    return result
+
+
+def _dvc_metric_paths(root: Path) -> set[Path]:
+    """Every metric file `dvc.yaml`'s declared stages point at, expanded --
+    used by `discover` to keep the plain `metrics/` results scan from
+    double-counting files DVC already accounts for as its own runs."""
+    dvc_yaml = root / "dvc.yaml"
+    if not dvc_yaml.is_file():
+        return set()
+    paths: set[Path] = set()
+    for stage in _dvc_stages(dvc_yaml).values():
+        items = _dvc_flow_list_from_params(root, stage["foreach"]) if stage["foreach"] else [None]
+        for item in items:
+            for metric in stage["metrics"]:
+                rel = metric.replace("${item}", item) if item is not None else metric
+                paths.add((root / rel).resolve())
+    return paths
+
+
+def _dvc_flow_list_from_params(root: Path, param: str) -> list[str]:
+    params = _dvc_params_yaml(root / "params.yaml") if (root / "params.yaml").is_file() else {}
+    value = params.get(param, [])
+    return value if isinstance(value, list) else [value]
+
+
+def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
+    """Runs declared by `dvc.yaml`'s stages, one per `foreach` item or one
+    for a plain stage -- read without ever invoking `dvc` itself.
+
+    Verified 2026-08-28 against a real `dvc repro` (dvc 3.x, examples/dvc/
+    generate.sh): a `foreach: ${lr}` stage over `params.yaml`'s `lr` list
+    expands to `dvc.lock` stage keys `train@0.01`, `train@0.1`, ... -- the
+    `@item` suffix names the run, and the part before `@` is the family, the
+    same split `_sacred_runs` makes on `/` for `experiment.name`. A plain
+    (non-`foreach`) stage is a single run named for the stage itself with no
+    family -- there is no sibling to group it with, the same reason
+    `_mlflow_runs` leaves `family` unset for a run with no `run_name`. Only a
+    stage declaring `metrics:` (directly, or under `do:`) is read; a
+    data-prep stage with no metrics is not a run, the same refusal the
+    generic reader makes for a config file with no measurement attached.
+
+    Config comes from two places: `params.yaml`'s `params:` stanza names
+    which keys a stage reads, and `dvc.lock` records the value actually used
+    -- except the `foreach` key itself, whose `dvc.lock` entry is the whole
+    source list rather than the one item that ran, so that one key is taken
+    from the stage-instance name instead (see `_dvc_lock_params`).
+
+    Tolerant of a missing `dvc.lock` (read before `dvc repro` has ever run,
+    or deliberately not committed): the metric files `dvc.yaml` declares are
+    still read if they exist, just with no recorded config. A stage listing
+    four `foreach` items when only two have a metric file on disk (an
+    in-progress sweep) yields two runs, not four with two broken.
+    """
+    dvc_yaml = root / "dvc.yaml"
+    if not dvc_yaml.is_file():
+        return []
+    stages = _dvc_stages(dvc_yaml)
+    if not stages:
+        return []
+    params_yaml = root / "params.yaml"
+    top_params = _dvc_params_yaml(params_yaml) if params_yaml.is_file() else {}
+    dvc_lock = root / "dvc.lock"
+    lock_params = _dvc_lock_params(dvc_lock) if dvc_lock.is_file() else {}
+
+    records: list[RunRecord] = []
+    for stage_name, stage in sorted(stages.items()):
+        foreach_param = stage["foreach"]
+        items = top_params.get(foreach_param, []) if foreach_param else [None]
+        if not isinstance(items, list):
+            items = [items]
+        for item in items:
+            instance = f"{stage_name}@{item}" if item is not None else stage_name
+            metrics: list[Metric] = []
+            for metric_rel in stage["metrics"]:
+                rel = metric_rel.replace("${item}", item) if item is not None else metric_rel
+                metric_path = root / rel
+                if not metric_path.is_file():
+                    continue
+                payload = _load(metric_path)
+                if payload is not None:
+                    metrics.extend(metrics_from_payload(payload, None, None))
+            if not metrics:
+                continue  # declared but not yet produced -- not a broken run
+
+            if instance in seen:
+                continue
+            seen.add(instance)
+
+            config = dict(lock_params.get(instance, {}))
+            for key in stage["params"]:
+                top_value = top_params.get(key)
+                if key not in config and isinstance(top_value, str):
+                    config[key] = top_value
+            if foreach_param and item is not None:
+                config[foreach_param] = item
+
+            records.append(
+                RunRecord(
+                    project=root.name,
+                    name=instance,
+                    source_path=str(root / stage["metrics"][0].replace("${item}", item or "")),
+                    family=stage_name if foreach_param else None,
+                    status="recorded",
+                    config=config or None,
+                    metrics=metrics,
+                    adapter="dvc",
+                )
+            )
+    return records
+
+
 def _result_name(stem: str, result: Path, base: Path, dirname: str, seen: set[str]) -> str:
     """A run name that does not collide with one already recorded.
 
@@ -879,6 +1139,12 @@ def discover(root: Path) -> list[RunRecord]:
     project = root.name
     records: list[RunRecord] = []
     seen: set[str] = set()
+    # dvc.yaml stages routinely write into metrics/, one of RESULT_DIRS --
+    # unlike wandb/mlruns/sacred_runs, whose directory names never collide
+    # with a plain-results convention. Without this a project with a DVC
+    # sweep is scanned twice: once by _dvc_runs as `train@0.1`, and again by
+    # the ordinary metrics/ walk below as a bare `0.1`, for the same file.
+    dvc_metric_paths = _dvc_metric_paths(root)
 
     # RESULTS FIRST, then configs. Both share `seen`, and walking configs
     # first let `configs/asr_biglm.yaml` claim the name `asr_biglm` so
@@ -925,6 +1191,8 @@ def discover(root: Path) -> list[RunRecord]:
             list(base.glob("*.json")) + list(base.glob("*/*.json")) + list(base.glob("*.jsonl"))
         )
         for result in sorted(candidates):
+            if result.resolve() in dvc_metric_paths:
+                continue  # DVC's own output -- _dvc_runs below reads it
             payload = _load(result)
             if payload is None:
                 continue
@@ -980,4 +1248,5 @@ def discover(root: Path) -> list[RunRecord]:
     records.extend(_wandb_runs(root, seen))
     records.extend(_mlflow_runs(root, seen))
     records.extend(_sacred_runs(root, seen))
+    records.extend(_dvc_runs(root, seen))
     return records

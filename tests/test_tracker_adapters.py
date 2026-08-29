@@ -1,4 +1,4 @@
-"""W&B and MLflow local artifact directories, read through `generic`.
+"""W&B, MLflow, Sacred and DVC local artifact directories, read through `generic`.
 
 **Both readers have now been run against a real directory, not just the
 transcribed fixtures below.** The MLflow reader was run against a real
@@ -23,6 +23,13 @@ step (via `wandb.sdk.internal.datastore`, a maintainer-endorsed workaround
 for reading an offline `.wandb` log without syncing) that makes the
 committed fixture real data rather than a fabricated stand-in.
 
+Sacred's reader was added 2026-08-28, verified the same way against a real
+directory (examples/sacred/sacred_runs, sacred 0.8.7 via generate.py) from
+the start rather than retrofitted -- `test_the_reader_scans_the_real_committed_sacred_fixture`
+below pins it. DVC's reader followed the same day, against a real `dvc repro`
+(examples/dvc/, dvc 3.x via generate.sh); see
+`test_the_reader_scans_the_real_committed_dvc_fixture`.
+
 The fixtures below stay synthetic on purpose: they are what the
 shape-tolerance tests at the bottom exercise, targeted at specific edge
 cases (a crashed run, a malformed file) a training run would not
@@ -42,6 +49,7 @@ from attestation.ledger_adapters import generic
 
 WANDB_EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "wandb"
 SACRED_EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "sacred"
+DVC_EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "dvc"
 
 
 def _wandb_run(root, run_id, summary, config=None, metadata=None):
@@ -121,6 +129,61 @@ def _sacred_run(
     return d
 
 
+def _dvc_project(
+    root,
+    *,
+    stage="train",
+    foreach_param="lr",
+    items=("0.01", "0.1", "1", "10"),
+    metrics=None,
+    write_lock=True,
+    write_params=True,
+):
+    """A `dvc.yaml` `foreach` stage over `params.yaml`'s `lr` list, with the
+    metric files and `dvc.lock` a real `dvc repro` produces.
+
+    `metrics` maps each item (a string, exactly as it appears in `items` and
+    in the generated filenames) to its metrics dict; a missing key means that
+    metric file is not written, which is how the "listed metric file missing"
+    tolerance case is built.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "dvc.yaml").write_text(
+        "stages:\n"
+        f"  {stage}:\n"
+        f"    foreach: ${{{foreach_param}}}\n"
+        "    do:\n"
+        f"      cmd: python train.py ${{item}}\n"
+        "      params:\n"
+        f"        - {foreach_param}\n"
+        "      metrics:\n"
+        "        - metrics/${item}.json\n"
+    )
+    if write_params:
+        (root / "params.yaml").write_text(f"{foreach_param}: [{', '.join(items)}]\n")
+    if metrics:
+        (root / "metrics").mkdir(exist_ok=True)
+        for item, payload in metrics.items():
+            (root / "metrics" / f"{item}.json").write_text(json.dumps(payload))
+    if write_lock:
+        lock_lines = ["schema: '2.0'", "stages:"]
+        for item in items:
+            lock_lines.append(f"  {stage}@{item}:")
+            lock_lines.append(f"    cmd: python train.py {item}")
+            lock_lines.append("    params:")
+            lock_lines.append("      params.yaml:")
+            lock_lines.append(f"        {foreach_param}:")
+            for i in items:
+                lock_lines.append(f"        - {i}")
+            lock_lines.append("    outs:")
+            lock_lines.append(f"    - path: metrics/{item}.json")
+            lock_lines.append("      hash: md5")
+            lock_lines.append("      md5: deadbeef")
+            lock_lines.append("      size: 100")
+        (root / "dvc.lock").write_text("\n".join(lock_lines) + "\n")
+    return root
+
+
 # --------------------------------------------------------------------------
 # The gap this exists to close
 # --------------------------------------------------------------------------
@@ -128,16 +191,20 @@ def _sacred_run(
 
 def test_a_project_with_only_tracker_dirs_is_not_invisible(tmp_path):
     """The whole point. `discover` walks RESULT_DIRS and CONFIG_DIRS at the
-    project root; `wandb`, `mlruns` and `sacred_runs` are in none of them, so
-    before this change a project whose entire experimental record lived in
-    one of them scanned to zero runs and gave no indication why."""
+    project root; `wandb`, `mlruns` and `sacred_runs` are in none of them
+    (and dvc.yaml/dvc.lock are not results at all), so before this change a
+    project whose entire experimental record lived in one of them scanned to
+    zero runs and gave no indication why."""
     proj = tmp_path / "myproj"
     _wandb_run(proj, "run-20260814_101133-a1b2c3d4", {"wer": 0.12, "loss": 2.1})
     _mlflow_run(proj, "0", "abc123", name="baseline", metrics={"wer": [(0, 0.31, 5)]})
     _sacred_run(proj, 1, config={"lr": 0.01}, metrics={"auc": {"steps": [0], "values": [0.9]}})
+    _dvc_project(proj / "dvcproj", metrics={"0.01": {"auc": 0.9}})
 
     runs = generic.discover(proj)
     assert len(runs) == 3, [r.name for r in runs]
+    dvc_runs = generic.discover(proj / "dvcproj")
+    assert len(dvc_runs) == 1, [r.name for r in dvc_runs]
 
 
 # --------------------------------------------------------------------------
@@ -469,6 +536,171 @@ def test_detail_attaches_the_sacred_caveat(tmp_path):
     caveats = " ".join(found["caveats"])
     assert "sacred" in caveats
     assert "final" in caveats.lower() or "last" in caveats.lower()
+    conn.close()
+
+
+# --------------------------------------------------------------------------
+# DVC
+# --------------------------------------------------------------------------
+
+
+def test_dvc_foreach_stage_expands_to_one_run_per_item(tmp_path):
+    """`dvc.yaml`'s `foreach: ${lr}` over `params.yaml`'s `lr` list names one
+    stage instance per item -- `train@0.01`, `train@0.1`, ... -- the way a
+    real `dvc repro` does, read without ever running dvc itself."""
+    proj = tmp_path / "p"
+    _dvc_project(
+        proj,
+        items=("0.01", "0.1"),
+        metrics={"0.01": {"auc": 0.9}, "0.1": {"auc": 0.95}},
+    )
+
+    runs = generic.discover(proj)
+    assert {r.name for r in runs} == {"train@0.01", "train@0.1"}, [r.name for r in runs]
+
+
+def test_dvc_family_is_the_stage_name_before_the_at(tmp_path):
+    proj = tmp_path / "p"
+    _dvc_project(proj, items=("0.01", "0.1"), metrics={"0.01": {"auc": 0.9}, "0.1": {"auc": 0.95}})
+
+    runs = generic.discover(proj)
+    assert all(r.family == "train" for r in runs), [r.family for r in runs]
+
+
+def test_dvc_metrics_file_becomes_metrics(tmp_path):
+    proj = tmp_path / "p"
+    _dvc_project(proj, items=("0.1",), metrics={"0.1": {"auc": 0.95, "accuracy": 0.9}})
+
+    (run,) = generic.discover(proj)
+    assert {m.metric: m.value for m in run.metrics} == {"auc": 0.95, "accuracy": 0.9}
+
+
+def test_dvc_config_comes_from_params_yaml_and_the_lock(tmp_path):
+    """`params.yaml` names which keys the stage reads (`lr`); `dvc.lock`
+    records the value actually used for each stage instance. The recorded
+    value for `train@0.1` is `0.1`, not the whole `lr` list `params.yaml`
+    keys -- reading only the list would put every arm's config in every
+    other arm's row."""
+    proj = tmp_path / "p"
+    _dvc_project(
+        proj,
+        items=("0.01", "0.1"),
+        metrics={"0.01": {"auc": 0.9}, "0.1": {"auc": 0.95}},
+    )
+
+    runs = {r.name: r for r in generic.discover(proj)}
+    assert runs["train@0.1"].config.get("lr") == "0.1"
+    assert runs["train@0.01"].config.get("lr") == "0.01"
+
+
+def test_dvc_missing_lock_still_reads_existing_metric_files(tmp_path):
+    """Tolerance: `dvc.lock` is written only after `dvc repro` runs. A stage
+    declared in `dvc.yaml` whose metric file already exists on disk must
+    still be read -- the lock adds config, it is not required for a run to
+    be recorded."""
+    proj = tmp_path / "p"
+    _dvc_project(
+        proj,
+        items=("0.01", "0.1"),
+        metrics={"0.01": {"auc": 0.9}, "0.1": {"auc": 0.95}},
+        write_lock=False,
+    )
+
+    runs = generic.discover(proj)
+    assert {r.name for r in runs} == {"train@0.01", "train@0.1"}, [r.name for r in runs]
+
+
+def test_dvc_missing_metric_file_yields_fewer_metrics_not_fewer_runs(tmp_path):
+    """Tolerance: `dvc.yaml` lists four arms; only two have run so far
+    (`dvc repro` is incremental). The two with no metric file yet must not
+    appear as empty or broken runs -- they are simply not there yet, the
+    same rule the MLflow and Sacred readers apply to a run with nothing
+    measured."""
+    proj = tmp_path / "p"
+    _dvc_project(
+        proj,
+        items=("0.01", "0.1", "1", "10"),
+        metrics={"0.01": {"auc": 0.9}, "0.1": {"auc": 0.95}},
+    )
+
+    runs = generic.discover(proj)
+    assert {r.name for r in runs} == {"train@0.01", "train@0.1"}, [r.name for r in runs]
+
+
+def test_dvc_missing_params_yaml_means_no_config(tmp_path):
+    proj = tmp_path / "p"
+    _dvc_project(proj, items=("0.1",), metrics={"0.1": {"auc": 0.95}}, write_params=False)
+
+    (run,) = generic.discover(proj)
+    assert not run.config
+
+
+def test_dvc_stage_declaring_no_metrics_is_not_a_run(tmp_path):
+    """A `dvc.yaml` stage with no `metrics:` key is a data or preprocessing
+    stage, not a measured result -- the same refusal the generic reader
+    makes for a config file with no result attached."""
+    proj = tmp_path / "p"
+    proj.mkdir(parents=True)
+    (proj / "dvc.yaml").write_text(
+        "stages:\n  prepare:\n    cmd: python prepare.py\n    outs:\n      - data/clean.csv\n"
+    )
+
+    assert generic.discover(proj) == []
+
+
+def test_dvc_non_foreach_stage_declaring_metrics_is_one_run(tmp_path):
+    """Not every DVC stage is a `foreach` sweep -- a single named stage that
+    declares `metrics:` directly is one run named for the stage itself."""
+    proj = tmp_path / "p"
+    proj.mkdir(parents=True)
+    (proj / "dvc.yaml").write_text(
+        "stages:\n"
+        "  evaluate:\n"
+        "    cmd: python evaluate.py\n"
+        "    metrics:\n"
+        "      - metrics/eval.json\n"
+    )
+    (proj / "metrics").mkdir()
+    (proj / "metrics" / "eval.json").write_text(json.dumps({"auc": 0.93}))
+
+    (run,) = generic.discover(proj)
+    assert run.name == "evaluate"
+    assert run.family is None
+
+
+def test_the_reader_scans_the_real_committed_dvc_fixture():
+    """examples/dvc/ is real: written by `dvc repro` (dvc 3.x, generate.sh,
+    2026-08-28), not transcribed from documentation."""
+    runs = generic.discover(DVC_EXAMPLE)
+    assert len(runs) == 4, [r.name for r in runs]
+    assert all(r.adapter == "dvc" for r in runs)
+    assert all(r.name.startswith("train@") for r in runs), [r.name for r in runs]
+    assert all(r.family == "train" for r in runs)
+    by_lr = {r.config["lr"]: r for r in runs}
+    assert set(by_lr) == {"0.01", "0.1", "1", "10"}
+    for run in runs:
+        metrics = {m.metric for m in run.metrics}
+        assert {"accuracy", "precision", "recall", "auc"} <= metrics, metrics
+
+
+def test_detail_attaches_the_dvc_caveat(tmp_path):
+    """Same rule as wandb/mlflow/sacred: `ledger.ADAPTER_CAVEATS` needs a
+    "dvc" entry, or `runs.compare` ranks DVC arms with no caveat while every
+    other tracker carries one."""
+    from attestation import ledger
+    from attestation.db import get_db
+
+    ws = tmp_path / "ws"
+    proj = ws / "proj"
+    _dvc_project(proj, items=("0.1",), metrics={"0.1": {"auc": 0.95}})
+
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, ws)
+    found = ledger.detail(conn, "proj", "train@0.1")
+
+    assert found["adapter"] == "dvc"
+    caveats = " ".join(found["caveats"])
+    assert "dvc" in caveats
     conn.close()
 
 
