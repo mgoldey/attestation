@@ -50,6 +50,12 @@ DEFAULT_TOL = 1e-9
 
 @dataclass
 class Claim:
+    """One `<!-- claim: ... -->` annotation, parsed but not yet checked.
+
+    `raw` keeps the annotation's original body so a malformed field can be
+    reported with the text that failed to parse, not a reconstruction of it.
+    """
+
     path: str
     line: int
     project: str
@@ -90,6 +96,10 @@ class VerdictKind(StrEnum):
 
 @dataclass
 class Verdict:
+    """One claim's outcome: which `VerdictKind`, why, and what it was checked
+    against -- `source_path` names the run the ledger read, so an auditor's
+    "from which file?" has an answer without opening the ledger separately."""
+
     claim: Claim
     verdict: VerdictKind
     message: str
@@ -204,6 +214,14 @@ def _is_stale(claim: Claim, source_path: str | None) -> bool:
 
 
 def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
+    """Check one claim against the ledger and return its `Verdict`.
+
+    Deterministic throughout: no run, no matching metric, or more than one
+    candidate row all become distinct `VerdictKind`s rather than a guess --
+    disambiguating by distance to the claimed value would let the claim
+    select its own evidence, so "more than one row, no split=/step=" is
+    `AMBIGUOUS`, never a silent pick of the closest.
+    """
     runs = _matching_runs(conn, claim)
     if not runs:
         return Verdict(
@@ -350,6 +368,7 @@ def _masked_prose(text: str) -> str:
     """
 
     def blank(m):
+        """A `re.sub` replacement: same-length spaces, so offsets survive."""
         return " " * len(m.group(0))
 
     # ALL HTML comments, not just claim annotations: a comment renders as

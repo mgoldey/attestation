@@ -1406,6 +1406,10 @@ def _result_name(stem: str, result: Path, base: Path, dirname: str, seen: set[st
 
 
 def discover(root: Path) -> list[RunRecord]:
+    """Every run this adapter recognises under one project directory,
+    trying every tracker convention this module knows (wandb, mlflow,
+    sacred, dvc, hydra, plain results/configs) and deduplicating by name via
+    `seen` -- see the comment below for why results are read before configs."""
     project = root.name
     records: list[RunRecord] = []
     seen: set[str] = set()

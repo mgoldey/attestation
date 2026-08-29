@@ -20,4 +20,7 @@ NAMED: dict = {}
 
 
 def adapter_for(project: str):
+    """The module to scan `project` with: a `NAMED` override if registered,
+    else `generic` -- which, per the module docstring, is meant to cover
+    everything and stay the common case."""
     return NAMED.get(project, generic)

@@ -52,6 +52,8 @@ class DetectedCorpus:
     source_path: str | None = None
 
     def is_empty(self) -> bool:
+        """Whether nothing at all was detected -- distinct from `source_path`
+        alone being set, which just says where the (empty) detection looked."""
         return not any((self.source, self.config, self.tokenizer, self.seq_len))
 
 

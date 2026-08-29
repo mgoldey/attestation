@@ -56,6 +56,7 @@ def describe(expr) -> dict:
 
 
 def op_simplify(payload: dict) -> dict:
+    """`sym.simplify`: SymPy's `simplify()` on `payload["expr"]`."""
     expr = parse_safe(payload["expr"])
     out = describe(sp.simplify(expr))
     out["parsed_input"] = str(expr)
@@ -63,6 +64,8 @@ def op_simplify(payload: dict) -> dict:
 
 
 def op_solve(payload: dict) -> dict:
+    """`sym.solve`: roots of `payload["expr"]` for `payload.get("symbol")`,
+    resolved via `resolve_symbol` when no symbol is named."""
     expr = parse_safe(payload["expr"])
     symbol = resolve_symbol(expr, payload.get("symbol"))
     roots = sp.solve(expr, symbol)
@@ -73,6 +76,8 @@ def op_solve(payload: dict) -> dict:
 
 
 def op_differentiate(payload: dict) -> dict:
+    """`sym.differentiate`: the `payload.get("order", 1)`-th derivative of
+    `payload["expr"]` with respect to its resolved symbol."""
     expr = parse_safe(payload["expr"])
     symbol = resolve_symbol(expr, payload.get("symbol"))
     order = max(1, int(payload.get("order") or 1))
@@ -83,6 +88,8 @@ def op_differentiate(payload: dict) -> dict:
 
 
 def op_integrate(payload: dict) -> dict:
+    """`sym.integrate`: indefinite, or definite when `payload["bounds"]` is
+    a `[lo, hi]` pair, over `payload["expr"]`'s resolved symbol."""
     expr = parse_safe(payload["expr"])
     symbol = resolve_symbol(expr, payload.get("symbol"))
     bounds = payload.get("bounds")
@@ -119,6 +126,10 @@ def _walk_steps(rule, depth: int = 0) -> list[dict]:
 
 
 def op_derivation(payload: dict) -> dict:
+    """`sym.derivation`: a step-by-step trace for `payload["operation"]`
+    (default "integrate"), via SymPy's manual-integration rule engine --
+    differentiation has no such engine, so its "steps" is just input and
+    result, and `out["note"]` says so rather than implying a real trace."""
     expr = parse_safe(payload["expr"])
     symbol = resolve_symbol(expr, payload.get("symbol"))
     operation = payload.get("operation") or "integrate"
@@ -147,6 +158,11 @@ def op_derivation(payload: dict) -> dict:
 
 
 def op_verify(payload: dict) -> dict:
+    """`sym.verify`: is `payload["lhs"]` == `payload["rhs"]` -- "equal" only
+    when `simplify(lhs - rhs)` is exactly 0, "unequal" only with a proof
+    (a non-zero constant, or a numeric counterexample), and "unproven"
+    otherwise. Never claims a disproof `simplify`'s incompleteness cannot
+    support -- "unproven" means unknown, not false."""
     lhs, rhs = parse_safe(payload["lhs"]), parse_safe(payload["rhs"])
     difference = sp.simplify(lhs - rhs)
     if difference == 0:
@@ -202,6 +218,9 @@ def _units_coefficient(expr) -> float | None:
 
 
 def op_evaluate(payload: dict) -> dict:
+    """`sym.evaluate`: substitute `payload["subs"]`, convert units via
+    `payload["units"]` if given, then simplify. Reports why no number
+    resulted (see `_free_symbol_note`) rather than leaving a bare `None`."""
     expr = parse_safe(payload["expr"])
     subs = payload.get("subs")
     if subs:

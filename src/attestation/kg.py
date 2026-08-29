@@ -353,6 +353,8 @@ def communities(
     adjacency, weights = graph if graph is not None else build_graph(tag_assignments(conn))
 
     def edge_weight(a: str, b: str) -> int:
+        """Co-occurrence weight between two tags, order-independent -- edges
+        are stored once under the lexically smaller key of the pair."""
         return weights.get((a, b) if a < b else (b, a), 0)
 
     two_m = sum(weights.values()) * 2.0
@@ -431,6 +433,8 @@ def health(conn: sqlite3.Connection) -> dict:
     largest = max((len(c["members"]) for c in groups), default=0)
 
     def pct(part: float, whole: float) -> float:
+        """part/whole as a percentage, rounded to one decimal; 0.0 rather
+        than a division error when whole is empty."""
         return round(100 * part / whole, 1) if whole else 0.0
 
     return {

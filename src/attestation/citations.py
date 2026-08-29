@@ -104,6 +104,12 @@ class BibtexReader:
         self.paths = [Path(p) for p in paths]
 
     def all(self) -> Iterator[Reference]:
+        """Every entry each `.bib` file yields, skipping ones with no title.
+
+        A missing file is silently skipped rather than an error, matching
+        `ZoteroReader`: a `.bib` named in config but not (yet) present is an
+        absent source, not a broken one.
+        """
         for path in self.paths:
             if not path.is_file():
                 continue
@@ -124,6 +130,12 @@ class BibtexReader:
                 )
 
     def lookup(self, key: str) -> Reference | None:
+        """The entry whose citation key or DOI matches `key`, case-insensitive.
+
+        Scans `all()` rather than an index: `.bib` files are small and this
+        reader has no persistent state to keep one in sync with a file that
+        may have changed on disk between calls.
+        """
         needle = key.lower()
         for ref in self.all():
             if ref.key.lower() == needle or (ref.doi or "").lower() == needle:
@@ -178,6 +190,15 @@ class ZoteroReader:
         return conn
 
     def all(self) -> Iterator[Reference]:
+        """Every item in the library with a title, read-only and tolerant.
+
+        No library, a corrupt file, or a schema this does not recognise all
+        yield nothing rather than raising -- see the class docstring. This
+        reader ships tested only against a fixture built to Zotero's
+        documented schema; there was no real library on the machine where it
+        was written, so the fixture is plausible, not verified. If you have a
+        real one, point this at it.
+        """
         if not self.path.is_file():
             return
         try:
@@ -213,6 +234,12 @@ class ZoteroReader:
             )
 
     def lookup(self, key: str) -> Reference | None:
+        """The item whose Zotero key or DOI matches `key`, case-insensitive.
+
+        Scans `all()` -- the library is opened fresh each call (see
+        `_connect`), so there is no cached index to keep in sync with a
+        library that changed since the last lookup.
+        """
         needle = key.lower()
         for ref in self.all():
             if ref.key.lower() == needle or (ref.doi or "").lower() == needle:
@@ -267,9 +294,26 @@ class WebReader:
         self.cache_dir = cache_dir or (Path.home() / ".hermes" / "citation-cache")
 
     def all(self) -> Iterator[Reference]:
+        """Not supported: a network source has no fixed set to enumerate.
+
+        `Resolver.search` relies on this raising -- it skips every reader
+        with `network=True` before calling `all()`, so a search that fanned
+        out to CrossRef here would be the offline guarantee failing quietly.
+        This exists so that bypassing that guard is loud rather than a silent
+        empty result.
+        """
         raise NotImplementedError("a network source cannot be enumerated")
 
     def lookup(self, key: str) -> Reference | None:
+        """DOI or arXiv id metadata from CrossRef, cached content-addressed.
+
+        A cache hit returns the ORIGINAL `fetched_at`, never today's date --
+        the cache must not launder a network record into one that looks
+        local. Any failure (unreachable network, a 404, a changed payload
+        shape) returns `None` rather than raising: an unreachable network is
+        an absent source, exactly like a missing Zotero library, and should
+        not break a lookup whose other readers can still answer.
+        """
         import json
         from datetime import UTC, datetime
 
@@ -345,6 +389,12 @@ class Resolver:
         return cls(readers)
 
     def lookup(self, key: str) -> Reference | None:
+        """The first configured reader's answer for `key`, tried in order.
+
+        Order is the constructor's reader list, which `from_env` fixes as
+        zotero, then bibtex, then web -- so a network lookup is only ever
+        tried after every local, offline reader has already said no.
+        """
         for reader in self.readers:
             found = reader.lookup(key)
             if found is not None:
@@ -370,4 +420,8 @@ class Resolver:
         return out
 
     def sources(self) -> list[dict]:
+        """Which readers are configured, and which of them can reach the
+        network -- so `cite.sources` reports the offline exception from the
+        same surface that would have done the reaching, rather than a
+        separate claim about it."""
         return [{"name": r.name, "network": r.network} for r in self.readers]

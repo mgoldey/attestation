@@ -94,6 +94,19 @@ jobs:
           print('feeds.toml present in wheel:', p)
           "
 
+      - name: py.typed is packaged
+        # Same regression insurance as feeds.toml above: a downstream type
+        # checker treats a package with no py.typed as untyped and ignores
+        # its annotations, silently, even though this repo checks them with
+        # `ty` on every commit.
+        run: |
+          /tmp/wheel-venv/bin/python -c "
+          import importlib.resources as r
+          p = r.files('attestation').joinpath('py.typed')
+          assert p.is_file(), 'attestation/py.typed missing from installed wheel'
+          print('py.typed present in wheel:', p)
+          "
+
   flows:
     name: example flows (offline)
     runs-on: ubuntu-latest

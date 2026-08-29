@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
 ]
+
 dependencies = [
     "feedparser>=6.0",
     "sqlite-vec>=0.1.6",
@@ -40,6 +41,12 @@ dependencies = [
     "python-dotenv>=1.0",
     "sympy>=1.13",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mgoldey/attestation"
+Repository = "https://github.com/mgoldey/attestation"
+Issues = "https://github.com/mgoldey/attestation/issues"
+Changelog = "https://github.com/mgoldey/attestation/blob/main/CHANGELOG.md"
 
 [project.scripts]
 attest = "attestation.cli:main"

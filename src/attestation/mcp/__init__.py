@@ -167,6 +167,11 @@ class _FilteringServer:
         self._expand = expand
 
     def tool(self, *args, name: str | None = None, **kwargs):
+        """`FastMCP.tool`, but a no-op decorator (never registering the
+        function) for anything outside `self._surface`, or -- unless
+        `expand` -- for anything that is not an entry point. See the class
+        docstring for why filtering happens here, at the decorator, rather
+        than after registration."""
         if name is not None:
             if not _allowed(name, self._surface):
                 return lambda fn: fn  # registered nowhere; the tool simply is not

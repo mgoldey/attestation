@@ -60,6 +60,10 @@ def forget_profile_vector(conn: sqlite3.Connection, user_id: int) -> None:
 
 
 class RankedItem(BaseModel):
+    """One feed item as ranked for a reader -- `score` is a rank WITHIN the
+    candidate set that produced it (see the comment on `profile_similarity`
+    below), never comparable across two different calls."""
+
     item_id: int
     title: str
     url: str | None
@@ -221,6 +225,10 @@ def _preference_ready(conn: sqlite3.Connection, user_id: int) -> bool:
 
 
 def blend_weight(n_clicks: int) -> float:
+    """How much a persona's click-classifier rank counts against its
+    embedding-profile rank, 0 at no clicks rising asymptotically toward 1 --
+    so a brand-new reader is ranked purely by profile similarity, and only
+    a click history shifts weight toward the learned classifier."""
     return n_clicks / (n_clicks + 5)
 
 
@@ -261,6 +269,10 @@ def _click_training_data(conn, user_id: int):
 
 
 def classifier_probs(conn, user_id: int, X: np.ndarray) -> np.ndarray | None:
+    """P(useful) for each row of `X` from a persona's own click history, or
+    `None` when there is not yet a click history to learn from (see the
+    single-class guard below) -- callers must fall back to embedding-only
+    order on `None` rather than treat it as all-zero."""
     X_train, y = _click_training_data(conn, user_id)
     if y is None or len(set(y.tolist())) < 2:
         return None  # single-class guard: never let sklearn see one class
@@ -402,6 +414,15 @@ def rank_items(
     exclude_clicked: bool = True,
     only_ids: Sequence[int] | None = None,
 ) -> list[RankedItem]:
+    """The candidate items for `user_id`, blending profile similarity with
+    the click classifier via `blend_weight`.
+
+    `since_days=None` with `exclude_clicked=False` is `search_feed`'s
+    semantics -- an older or already-rated item is a legitimate hit there.
+    A cold embedder degrades to a cached profile vector (see
+    `_profile_vector`) rather than failing the whole call; ranking never
+    waits on `explain.explain`, which runs separately and can return `None`.
+    """
     rows = _candidate_items(
         conn, user_id, since_days, exclude_clicked=exclude_clicked, only_ids=only_ids
     )

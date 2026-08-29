@@ -18,10 +18,14 @@ log = logging.getLogger(__name__)
 
 
 class Explanation(BaseModel):
+    """The chat model's structured reply: one short sentence, nothing else."""
+
     text: str = Field(min_length=1, max_length=300)
 
 
 class ExplainState(BaseModel):
+    """LangGraph state threaded profile -> explanation across the two nodes."""
+
     user_id: int
     item_id: int
     profile: str = ""
@@ -64,6 +68,9 @@ def explanation_messages(profile: str, title: str, summary: str) -> list[dict]:
 
 def _build_graph(conn: sqlite3.Connection, chat_fn):
     def synthesize_profile(state: ExplainState) -> dict:
+        """The `profile` node: prefer stored interests text, synthesize only
+        when a persona has clicks but no interests -- see the module-level
+        comment below for why synthesis is the fallback, not the default."""
         titles = [
             r["title"]
             for r in conn.execute(
@@ -114,6 +121,9 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
             return {"profile": interests}
 
     def generate_explanation(state: ExplainState) -> dict:
+        """The `explain` node: one retry per spec, `None` rather than a
+        traceback if both attempts fail to parse -- ranking never waits on
+        this, so a bad reply must degrade, not raise."""
         item = conn.execute(
             "SELECT title, summary FROM items WHERE id = ?", (state.item_id,)
         ).fetchone()
@@ -137,6 +147,14 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
 
 
 def explain(conn, user_id: int, item_id: int, chat_fn=default_chat_fn) -> str | None:
+    """Why this item was ranked here for this reader, cached after the first
+    successful call.
+
+    Degrades to `None` on every failure mode -- unknown user, graph
+    exception, an explanation the model never returned -- per this module's
+    reliability contract: ranking never waits on an explanation, so this must
+    never raise into that path.
+    """
     cached = conn.execute(
         "SELECT text FROM explanations WHERE user_id = ? AND item_id = ?",
         (user_id, item_id),

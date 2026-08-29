@@ -20,12 +20,17 @@ TAG_RE = re.compile(r"<[^>]+>")
 
 
 def strip_boilerplate(text: str) -> str:
+    """Drop HTML tags and arXiv's own "Announce Type / Abstract:" preamble,
+    collapsing whitespace -- so a stored summary is the actual abstract, not
+    the feed entry's markup and boilerplate around it."""
     text = TAG_RE.sub(" ", text or "")
     text = ARXIV_RE.sub("", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
 def content_hash(title: str, summary: str) -> str:
+    """A dedup key for one item: title+summary, SHA-256. Two feeds syndicating
+    the same paper hash identically without any cross-feed ID to rely on."""
     return hashlib.sha256(f"{title}\n{summary}".encode()).hexdigest()
 
 
@@ -111,6 +116,15 @@ def _new_entries(conn, feed_id: int, entries) -> tuple[list, int]:
 
 
 def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -> dict:
+    """Fetch every registered feed, dedup, embed, and store -- deterministic
+    throughout, per the module docstring; no LLM runs here.
+
+    Embedding happens in a pass separate from the dedup/store transaction
+    (see the comment below `_new_entries`): the embed call is the slow HTTP
+    round trip to the model server, and holding a DB lock across it would
+    block every other reader and writer for that long. One feed's failure is
+    counted and does not stop the others.
+    """
     sync_feeds(conn, feeds_path)
     stats = {"added": 0, "skipped": 0, "failed_feeds": 0}
     for feed in conn.execute("SELECT * FROM feeds").fetchall():

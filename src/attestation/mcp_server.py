@@ -22,6 +22,12 @@ register_all(mcp)
 
 
 def main() -> None:
+    """The `attest-mcp` console script: load `.env`, then serve over stdio.
+
+    Runs until the client disconnects or the process is signalled -- see
+    `attest reload`, the CLI command that SIGTERMs every live one of these
+    so a session picks up code edits instead of holding a stale process.
+    """
     from attestation.llm import load_env
 
     load_env()

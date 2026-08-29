@@ -46,6 +46,9 @@ class Status(StrEnum):
 
 @dataclass
 class StepResult:
+    """One step's outcome: its `Status` plus a one-line human detail,
+    printed verbatim as `run_install`'s aligned report line."""
+
     name: str
     status: Status
     detail: str = ""
@@ -148,6 +151,7 @@ def _consent(yes: bool, prompt: str) -> bool:
 
 
 def step_uv() -> StepResult:
+    """Is `uv` on PATH -- the one dependency this installer cannot fix itself."""
     if shutil.which("uv"):
         return StepResult("uv", Status.OK)
     return StepResult(
@@ -156,6 +160,9 @@ def step_uv() -> StepResult:
 
 
 def step_ollama_reachable() -> StepResult:
+    """Can the configured Ollama root be reached at all -- skipped, not
+    broken, for a non-Ollama LLM_BASE_URL, which has nothing for this to
+    check."""
     if not _is_ollama_backend():
         return StepResult("ollama_reachable", Status.SKIPPED, "non-Ollama LLM_BASE_URL")
     if _ollama_native_root_reachable():
@@ -207,6 +214,15 @@ def _step_models_pull(missing: list[str], yes: bool) -> StepResult:
 
 
 def step_models(check: bool = False, yes: bool = False) -> StepResult:
+    """Are the configured chat + embed models installed; pull them with
+    consent if not.
+
+    Every failure mode here is reported rather than left to abort the whole
+    run (see the comment above the `shutil.which` guard): a missing `ollama`
+    binary, an unreachable daemon, or a pull that fails partway all become a
+    `StepResult` instead of an uncaught exception that would blank the report
+    for every step after this one.
+    """
     if not _is_ollama_backend():
         return StepResult("models", Status.SKIPPED, "non-Ollama LLM_BASE_URL")
     # Guarded like step_uv, which was the only step doing this correctly. On a
@@ -245,6 +261,8 @@ def step_models(check: bool = False, yes: bool = False) -> StepResult:
 
 
 def step_env_file(check: bool = False) -> StepResult:
+    """Does `.env` exist; create it from `.env.sample` if not (skipped
+    entirely outside a checkout, where there is no sample to copy)."""
     root = _checkout_root()
     if root is None:
         return StepResult("env_file", Status.SKIPPED, NO_CHECKOUT)
@@ -268,6 +286,13 @@ def _run_ingest_and_maybe_tag(now: bool, root: Path) -> tuple[bool, str]:
 
 
 def step_first_data(check: bool = False, yes: bool = False, now: bool = False) -> StepResult:
+    """Does the database hold any items yet; ingest (and with `now`, tag)
+    with consent if not.
+
+    An absent database is reported rather than opened: `get_db` runs
+    `CREATE TABLE` as a side effect, so `--check` opening one would write a
+    ~90KB file for a step whose whole point is to change nothing.
+    """
     from attestation.db import get_db, resolve_db_path
 
     db_path = resolve_db_path(None)
@@ -307,6 +332,8 @@ def step_first_data(check: bool = False, yes: bool = False, now: bool = False) -
 
 
 def step_warmup(check: bool = False) -> StepResult:
+    """Pin chat + embed models in VRAM, skipped under --check (see below) and
+    for a non-Ollama backend, which has nothing to pin."""
     # warmup loads both models and holds them for OLLAMA_KEEP_ALIVE (30m
     # default). It used to pass keep_alive=-1 -- "Forever" in `ollama ps`, and
     # literally the year 2318 in the expiry field -- which held 5.4GB across
@@ -429,6 +456,15 @@ def _check_surfaces(agent: str, *, check: bool) -> StepResult:
 
 
 def step_mcp_wiring(agent: str | None, check: bool = False) -> StepResult:
+    """Register the attestation MCP server with hermes-agent (and its
+    per-surface tool restrictions) if not already wired, and verify the
+    registration rather than trust it.
+
+    Confirms `mcp add` actually took (see the comment above the returncode
+    check) because this is the one step every other tool depends on: a
+    silent failure here means the agent has no attestation tools while the
+    installer reports success.
+    """
     if agent is None:
         return StepResult("mcp_wiring", Status.SKIPPED, "no hermes-agent binary found")
 
@@ -497,6 +533,13 @@ def _sync_one_skill_file(src: Path, dest_dir: Path, src_dir: Path) -> bool:
 
 
 def step_skill_copy(check: bool = False) -> StepResult:
+    """Sync the packaged research-provenance skill files into the agent's
+    skill directory, byte-for-byte, skipping unchanged files.
+
+    Skipped -- not broken -- when the skill is not bundled with this
+    install (see the comment below): this is a fallback lane, and an odd
+    packaging mode losing it should not fail the rest of the run.
+    """
     src_dir = _skill_source_dir()
     dest_dir = _skill_dest_dir()
     # The skill ships inside the package, so this normally exists in every
@@ -529,6 +572,13 @@ def step_skill_copy(check: bool = False) -> StepResult:
 
 
 def step_reasoning_override(agent: str | None, check: bool = False) -> StepResult:
+    """Set `agent.reasoning_overrides.<model>: none` for a hermes3 chat model.
+
+    Scoped to hermes3 by fnmatch (see CLAUDE.md's llm.py note): the override
+    exists for a model-specific quirk and every other chat model is skipped
+    as not needing it, rather than the override being applied broadly on the
+    theory that it is harmless elsewhere.
+    """
     if agent is None:
         return StepResult("reasoning_override", Status.SKIPPED, "no hermes-agent binary found")
     if not _is_ollama_backend():
@@ -695,6 +745,15 @@ def _duplicate_crontab_entry() -> str | None:
 
 
 def step_schedule(agent: str | None, check: bool = False) -> StepResult:
+    """Write the refresh script and register hermes-agent's own cron job for
+    it, detecting a hand-added crontab duplicate rather than reporting OK for
+    a schedule that is silently racing itself.
+
+    Verifies `agent cron create` actually registered the job (see the
+    comment above the returncode check): one build parsed "cron" as a chat
+    prompt and exited 0 having registered nothing, so this checks
+    `cron list` afterwards rather than trusting the exit code.
+    """
     if agent is None:
         return StepResult("schedule", Status.SKIPPED, "no hermes-agent binary found")
 
@@ -795,6 +854,9 @@ def _run_steps(check: bool, yes: bool, now: bool) -> list[StepResult]:
 
 
 def run_install(check: bool = False, yes: bool = False, now: bool = False) -> int:
+    """Run every step in spec order, print one aligned line each, and exit
+    nonzero iff any step is BROKEN -- the CLI entry point for `attest install`
+    and its `--check` doctor mode."""
     results = _run_steps(check, yes, now)
     for result in results:
         _print_step(result)

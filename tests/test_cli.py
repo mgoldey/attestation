@@ -752,3 +752,35 @@ def test_bootstrap_persona_unknown_name_names_the_demo_personas(tmp_path, capsys
     assert main(["bootstrap-persona", "--db", str(db), "no-such-persona"]) == 1
     out = capsys.readouterr().out
     assert "bench-chemist" in out, "the fix is to name a demo persona; say which exist"
+
+
+def _leaf_commands(parser):
+    """Yield (path, help_text, func) for every leaf subcommand -- `runs`'s
+    own sub-subcommands included, so the equality test below covers
+    `runs scan` etc. and not just `runs` itself. Walks the live parser tree
+    rather than a hand-kept list, so a new subcommand is covered the moment
+    it is added."""
+    group = parser._subparsers._group_actions[0]  # type: ignore[union-attr]
+    for action in group._choices_actions:
+        child = group.choices[action.dest]
+        func = child.get_default("func")
+        if func is not None:
+            yield [action.dest], action.help, func
+        else:
+            for path, help_text, inner_func in _leaf_commands(child):
+                yield [action.dest, *path], help_text, inner_func
+
+
+def test_every_cmd_docstring_is_its_helps_first_line():
+    """`build_parser`'s docstring names the design: `help=` is the one
+    source, and each `cmd_*` docstring's first line is that same string,
+    reused rather than retyped -- so a fix to one (like the `eval --help`
+    drift `test_a_subcommand_help_describes_what_it_prints` guards) cannot
+    land in the help text without also landing in the docstring, or vice
+    versa.
+    """
+    for path, help_text, func in _leaf_commands(build_parser()):
+        first_line = (func.__doc__ or "").splitlines()[0] if func.__doc__ else None
+        assert first_line == help_text, (
+            f"attest {' '.join(path)}: docstring first line {first_line!r} != help {help_text!r}"
+        )

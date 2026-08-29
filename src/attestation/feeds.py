@@ -81,6 +81,8 @@ def add_feed(
 
 
 def list_feeds(conn: sqlite3.Connection) -> list[dict]:
+    """Every registered feed with its item count -- the DB is the source of
+    truth (see the module docstring): feeds.toml only seeds the first ingest."""
     rows = conn.execute(
         "SELECT f.id, f.title, f.url, f.last_fetched, COUNT(i.id) AS item_count"
         " FROM feeds f LEFT JOIN items i ON i.feed_id = f.id"

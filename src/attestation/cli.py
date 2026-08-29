@@ -68,11 +68,17 @@ def fail(message: str) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Assemble every `attest` subcommand, each `help=` reused verbatim as its
+    handler's one-line docstring (see the `test_help_matches_docstring`
+    family in test_cli.py) so `--help` and `cmd_<name>.__doc__` cannot drift
+    the way `eval --help` once did (see `test_a_subcommand_help_describes_
+    what_it_prints`)."""
     p = argparse.ArgumentParser(prog="attest")
     p.add_argument("--version", action="version", version=f"attest {version('attestation')}")
     sub = p.add_subparsers(dest="command", required=True)
 
     def add_db(sp):
+        """Add the --db flag every subcommand but warmup/emit/install shares."""
         sp.add_argument(
             "--db",
             default=None,
@@ -288,11 +294,12 @@ def _emit_agent_files(root, write: bool) -> int:
 
 
 def cmd_backup(args: argparse.Namespace) -> int:
-    """Write a consistent single-file copy of the database.
+    """write a consistent copy of the database
 
-    Exists because `cp hermes.db backup.db` is what an operator types and it
-    silently drops the WAL -- the copy opens, looks intact, and is missing the
-    newest writes. Five such copies were found beside the live database.
+    A single-file copy, exact and restorable -- exists because `cp hermes.db
+    backup.db` is what an operator types and it silently drops the WAL -- the
+    copy opens, looks intact, and is missing the newest writes. Five such
+    copies were found beside the live database.
     """
     from attestation.db import backup_db, get_db, resolve_db_path
 
@@ -310,11 +317,12 @@ def cmd_backup(args: argparse.Namespace) -> int:
 
 
 def cmd_emit(args: argparse.Namespace) -> int:
-    """Report -- or with --write, produce -- the per-surface agent configs.
+    """agent configs generated from the tool surfaces
 
-    Reporting is the default because nothing here overwrites: a difference
-    between generated and on-disk is a fact the user acts on, not one this
-    command resolves for them. See emit.py's module docstring.
+    Reports by default -- or with --write, produces -- the per-surface agent
+    configs. Reporting is the default because nothing here overwrites: a
+    difference between generated and on-disk is a fact the user acts on, not
+    one this command resolves for them. See emit.py's module docstring.
     """
     import subprocess
 
@@ -345,7 +353,7 @@ def cmd_emit(args: argparse.Namespace) -> int:
 
 
 def cmd_reload(args: argparse.Namespace) -> int:
-    """Restart every running MCP server so edits to this checkout take effect.
+    """restart running MCP servers so code edits take effect
 
     An MCP server is spawned once per session and never reloads. Both live
     servers here were once found running code five commits stale -- the Hermes
@@ -385,6 +393,7 @@ def cmd_reload(args: argparse.Namespace) -> int:
 
 
 def cmd_warmup(args: argparse.Namespace) -> int:
+    """pin chat + embedding models in VRAM"""
     import attestation.cli  # self-import so tests can monkeypatch attestation.cli.warmup
 
     attestation.cli.warmup()
@@ -409,6 +418,7 @@ def _citation_resolver():
 
 
 def cmd_claims(args: argparse.Namespace) -> int:
+    """verify claims written in Markdown against runs"""
     from attestation import claims as claims_mod
     from attestation import ledger
 
@@ -458,6 +468,7 @@ def cmd_claims(args: argparse.Namespace) -> int:
 
 
 def cmd_browse(args: argparse.Namespace) -> int:
+    """open the ledger in Datasette (read-only)"""
     import shutil
     import subprocess
 
@@ -499,6 +510,7 @@ def cmd_browse(args: argparse.Namespace) -> int:
 
 
 def cmd_runs_scan(args: argparse.Namespace) -> int:
+    """re-read runs from a workspace directory"""
     from attestation import ledger
 
     with open_db(args.db) as conn:
@@ -523,6 +535,7 @@ def cmd_runs_scan(args: argparse.Namespace) -> int:
 
 
 def cmd_runs_list(args: argparse.Namespace) -> int:
+    """runs in the ledger"""
     from attestation import ledger
 
     with open_db(args.db) as conn:
@@ -539,6 +552,7 @@ def cmd_runs_list(args: argparse.Namespace) -> int:
 
 
 def cmd_runs_compare(args: argparse.Namespace) -> int:
+    """rank the arms of an experiment family"""
     from attestation import ledger
 
     with open_db(args.db) as conn:
@@ -581,6 +595,7 @@ def cmd_runs_compare(args: argparse.Namespace) -> int:
 
 
 def cmd_runs_show(args: argparse.Namespace) -> int:
+    """one run in full"""
     from attestation import ledger
 
     with open_db(args.db) as conn:
@@ -600,6 +615,7 @@ def cmd_runs_show(args: argparse.Namespace) -> int:
 
 
 def cmd_kg_report(args: argparse.Namespace) -> int:
+    """knowledge-graph health + topic clusters"""
     from attestation import kg
 
     with open_db(args.db) as conn:
@@ -635,6 +651,7 @@ def cmd_kg_report(args: argparse.Namespace) -> int:
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
+    """fetch feeds, embed, store"""
     from attestation.embed import Embedder
     from attestation.ingest import run_ingest
 
@@ -645,6 +662,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 
 def cmd_tag(args: argparse.Namespace) -> int:
+    """LLM-tag untagged items (topic tags + content type)"""
     import attestation.features
     from attestation.llm import base_url
 
@@ -665,6 +683,7 @@ def cmd_tag(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
+    """run the web UI"""
     import uvicorn
 
     from attestation.db import resolve_db_path
@@ -675,6 +694,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
+    """cross-validated AUC for a persona's click classifier"""
     from attestation.rank import evaluate_user, get_user
     from attestation.simulate import source_skew_caveat
 
@@ -740,6 +760,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
 
 def cmd_bootstrap_persona(args: argparse.Namespace) -> int:
+    """write pseudo-clicks for a persona"""
     from attestation.db import SEED_USERS
     from attestation.embed import Embedder
     from attestation.rank import bootstrap_persona, create_user, get_user
@@ -770,12 +791,23 @@ def cmd_bootstrap_persona(args: argparse.Namespace) -> int:
 
 
 def cmd_install(args: argparse.Namespace) -> int:
+    """idempotent setup + --check doctor mode"""
     import attestation.install
 
     return attestation.install.run_install(check=args.check, yes=args.yes, now=args.now)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse argv, dispatch to the matching `cmd_*`, and normalise its exit code.
+
+    A console-script entry point returning anything other than an int, or
+    raising instead of returning, is invisible until something inspects the
+    process exit status -- `open_db` reports a bad DB path this way (see its
+    docstring), so a SystemExit it raises is converted back to a plain int
+    here, which is the one place that keeps main()'s contract true for the
+    tests and for anything embedding the CLI directly, not just the console
+    script.
+    """
     from attestation.llm import load_env
 
     load_env()

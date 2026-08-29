@@ -175,6 +175,11 @@ def _metric_direction(metric: str, directions: dict[str, str]) -> str | None:
 
 @dataclass
 class Metric:
+    """One final value read from a run's artifacts -- not a logged curve;
+    see the module docstring's per-tracker conventions for what "final" means
+    per adapter. `step`/`split` disambiguate a metric a run recorded more
+    than once (a checkpoint, a train vs. eval split)."""
+
     metric: str
     value: float
     step: int | None = None
@@ -426,6 +431,9 @@ def list_runs(
     family: str | None = None,
     limit: int = 20,
 ) -> list[dict]:
+    """Runs in the ledger, optionally filtered by project/family, newest
+    ordering left to the caller's `ORDER BY` needs -- here, grouped for
+    display rather than chronological."""
     sql = "SELECT id, project, name, family, status, started, source_path FROM runs"
     clauses, params = [], []
     if project:
@@ -501,6 +509,10 @@ def adapter_caveats(adapters) -> list[str]:
 
 
 def detail(conn: sqlite3.Connection, project: str, name: str) -> dict | None:
+    """One run in full: its row, decoded config, every recorded metric, and
+    the caveat (if any) for the adapter that read it -- `None` if no such
+    run exists rather than an empty dict, so a caller can tell "not found"
+    from "found, nothing to report"."""
     row = conn.execute(
         "SELECT * FROM runs WHERE project = ? AND name = ?", (project, name)
     ).fetchone()
@@ -918,6 +930,9 @@ def compare(
     scored = [a for a in arms if a["value"] is not None]
 
     def rank_key(arm: dict) -> tuple[float, str]:
+        """Sort key: best value first regardless of direction, ties broken
+        by name. See the comment above the `float()` call for why the None
+        case is resolved here rather than inline in a lambda."""
         # Bind through a local float so the None-ness is resolved once, where
         # the `scored` filter above already guarantees it. Negating inside the
         # lambda read as `-None` to a type checker, and it was right to ask.
@@ -1122,6 +1137,9 @@ def _caveats(scored: list[dict], metric: str) -> list[str]:
 
 
 def families(conn: sqlite3.Connection, project: str | None = None) -> list[dict]:
+    """Every named run family and its run count, largest first -- what
+    `attest runs list` prints below the individual runs so a reader knows
+    what is comparable with `runs compare`."""
     sql = (
         "SELECT project, family, COUNT(*) n FROM runs WHERE family IS NOT NULL"
         + (" AND project = ?" if project else "")

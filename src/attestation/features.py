@@ -60,6 +60,9 @@ NON_TOPIC_TAGS = frozenset(
 
 
 class ItemTags(BaseModel):
+    """The tagger's structured reply: content type plus one to four tags,
+    validated and normalized by `_tags_shape` rather than rejected whole."""
+
     content_type: Literal["paper", "survey", "announcement", "release", "blog", "other"]
     tags: list[str] = Field(min_length=1, max_length=4)
 

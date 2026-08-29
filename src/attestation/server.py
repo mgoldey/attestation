@@ -211,6 +211,13 @@ def require_same_origin(request: Request) -> None:
 
 
 def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
+    """Build the HTMX web UI as a fresh FastAPI app bound to `db_path`.
+
+    Opens one SQLite connection PER THREAD rather than one for the app (see
+    the comment below): FastAPI runs sync routes in a threadpool, and a
+    shared connection let concurrent requests interleave cursors, which
+    measurably corrupted results under the page's own concurrent load.
+    """
     if embedder is None:
         from attestation.embed import Embedder
 
@@ -231,6 +238,9 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
     _local = threading.local()
 
     def connection() -> sqlite3.Connection:
+        """This thread's own SQLite connection, opened once and reused --
+        see the comment above `_local` for why one per thread, not one for
+        the app."""
         existing = getattr(_local, "conn", None)
         if existing is None:
             existing = get_db(db_path)
@@ -238,7 +248,6 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         return existing
 
     def require_user(user_name: str) -> sqlite3.Row:
-        conn = connection()
         """An existing reader, or 404. Used by the routes that WRITE.
 
         Recording a click or asking for an explanation under an unknown name
@@ -247,13 +256,13 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         the "permanent persona nobody knows exists" that mcp/_tool.py warns
         about -- except here nothing announces it. Reads create; writes refuse.
         """
+        conn = connection()
         user = get_user(conn, user_name)
         if user is None:
             raise HTTPException(status_code=404, detail=f"unknown user: {user_name}")
         return user
 
     def reader(user_name: str, request: Request) -> sqlite3.Row:
-        conn = connection()
         """An existing reader, created on first sight. Used by the routes that READ.
 
         Browsing used to 404. Two front doors onto one database disagreeing
@@ -275,6 +284,7 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         visiting the URL themselves. So: reads are always allowed; the
         INSERT is not.
         """
+        conn = connection()
         if not user_name.strip():
             raise HTTPException(status_code=400, detail="user name required")
         user = get_user(conn, user_name)
@@ -284,6 +294,9 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         return user
 
     def render_list(user_name: str, request: Request) -> str:
+        """The ranked-list HTML fragment for one reader, or a cold-embedder
+        notice in its place -- shared by the index page and the `/list`
+        HTMX endpoint so both render identically."""
         conn = connection()
         user = reader(user_name, request)
         try:
@@ -298,10 +311,14 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         )
 
     def persona_names() -> list[str]:
+        """Every persona name, for the page's persona picker."""
         return [r["name"] for r in connection().execute("SELECT name FROM users ORDER BY name")]
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request, user: str | None = Query(None)):
+        """`/` with no `?user`: the first persona if any exist, else the
+        onboarding form -- see CLAUDE.md's note that this replaced a
+        hardcoded default persona that autocreated for whoever opened it."""
         users = persona_names()
         if user is None:
             if not users:
@@ -313,10 +330,16 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
 
     @app.get("/onboard", response_class=HTMLResponse)
     def onboard():
+        """The onboarding form on demand, e.g. from a "create another
+        persona" link, rather than only when no persona exists yet."""
         return PAGE.render(users=persona_names(), user=None, feed_content=ONBOARD.render())
 
     @app.post("/personas", dependencies=[Depends(require_same_origin)])
     def create_persona(name: str = Form(...), interests: str = Form(...)):
+        """The onboarding form's submit target: create a persona and land on
+        its feed. Same-origin only (see `require_same_origin`) since this is
+        the one route that both writes and is reachable with no existing
+        persona to authenticate the request against."""
         try:
             create_user(connection(), name.strip(), interests.strip())
         except ValueError as exc:
@@ -325,6 +348,8 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
 
     @app.get("/list", response_class=HTMLResponse)
     def list_view(request: Request, user: str = Query(...)):
+        """The HTMX fragment `index` embeds -- also fetched directly on a
+        persona switch, without reloading the whole page."""
         return render_list(user, request)
 
     @app.post("/clicks", response_class=HTMLResponse, dependencies=[Depends(require_same_origin)])
@@ -334,6 +359,9 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         item_id: int = Form(...),
         useful: int = Form(...),
     ):
+        """Record a useful/not-useful vote and return the re-ranked list --
+        `require_user` refuses an unknown name rather than creating one, per
+        `require_user`'s own docstring."""
         u = require_user(user)
         record_click(connection(), u["id"], item_id, bool(useful), source="ui")
         # retrain + re-rank happens inside rank_items. require_user already
@@ -342,6 +370,8 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
 
     @app.get("/explanation", response_class=PlainTextResponse)
     def explanation(user: str = Query(...), item_id: int = Query(...)):
+        """Lazy-loaded "why this?" text for one item, plain text so the
+        page's own JS can drop it straight into the DOM without escaping."""
         u = require_user(user)
         return explain(connection(), u["id"], item_id, chat_fn=chat_fn) or ""
 

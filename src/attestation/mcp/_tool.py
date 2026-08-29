@@ -53,10 +53,13 @@ def open_db(path=None):
 
 
 def valid_users(conn: sqlite3.Connection) -> list[str]:
+    """Every persona name in the database, alphabetical."""
     return [r["name"] for r in conn.execute("SELECT name FROM users ORDER BY name")]
 
 
 def unknown_user_message(conn: sqlite3.Connection, user: str) -> str:
+    """The refusal text for a name that does not autocreate -- names the
+    personas that do exist, so the caller has something to act on."""
     names = valid_users(conn)
     return f"unknown user: {user!r}. Valid users: {', '.join(names) if names else '(none seeded)'}"
 
@@ -101,14 +104,21 @@ def tool(
     empty = empty or {}
 
     def decorate(fn: Callable) -> Callable:
+        """Bind `fn` inside the ritual described in `tool`'s own docstring."""
         name = label or getattr(fn, "__name__", "tool")
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
+            """The actual per-call ritual: connection, user lookup, the try
+            block whose except clauses are documented individually below."""
+
             def fail(message: str) -> dict:
+                """The failure envelope: `empty`'s fields plus why."""
                 return {"ok": False, "message": message, **empty}
 
             def succeed(result: dict | None) -> dict:
+                """The success envelope: the body's own fields layered over
+                `empty`'s defaults, so both envelopes share every key."""
                 result = dict(result or {})
                 message = result.pop("message", "")
                 return {"ok": True, "message": message, **{**empty, **result}}

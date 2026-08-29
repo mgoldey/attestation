@@ -29,6 +29,9 @@ ENV_VARS = (
 
 
 def base_url() -> str:
+    """The configured LLM server root, resolved at call time: env var, else
+    `DEFAULT_BASE_URL` -- never cached, so a `.env` change takes effect
+    without restarting anything that only imports this module."""
     return os.environ.get("LLM_BASE_URL", DEFAULT_BASE_URL)
 
 
@@ -57,10 +60,12 @@ def backend_unreachable(exc: BaseException) -> bool:
 
 
 def chat_model() -> str:
+    """The configured chat model name, resolved at call time -- see `base_url`."""
     return os.environ.get("CHAT_MODEL", DEFAULT_CHAT_MODEL)
 
 
 def embed_model() -> str:
+    """The configured embedding model name, resolved at call time -- see `base_url`."""
     return os.environ.get("EMBED_MODEL", DEFAULT_EMBED_MODEL)
 
 
@@ -91,6 +96,10 @@ _module_base_url = base_url  # constructors' `base_url` param shadows the functi
 
 
 class ChatClient:
+    """A schema-constrained chat completion, against any OpenAI-compatible
+    server -- see the module docstring: config resolves per call/construction,
+    never at import, and reliability policy (retry, degrade) is the caller's."""
+
     def __init__(self, base_url=None, model=None, api_key=None, timeout=120, transport=None):
         self.model = model or chat_model()
         self.client = httpx.Client(
@@ -101,6 +110,13 @@ class ChatClient:
         )
 
     def chat_json(self, messages: list[dict], schema: dict) -> dict:
+        """One chat call, requesting a JSON object matching `schema`.
+
+        Sends `reasoning_effort="none"` first (see the comment below: chain-
+        of-thought buys nothing for a small schema-bound reply and roughly
+        doubled latency when measured), retrying once without it for a
+        server that rejects the field with a 400 rather than ignoring it.
+        """
         # reasoning_effort="none": every call here asks for a small, schema-bound
         # JSON object, so chain-of-thought buys nothing and costs a lot. Measured
         # on gemma4:e2b (2026-08-11): 19.8s and ~500 thinking tokens per tagging
@@ -157,6 +173,9 @@ def _first_json_object(text: str) -> dict:
 
 
 class EmbeddingClient:
+    """One embedding vector per call, against any OpenAI-compatible server --
+    same construction-time config resolution as `ChatClient`."""
+
     def __init__(self, base_url=None, model=None, api_key=None, timeout=60, transport=None):
         self.model = model or embed_model()
         self.client = httpx.Client(
@@ -167,6 +186,8 @@ class EmbeddingClient:
         )
 
     def embed(self, text: str) -> list[float]:
+        """The raw embedding for `text`, untruncated and unnormalized --
+        `embed.truncate_normalize` is the caller's job, not this client's."""
         resp = self.client.post("/embeddings", json={"model": self.model, "input": text})
         resp.raise_for_status()
         return resp.json()["data"][0]["embedding"]
