@@ -184,10 +184,12 @@ def test_dspy_never_enters_the_library():
     CSVLogger's CSV and a plain metrics JSON already fit `results/*.csv`/
     `*.json`, the generic adapter's oldest convention -- it is guarded here
     for the same reason as the other five, not because the ledger reads a
-    TensorFlow-specific directory."""
+    TensorFlow-specific directory. mkdocs is the same kind of optional
+    dependency again: the `docs` group builds the site from `mkdocs.yml` and
+    `scripts/render_*.py`, and nothing the package needs at runtime."""
     src = Path(__file__).resolve().parents[1] / "src" / "attestation"
     files = list(src.rglob("*.py"))
-    for name in ("dspy", "mlflow", "wandb", "sacred", "dvc", "tensorflow", "hydra"):
+    for name in ("dspy", "mlflow", "wandb", "sacred", "dvc", "tensorflow", "hydra", "mkdocs"):
         pattern = re.compile(rf"^\s*(import|from)\s+{name}\b", re.MULTILINE)
         offenders = [str(p.relative_to(src)) for p in files if pattern.search(p.read_text())]
         assert offenders == [], f"{name} imported under src/: {offenders}"

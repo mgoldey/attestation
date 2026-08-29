@@ -129,3 +129,32 @@ jobs:
         # network. Its numbers are about the stub and say so; the point is
         # that the flows cannot rot.
         run: uv run python examples/flows/run_all.py --offline
+
+  docs:
+    name: docs site
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies (with the docs group)
+        run: uv sync --all-extras --dev --group docs
+
+      - name: mkdocs build --strict
+        # A docstring that breaks a cross-reference, or a nav entry in
+        # mkdocs.yml that points nowhere, fails the push here rather than
+        # rotting silently. The `gates` job does not install the docs group,
+        # so this job runs the real build itself.
+        run: uv run --group docs mkdocs build --strict
+
+      - name: Upload built site
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-site
+          path: site/

@@ -78,6 +78,12 @@ optimize = [
 # The ledger READS mlruns/ (ledger_adapters/generic.py); nothing under src/
 # imports mlflow, and tests/test_tag_prompt.py asserts it.
 examples = ["mlflow-skinny>=2.20"]
+# The docs site (mkdocs.yml, docs/). Never a runtime dependency: nothing
+# under src/ imports mkdocs or mkdocstrings, and tests/test_tag_prompt.py
+# asserts it the same way it does dspy/mlflow/wandb/sacred/dvc/hydra. CI's
+# `docs` job installs this group and runs `mkdocs build --strict`; the
+# `gates` job does not install it.
+docs = ["mkdocs-material>=9", "mkdocstrings[python]>=0.26"]
 
 [build-system]
 requires = ["hatchling"]

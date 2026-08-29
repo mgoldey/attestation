@@ -1,0 +1,55 @@
+site_name: attestation
+site_description: >-
+  Auditable research provenance, fully local: experiment runs, verifiable
+  claims, a reading knowledge graph, symbolic derivations, and a personalized
+  science feed.
+repo_url: https://github.com/mgoldey/attestation
+docs_dir: docs
+strict: true
+
+theme:
+  name: material
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Guides:
+      - Architecture: architecture/README.md
+      - Measurement lessons: measurement-lessons.md
+      - Recommendation refinements: recommendation-refinements.md
+      - hermes-agent research: hermes-agent-plugin-research.md
+  - Design records: site/specs.md
+  - Reference:
+      - CLI: reference/cli.md
+      - API:
+          - ledger: reference/api/ledger.md
+          - claims: reference/api/claims.md
+          - citations: reference/api/citations.md
+          - rank: reference/api/rank.md
+          - ingest: reference/api/ingest.md
+          - features: reference/api/features.md
+          - simulate: reference/api/simulate.md
+          - explain: reference/api/explain.md
+          - symbolic: reference/api/symbolic.md
+          - kg: reference/api/kg.md
+          - emit: reference/api/emit.md
+          - install: reference/api/install.md
+          - llm: reference/api/llm.md
+          - embed: reference/api/embed.md
+          - db: reference/api/db.md
+          - ports: reference/api/ports.md

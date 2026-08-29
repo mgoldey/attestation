@@ -22,6 +22,12 @@ dist/
 build/
 .mutate-backup/
 
+# `mkdocs build` output. Built, not deployed; CI's `docs` job uploads it as
+# an artifact instead of committing it. Anchored to the root: `docs/site/`
+# holds a committed, generated page (the design-records index) and must not
+# be swept up by an unanchored `site/`.
+/site/
+
 # Process logs from the superpowers plugin (design/plan transcripts) and a uv
 # cache left by a run with HOME pointed at a fake path: both sat untracked-but-
 # unignored, one `git add .` from becoming permanent history.
