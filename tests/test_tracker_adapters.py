@@ -41,6 +41,7 @@ import pytest
 from attestation.ledger_adapters import generic
 
 WANDB_EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "wandb"
+SACRED_EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "sacred"
 
 
 def _wandb_run(root, run_id, summary, config=None, metadata=None):
@@ -90,6 +91,36 @@ def _mlflow_run(
     return d
 
 
+def _sacred_run(
+    root,
+    n,
+    *,
+    experiment_name="lr_sweep",
+    status="COMPLETED",
+    config=None,
+    metrics=None,
+    result=None,
+    write_metrics=True,
+    write_config=True,
+):
+    d = root / "sacred_runs" / str(n)
+    d.mkdir(parents=True)
+    run_json = {
+        "experiment": {"name": experiment_name},
+        "status": status,
+        "start_time": "2026-08-28T10:00:00.000000",
+        "stop_time": "2026-08-28T10:00:10.000000",
+    }
+    if result is not None:
+        run_json["result"] = result
+    (d / "run.json").write_text(json.dumps(run_json))
+    if write_config:
+        (d / "config.json").write_text(json.dumps(config if config is not None else {}))
+    if write_metrics and metrics is not None:
+        (d / "metrics.json").write_text(json.dumps(metrics))
+    return d
+
+
 # --------------------------------------------------------------------------
 # The gap this exists to close
 # --------------------------------------------------------------------------
@@ -97,15 +128,16 @@ def _mlflow_run(
 
 def test_a_project_with_only_tracker_dirs_is_not_invisible(tmp_path):
     """The whole point. `discover` walks RESULT_DIRS and CONFIG_DIRS at the
-    project root; `wandb` and `mlruns` are in neither, so before this change a
-    project whose entire experimental record lived in one of them scanned to
-    zero runs and gave no indication why."""
+    project root; `wandb`, `mlruns` and `sacred_runs` are in none of them, so
+    before this change a project whose entire experimental record lived in
+    one of them scanned to zero runs and gave no indication why."""
     proj = tmp_path / "myproj"
     _wandb_run(proj, "run-20260814_101133-a1b2c3d4", {"wer": 0.12, "loss": 2.1})
     _mlflow_run(proj, "0", "abc123", name="baseline", metrics={"wer": [(0, 0.31, 5)]})
+    _sacred_run(proj, 1, config={"lr": 0.01}, metrics={"auc": {"steps": [0], "values": [0.9]}})
 
     runs = generic.discover(proj)
-    assert len(runs) == 2, [r.name for r in runs]
+    assert len(runs) == 3, [r.name for r in runs]
 
 
 # --------------------------------------------------------------------------
@@ -266,6 +298,158 @@ def test_mlflow_run_with_no_metrics_yields_nothing(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# Sacred
+# --------------------------------------------------------------------------
+
+
+def test_sacred_metrics_become_final_values_not_curves(tmp_path):
+    """metrics.json holds every logged point; the decision this adapter
+    inherits from MLflow's is the last value and its last step, not the
+    curve -- a 10-step train_loss log becomes one Metric, not ten rows."""
+    proj = tmp_path / "p"
+    _sacred_run(
+        proj,
+        1,
+        config={"lr": 0.01},
+        metrics={
+            "train_loss": {"steps": [0, 1, 2], "values": [0.9, 0.5, 0.3]},
+            "auc": {"steps": [0], "values": [0.97]},
+        },
+    )
+
+    (run,) = generic.discover(proj)
+    by_name = {m.metric: m for m in run.metrics}
+    assert by_name["train_loss"].value == 0.3
+    assert by_name["train_loss"].step == 2
+    assert by_name["auc"].value == 0.97
+
+
+def test_sacred_run_is_named_experiment_slash_number(tmp_path):
+    proj = tmp_path / "p"
+    _sacred_run(
+        proj,
+        3,
+        experiment_name="lr_sweep",
+        config={},
+        metrics={"auc": {"steps": [0], "values": [0.9]}},
+    )
+
+    (run,) = generic.discover(proj)
+    assert run.name == "lr_sweep/3"
+    assert run.family == "lr_sweep"
+
+
+def test_sacred_config_json_becomes_config(tmp_path):
+    proj = tmp_path / "p"
+    _sacred_run(
+        proj, 1, config={"lr": 0.01, "seed": 7}, metrics={"auc": {"steps": [0], "values": [0.9]}}
+    )
+
+    (run,) = generic.discover(proj)
+    assert run.config == {"lr": 0.01, "seed": 7}
+
+
+def test_sacred_numeric_result_becomes_a_metric(tmp_path):
+    """run.json's own `result` field -- the value `@ex.main` returned -- is
+    Sacred's own headline number and is not duplicated in metrics.json."""
+    proj = tmp_path / "p"
+    _sacred_run(
+        proj,
+        1,
+        config={"lr": 0.01},
+        metrics={"train_loss": {"steps": [0], "values": [0.5]}},
+        result=0.987,
+    )
+
+    (run,) = generic.discover(proj)
+    by_name = {m.metric: m for m in run.metrics}
+    assert by_name["result"].value == 0.987
+
+
+def test_sacred_non_numeric_result_is_not_recorded_as_a_metric(tmp_path):
+    """Sacred's `result` can be any JSON-serialisable object -- a dict, a
+    list, a string. Only a number is a metric; anything else is silently
+    not one, the same refusal `_numeric_items` makes everywhere else."""
+    proj = tmp_path / "p"
+    d = _sacred_run(proj, 1, config={}, metrics={"auc": {"steps": [0], "values": [0.9]}})
+    run_json = json.loads((d / "run.json").read_text())
+    run_json["result"] = {"not": "a number"}
+    (d / "run.json").write_text(json.dumps(run_json))
+
+    (run,) = generic.discover(proj)
+    assert "result" not in {m.metric for m in run.metrics}
+
+
+def test_sacred_only_completed_runs_are_recorded(tmp_path):
+    """A run.json with status FAILED or INTERRUPTED is still on disk after a
+    crash. Recording it as a result the same way as a completed run would
+    misreport a crash as a measurement."""
+    proj = tmp_path / "p"
+    _sacred_run(
+        proj, 1, status="COMPLETED", config={}, metrics={"auc": {"steps": [0], "values": [0.9]}}
+    )
+    _sacred_run(
+        proj, 2, status="FAILED", config={}, metrics={"auc": {"steps": [0], "values": [0.1]}}
+    )
+
+    runs = generic.discover(proj)
+    assert len(runs) == 1, [r.name for r in runs]
+    assert runs[0].name.endswith("/1")
+
+
+def test_sacred_missing_metrics_json_is_skipped_like_mlflow(tmp_path):
+    """A run with config but no metrics.json (or an empty one) is a spec with
+    no measurement attached -- the same rule the MLflow reader follows for a
+    run with no metric files."""
+    proj = tmp_path / "p"
+    _sacred_run(proj, 1, config={"lr": 0.01}, metrics=None, write_metrics=False)
+
+    assert generic.discover(proj) == []
+
+
+def test_sacred_missing_config_json_means_no_config(tmp_path):
+    proj = tmp_path / "p"
+    _sacred_run(
+        proj,
+        1,
+        metrics={"auc": {"steps": [0], "values": [0.9]}},
+        write_config=False,
+    )
+
+    (run,) = generic.discover(proj)
+    assert run.config is None
+
+
+def test_sacred_unknown_keys_in_run_json_are_ignored(tmp_path):
+    """A future Sacred version, or a custom observer, adding fields to
+    run.json must not raise -- the shape-tolerance rule every convention
+    here follows."""
+    proj = tmp_path / "p"
+    d = _sacred_run(proj, 1, config={}, metrics={"auc": {"steps": [0], "values": [0.9]}})
+    run_json = json.loads((d / "run.json").read_text())
+    run_json["some_future_field"] = {"nested": ["stuff"]}
+    (d / "run.json").write_text(json.dumps(run_json))
+
+    (run,) = generic.discover(proj)
+    assert run.name == "lr_sweep/1"
+
+
+def test_the_reader_scans_the_real_committed_sacred_fixture():
+    """examples/sacred/sacred_runs is real: written by sacred 0.8.7
+    (generate.py, 2026-08-28), not transcribed from documentation."""
+    runs = generic.discover(SACRED_EXAMPLE)
+    assert len(runs) == 4, [r.name for r in runs]
+    assert all(r.adapter == "sacred" for r in runs)
+    assert all(r.name.startswith("lr_sweep/") for r in runs), [r.name for r in runs]
+    assert all(r.family == "lr_sweep" for r in runs)
+    by_lr = {r.config["lr"]: r for r in runs}
+    assert set(by_lr) == {0.001, 0.01, 0.1, 1.0}
+    for run in runs:
+        metrics = {m.metric for m in run.metrics}
+        assert {"train_loss", "auc", "result"} <= metrics, metrics
+
+
+# --------------------------------------------------------------------------
 # Coexistence and shape tolerance
 # --------------------------------------------------------------------------
 
@@ -305,6 +489,20 @@ def test_a_tracker_run_colliding_with_a_results_run_is_recorded_once(tmp_path):
     runs = generic.discover(proj)
     names = [r.name for r in runs]
     assert names.count("train_asr/a1b2c3d4") == 1, names
+
+
+def test_a_sacred_run_colliding_with_a_results_run_is_recorded_once(tmp_path):
+    """Same rule, for Sacred's own naming: `lr_sweep/1` collides with a
+    results/ file that happens to share that stem."""
+    proj = tmp_path / "p"
+    (proj / "results").mkdir(parents=True)
+    (proj / "results" / "lr_sweep").mkdir()
+    (proj / "results" / "lr_sweep" / "1.json").write_text(json.dumps({"wer": 0.4}))
+    _sacred_run(proj, 1, config={}, metrics={"auc": {"steps": [0], "values": [0.9]}})
+
+    runs = generic.discover(proj)
+    names = [r.name for r in runs]
+    assert names.count("lr_sweep/1") == 1, names
 
 
 def test_no_metric_direction_is_inferred_from_tracker_metadata(tmp_path):

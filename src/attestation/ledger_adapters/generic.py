@@ -480,7 +480,7 @@ def diagnose_empty(root: Path) -> str:
 # already worked -- see its docstring for the naming detail and for the
 # larger surprise, that offline W&B does not write wandb-summary.json or
 # config.yaml to files/ at all until a run is synced.
-TRACKER_DIRS = ("wandb", "mlruns")
+TRACKER_DIRS = ("wandb", "mlruns", "sacred_runs")
 
 # Recorded on every RunRecord this module's convention-based reader produces,
 # so `runs.detail` can tell a hand-written results/ tree apart from a tracker
@@ -744,6 +744,122 @@ def _mlflow_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     return records
 
 
+def _sacred_metrics(metrics_path: Path) -> list[Metric]:
+    """`metrics.json`'s `{name: {"steps": [...], "values": [...]}}` shape.
+
+    Same decision as MLflow's metric-per-file log: the final value and the
+    step it was logged at, not the curve -- a ten-point train_loss series
+    becomes one Metric, not ten `run_metrics` rows. `values`/`steps` are
+    parallel arrays kept in logged order, so the last element of each is the
+    final one; a `timestamps` array is also present and unused here.
+    """
+    payload = _load(metrics_path)
+    if not isinstance(payload, dict):
+        return []
+    out: list[Metric] = []
+    for name, series in payload.items():
+        if not isinstance(series, dict):
+            continue
+        values = series.get("values")
+        if not isinstance(values, list) or not values:
+            continue
+        value = values[-1]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
+            continue
+        steps = series.get("steps")
+        step = (
+            steps[-1] if isinstance(steps, list) and steps and isinstance(steps[-1], int) else None
+        )
+        out.append(Metric(name, float(value), step=step))
+    return out
+
+
+def _sacred_result_metric(run_json: dict) -> Metric | None:
+    """`run.json`'s own `result` -- the value `@ex.main` returned.
+
+    Sacred lets a main function return anything JSON-serialisable: a dict, a
+    list, a string. Only a number is a metric; the field is simply absent
+    from `metrics.json` (it is not something `_run.log_scalar` ever wrote),
+    so this is the one place it can be picked up at all.
+    """
+    result = run_json.get("result")
+    if (
+        isinstance(result, bool)
+        or not isinstance(result, (int, float))
+        or not math.isfinite(result)
+    ):
+        return None
+    return Metric("result", float(result))
+
+
+def _sacred_runs(root: Path, seen: set[str]) -> list[RunRecord]:
+    """Runs under `sacred_runs/<n>/`, one numbered directory per run.
+
+    Verified 2026-08-28 against a real directory (sacred 0.8.7,
+    examples/sacred/generate.py): `FileStorageObserver` writes `config.json`,
+    `metrics.json`, `run.json`, `cout.txt` (captured stdout/stderr) and a
+    shared `_sources/` of hashed copies of the driver script into each
+    numbered run directory it creates, starting at `1`. `run.json` carries
+    `experiment.name`, `status`, and -- unlike W&B or MLflow -- a `result`
+    field holding whatever `@ex.main` returned. `cout.txt` and `_sources/`
+    are not read here: see examples/sacred/generate.py's `scrub()` for why
+    they are not committed either.
+    """
+    base = root / "sacred_runs"
+    if not base.is_dir():
+        return []
+    records: list[RunRecord] = []
+    for run_dir in sorted((p for p in base.iterdir() if p.is_dir()), key=lambda p: p.name):
+        run_json = _load(run_dir / "run.json")
+        if not isinstance(run_json, dict):
+            continue
+        # A run.json with status FAILED or INTERRUPTED is still on disk after
+        # a crash. Recording it the same way as a completed run would
+        # misreport a crash as a measurement.
+        if run_json.get("status") != "COMPLETED":
+            continue
+        experiment = run_json.get("experiment")
+        family = experiment.get("name") if isinstance(experiment, dict) else None
+        if not isinstance(family, str) or not family:
+            continue
+
+        metrics_path = run_dir / "metrics.json"
+        metrics = _sacred_metrics(metrics_path) if metrics_path.is_file() else []
+        result_metric = _sacred_result_metric(run_json)
+        if result_metric is not None:
+            metrics.append(result_metric)
+        if not metrics:
+            continue  # a spec with no measurement attached -- same as MLflow
+
+        name = f"{family}/{run_dir.name}"
+        if name in seen:
+            continue
+        seen.add(name)
+
+        config_path = run_dir / "config.json"
+        config = _load(config_path) if config_path.is_file() else None
+        config = config if isinstance(config, dict) else None
+
+        records.append(
+            RunRecord(
+                project=root.name,
+                name=name,
+                source_path=str(run_dir),
+                family=family,
+                status="recorded",
+                started=run_json.get("start_time"),
+                config=config,
+                metrics=metrics,
+                adapter="sacred",
+            )
+        )
+    return records
+
+
 def _result_name(stem: str, result: Path, base: Path, dirname: str, seen: set[str]) -> str:
     """A run name that does not collide with one already recorded.
 
@@ -862,4 +978,5 @@ def discover(root: Path) -> list[RunRecord]:
 
     records.extend(_wandb_runs(root, seen))
     records.extend(_mlflow_runs(root, seen))
+    records.extend(_sacred_runs(root, seen))
     return records

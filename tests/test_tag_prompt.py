@@ -168,16 +168,33 @@ def test_dspy_never_enters_the_library():
     The spec's refusal condition: if dspy cannot be kept out of the runtime
     import path, the design is abandoned.
 
-    mlflow and wandb are the same kind of optional dependency
-    (examples/flows/training/train_mlflow.py, examples/wandb/generate.py):
-    the ledger READS mlruns/ and wandb/ directories (ledger_adapters/
-    generic.py's `_mlflow_runs` and `_wandb_runs`, named as such in comments
-    and the `adapter="mlflow"`/`adapter="wandb"` labels) without ever
-    importing the libraries that write them, so this checks for an import,
-    not the word."""
+    mlflow, wandb and sacred are the same kind of optional dependency
+    (examples/flows/training/train_mlflow.py, examples/wandb/generate.py,
+    examples/sacred/generate.py): the ledger READS mlruns/, wandb/ and
+    sacred_runs/ directories (ledger_adapters/generic.py's `_mlflow_runs`,
+    `_wandb_runs` and `_sacred_runs`, named as such in comments and the
+    `adapter="mlflow"`/`adapter="wandb"`/`adapter="sacred"` labels) without
+    ever importing the libraries that write them, so this checks for an
+    import, not the word."""
     src = Path(__file__).resolve().parents[1] / "src" / "attestation"
     files = list(src.rglob("*.py"))
-    for name in ("dspy", "mlflow", "wandb"):
+    for name in ("dspy", "mlflow", "wandb", "sacred"):
         pattern = re.compile(rf"^\s*(import|from)\s+{name}\b", re.MULTILINE)
         offenders = [str(p.relative_to(src)) for p in files if pattern.search(p.read_text())]
         assert offenders == [], f"{name} imported under src/: {offenders}"
+
+
+def test_dspy_stays_confined_to_the_optimizer_under_evals():
+    """`evals/` is not a package and every script there imports its peers
+    top-level (see tagging_eval.py's own docstring), so a reaction or
+    explanation eval could import dspy by accident -- e.g. copying a helper
+    out of optimize_tagging.py -- without src/ ever seeing it. Only the
+    optimizer itself may import it."""
+    evals_dir = Path(__file__).resolve().parents[1] / "evals"
+    pattern = re.compile(r"^\s*(import|from)\s+dspy\b", re.MULTILINE)
+    offenders = [
+        str(p.relative_to(evals_dir))
+        for p in evals_dir.rglob("*.py")
+        if p.name != "optimize_tagging.py" and pattern.search(p.read_text())
+    ]
+    assert offenders == [], f"dspy imported outside optimize_tagging.py: {offenders}"
