@@ -123,3 +123,29 @@ def test_runs_compare_never_auto_selects_a_std_metric(conn, tmp_path):
 
     assert result["metric"] == "wer"
     assert "wer_std" not in ledger.METRIC_DIRECTION
+
+
+def test_family_of_a_bare_split_token_stem_is_the_token_name():
+    """`lr_0.001` has no separate shared prefix -- `lr` IS the whole stem, so
+    stripping the recognised variant token empties it. The token name itself
+    is the family: `lr_0.001` and `lr_0.01` both belong to family `lr`, the
+    same way `dit_small_rope_crossattn`'s family is what's left after its
+    trailing variant token is dropped. Before this fix, family_of returned
+    None here -- `attest runs compare lr` failed with "no family 'lr'" on a
+    real four-arm learning-rate sweep (examples/tensorflow/)."""
+    assert generic.family_of("lr_0.001") == "lr"
+    assert generic.family_of("lr_0.01") == "lr"
+
+
+def test_family_of_a_bare_seed_stem_is_the_token_name():
+    assert generic.family_of("seed_3") == "seed"
+
+
+def test_family_of_sweep_shape_is_unchanged():
+    """A stem with a real shared prefix still drops only the trailing variant
+    token -- the bare-token fallback must not swallow this shape."""
+    assert generic.family_of("dit_small_rope_crossattn") == "dit-small-rope"
+
+
+def test_family_of_a_name_with_no_separator_is_still_ungrouped():
+    assert generic.family_of("foo") is None

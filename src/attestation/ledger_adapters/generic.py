@@ -367,13 +367,19 @@ def _config_shape(path: Path) -> dict | None:
 def family_of(stem: str) -> str | None:
     """Group sibling runs by their shared prefix, so a sweep compares as a unit.
 
-    Two shapes, both common:
+    Three shapes, all common:
 
     - a *sweep*: `dit_small_rope_crossattn` / `dit_small_rope_melmask` differ in
       a trailing variant token, so the family is everything before it.
     - a *series*: `eval_step_22000` / `eval_step_18000_cfg2.0` are the same run
       at different steps, so stripping the step and variant tokens leaves the
       family directly.
+    - a *bare split-token stem*: `lr_0.001` / `lr_0.01` have no separate shared
+      prefix at all -- the recognised token (`lr`) IS the whole stem, so
+      stripping it the way the sweep/series cases do empties the name. The
+      token itself is the family here (real example: a four-arm learning-rate
+      sweep named `results/lr_<lr>.json`, which `attest runs compare lr` must
+      group as family `lr`).
 
     A heuristic, and treated as one. It groups names that follow a separator
     convention; anything else gets no family rather than a wrong one, and an
@@ -384,6 +390,13 @@ def family_of(stem: str) -> str | None:
     parts = [p for p in re.split(r"[-_]", stripped) if p]
 
     if not parts:
+        # Nothing survived stripping. If a recognised split token consumed the
+        # *entire* stem (not just a trailing step/variant suffix on top of a
+        # real prefix), that token's own name is the family -- `lr_0.001` has
+        # no prefix to fall back to, but `lr` is still a meaningful group.
+        m = _SPLIT.match(stem)
+        if m and m.end() == len(stem):
+            return m.group(1).lower()
         return None
     if stripped != stem:
         # a series: the step/variant token was the distinguishing part, so what
