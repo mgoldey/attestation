@@ -6,6 +6,11 @@ A score for the tagging prompt that ships (`attest tag`'s
 `DEFAULT_TAG_INSTRUCTION`) against 28 labelled dev cases, and the transfer
 gate that decides whether a candidate prompt may replace it — run across
 three model families rather than the one the candidate was optimized for.
+Alongside it, a score for the reaction prompt (`feed.simulate_ratings`,
+63 dev cases, precision/recall/AUC and a confidence histogram) and the
+explanation prompt (`feed.explain`, 12 dev cases, refusal precision/recall)
+— the same model-free, production-renderer scoring, for the two tasks that
+don't have an optimizer yet.
 
 ## Prerequisites
 
@@ -16,15 +21,20 @@ three model families rather than the one the candidate was optimized for.
 ```bash
 uv run python evals/run_tagging_eval.py --split dev
 uv run python evals/transfer_matrix.py --artifact evals/prompts/tagging-2026-08-27.json
+uv run python evals/run_reaction_eval.py --split dev
+uv run python evals/run_explanation_eval.py --split dev
 ```
 
 Relative to the repo root (`run.sh` does `cd "$(dirname "$0")/../.."`
-first). Both scripts render the prompt through
-`attestation.features.tag_messages` — the same function `attest tag`
-calls — so the number here is the number in production, not a proxy for
-it. Neither script needs `uv run --group optimize`; that group is only for
-`evals/optimize_tagging.py`, the GEPA optimizer that produced the artifact
-these two evaluate.
+first). All four scripts render their prompt through the production
+function — `attestation.features.tag_messages` (`attest tag`),
+`attestation.simulate.reaction_messages` (`feed.simulate_ratings`),
+`attestation.explain.explanation_messages` (`feed.explain`) — so the number
+here is the number in production, not a proxy for it. None needs
+`uv run --group optimize`; that group is only for
+`evals/optimize_tagging.py`, the GEPA optimizer that produced the tagging
+artifact the first two scripts evaluate — reaction and explanation have no
+optimizer yet, only the corpus and the scorer.
 
 ## What it prints
 
@@ -130,6 +140,16 @@ verbatim.
   dependency group is not installed — neither `uv sync` nor CI installs
   it, by design (`dspy` pulls ~30 packages and nothing under `src/` may
   import it).
+
+**The other two tasks are scored the same way, without an optimizer yet.**
+`run_reaction_eval.py` prints precision, recall, AUC over signed confidence
+(`n/a` when confidence never varies — measured true on gemma4:e2b, which is
+why the histogram prints beside the score) and a confidence histogram;
+`run_explanation_eval.py` prints refusal precision/recall (refused vs.
+should-refuse), because the explanation prompt's refusal clause is
+load-bearing and nothing else in the repo guards it. `score_verdicts` is
+defined once, in `evals/reaction_eval.py`, and `examples/flows/
+persona_eval.py` imports it rather than keeping its own copy.
 
 ## Next
 

@@ -8,3 +8,5 @@ cd "$(dirname "$0")/../.."
 export ATTEST_DB="$(mktemp -d)/attest.db"
 uv run python evals/run_tagging_eval.py --split dev
 uv run python evals/transfer_matrix.py --artifact evals/prompts/tagging-2026-08-27.json
+uv run python evals/run_reaction_eval.py --split dev
+uv run python evals/run_explanation_eval.py --split dev

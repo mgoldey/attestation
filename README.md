@@ -701,6 +701,19 @@ or it refuses to open the database at all — `attest browse` handles that.
 
 ### Prompt evals and the optimizer
 
-The tagging prompt is scored, not tuned by taste. See
-`examples/prompt-evals/` for the eval → transfer-gate golden path and the
-optimizer this repo used to produce the prompt that ships today.
+Every model-driven prompt is scored, not tuned by taste: tagging
+(`evals/tagging_cases.json`, 51 cases), reaction (`evals/reaction_cases.json`,
+100 cases) and explanation (`evals/explanation_cases.json`, 40 cases) each
+have a corpus and a model-free scorer that renders through the same function
+production calls, so a score is always a score of the prompt that ships.
+
+    uv run python evals/run_tagging_eval.py --split dev
+    uv run python evals/run_reaction_eval.py --split dev
+    uv run python evals/run_explanation_eval.py --split dev
+
+Only tagging has an optimizer today (DSPy GEPA — the candidate that ships
+tied the model it was optimized for, 0.807 vs 0.807 on gemma4:e2b, and beat
+the two it never saw, +0.110 on gemma4:e4b and +0.086 on hermes3:8b, with a
+narrower spread across them, which is why the gate's bar is transfer rather
+than a single score). See `examples/prompt-evals/` for the eval →
+transfer-gate golden path.

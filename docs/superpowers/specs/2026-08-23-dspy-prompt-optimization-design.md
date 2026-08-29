@@ -115,6 +115,14 @@ This design fails and should be abandoned if:
   probably be reordered around it.
 - Whether `explain` and `simulate` prompts get the same treatment. Both lack
   a labelled eval set entirely, so they cannot be optimized until they have one.
+- **2026-08-28:** the corpora now exist — `evals/reaction_cases.json` (100
+  cases) and `evals/explanation_cases.json` (40 cases), each with a
+  model-free scorer (`evals/reaction_eval.py`, `evals/explanation_eval.py`)
+  and a public renderer (`simulate.reaction_messages`,
+  `explain.explanation_messages`). Optimisers for either prompt
+  (`optimize_reaction.py`, `optimize_explanation.py`) remain future work —
+  this only makes them possible; see
+  `docs/superpowers/specs/2026-08-28-task-corpora-design.md`.
 - Whether a hosted model (Claude, GPT) belongs in the transfer matrix. It would
   strengthen the transfer claim and it contradicts the offline guarantee for
   anyone running the optimizer — probably opt-in behind the same flag shape as
