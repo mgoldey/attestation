@@ -1,7 +1,7 @@
 # Docs for collaborators: a front door that leads with the answer
 
 **Date:** 2026-08-29
-**Status:** design; implementation follows in the plan of the same date.
+**Status:** implemented 2026-08-29 (d6bbe54, a2e5515, fa49ebe), with deviations below.
 **Depends on:** package docs (`2026-08-29-package-docs-design.md`), golden
 paths (`2026-08-28-golden-paths-design.md`).
 
@@ -106,3 +106,33 @@ Contributing → Changelog. The four research narratives currently under
   the strict build and the whole suite are green; no README fact was
   dropped — each moved section appears, verbatim or lightly edited, in
   exactly one guide (a reviewer diffs the moved text).
+
+## Deviations and findings
+
+**The README's links into `docs/` are real markdown links, and the site
+home includes the README through a hook, not a bare snippet.** A link
+written for the repository root (`[..](docs/guides/x.md)`) resolves to
+`docs/docs/...` once `docs/` is the serving root, and `pymdownx.snippets`
+cannot rewrite what it includes; a `docs/docs` symlink recurses forever.
+`docs/_hooks.py` performs the one include for `index.md` and drops the
+`docs/` prefix as it reads — it must do the include itself because
+`on_page_markdown` runs BEFORE snippets expand, so a hook that only
+rewrites sees the one-line directive. The first cut used backtick paths
+instead, which built clean but were not clickable on GitHub and, being
+plain text, were invisible to `test_the_readme_is_a_front_door`'s link
+check: 17 references a typo could have broken with every gate green.
+
+**Two `tests/test_architecture.py` tests followed the facts they guard.**
+They asserted the 46-tool table and the `feed.list` cap were present in
+`README.md`; that content now lives in `docs/guides/agents.md`, so the
+tests read that file with the same live-surface comparison.
+
+**Install has its own nav entry beside Guides.** The spec's "Install →
+Guides (the seven)" counts `install.md` among the seven; it is a top-level
+entry, because a newcomer looks for "Install" in a nav, and the README's
+flat guide list is left as is.
+
+**`docs/architecture/research-profile.md` was orphaned** from any nav and is
+now the fourth entry in Notes. README went from 778 lines to 148; the
+cold-reader review found one dropped sentence (which golden-path group
+needs a model server), restored in the fix round.
