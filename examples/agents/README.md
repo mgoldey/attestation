@@ -97,6 +97,6 @@ actually running.
 
 ## Next
 
-See README § "Launching alongside hermes-agent" for the manual, step-by-step
+See `docs/guides/agents.md` (the agents guide) for the manual, step-by-step
 registration this path automates, and the catalogue at `examples/README.md`
 for the other golden paths.
