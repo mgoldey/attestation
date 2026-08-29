@@ -1,7 +1,7 @@
 # Package documentation: the surface, the reference, and the ratchets
 
 **Date:** 2026-08-29
-**Status:** design; implementation follows in the plan of the same date.
+**Status:** implemented 2026-08-29, with deviations below.
 **Depends on:** golden paths (`2026-08-28-golden-paths-design.md`), the
 architecture roadmap (`2026-08-21-architecture-roadmap.md`).
 
@@ -144,9 +144,95 @@ command and `CONTRIBUTING.md`.
 - `tests/test_docstring_ratchet.py` passes at a baseline of 0 undocumented
   public defs, and fails — naming the offender — when one is added.
 - `attest <cmd> --help` and `cmd_<cmd>.__doc__` are the same text for
-  every subcommand (one test).
+  every subcommand (one test). **Amended 2026-08-29:** `cmd_*` docstrings
+  carry rationale paragraphs beyond the one-line help text (see
+  Deviations), so "the same text" means the same FIRST line, by
+  construction — `_documented` sets it from `HELP`, and the test checks
+  only that line.
 - `uv run --group docs mkdocs build --strict` exits 0; CI job `docs` is
   green; `docs/reference/cli.md` is byte-equal to a fresh render (one
   test).
 - `CONTRIBUTING.md` and `CHANGELOG.md` exist and are linked from the
   README; `[project.urls]` present.
+
+## Deviations and findings
+
+**`docs/CONTRIBUTING.md`, `docs/CHANGELOG.md`, and `docs/examples` are
+symlinks to the repo-root files/directory, not copies or mkdocs
+`include-markdown` includes.** `mkdocs` serves `docs_dir` as its own root,
+so a root-relative link inside a file included via `pymdownx.snippets`
+(the README's own links to `CONTRIBUTING.md`, `examples/`, and so on)
+resolves against `docs/`, not the repo root — a copy would need every such
+link rewritten, and would drift the moment the source file's links
+changed. A symlink sidesteps both problems: `docs/CONTRIBUTING.md` IS
+`CONTRIBUTING.md`, so a link written relative to the repo root already
+lands correctly once `docs/` is the serving root. The cost is Windows:
+without `git config core.symlinks true` (or Developer Mode enabled at
+clone time), Windows checks a symlink out as a plain text file containing
+the link's target path rather than the linked content, and `mkdocs build`
+would either 404 on it or render the path as literal text. `mkdocs.yml`'s
+new comment block above `nav` and `CONTRIBUTING.md`'s new "The docs site"
+section both name this caveat.
+
+**`cmd_*` docstrings are not literally identical to their `help=` text —
+only their first line is.** The design's "one source" section anticipated
+`HELP` feeding both `--help` and the docstring; what shipped
+(`_documented`, `cli.py`) sets the docstring's first line from `HELP` and
+keeps any rationale paragraph already written in the function's own
+literal docstring below it (blank line, then prose) — `argparse`'s
+`help=` stays a one-line summary, matching how every other subcommand's
+help text reads, while the docstring can still carry the "why" this
+codebase's docstrings are written to carry (see `CONTRIBUTING.md`'s
+"Docstrings on every public def"). `tests/test_cli.py::
+test_every_cmd_docstring_is_its_helps_first_line` checks exactly that: the
+docstring's first line equals `HELP[name]`, not the whole string. The
+Success criteria entry above is amended in place to say so, since "the
+same text" as originally written was already wrong the day this shipped.
+
+**The docstring ratchet's runtime-`__doc__` fallback originally accepted
+ANY decorator, not just `@_documented` — narrowed 2026-08-29 (see follow-up
+item 2).** As written for this spec, `tests/test_docstring_ratchet.py`
+treated a module-level def as documented if it carried any decorator at
+all and its runtime `__doc__` was non-empty, reasoning that a decorator is
+the only thing that can set `__doc__` without a literal string in the
+body. That reasoning missed `@dataclass`, which synthesizes a `__doc__`
+of the form `Foo(a: int)` on the class itself with no literal docstring
+anywhere — so an undocumented public dataclass passed the ratchet.
+Narrowed the fallback to require `_documented` specifically among the
+decorator's names (`_decorator_names()` resolves `@foo`, `@foo(...)`,
+`@mod.foo`, and `@mod.foo(...)` to their base name), and added two
+regression tests: an undocumented `@dataclass` is reported, and a
+`@_documented`-decorated def with no literal docstring is still accepted.
+The collector (`_undocumented`) already took an arbitrary `path` and read
+it directly, so no path-handling refactor was needed; what did need
+generalizing was the module-loading step it uses to check a decorator's
+runtime `__doc__`, which assumed the path was importable as
+`attestation.<...>` — `_load_module_for_import_check()` now falls back to
+loading an out-of-package path directly via `importlib.util`, which is
+what lets the regression tests point the collector at a temp module
+outside `src/attestation` instead of only asserting against the real tree.
+
+**The getting-started page includes the golden-path catalogue by
+snippet, matching the pattern the design already set for the README.**
+`getting-started.md` is `examples/README.md`'s catalogue via
+`pymdownx.snippets`, the same "included, not copied" rule `mkdocs.yml`'s
+Home entry applies to the README — a hand-copied catalogue would drift
+the first time a golden path was added or reordered, which
+`tests/test_golden_paths.py` already guards on the `examples/` side but
+would have no counterpart on the docs-site side.
+
+**Two dead-docstring bugs found in `server.py` during this work:
+`require_user` and `reader` each had a string literal placed AFTER their
+first statement (`conn = connection()`), not before it — a comment-shaped
+piece of dead code, not a docstring, since Python only recognizes a
+literal string as `__doc__` when it is the first statement in the body.**
+Both had real, substantial rationale written (why writes refuse rather
+than autocreate; why the web UI's read path autocreates and only guards
+the write against cross-origin), and both were silently inert: `ast.
+get_docstring` and `help()` alike would have reported `None`, and the
+docstring ratchet itself would have flagged them as undocumented public
+functions had this landed before the fix rather than as part of it. Fixed
+in `7bc20cf` by moving `conn = connection()` below the docstring in both
+functions — the same commit that added the ratchet, so the ratchet never
+saw the bug. Recorded here because a docstring rewrite that reorders
+statements is exactly the kind of change a diff reviewer skims past.

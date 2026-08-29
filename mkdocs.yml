@@ -25,6 +25,26 @@ markdown_extensions:
       base_path: ["."]
       check_paths: true
 
+# Where each nav page's content actually comes from -- so an edit lands in
+# the right place rather than a copy the next build overwrites or ignores:
+#   - Generated, never hand-edit: site/specs.md (scripts/render_spec_index.py)
+#     and reference/cli.md (scripts/render_cli_reference.py). Both are
+#     asserted fresh by tests/test_docs_site.py; a hand edit is silently
+#     overwritten by the next `uv run python scripts/render_*.py` and would
+#     fail that test in the meantime.
+#   - Hand-written stubs: reference/api/*.md, one per module in
+#     attestation.__all__, each a `::: attestation.<module>` mkdocstrings
+#     directive with no prose of its own -- the prose lives in the module's
+#     own docstring.
+#   - Snippet-includes: index.md (README.md) and getting-started.md
+#     (examples/README.md's golden-path catalogue), via pymdownx.snippets --
+#     the included file stays the single source, this repo included.
+#   - Symlinks (docs/CONTRIBUTING.md, docs/CHANGELOG.md, docs/examples):
+#     point at the repo-root files/directory so a snippet-include's
+#     root-relative links resolve under docs_dir, without a second copy to
+#     drift. Needs `git config core.symlinks true` (or Windows Developer
+#     Mode) at checkout time -- without it, Windows checks these out as
+#     plain text files containing the link path, not the linked content.
 nav:
   - Home: index.md
   - Getting started: getting-started.md
@@ -53,3 +73,14 @@ nav:
           - embed: reference/api/embed.md
           - db: reference/api/db.md
           - ports: reference/api/ports.md
+
+# Deliberately-orphaned pages: real content, reachable by browsing the repo
+# or the symlinked directory, but not meant to appear in the nav or trigger
+# mkdocs's "not included in nav" INFO line. examples/** is the golden-path
+# catalogue's own READMEs (linked FROM getting-started.md's included
+# catalogue, not duplicated as nav entries); superpowers/** is the specs
+# already indexed by site/specs.md and their plans, which specs.md links to
+# individually rather than the nav doing so a second time.
+not_in_nav: |
+  examples/**
+  superpowers/**

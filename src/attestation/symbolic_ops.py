@@ -56,7 +56,17 @@ def describe(expr) -> dict:
 
 
 def op_simplify(payload: dict) -> dict:
-    """`sym.simplify`: SymPy's `simplify()` on `payload["expr"]`."""
+    """`sym.simplify`: SymPy's `simplify()` on `payload["expr"]`.
+
+    `simplify()` is a heuristic search over rewrite rules (factoring,
+    trig identities, powsimp, ratsimp, and more), not a decision procedure
+    -- it tries a fixed set of strategies and keeps whichever result scores
+    shortest, so it can leave an expression that a human would simplify
+    further unchanged, and it makes no guarantee of finding a canonical or
+    minimal form. It never raises on an already-simple expression; there is
+    no symbol to resolve here, unlike `op_solve` and the operations below,
+    since `simplify()` acts on the whole expression rather than with
+    respect to one variable."""
     expr = parse_safe(payload["expr"])
     out = describe(sp.simplify(expr))
     out["parsed_input"] = str(expr)
@@ -65,7 +75,21 @@ def op_simplify(payload: dict) -> dict:
 
 def op_solve(payload: dict) -> dict:
     """`sym.solve`: roots of `payload["expr"]` for `payload.get("symbol")`,
-    resolved via `resolve_symbol` when no symbol is named."""
+    resolved via `resolve_symbol` when no symbol is named.
+
+    `resolve_symbol` picks the target the same way for every operation in
+    this module: an explicit `symbol=` always wins (and must actually
+    appear in the expression, or this raises naming the free symbols that
+    do); with none given, the expression's free symbols must number exactly
+    one. Zero free symbols defaults to `x` (a constant expression has
+    nothing to disambiguate). More than one free symbol raises rather than
+    picking, e.g., the alphabetically-first or first-encountered symbol --
+    for `x*y - 1`, guessing `x` would silently answer "solve for x treating
+    y as a constant" when the caller may have meant y, and a silently wrong
+    variable is worse than an explicit refusal naming both candidates (see
+    `test_ambiguous_symbol_raises_naming_candidates` and
+    `test_solve_explicit_symbol_overrides_autodetect` in
+    `tests/test_symbolic_ops.py`)."""
     expr = parse_safe(payload["expr"])
     symbol = resolve_symbol(expr, payload.get("symbol"))
     roots = sp.solve(expr, symbol)

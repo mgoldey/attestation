@@ -12,7 +12,6 @@ dependency).
 
 Spec: docs/superpowers/specs/2026-08-29-package-docs-design.md."""
 
-import os
 import re
 import subprocess
 import sys
@@ -23,12 +22,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_cli_reference_is_a_fresh_render():
+def test_cli_reference_is_a_fresh_render(monkeypatch):
     """`docs/reference/cli.md` is generated from the live parser; a hand
     edit here would silently drift from `--help` the way a hand-transcribed
     reference always does.
     """
-    os.environ["COLUMNS"] = "80"
+    monkeypatch.setenv("COLUMNS", "80")
     sys.path.insert(0, str(ROOT / "scripts"))
     import render_cli_reference
 

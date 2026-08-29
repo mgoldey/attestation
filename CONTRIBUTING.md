@@ -84,6 +84,14 @@ pointing at the wrong module), so this isn't optional bookkeeping — it's a
 gate. **Add your new file's name to the appropriate `{...}` group in
 `CLAUDE.md` in the same commit that adds the file.**
 
+## The docs site
+
+`mkdocs.yml`'s comment block above `nav` states which pages are generated
+(never hand-edit), hand-written, snippet-included, or symlinked — read it
+before touching a page — and `uv run --group docs mkdocs build --strict`
+(`tests/test_docs_site.py` covers the parts of it that don't need `mkdocs`
+installed) is how you check a nav or cross-reference change before pushing.
+
 ## Adding a golden path
 
 `examples/<name>/` is this repo's worked-example format

@@ -16,24 +16,36 @@ like `cli.py`'s `add_db`, is still something a reader can end up looking at
 (via `__doc__`, a traceback, or just reading the file) and still counts.
 
 A def is documented if the AST shows a literal docstring, OR -- for a
-MODULE-LEVEL def only -- if it carries a decorator and its runtime
-`__doc__` is non-empty. The second arm exists for exactly one case:
-`cli.py`'s `cmd_*` handlers get `__doc__` from `@_documented(name)`, which
-reads the argparse `help=` text out of `HELP` at import time rather than
-repeating it as a second literal string (see cli.py's own docstring on
-`HELP` and `_documented` for why). It is deliberately NOT extended to a
-nested function/closure (`add_db`, `wrapper`, ...): those cannot carry a
-decorator in the first place, so a missing literal docstring there is
-never explained by this mechanism and must stay a real finding.
+MODULE-LEVEL def only -- if its decorator list names `_documented`
+specifically and its runtime `__doc__` is non-empty. That arm exists for
+exactly one case: `cli.py`'s `cmd_*` handlers get `__doc__` from
+`@_documented(name)`, which reads the argparse `help=` text out of `HELP`
+at import time rather than repeating it as a second literal string (see
+cli.py's own docstring on `HELP` and `_documented` for why). It is
+deliberately NOT extended to a nested function/closure (`add_db`,
+`wrapper`, ...): those cannot carry a decorator in the first place, so a
+missing literal docstring there is always a real finding.
+
+Narrowed to the named decorator (not "any decorator") 2026-08-29: `@dataclass`
+also sets a runtime `__doc__` (it synthesizes `Foo(a: int)` as the class's
+docstring), so the original "any decorator + non-empty `__doc__`" fallback
+let an undocumented public `@dataclass` pass silently. Only `@_documented`
+is a real docstring-setting mechanism this repo has written; nothing else
+gets the benefit of the doubt.
 """
 
 import ast
 import importlib
+import importlib.util
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "attestation"
 
 BASELINE = 0
+
+# The only decorator this ratchet trusts to set __doc__ at import time
+# without a literal docstring in the body. See cli.py's HELP/_documented.
+DOC_SETTING_DECORATOR = "_documented"
 
 
 def _module_name(path: Path) -> str:
@@ -52,10 +64,49 @@ def _module_name(path: Path) -> str:
     return ".".join(parts)
 
 
+def _decorator_names(child: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """The base name of each decorator on `child` -- `@foo`, `@foo(...)`,
+    `@mod.foo`, and `@mod.foo(...)` all resolve to `"foo"`. Only the base
+    name is ever compared against `DOC_SETTING_DECORATOR`, so an aliased or
+    namespaced spelling of an unrelated decorator can't collide with it."""
+    names: set[str] = set()
+    for dec in child.decorator_list:
+        target = dec.func if isinstance(dec, ast.Call) else dec
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+        elif isinstance(target, ast.Attribute):
+            names.add(target.attr)
+    return names
+
+
+def _load_module_for_import_check(path: Path):
+    """The module object `_undocumented` consults for a `@_documented`-style
+    runtime `__doc__`. Under `src/attestation`, this is the installed
+    package module (so it reflects what a real import sees); for an
+    arbitrary path outside the package (a temp module in a regression test),
+    it is loaded directly from the file, since `_module_name` only resolves
+    paths relative to `SRC.parent`."""
+    try:
+        path.relative_to(SRC.parent)
+    except ValueError:
+        spec = importlib.util.spec_from_file_location(f"_ratchet_check_{path.stem}", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    return importlib.import_module(_module_name(path))
+
+
 def _undocumented(path: Path) -> list[str]:
-    """`file:line kind name` for every undocumented public def in `path`."""
+    """`file:line kind name` for every undocumented public def in `path`.
+
+    Reads and parses `path` itself, so it is callable on any `.py` file --
+    not only one under `SRC` -- which is what lets a regression test point
+    it at a temp module."""
     tree = ast.parse(path.read_text(), filename=str(path))
-    rel = path.relative_to(SRC.parent.parent)
+    try:
+        rel = path.relative_to(SRC.parent.parent)
+    except ValueError:
+        rel = path
     out: list[str] = []
 
     if ast.get_docstring(tree) is None:
@@ -77,13 +128,19 @@ def _undocumented(path: Path) -> list[str]:
             if isinstance(child, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
                 if not child.name.startswith("_"):
                     documented = ast.get_docstring(child) is not None
-                    if not documented and attr_path is not None and child.decorator_list:
-                        # A decorator can set __doc__ at import time (see
-                        # cli.py's `_documented`) without a literal string
+                    if (
+                        not documented
+                        and attr_path is not None
+                        and DOC_SETTING_DECORATOR in _decorator_names(child)
+                    ):
+                        # @_documented can set __doc__ at import time (see
+                        # cli.py's HELP/_documented) without a literal string
                         # in the body -- checkable only for a def reachable
-                        # as a module/class attribute.
+                        # as a module/class attribute. No other decorator
+                        # gets this benefit of the doubt (see module
+                        # docstring: @dataclass also sets a runtime __doc__).
                         if module is None:
-                            module = importlib.import_module(_module_name(path))
+                            module = _load_module_for_import_check(path)
                         obj = module
                         for part in [*attr_path, child.name]:
                             obj = getattr(obj, part, None)
@@ -115,3 +172,52 @@ def test_every_public_def_has_a_docstring():
     assert len(missing) <= BASELINE, (
         f"{len(missing)} undocumented public def(s), baseline is {BASELINE}:\n" + "\n".join(missing)
     )
+
+
+def test_undocumented_dataclass_is_reported_despite_synthesized_doc(tmp_path):
+    """`@dataclass` sets a runtime `__doc__` (`Foo(a: int)`) with no literal
+    docstring anywhere -- the exact shape the pre-2026-08-29 fallback let
+    through, since it trusted "any decorator + non-empty `__doc__`" rather
+    than checking which decorator. This must still be a finding."""
+    module = tmp_path / "undocumented_dataclass_module.py"
+    module.write_text(
+        '"""A module that states itself but not its dataclass."""\n'
+        "\n"
+        "from dataclasses import dataclass\n"
+        "\n"
+        "\n"
+        "@dataclass\n"
+        "class Foo:\n"
+        "    a: int\n"
+    )
+
+    missing = _undocumented(module)
+
+    assert any("class Foo" in line for line in missing), missing
+
+
+def test_documented_decorator_without_literal_docstring_is_accepted(tmp_path):
+    """The narrowed fallback still accepts the one real case it exists for:
+    a module-level def whose decorator list names `_documented` and whose
+    runtime `__doc__` is non-empty, even with no literal docstring in the
+    body."""
+    module = tmp_path / "documented_via_decorator_module.py"
+    module.write_text(
+        '"""A module that states itself and documents a def via decorator."""\n'
+        "\n"
+        "\n"
+        "def _documented(func):\n"
+        '    """Set on the module for the test to find, not a real decorator\n'
+        '    factory -- just enough to exercise the ratchet\'s fallback."""\n'
+        '    func.__doc__ = "set at import time, not as a literal string"\n'
+        "    return func\n"
+        "\n"
+        "\n"
+        "@_documented\n"
+        "def documented_thing():\n"
+        "    return 1\n"
+    )
+
+    missing = _undocumented(module)
+
+    assert not any("documented_thing" in line for line in missing), missing

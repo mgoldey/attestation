@@ -431,9 +431,10 @@ def list_runs(
     family: str | None = None,
     limit: int = 20,
 ) -> list[dict]:
-    """Runs in the ledger, optionally filtered by project/family, newest
-    ordering left to the caller's `ORDER BY` needs -- here, grouped for
-    display rather than chronological."""
+    """Runs in the ledger, optionally filtered by project/family. Ordered
+    `project, family, name` -- grouped for display so related runs sit
+    together, not `started DESC`, so this is not a "most recent runs" query;
+    a caller wanting recency order does its own sort on the result."""
     sql = "SELECT id, project, name, family, status, started, source_path FROM runs"
     clauses, params = [], []
     if project:

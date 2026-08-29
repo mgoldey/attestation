@@ -7,10 +7,12 @@ emits each command's `--help` text verbatim. The alternative -- a hand-typed
 reference page -- drifts the moment a flag changes; this cannot, because
 `tests/test_docs_site.py` asserts the committed file equals a fresh render.
 
-`argparse` wraps `format_help()` to the terminal width (`COLUMNS`/`shutil.
-get_terminal_size()`), so the same parser renders different text in a wide
-terminal and a CI runner unless the width is pinned. `COLUMNS=80` is set
-here, before `argparse` is imported, and the test pins the same value.
+`argparse` wraps `format_help()` to the terminal width, reading `COLUMNS`
+via `shutil.get_terminal_size()` at CALL time (not at import time -- setting
+it after `import argparse` would work just as well), so the same parser
+renders different text in a wide terminal and a CI runner unless the width
+is pinned. `COLUMNS=80` is set here, before `format_help()` is ever called,
+and the test pins the same value.
 
 Run: uv run python scripts/render_cli_reference.py
 """
