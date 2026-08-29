@@ -888,10 +888,27 @@ def _strip_inline_comment(text: str) -> str:
 
     DVC's own writer never emits one, but a hand-edited dvc.yaml commonly
     does (`- metrics/${item}.json  # note`). Only a `#` preceded by
-    whitespace counts, so a literal `#` glued to a path or token (unusual,
-    but not this module's business to reject) is left alone.
+    whitespace counts AND outside a quoted segment: an earlier version of
+    this function used a plain whitespace-then-hash regex and truncated a
+    single-quoted `1 # not a comment` to `1`, and a double-quoted `see docs
+    # section 3` to `see docs` -- found by review, not by running a real
+    dvc.yaml, since DVC's own writer never quotes a scalar in the first
+    place (this module's own long-standing assumption, stated on
+    `_indented_lines` above). A hand-edited file can still quote one, so a
+    `#` is tracked against open/close quote state one character at a time
+    rather than assumed to never occur inside one.
     """
-    return re.sub(r"(?:^|\s)#.*$", "", text).rstrip()
+    quote: str | None = None
+    for i, ch in enumerate(text):
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+        elif ch == "#" and (i == 0 or text[i - 1].isspace()):
+            return text[:i].rstrip()
+    return text.rstrip()
 
 
 def _indented_lines(text: str) -> list[tuple[int, str, str | None]]:

@@ -756,6 +756,59 @@ def test_dvc_flow_style_metrics_list_is_still_read(tmp_path):
     assert run.config.get("lr") == "0.1"
 
 
+@pytest.mark.parametrize(
+    "quoted",
+    [
+        "lr: '1 # not a comment'",
+        'note: "see docs # section 3"',
+    ],
+    ids=["single-quoted", "double-quoted"],
+)
+def test_a_hash_inside_a_quoted_value_is_not_a_comment(quoted):
+    """`_strip_inline_comment` first stripped a trailing `# ...` with a
+    plain whitespace-then-hash regex, which does not know about quoting --
+    `lr: '1 # not a comment'` truncated to `lr: '1`, and `note: "see docs #
+    section 3"` truncated to `note: "see docs`, both silently. DVC's own
+    writer never quotes a scalar (this module's long-standing assumption),
+    but a hand-edited dvc.yaml or params.yaml can, so the value must
+    survive whichever quote style wraps it."""
+    assert generic._strip_inline_comment(quoted) == quoted
+
+
+@pytest.mark.parametrize(
+    ("quoted", "expected"),
+    [
+        ("lr: '1 # not a comment'  # real comment", "lr: '1 # not a comment'"),
+        ('note: "see docs # section 3"  # real comment', 'note: "see docs # section 3"'),
+    ],
+    ids=["single-quoted", "double-quoted"],
+)
+def test_a_real_trailing_comment_after_a_quoted_value_is_still_stripped(quoted, expected):
+    """The quote-aware fix must not overcorrect into never stripping a
+    comment at all -- a genuine `# comment` after a closed quote is still a
+    comment and must still go, whichever quote style precedes it."""
+    assert generic._strip_inline_comment(quoted) == expected
+
+
+def test_a_quoted_hash_in_params_yaml_survives_through_the_dvc_reader(tmp_path):
+    """End-to-end version of the two tests above, through the actual
+    params.yaml parsing path (`_dvc_params_yaml`, built on
+    `_indented_lines`/`_strip_inline_comment`) rather than the helper in
+    isolation -- proves the fix reaches the code path the bug was found in,
+    not just the unit that was patched."""
+    proj = tmp_path / "p"
+    _dvc_project(proj, items=("0.1",), metrics={"0.1": {"auc": 0.95}})
+    params_path = proj / "params.yaml"
+    params_path.write_text(params_path.read_text() + 'note: "see docs # section 3"\n')
+
+    parsed = generic._dvc_params_yaml(params_path)
+    assert parsed["note"] == '"see docs # section 3"'
+
+    (run,) = generic.discover(proj)
+    assert run.name == "train@0.1"
+    assert run.adapter == "dvc"
+
+
 def test_the_reader_scans_the_real_committed_dvc_fixture():
     """examples/dvc/ is real: written by `dvc repro` (dvc 3.x, generate.sh,
     2026-08-28), not transcribed from documentation."""
