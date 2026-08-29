@@ -256,26 +256,34 @@ def avg_ranks(scores: np.ndarray) -> np.ndarray:
 
 
 def _click_training_data(conn, user_id: int):
+    """This user's click history as row dicts (`useful`, float32 `embedding`),
+    or `[]` when there is none -- the reader `classifier_probs`'s caller
+    (`rank_items`) hands to the pure blend, so the pure side never sees a
+    connection."""
     rows = conn.execute(
         "SELECT c.useful, v.embedding FROM clicks c"
         " JOIN item_vectors v ON v.rowid = c.item_id WHERE c.user_id = ?",
         (user_id,),
     ).fetchall()
-    if not rows:
-        return None, None
-    y = np.array([r["useful"] for r in rows])
-    X = np.stack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])
-    return X, y
+    return [
+        {"useful": r["useful"], "embedding": np.frombuffer(r["embedding"], dtype=np.float32)}
+        for r in rows
+    ]
 
 
-def classifier_probs(conn, user_id: int, X: np.ndarray) -> np.ndarray | None:
-    """P(useful) for each row of `X` from a persona's own click history, or
-    `None` when there is not yet a click history to learn from (see the
-    single-class guard below) -- callers must fall back to embedding-only
-    order on `None` rather than treat it as all-zero."""
-    X_train, y = _click_training_data(conn, user_id)
-    if y is None or len(set(y.tolist())) < 2:
+def classifier_probs(click_rows, X: np.ndarray) -> np.ndarray | None:
+    """P(useful) for each row of `X` from a persona's own click history
+    (`click_rows`: dicts with `useful` and a float32 `embedding`), or `None`
+    when there is not yet a two-class history to learn from -- callers must
+    fall back to embedding-only order on `None` rather than treat it as
+    all-zero. Takes rows, not a connection, so the blend can be exercised on
+    literal vectors."""
+    if not click_rows:
+        return None
+    y = np.array([int(r["useful"]) for r in click_rows])
+    if len(set(y.tolist())) < 2:
         return None  # single-class guard: never let sklearn see one class
+    X_train = np.stack([np.asarray(r["embedding"], dtype=np.float32) for r in click_rows])
     clf = LogisticRegression(class_weight="balanced", C=0.1, max_iter=1000)
     clf.fit(X_train, y)
     return clf.predict_proba(X)[:, 1]
@@ -405,6 +413,56 @@ def _profile_vector(conn, embedder, user_id: int, interests_text: str) -> np.nda
     return vec
 
 
+def rank_rows(
+    rows: list[dict],
+    profile_vec: np.ndarray,
+    click_rows: list[dict] | None,
+    pref: np.ndarray | None,
+    n_clicks: int,
+) -> list[RankedItem]:
+    """The blend, on rows: profile cosine, the click classifier (silent on a
+    single-class history) and the tie-averaged preference term, mixed by
+    `blend_weight(n_clicks)`. Pure: no connection, no embedder -- the reader
+    `rank_items` supplies rows with float32 embeddings and optional `tags`/
+    `content_type`, and `examples/ranking/` calls this on literal vectors."""
+    if not rows:
+        return []
+    X = np.stack([np.asarray(r["embedding"], dtype=np.float32) for r in rows])
+    profile_sims = X @ profile_vec
+    profile_rank = ranks(profile_sims)
+
+    click_ranks = []
+    probs = classifier_probs(click_rows, X)
+    if probs is not None:
+        click_ranks.append(ranks(probs))
+    if pref is not None:
+        # Tie-averaged ranks: tied (mostly neutral-0.5) items share one rank value, so the
+        # pref term adds no tie-break noise and an all-neutral array is a blend no-op.
+        click_ranks.append(avg_ranks(pref))
+
+    if not click_ranks:
+        final = profile_rank.astype(np.float64)
+    else:
+        w = blend_weight(n_clicks)
+        final = w * np.mean(click_ranks, axis=0) + (1 - w) * profile_rank
+
+    order = np.argsort(final)
+    return [
+        RankedItem(
+            item_id=rows[i]["id"],
+            title=rows[i]["title"],
+            url=rows[i]["url"],
+            source=rows[i]["source"],
+            score=float(final[i]),
+            profile_similarity=float(profile_sims[i]),
+            tags=rows[i].get("tags") or [],
+            content_type=rows[i].get("content_type"),
+            summary=rows[i]["summary"],
+        )
+        for i in order
+    ]
+
+
 def rank_items(
     conn,
     embedder,
@@ -428,31 +486,8 @@ def rank_items(
     )
     if not rows:
         return []
-    X = np.stack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])
     user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     profile_vec = _profile_vector(conn, embedder, user_id, user["interests"] or user["name"])
-    profile_sims = X @ profile_vec
-    profile_rank = ranks(profile_sims)
-
-    probs = classifier_probs(conn, user_id, X)
-    n_clicks = conn.execute(
-        "SELECT COUNT(*) c FROM clicks WHERE user_id = ?", (user_id,)
-    ).fetchone()["c"]
-
-    click_ranks = []
-    if probs is not None:
-        click_ranks.append(ranks(probs))
-    if _preference_ready(conn, user_id):
-        pref = pref_scores_for_items(conn, user_id, [r["id"] for r in rows])
-        # Tie-averaged ranks: tied (mostly neutral-0.5) items share one rank value, so the
-        # pref term adds no tie-break noise and an all-neutral array is a blend no-op.
-        click_ranks.append(avg_ranks(pref))
-
-    if not click_ranks:
-        final = profile_rank.astype(np.float64)
-    else:
-        w = blend_weight(n_clicks)
-        final = w * np.mean(click_ranks, axis=0) + (1 - w) * profile_rank
 
     ids = [r["id"] for r in rows]
     ctype: dict[int, str] = {}
@@ -470,21 +505,29 @@ def rank_items(
         ):
             tags_by.setdefault(r["item_id"], []).append(r["tag"])
 
-    order = np.argsort(final)
-    return [
-        RankedItem(
-            item_id=rows[i]["id"],
-            title=rows[i]["title"],
-            url=rows[i]["url"],
-            source=rows[i]["source"],
-            score=float(final[i]),
-            profile_similarity=float(profile_sims[i]),
-            tags=tags_by.get(rows[i]["id"], []),
-            content_type=ctype.get(rows[i]["id"]),
-            summary=rows[i]["summary"],
-        )
-        for i in order
+    row_dicts = [
+        {
+            "id": r["id"],
+            "title": r["title"],
+            "url": r["url"],
+            "source": r["source"],
+            "summary": r["summary"],
+            "embedding": np.frombuffer(r["embedding"], dtype=np.float32),
+            "tags": tags_by.get(r["id"], []),
+            "content_type": ctype.get(r["id"]),
+        }
+        for r in rows
     ]
+
+    click_rows = _click_training_data(conn, user_id)
+    # Tie-averaged ranks: tied (mostly neutral-0.5) items share one rank value, so the
+    # pref term adds no tie-break noise and an all-neutral array is a blend no-op.
+    pref = pref_scores_for_items(conn, user_id, ids) if _preference_ready(conn, user_id) else None
+    n_clicks = conn.execute(
+        "SELECT COUNT(*) c FROM clicks WHERE user_id = ?", (user_id,)
+    ).fetchone()["c"]
+
+    return rank_rows(row_dicts, profile_vec, click_rows, pref, n_clicks)
 
 
 def bootstrap_persona(conn, embedder, user_name: str, k: int = 30) -> int:
@@ -677,6 +720,12 @@ def ranking_quality(conn, user_id: int) -> dict:
         counts[int(row["useful"])] = counts.get(int(row["useful"]), 0) + row["n"]
         by_source[row["source"]] = by_source.get(row["source"], 0) + row["n"]
 
+    return _ranking_quality(counts, by_source)
+
+
+def _ranking_quality(counts: dict[int, int], by_source: dict[str, int]) -> dict:
+    """Caveat selection over click counts, pure so the 199/1 case is a
+    two-dict test; `ranking_quality` is the one-query reader."""
     total = sum(counts.values())
     active = len(counts) > 1
     real = sum(n for src, n in by_source.items() if src in HUMAN_CLICK_SOURCES)

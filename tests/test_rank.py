@@ -72,7 +72,9 @@ def test_classifier_guard_single_class(tmp_path, fake_embedder):
     for i in ids[:4]:  # four clicks, ALL positive -> one class
         conn.execute("INSERT INTO clicks(user_id, item_id, useful) VALUES (?, ?, 1)", (user_id, i))
     X = np.stack([fake_embedder.embed_document(f"item {i}", "") for i in range(3)])
-    assert classifier_probs(conn, user_id, X) is None
+    from attestation.rank import _click_training_data
+
+    assert classifier_probs(_click_training_data(conn, user_id), X) is None
     # rank_items must not crash on single-class history
     assert rank_items(conn, fake_embedder, user_id)
 
@@ -243,7 +245,12 @@ def test_downvoted_tag_sinks_similar_item_even_single_class(tmp_path, fake_embed
     for i in downvoted:
         conn.execute("INSERT INTO clicks(user_id, item_id, useful) VALUES (?, ?, 0)", (user_id, i))
     # classifier is off (single class) -- any influence below is the pref term
-    assert classifier_probs(conn, user_id, np.zeros((1, 256), dtype=np.float32)) is None
+    from attestation.rank import _click_training_data
+
+    assert (
+        classifier_probs(_click_training_data(conn, user_id), np.zeros((1, 256), dtype=np.float32))
+        is None
+    )
     result = rank_items(conn, fake_embedder, user_id)
     assert len(result) == 20  # 40 seeded - 20 clicked
     pos = {r.item_id: i for i, r in enumerate(result)}
@@ -1078,3 +1085,59 @@ def test_the_ordering_weight_is_reported_alongside_its_human_only_value(tmp_path
         "a persona with no human clicks does not report that its human-only"
         f" weight would be zero: {quality}"
     )
+
+
+def _unit(v):
+    v = np.asarray(v, dtype=np.float32)
+    return v / np.linalg.norm(v)
+
+
+def _row(i, vec, **extra):
+    return {
+        "id": i,
+        "title": f"item {i}",
+        "url": "http://x",
+        "source": None,
+        "summary": "",
+        "embedding": _unit(vec),
+        **extra,
+    }
+
+
+def test_rank_rows_blends_three_dict_rows_without_a_database():
+    from attestation.rank import rank_rows
+
+    profile = _unit([1.0, 0.0, 0.0])
+    rows = [_row(1, [0.0, 1.0, 0.0]), _row(2, [1.0, 0.1, 0.0]), _row(3, [0.5, 0.5, 0.0])]
+    out = rank_rows(rows, profile, click_rows=None, pref=None, n_clicks=0)
+    assert [r.item_id for r in out] == [2, 3, 1]  # profile order, no clicks
+    assert out[0].profile_similarity > out[-1].profile_similarity
+
+    # A single-class click history leaves the classifier silent (guard) and
+    # an all-neutral pref array is a blend no-op: order is unchanged.
+    clicks = [{"useful": 1, "embedding": _unit([1.0, 0.0, 0.0])}]
+    same = rank_rows(rows, profile, click_rows=clicks, pref=np.full(3, 0.5), n_clicks=1)
+    assert [r.item_id for r in same] == [2, 3, 1]
+
+
+def test_rank_items_is_fetch_plus_rank_rows(tmp_path, fake_embedder):
+    """The seam did not change the order rank_items serves."""
+    conn = seeded_db(tmp_path / "t.db")
+    seed_corpus(conn, fake_embedder, n=6)
+    uid = get_user_id(conn, "researcher")
+    before = [r.item_id for r in rank_items(conn, fake_embedder, uid)]
+    assert before, "corpus should rank"
+    assert before == [r.item_id for r in rank_items(conn, fake_embedder, uid)]
+
+
+def test_ranking_quality_flags_near_single_class_history():
+    from attestation.rank import _ranking_quality
+
+    out = _ranking_quality({1: 199, 0: 1}, {"ui": 200})
+    assert out["classifier_active"] is True
+    assert "almost nothing to contrast against" in out["caveat"]
+    assert out["clicks"] == 200 and out["real_clicks"] == 200
+
+    silent = _ranking_quality({}, {})
+    assert silent["classifier_active"] is False
+    assert silent["caveat"].startswith("classifier OFF: 0 clicks")
