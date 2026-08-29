@@ -50,24 +50,26 @@ artifact it came from.
 Four things, plus one way to use all of them:
 
 - **The experiment ledger** reads runs from artifacts already on disk — no
-  instrumentation, no `log_metric()` calls — and ranks the arms of a sweep
-  with caveats rather than a silent verdict. Five tracker layouts (W&B,
-  MLflow, Sacred, DVC, Hydra) are read as conventions of their own. See
-  `docs/guides/ledger.md`.
+  instrumentation, no `log_metric()` calls — and ranks the
+  [arms](docs/concepts.md) of a sweep with caveats rather than a silent
+  verdict. Five tracker layouts (W&B, MLflow, Sacred, DVC, Hydra) are read
+  as conventions of their own. See
+  [docs/guides/ledger.md](docs/guides/ledger.md).
 - **Verifiable claims and citations** check a number in your prose against
   the run that produced it, one of five verdicts (`supported`,
   `contradicted`, `unsupported`, `ambiguous`, `stale`), and lint a citation
   key against your configured bibliography. See
-  `docs/guides/claims-and-citations.md`.
+  [docs/guides/claims-and-citations.md](docs/guides/claims-and-citations.md).
 - **The feed and knowledge graph** rank a personalised reading list from
   cosine similarity plus click-trained terms, and derive a concept graph
   from the same tagging pass — no separate content pipeline. See
-  `docs/guides/feed.md`.
+  [docs/guides/feed.md](docs/guides/feed.md).
 - **Symbolic derivations** run in a sandboxed subprocess with a timeout and
-  memory cap, never `eval`-ing input. See `sym.*` in `docs/guides/agents.md`.
+  memory cap, never `eval`-ing input. See `sym.*` in
+  [docs/guides/agents.md](docs/guides/agents.md).
 - **Use it from an agent** — all four are exposed as 46 MCP tools, restricted
   per session into `feed`/`provenance`/`knowledge`/`symbolic` surfaces. See
-  `docs/guides/agents.md` and the repo's own
+  [docs/guides/agents.md](docs/guides/agents.md) and the repo's own
   `src/attestation/skills/research-provenance/SKILL.md`.
 
 ## Install
@@ -81,8 +83,8 @@ uv run attest install          # idempotent setup: .env, models, first ingest
 uv run attest install --check  # diagnose only, exits 1 on gaps
 ```
 
-See `docs/guides/install.md` for prerequisites and the manual steps
-`attest install` automates.
+See [docs/guides/install.md](docs/guides/install.md) for prerequisites and
+the manual steps `attest install` automates.
 
 ## Golden paths
 
@@ -95,7 +97,7 @@ for each. Twelve paths, grouped by prerequisite:
 
 **None — pure local computation:**
 
-- `agents/` — the install doctor, `attest emit`'s configs, one surface over stdio
+- `agents/` — the install doctor, `attest emit`'s configs, one [surface](docs/concepts.md) over stdio
 - `citations/` — a BibTeX library, a draft, one citation key that resolves nowhere
 - `dvc/` — a real `dvc repro` pipeline, four `foreach` arms ranked
 - `flows/` — forty items scored, every MCP tool over stdio, four MLflow arms
@@ -107,7 +109,8 @@ for each. Twelve paths, grouped by prerequisite:
 - `wandb/` — a real offline W&B run directory, four arms ranked
 - `workspace/` — the ledger and claim checker, three claims wrong on purpose
 
-**A model server at `LLM_BASE_URL`:**
+**A model server at `LLM_BASE_URL`:** every path above needs no model; this
+one does, to score prompts against a running LLM.
 
 - `prompt-evals/` — the tagging prompt's dev score and the transfer gate
 
@@ -126,17 +129,17 @@ uv run --group examples python examples/flows/run_all.py --offline
 `uv run --group docs mkdocs serve` runs a browsable site over everything
 below. The guides, one per question:
 
-- `docs/guides/install.md` — set up with or without a model server
-- `docs/guides/agents.md` — MCP tools, surfaces, the skill
-- `docs/guides/ledger.md` — reading and ranking runs
-- `docs/guides/claims-and-citations.md` — checking a draft
-- `docs/guides/feed.md` — how ranking works
-- `docs/guides/evals.md` — how prompts are measured
-- `docs/guides/testing.md` — the gates and CI jobs
+- [docs/guides/install.md](docs/guides/install.md) — set up with or without a model server
+- [docs/guides/agents.md](docs/guides/agents.md) — MCP tools, surfaces, the skill
+- [docs/guides/ledger.md](docs/guides/ledger.md) — reading and ranking runs
+- [docs/guides/claims-and-citations.md](docs/guides/claims-and-citations.md) — checking a draft
+- [docs/guides/feed.md](docs/guides/feed.md) — how ranking works
+- [docs/guides/evals.md](docs/guides/evals.md) — how prompts are measured
+- [docs/guides/testing.md](docs/guides/testing.md) — the gates and CI jobs
 
-Plus `docs/concepts.md` for first-ten-minutes vocabulary, the CLI reference
-(`docs/reference/cli.md`) and API reference under `docs/`, design records
-under `docs/superpowers/specs/`, measurement lessons
+Plus [docs/concepts.md](docs/concepts.md) for first-ten-minutes vocabulary, the
+CLI reference (`docs/reference/cli.md`) and API reference under `docs/`, design
+records under `docs/superpowers/specs/`, measurement lessons
 (`docs/measurement-lessons.md`), [CONTRIBUTING.md](CONTRIBUTING.md) for the
 gates and conventions, and [CHANGELOG.md](CHANGELOG.md) for what's landed.
 

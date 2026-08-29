@@ -10,6 +10,9 @@ strict: true
 theme:
   name: material
 
+hooks:
+  - docs/_hooks.py
+
 plugins:
   - search
   - mkdocstrings:
@@ -36,9 +39,18 @@ markdown_extensions:
 #     attestation.__all__, each a `::: attestation.<module>` mkdocstrings
 #     directive with no prose of its own -- the prose lives in the module's
 #     own docstring.
-#   - Snippet-includes: index.md (README.md) and getting-started.md
-#     (examples/README.md's golden-path catalogue), via pymdownx.snippets --
-#     the included file stays the single source, this repo included.
+#   - Snippet-includes: getting-started.md (examples/README.md's
+#     golden-path catalogue), via pymdownx.snippets -- the included file
+#     stays the single source, this repo included. index.md (README.md) is
+#     a special case: `docs/_hooks.py`'s on_page_markdown does that one
+#     include itself, in code, rather than leaving it to pymdownx.snippets.
+#     Reason: on_page_markdown runs BEFORE pymdownx.snippets expands
+#     `--8<--`, so a hook that only rewrote text mkdocs had already inlined
+#     would never see anything to rewrite -- the page is still the one-line
+#     directive at that point. The hook reads README.md itself and, while
+#     inlining it, rewrites `](docs/` -> `](` so a link the README writes
+#     for repo-root context (`docs/guides/x.md`) resolves once `docs/` is
+#     the serving root, instead of becoming `docs/docs/guides/x.md`.
 #   - Symlinks (docs/CONTRIBUTING.md, docs/CHANGELOG.md, docs/examples):
 #     point at the repo-root files/directory so a snippet-include's
 #     root-relative links resolve under docs_dir, without a second copy to
