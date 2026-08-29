@@ -23,6 +23,20 @@ at an interpreter that no longer existed). `uv sync` rebuilds it.
 `uv run pre-commit install` activates the local git hook so the gates below
 run on every commit rather than only when you remember to run them.
 
+## Where things live
+
+| directory | purpose | guarding test |
+|---|---|---|
+| `src/attestation/` | the library: ledger, claims, feed ranking, symbolic math, MCP server entry points | `tests/test_architecture.py` (layering rules), `tests/test_docstring_ratchet.py` |
+| `src/attestation/mcp/` | the 46 MCP tools, namespaced `feed.*`/`sym.*`/`kg.*`/`runs.*`/`cite.*`, plus the four surfaces | `tests/test_mcp_server.py`, `tests/test_agent_surfaces.py`, `tests/test_tool_envelope.py` |
+| `src/attestation/ledger_adapters/` | tracker-convention readers (the `generic` adapter's nested-key handling) | `tests/test_ledger_adapters.py` |
+| `evals/` | labelled corpora and scorers for every model-driven prompt (tagging, reaction, explanation) | `tests/test_tagging_eval.py`, `tests/test_reaction_eval.py`, `tests/test_explanation_eval.py` |
+| `examples/` | golden paths: runnable, README-documented worked examples | `tests/test_golden_paths.py` |
+| `docs/guides/` | the seven how-to guides a collaborator's question maps to | `tests/test_docs_site.py` |
+| `docs/superpowers/` | design specs (written before the code) and their implementation plans | `tests/test_architecture.py::test_the_docs_index_lists_every_source_and_test_file`, `tests/test_docs_site.py::test_spec_index_is_a_fresh_render` |
+| `tests/` | the suite itself | `uv run pytest` (the pytest gate below) |
+| `scripts/` | generators the docs site depends on (CLI reference, spec index) plus the complexity-ratchet and mutation-testing helpers | `tests/test_docs_site.py` |
+
 ## The gates
 
 `uv run --frozen pre-commit run --all-files` runs eight local hooks, defined

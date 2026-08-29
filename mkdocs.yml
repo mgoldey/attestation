@@ -45,15 +45,27 @@ markdown_extensions:
 #     drift. Needs `git config core.symlinks true` (or Windows Developer
 #     Mode) at checkout time -- without it, Windows checks these out as
 #     plain text files containing the link path, not the linked content.
+#
+# Nav order follows the front-door shape: start with the answer (Home, which
+# snippet-includes README.md), then the glossary a newcomer needs before the
+# guides use its words, then install, then the seven guides (one per
+# question a collaborator has -- see the guides table in
+# docs/superpowers/specs/2026-08-29-docs-for-collaborators-design.md), then
+# the runnable catalogue, then reference material, then the four research
+# narratives -- grouped as "Notes" because that is what they are, not guides
+# -- then the contributor and release docs.
 nav:
-  - Home: index.md
-  - Getting started: getting-started.md
+  - Start here: index.md
+  - Concepts: concepts.md
+  - Install: guides/install.md
   - Guides:
-      - Architecture: architecture/README.md
-      - Measurement lessons: measurement-lessons.md
-      - Recommendation refinements: recommendation-refinements.md
-      - hermes-agent research: hermes-agent-plugin-research.md
-  - Design records: site/specs.md
+      - Use it from an agent: guides/agents.md
+      - The experiment ledger: guides/ledger.md
+      - Claims and citations: guides/claims-and-citations.md
+      - The feed and knowledge graph: guides/feed.md
+      - Prompt evals and the optimizer: guides/evals.md
+      - Tests: guides/testing.md
+  - Golden paths: getting-started.md
   - Reference:
       - CLI: reference/cli.md
       - API:
@@ -73,6 +85,15 @@ nav:
           - embed: reference/api/embed.md
           - db: reference/api/db.md
           - ports: reference/api/ports.md
+  - Design records: site/specs.md
+  - Measurement lessons: measurement-lessons.md
+  - Notes:
+      - Architecture: architecture/README.md
+      - Research profile: architecture/research-profile.md
+      - Recommendation refinements: recommendation-refinements.md
+      - hermes-agent research: hermes-agent-plugin-research.md
+  - Contributing: CONTRIBUTING.md
+  - Changelog: CHANGELOG.md
 
 # Deliberately-orphaned pages: real content, reachable by browsing the repo
 # or the symlinked directory, but not meant to appear in the nav or trigger

@@ -101,3 +101,91 @@ def test_mkdocs_build_strict():
     assert result.returncode == 0, (
         f"mkdocs build --strict failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
+
+
+def test_the_readme_is_a_front_door():
+    """The README used to be the whole manual -- 778 lines, twelve sections,
+    the pitch and the install guide and the hermes-agent integration manual
+    and the ledger manual all in one file. A newcomer could not tell in a
+    minute what to run or where their question's answer lived.
+
+    Front-door shape, mechanically checked: short enough to read in a
+    minute, every relative link inside it resolves, and the quickstart is
+    still there (its byte-identical content is `test_examples.py`'s job, not
+    this test's).
+    """
+    import re
+
+    text = (ROOT / "README.md").read_text()
+    lines = text.splitlines()
+    assert len(lines) <= 200, f"README is {len(lines)} lines, want <= 200"
+
+    assert "Try it in 60 seconds" in text, "README dropped its quickstart heading"
+
+    link_re = re.compile(r"\]\((docs/[^)#\s]+|CONTRIBUTING\.md|examples/[^)#\s]+)")
+    missing = []
+    for target in link_re.findall(text):
+        if not (ROOT / target).exists():
+            missing.append(target)
+    assert not missing, f"README links to missing target(s): {missing}"
+
+
+def test_every_guide_is_in_the_nav_and_leads_with_an_answer():
+    """Each guide under `docs/guides/` needs two things to work as a front
+    door's second click: the site nav has to know it exists, and it has to
+    open with a plain-language answer before the reader hits a `##` heading
+    -- the same "lead with the answer" shape as the README, at guide scale.
+    """
+    nav_text = (ROOT / "mkdocs.yml").read_text()
+    guides = sorted((ROOT / "docs" / "guides").glob("*.md"))
+    assert guides, "no guides found under docs/guides/"
+
+    for guide in guides:
+        rel = f"guides/{guide.name}"
+        assert rel in nav_text, f"{rel} is not referenced in mkdocs.yml's nav"
+
+        lines = guide.read_text().splitlines()
+        # skip the title (`# ...`) and any blank lines, then the next
+        # non-blank line must be the answer paragraph, appearing strictly
+        # before the first `## ` section heading.
+        body = [ln for ln in lines if not ln.startswith("# ")]
+        first_heading_idx = next(
+            (i for i, ln in enumerate(body) if ln.startswith("## ")), len(body)
+        )
+        answer_lines = [ln for ln in body[:first_heading_idx] if ln.strip()]
+        assert answer_lines, f"{guide.name} has no answer paragraph before its first ## heading"
+        answer_paragraph = " ".join(answer_lines).rstrip()
+        assert answer_paragraph.endswith("."), (
+            f"{guide.name}'s answer paragraph does not end with a period: {answer_paragraph!r}"
+        )
+
+
+def test_the_concepts_page_defines_the_first_ten_minutes():
+    """`docs/concepts.md` is the glossary for the words a newcomer meets
+    early: run, family, arm, spec, claim and its verdict kinds, corpus,
+    persona, click provenance, surface, golden path, tracker convention.
+    Each term must actually be defined here, not just mentioned in passing
+    -- checked as a bolded or heading term.
+    """
+    text = (ROOT / "docs" / "concepts.md").read_text()
+    terms = [
+        "run",
+        "family",
+        "arm",
+        "spec",
+        "claim",
+        "verdict",
+        "corpus",
+        "persona",
+        "provenance",
+        "surface",
+        "golden path",
+        "convention",
+    ]
+    missing = []
+    for term in terms:
+        bold = re.search(rf"\*\*{re.escape(term)}", text, re.IGNORECASE)
+        heading = re.search(rf"^###\s+{re.escape(term)}", text, re.IGNORECASE | re.MULTILINE)
+        if not (bold or heading):
+            missing.append(term)
+    assert not missing, f"docs/concepts.md does not define: {missing}"

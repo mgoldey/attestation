@@ -579,6 +579,10 @@ def test_readme_tool_count_and_table_match_the_live_surface():
     A table is a claim about completeness. This asserts the count AND that
     every live tool has a row, because a correct total above an incomplete
     table is the drift that is hardest to notice.
+
+    The tool table itself moved from README to `docs/guides/agents.md` on
+    2026-08-29 (README became a front door under 200 lines) -- this test
+    moved with it, since the fact it guards lives there now, not in README.
     """
     import asyncio
     import re
@@ -591,16 +595,17 @@ def test_readme_tool_count_and_table_match_the_live_surface():
     register_all(server)
     names = {t.name for t in asyncio.run(server.list_tools())}
 
-    text = (SRC.parent.parent / "README.md").read_text()
+    text = (SRC.parent.parent / "docs" / "guides" / "agents.md").read_text()
 
     claimed = int(re.search(r"exposes (\d+) tools", text).group(1))
     assert claimed == len(names), (
-        f"README says {claimed} tools, live surface has {len(names)}. Update the line."
+        f"docs/guides/agents.md says {claimed} tools, live surface has {len(names)}."
+        " Update the line."
     )
 
     documented = set(re.findall(r"`([a-z_]+\.[a-z_]+)\(", text))
     missing = sorted(names - documented)
-    assert not missing, f"live tools with no README row: {missing}"
+    assert not missing, f"live tools with no docs/guides/agents.md row: {missing}"
 
 
 def test_a_schema_bound_is_never_looser_than_the_code_enforces():
@@ -676,6 +681,9 @@ def test_documented_response_limits_match_the_constants():
     agent author budgeting from README's 50 plans a payload the schema rejects
     -- and 13 was derived by measurement against a 7000-char ceiling, so it is
     exactly the kind of number that moves.
+
+    The tool table (and this "capped at" line) moved from README to
+    `docs/guides/agents.md` on 2026-08-29 -- this test moved with it.
     """
     import re
     from pathlib import Path
@@ -683,13 +691,14 @@ def test_documented_response_limits_match_the_constants():
     from attestation.mcp.feed import DEFAULT_LIST_LIMIT, MAX_SEARCH_LIMIT
 
     root = Path(__file__).resolve().parents[1]
-    readme = (root / "README.md").read_text()
+    agents_guide = (root / "docs" / "guides" / "agents.md").read_text()
     claude = (root / "CLAUDE.md").read_text()
 
-    capped = re.search(r"capped at (\d+)", readme)
-    assert capped, "README no longer states feed.list's cap"
+    capped = re.search(r"capped at (\d+)", agents_guide)
+    assert capped, "docs/guides/agents.md no longer states feed.list's cap"
     assert int(capped.group(1)) == MAX_SEARCH_LIMIT, (
-        f"README says capped at {capped.group(1)}, MAX_SEARCH_LIMIT is {MAX_SEARCH_LIMIT}"
+        f"docs/guides/agents.md says capped at {capped.group(1)},"
+        f" MAX_SEARCH_LIMIT is {MAX_SEARCH_LIMIT}"
     )
 
     default = re.search(r"feed\.list defaults to limit=(\d+)", claude)
