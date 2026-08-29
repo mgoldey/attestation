@@ -322,6 +322,23 @@ Expected finding: `_wandb_runs` (`generic.py:551+`, docstring says `wandb/run-<t
 
 ---
 
+### Task 5b: `examples/mlflow/`
+
+**Files:** Create `examples/mlflow/{README.md,run.sh}`; modify `examples/README.md`, `CLAUDE.md`. No new fixture: the inputs are the committed real MLflow directory `examples/flows/training/mlruns/` and its `FINDINGS.md`, produced by `examples/flows/training/train_mlflow.py` (mlflow-skinny 3.x) and scrubbed of attribution; this path is the standalone front door for them, added at the user's request (2026-08-28).
+
+*Prerequisites*: `none — pure local computation` (the retrain step needs only the `examples` dependency group, no model server). *Run it* (from the path's directory):
+```bash
+uv run attest runs scan --root ../flows --project training
+uv run attest runs compare c_sweep --metric auc
+uv run attest claims ../flows/training/FINDINGS.md || true
+uv run --group examples python ../flows/training/train_mlflow.py --out "$(mktemp -d)"
+```
+*What you get*: the ledger reading a real `mlruns/` — four arms of one family, final metric values with their steps — ranked with its caveats, one claim contradicted on purpose, and the same four arms retrained in about two seconds into a throwaway directory so the "under thirty seconds" claim is something you watch, not read. *What it demonstrates*: the `mlruns/<exp>/<run>/{meta.yaml,params/,metrics/}` convention (`run_name` → family; last line of each metric file → final value + step; `lifecycle_stage: deleted` skipped), why the ledger reads final values not curves, the scrub (`user_id`, `artifact_uri`, `mlflow.user`, git tags) and why regenerating the committed directory is deliberate; a table of what `attest runs compare` prints for `auc`. *When it goes wrong*: `mlflow-skinny` missing (`uv sync --group examples`); `MLFLOW_ALLOW_FILE_STORE`-style refusals on newer mlflow; a `--metric` with no declared direction (refused, not guessed). *Next*: `examples/flows/` and `examples/wandb/`. Pin the `winner:` line (`winner: c_sweep/<8hex>` — check the exact rendering; if the run id is in the line, pin a stable line above it such as the family header instead).
+
+Runs in parallel with Tasks 2–5 (disjoint files).
+
+---
+
 ### Task 6: `examples/sacred/` and `_sacred_runs`
 
 **Files:** Create `examples/sacred/{README.md,run.sh,generate.py}` + committed `sacred_runs/` output; modify `src/attestation/ledger_adapters/generic.py` (new `_sacred_runs(root, seen)`, `TRACKER_DIRS` gains the directory name, `discover()` calls it), `tests/test_tracker_adapters.py` (fixture-shape + tolerance tests), `tests/test_tag_prompt.py` (guard gains `sacred`), `docs/superpowers/specs/2026-08-22-tracker-adapters-design.md` (a dated "Sacred" subsection), `examples/README.md`, `CLAUDE.md`.
@@ -356,7 +373,7 @@ Run the whole suite and the gates; run every offline `run.sh` once more by hand 
 
 ## Self-review
 
-**Spec coverage.** Shape + test + catalogue (Task 1); retrofits: workspace and flows (Task 1), prompt-evals and agents (Task 2); integrations: citations (3), model servers (4), wandb (5), sacred (6), dvc (7), hydra (8); front door and status (9). Convention rules (final values, no direction inference, `NAMED` empty, own function, tolerance test, docstring names the library version) appear in Tasks 6–8 and the global constraints. Attribution guard generalised to `examples/**` (Task 1). `src/` import guard extended (Tasks 5–8).
+**Spec coverage.** Shape + test + catalogue (Task 1); retrofits: workspace and flows (Task 1), prompt-evals and agents (Task 2); integrations: citations (3), model servers (4), wandb (5), mlflow front door (5b), sacred (6), dvc (7), hydra (8); front door and status (9). Convention rules (final values, no direction inference, `NAMED` empty, own function, tolerance test, docstring names the library version) appear in Tasks 6–8 and the global constraints. Attribution guard generalised to `examples/**` (Task 1). `src/` import guard extended (Tasks 5–8).
 
 **Placeholders.** The framework test is complete code; each path task names its files, commands, the reader's exact inputs and naming rule, its scrub list and its pinned line. Real-library layouts are stated as expectations to *verify against the real output*, which is the point of generating them.
 
