@@ -49,7 +49,12 @@ class Reaction(BaseModel):
     confidence: int = Field(ge=1, le=5)
 
 
-def _prompt(persona: str, interests: str, title: str, summary: str) -> list[dict]:
+def reaction_messages(persona: str, interests: str, title: str, summary: str) -> list[dict]:
+    """The ONE renderer of the reaction prompt.
+
+    `react_to_item` and `evals/reaction_eval.py` both call this, so a score
+    is always a score of the prompt `feed.simulate_ratings` actually sends.
+    """
     return [
         {
             "role": "system",
@@ -75,6 +80,10 @@ def _prompt(persona: str, interests: str, title: str, summary: str) -> list[dict
     ]
 
 
+# One release's alias for callers still importing the private name.
+_prompt = reaction_messages
+
+
 def react_to_item(chat_fn, persona: str, interests: str, title: str, summary: str) -> Reaction:
     """One simulated reaction. Raises on an unusable response.
 
@@ -82,7 +91,8 @@ def react_to_item(chat_fn, persona: str, interests: str, title: str, summary: st
     silent `useful=False`, which would poison training data with the model's
     formatting problems rather than its judgement.
     """
-    out = chat_fn(_prompt(persona, interests, title, summary), Reaction.model_json_schema())
+    messages = reaction_messages(persona, interests, title, summary)
+    out = chat_fn(messages, Reaction.model_json_schema())
     return Reaction.model_validate(out)
 
 

@@ -22,66 +22,16 @@ import os
 import sys
 import tempfile
 import time
-from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
 import _common
 
-
-def score_verdicts(reactions: list[dict], labels: dict[int, bool]) -> dict:
-    """Confusion matrix, precision, recall, and AUC of a signed confidence.
-
-    Items in `labels` with no reaction were skipped as unsure by the model;
-    they are counted in n_unsure and excluded from the matrix, never from
-    the report.
-    """
-    by_item = {r["item_id"]: r for r in reactions if r["item_id"] in labels}
-    tp = fp = fn = tn = 0
-    scores, truth = [], []
-    for item_id, label in labels.items():
-        r = by_item.get(item_id)
-        if r is None:
-            continue
-        verdict = bool(r["verdict"])
-        tp += verdict and label
-        fp += verdict and not label
-        fn += (not verdict) and label
-        tn += (not verdict) and not label
-        scores.append(r["confidence"] if verdict else -r["confidence"])
-        truth.append(label)
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    auc = None
-    if len(set(scores)) > 1 and len(set(truth)) > 1:
-        from sklearn.metrics import roc_auc_score
-
-        auc = float(roc_auc_score(truth, scores))
-    return {
-        "tp": tp,
-        "fp": fp,
-        "fn": fn,
-        "tn": tn,
-        "n_scored": len(scores),
-        "n_unsure": len(labels) - len(scores),
-        "precision": precision,
-        "recall": recall,
-        "auc": auc,
-        "confidence_histogram": dict(
-            sorted(Counter(r["confidence"] for r in by_item.values()).items())
-        ),
-    }
-
-
-def rank_auc(order: list[int], labels: dict[int, bool]) -> float | None:
-    """AUC of a ranking: earlier = higher score. None on a single class."""
-    truth = [labels[i] for i in order if i in labels]
-    if len(set(truth)) < 2:
-        return None
-    from sklearn.metrics import roc_auc_score
-
-    scores = [len(order) - pos for pos, i in enumerate(order) if i in labels]
-    return float(roc_auc_score(truth, scores))
+# score_verdicts and rank_auc moved verbatim to evals/reaction_eval.py, which
+# `tests/test_reaction_eval.py` covers; this module keeps a thin wrapper so
+# there is one definition and `tests/test_flows_scoring.py` still passes.
+from reaction_eval import rank_auc, score_verdicts
 
 
 def prepare_db(db_path: Path, base_url: str, chat_model: str, embed_model: str) -> dict:
