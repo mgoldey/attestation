@@ -10,3 +10,8 @@ the suite asserts.
 |---|---|---|---|
 | `workspace/` | the run ledger and claim checker over a two-project workspace with three claims deliberately wrong | `none — pure local computation` | ~1 s |
 | `flows/` | forty labelled items scored for two personas, every MCP tool driven over stdio, four MLflow arms read back by the ledger | `none — pure local computation` | ~75 s |
+| `model-servers/` | `attest ingest` and `attest tag` run as real subprocesses against an in-process OpenAI-compatible stub, plus a table for pointing `LLM_BASE_URL` at vLLM/llama.cpp/LM Studio/Ollama | `none — pure local computation` | ~2 s |
+| `mlflow/` | the run ledger reading a real MLflow directory — four sweep arms ranked, one claim checked against them and contradicted on purpose, the same arms retrained in about two seconds | `none — pure local computation` | ~5 s |
+| `citations/` | a four-entry BibTeX library written by bibtexparser, a draft citing three real keys and one that resolves nowhere, and the citation lint that only `cite.check`/`runs.claims_check` over MCP surface — `attest claims` does not | `none — pure local computation` | ~5 s |
+| `agents/` | the install doctor's report, the per-surface agent configs `attest emit` generates, and one `AGENT_SURFACES` surface driven over stdio the way hermes-agent actually drives it | `none — pure local computation` | ~10 s |
+| `prompt-evals/` | a score for the shipping tagging prompt on 28 dev cases, and the transfer gate that decided whether a GEPA candidate could replace it | `a model server at LLM_BASE_URL` | ~2 min |
