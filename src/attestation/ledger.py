@@ -476,6 +476,11 @@ ADAPTER_CAVEATS: dict[str, str] = {
         " on every `dvc repro`, not a curve -- there is no history of a"
         " prior run's value once a stage reruns"
     ),
+    "hydra": (
+        "read by the hydra adapter: metrics come from whatever JSON/CSV file"
+        " an arm's directory holds, read as a final value the same way as"
+        " every other tracker here, not a curve or a best step"
+    ),
 }
 
 

@@ -1,4 +1,5 @@
-"""W&B, MLflow, Sacred and DVC local artifact directories, read through `generic`.
+"""W&B, MLflow, Sacred, DVC and Hydra local artifact directories, read
+through `generic`.
 
 **Both readers have now been run against a real directory, not just the
 transcribed fixtures below.** The MLflow reader was run against a real
@@ -28,7 +29,10 @@ directory (examples/sacred/sacred_runs, sacred 0.8.7 via generate.py) from
 the start rather than retrofitted -- `test_the_reader_scans_the_real_committed_sacred_fixture`
 below pins it. DVC's reader followed the same day, against a real `dvc repro`
 (examples/dvc/, dvc 3.x via generate.sh); see
-`test_the_reader_scans_the_real_committed_dvc_fixture`.
+`test_the_reader_scans_the_real_committed_dvc_fixture`. Hydra's reader
+followed the same day, against a real `--multirun` sweep (examples/hydra/,
+hydra-core 1.3.5 via generate.sh); see
+`test_the_reader_scans_the_real_committed_hydra_fixture`.
 
 The fixtures below stay synthetic on purpose: they are what the
 shape-tolerance tests at the bottom exercise, targeted at specific edge
@@ -50,6 +54,7 @@ from attestation.ledger_adapters import generic
 WANDB_EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "wandb"
 SACRED_EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "sacred"
 DVC_EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "dvc"
+HYDRA_EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "hydra"
 
 
 def _wandb_run(root, run_id, summary, config=None, metadata=None):
@@ -184,6 +189,46 @@ def _dvc_project(
     return root
 
 
+def _hydra_arm(
+    root,
+    n,
+    *,
+    sweep_date="2026-01-01",
+    sweep_time="10-00-00",
+    job_name="train",
+    config=None,
+    metrics=None,
+    write_hydra_yaml=True,
+    write_config_yaml=True,
+    metrics_filename="metrics.json",
+):
+    """One arm of a Hydra `--multirun` sweep: `multirun/<date>/<time>/<n>/`
+    with `.hydra/config.yaml`, `.hydra/hydra.yaml` (naming `job_name` at
+    `hydra.job.name`, and the sweep dir at `hydra.sweep.dir`), and a metrics
+    file -- the shape a real sweep produces (examples/hydra/generate.sh),
+    trimmed to just the keys `_hydra_runs` reads.
+    """
+    d = root / "multirun" / sweep_date / sweep_time / str(n) / ".hydra"
+    d.mkdir(parents=True)
+    if write_config_yaml:
+        lines = [f"{k}: {v}" for k, v in (config or {}).items()]
+        (d / "config.yaml").write_text("\n".join(lines) + ("\n" if lines else ""))
+    if write_hydra_yaml:
+        (d / "hydra.yaml").write_text(
+            "hydra:\n"
+            "  sweep:\n"
+            f"    dir: multirun/{sweep_date}/{sweep_time}\n"
+            "  overrides:\n"
+            "    task:\n"
+            f"    - lr={config.get('lr') if config else ''}\n"
+            "  job:\n"
+            f"    name: {job_name}\n"
+        )
+    if metrics is not None:
+        (d.parent / metrics_filename).write_text(json.dumps(metrics))
+    return d.parent
+
+
 # --------------------------------------------------------------------------
 # The gap this exists to close
 # --------------------------------------------------------------------------
@@ -191,20 +236,23 @@ def _dvc_project(
 
 def test_a_project_with_only_tracker_dirs_is_not_invisible(tmp_path):
     """The whole point. `discover` walks RESULT_DIRS and CONFIG_DIRS at the
-    project root; `wandb`, `mlruns` and `sacred_runs` are in none of them
-    (and dvc.yaml/dvc.lock are not results at all), so before this change a
-    project whose entire experimental record lived in one of them scanned to
-    zero runs and gave no indication why."""
+    project root; `wandb`, `mlruns`, `sacred_runs` and `multirun` are in none
+    of them (and dvc.yaml/dvc.lock are not results at all), so before this
+    change a project whose entire experimental record lived in one of them
+    scanned to zero runs and gave no indication why."""
     proj = tmp_path / "myproj"
     _wandb_run(proj, "run-20260814_101133-a1b2c3d4", {"wer": 0.12, "loss": 2.1})
     _mlflow_run(proj, "0", "abc123", name="baseline", metrics={"wer": [(0, 0.31, 5)]})
     _sacred_run(proj, 1, config={"lr": 0.01}, metrics={"auc": {"steps": [0], "values": [0.9]}})
     _dvc_project(proj / "dvcproj", metrics={"0.01": {"auc": 0.9}})
+    _hydra_arm(proj / "hydraproj", 0, config={"lr": 0.01}, metrics={"auc": 0.9})
 
     runs = generic.discover(proj)
     assert len(runs) == 3, [r.name for r in runs]
     dvc_runs = generic.discover(proj / "dvcproj")
     assert len(dvc_runs) == 1, [r.name for r in dvc_runs]
+    hydra_runs = generic.discover(proj / "hydraproj")
+    assert len(hydra_runs) == 1, [r.name for r in hydra_runs]
 
 
 # --------------------------------------------------------------------------
@@ -846,6 +894,173 @@ def test_detail_attaches_the_dvc_caveat(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# Hydra
+# --------------------------------------------------------------------------
+
+
+def test_hydra_multirun_sweep_becomes_one_run_per_arm(tmp_path):
+    proj = tmp_path / "p"
+    _hydra_arm(proj, 0, config={"lr": 0.01}, metrics={"auc": 0.9})
+    _hydra_arm(proj, 1, config={"lr": 0.1}, metrics={"auc": 0.95})
+
+    runs = generic.discover(proj)
+    assert {r.name for r in runs} == {"train/0", "train/1"}, [r.name for r in runs]
+
+
+def test_hydra_family_is_job_name_from_hydra_yaml(tmp_path):
+    proj = tmp_path / "p"
+    _hydra_arm(proj, 0, job_name="sweep", config={"lr": 0.01}, metrics={"auc": 0.9})
+
+    (run,) = generic.discover(proj)
+    assert run.family == "sweep"
+    assert run.name == "sweep/0"
+
+
+def test_hydra_metrics_json_becomes_metrics(tmp_path):
+    proj = tmp_path / "p"
+    _hydra_arm(proj, 0, config={"lr": 0.1}, metrics={"auc": 0.95, "accuracy": 0.9})
+
+    (run,) = generic.discover(proj)
+    assert {m.metric: m.value for m in run.metrics} == {"auc": 0.95, "accuracy": 0.9}
+
+
+def test_hydra_config_comes_from_hydra_config_yaml(tmp_path):
+    proj = tmp_path / "p"
+    _hydra_arm(proj, 0, config={"lr": 0.1}, metrics={"auc": 0.95})
+
+    (run,) = generic.discover(proj)
+    assert run.config == {"lr": 0.1}
+
+
+def test_hydra_missing_hydra_yaml_falls_back_to_the_sweep_directory_as_family(tmp_path):
+    """Tolerance: an older Hydra version, or a directory edited by hand,
+    might not write `.hydra/hydra.yaml`. `_hydra_runs` must still record the
+    arm -- named after the sweep directory it sits under, since there is no
+    `hydra.job.name` to read."""
+    proj = tmp_path / "p"
+    _hydra_arm(
+        proj,
+        0,
+        sweep_date="2026-01-01",
+        sweep_time="10-00-00",
+        config={"lr": 0.1},
+        metrics={"auc": 0.95},
+        write_hydra_yaml=False,
+    )
+
+    (run,) = generic.discover(proj)
+    assert run.family == "10-00-00"
+    assert run.name == "10-00-00/0"
+
+
+def test_hydra_arm_with_no_metrics_file_is_skipped(tmp_path):
+    """A spec with no measurement attached -- same refusal as MLflow/Sacred/
+    DVC: `.hydra/config.yaml` alone, with no metrics.json or any other
+    JSON/CSV file in the arm directory, is not a run."""
+    proj = tmp_path / "p"
+    _hydra_arm(proj, 0, config={"lr": 0.1}, metrics=None)
+
+    assert generic.discover(proj) == []
+
+
+def test_hydra_two_sweeps_of_the_same_job_qualify_the_second_with_its_time_dir(tmp_path):
+    """Two sweeps of `train` both produce an arm `0` -- `train/0` would
+    collide. The second sweep's arm 0 is re-qualified with its own time
+    directory rather than silently dropped, the same `seen`-based dedup
+    every other tracker reader here participates in."""
+    proj = tmp_path / "p"
+    _hydra_arm(proj, 0, sweep_date="2026-01-01", sweep_time="10-00-00", metrics={"auc": 0.9})
+    _hydra_arm(proj, 0, sweep_date="2026-01-01", sweep_time="11-00-00", metrics={"auc": 0.95})
+
+    runs = generic.discover(proj)
+    assert {r.name for r in runs} == {"train/0", "train/11-00-00/0"}, [r.name for r in runs]
+
+
+def test_hydra_metrics_come_from_a_csv_too(tmp_path):
+    """The brief's own tolerance: metrics come from any JSON/CSV file in the
+    arm directory, not only `metrics.json` -- reusing the same
+    `_csv_rows`/`metrics_from_payload` path the ordinary `results/` scan
+    uses, not a Hydra-specific format. A single-row CSV goes through the
+    same "independent samples" aggregation as any other CSV `generic` reads
+    (mean plus `_std` plus `n_records`, `_std` a guaranteed 0.0 for one row)
+    -- this is `metrics_from_payload`'s own existing behaviour, not
+    something `_hydra_runs` special-cases."""
+    proj = tmp_path / "p"
+    arm_dir = _hydra_arm(proj, 0, config={"lr": 0.1}, metrics=None)
+    (arm_dir / "metrics.csv").write_text("auc,accuracy\n0.95,0.9\n")
+
+    (run,) = generic.discover(proj)
+    values = {m.metric: m.value for m in run.metrics}
+    assert values["auc"] == 0.95
+    assert values["accuracy"] == 0.9
+    assert values["n_records"] == 1.0
+
+
+def test_the_reader_scans_the_real_committed_hydra_fixture():
+    """examples/hydra/multirun is real: written by hydra-core 1.3.5
+    (generate.sh, 2026-08-28), not transcribed from documentation. One extra
+    `generic`-adapter run is expected alongside the four Hydra arms:
+    examples/hydra/conf/ is itself one of `CONFIG_DIRS`, so `conf/
+    config.yaml` -- Hydra's own input, not a Hydra output -- is read as an
+    ordinary config spec named `config` by the ordinary CONFIG_DIRS scan,
+    the same honest "a spec with no result attached" every config file
+    gets; see the README's own note on this."""
+    runs = generic.discover(HYDRA_EXAMPLE)
+    hydra_runs = [r for r in runs if r.adapter == "hydra"]
+    assert len(hydra_runs) == 4, [r.name for r in runs]
+    assert all(r.name.startswith("train/") for r in hydra_runs), [r.name for r in hydra_runs]
+    assert all(r.family == "train" for r in hydra_runs)
+    by_lr = {r.config["lr"]: r for r in hydra_runs}
+    assert set(by_lr) == {0.01, 0.1, 1, 10}
+    for run in hydra_runs:
+        metrics = {m.metric for m in run.metrics}
+        assert {"accuracy", "precision", "recall", "auc"} <= metrics, metrics
+
+
+def test_detail_attaches_the_hydra_caveat(tmp_path):
+    """Same rule as wandb/mlflow/sacred/dvc: `ledger.ADAPTER_CAVEATS` needs a
+    "hydra" entry, or `runs.compare` ranks Hydra arms with no caveat while
+    every other tracker carries one."""
+    from attestation import ledger
+    from attestation.db import get_db
+
+    ws = tmp_path / "ws"
+    proj = ws / "proj"
+    _hydra_arm(proj, 0, config={"lr": 0.1}, metrics={"auc": 0.95})
+
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, ws)
+    found = ledger.detail(conn, "proj", "train/0")
+
+    assert found["adapter"] == "hydra"
+    caveats = " ".join(found["caveats"])
+    assert "hydra" in caveats
+    conn.close()
+
+
+def test_yaml_path_scalar_reads_a_nested_key(tmp_path):
+    """`_yaml_path_scalar`, the small generalisation of `_yaml_scalars` this
+    reader needed for `hydra.job.name` (three levels deep, unlike the flat
+    top-level keys `meta.yaml`/`config.yaml` use)."""
+    lines = generic._indented_lines("hydra:\n  job:\n    name: train\n")
+    assert generic._yaml_path_scalar(lines, ("hydra", "job", "name")) == "train"
+    assert generic._yaml_path_scalar(lines, ("hydra", "job", "missing")) is None
+    assert generic._yaml_path_scalar(lines, ("nope",)) is None
+
+
+def test_yaml_path_list_reads_hydras_same_indent_block_list(tmp_path):
+    """Hydra's own dumper writes a block list's `- item` lines at the SAME
+    indent as the key introducing them (`task:` and `- lr=0.01` both at
+    indent 4), not one level deeper as DVC's writer does for `metrics:` --
+    found only by running a real sweep, not by assuming DVC's own style
+    generalised."""
+    text = "hydra:\n  overrides:\n    task:\n    - lr=0.01\n    - seed=3\n  job:\n    name: train\n"
+    lines = generic._indented_lines(text)
+    assert generic._yaml_path_list(lines, ("hydra", "overrides", "task")) == ["lr=0.01", "seed=3"]
+    assert generic._yaml_path_list(lines, ("hydra", "overrides", "missing")) == []
+
+
+# --------------------------------------------------------------------------
 # Coexistence and shape tolerance
 # --------------------------------------------------------------------------
 
@@ -926,6 +1141,8 @@ def test_no_metric_direction_is_inferred_from_tracker_metadata(tmp_path):
         "meta-yaml-missing",
         "metric-file-empty",
         "metric-file-garbage",
+        "hydra-yaml-garbage",
+        "hydra-metrics-not-json",
     ],
 )
 def test_malformed_tracker_dirs_degrade_rather_than_raise(tmp_path, broken):
@@ -952,6 +1169,12 @@ def test_malformed_tracker_dirs_degrade_rather_than_raise(tmp_path, broken):
     elif broken == "metric-file-garbage":
         _mlflow_run(proj, "0", "abc", name="r", metrics={"wer": [(0, 0.2, 0)]})
         (proj / "mlruns" / "0" / "abc" / "metrics" / "wer").write_text("not a metric line\n")
+    elif broken == "hydra-yaml-garbage":
+        arm_dir = _hydra_arm(proj, 0, config={"lr": 0.1}, metrics={"auc": 0.9})
+        (arm_dir / ".hydra" / "hydra.yaml").write_text("not: [valid, yaml: at all")
+    elif broken == "hydra-metrics-not-json":
+        arm_dir = _hydra_arm(proj, 0, config={"lr": 0.1}, metrics=None)
+        (arm_dir / "metrics.json").write_text("<!DOCTYPE html>not json")
 
     generic.discover(proj)  # must not raise
 

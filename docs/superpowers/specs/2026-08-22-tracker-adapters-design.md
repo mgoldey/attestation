@@ -15,7 +15,8 @@ upstream of naming -- see the "Verification" section below, rewritten in
 light of it, and the module docstring in `ledger_adapters/generic.py`. A
 third convention, Sacred, was added 2026-08-28 as part of the golden-paths
 work (`2026-08-28-golden-paths-design.md`) -- see the "Sacred" subsection
-below. A fourth, DVC, followed the same day -- see the "DVC" subsection.
+below. A fourth, DVC, followed the same day -- see the "DVC" subsection. A
+fifth, Hydra, followed the same day -- see the "Hydra" subsection.
 **Roadmap:** spec 3 of `2026-08-21-architecture-roadmap.md`
 **Depends on:** nothing. The adapter seam already exists.
 
@@ -228,6 +229,88 @@ naming DVC's own limitation: each metric file is a snapshot overwritten on
 every `dvc repro`, not a curve -- there is no history of a prior run's
 value once a stage reruns, a different shape of "final value, not curve"
 than the per-line logs W&B, MLflow and Sacred each read.
+
+### Hydra (added 2026-08-28)
+
+```
+multirun/<date>/<time>/          one sweep, e.g. 2026-08-28/23-36-10
+  <n>/                           one arm, numbered from 0
+    .hydra/
+      config.yaml                the resolved config this arm ran with
+      hydra.yaml                 Hydra's own job/sweep/runtime metadata
+      overrides.yaml             the command-line overrides for this arm
+    metrics.json                 whatever the driver script itself writes
+    train.log                    Hydra's own per-job log (not read; not committed)
+  multirun.yaml                  one sweep-level summary (not read; not committed)
+```
+
+Verified 2026-08-28 against a real `--multirun` sweep (hydra-core 1.3.5,
+`examples/hydra/generate.sh`) rather than transcribed from documentation --
+`_hydra_runs` in `ledger_adapters/generic.py` was written and tested
+against the real layout from the start. Running `python train.py
+--multirun lr=0.01,0.1,1,10 hydra.job.chdir=True` produced exactly the
+documented `multirun/<date>/<time>/<n>/` layout, with one genuine surprise
+found only by running it (below).
+
+**The real finding: `hydra.job.chdir` is not the default a Hydra <1.2 user
+remembers, and the golden-paths brief's own premise ("Hydra changes cwd
+per job") needed correcting against the real tool.** hydra-core 1.3.5 does
+not change the working directory into each arm's own output directory
+unless `hydra.job.chdir=True` is passed explicitly -- Hydra 1.1 and
+earlier always changed directory; 1.2 introduced the setting and defaults
+it to `null` (behaving as `False`) for configs that read relative paths
+from the launch directory. Without the override, a real run of `--multirun
+lr=0.01,0.1,1,10` wrote a single top-level `metrics.json`, overwritten by
+each of the four arms in turn, not four separate ones under `multirun/`.
+`generate.sh` passes `hydra.job.chdir=True` explicitly, and `_hydra_runs`
+reads only the layout that override produces -- the same category of
+"a naming convention transcribed from documentation that the tool's actual
+behaviour quietly contradicts" `_sacred_runs`'s decisions and the DVC
+`${item}` finding above were each meant to prevent, found the same way:
+by running the real tool, not by reading its docs.
+
+**Naming drops the date and time, the same trade `_wandb_runs` makes for
+W&B's timestamp-and-hash run directory.** `<job.name>/<date>/<time>/<n>`
+is unreadable in a ledger listing several arms, so a run is named
+`<job.name>/<n>` instead, with `job.name` (Hydra's own `hydra.job.name`,
+defaulting to the driver script's stem) as the family. A second sweep of
+the same job name is not silently dropped: if `<job.name>/<n>` is already
+taken, `_hydra_runs` re-qualifies with the time directory
+(`<job.name>/<time>/<n>`) before giving up -- `seen` is shared with every
+other reader in the module, the same dedup `_wandb_runs`/`_mlflow_runs`/
+`_sacred_runs`/`_dvc_runs` already participate in.
+
+**A nested YAML key needed a small generalisation of `_yaml_scalars`, not
+a new parser.** `.hydra/hydra.yaml`'s `hydra.job.name`, `hydra.overrides.
+task` and `hydra.sweep.dir` all sit several levels deep, unlike the flat
+top-level keys `_yaml_scalars` already reads for `meta.yaml`/`config.yaml`.
+`_yaml_path_index`/`_yaml_path_scalar`/`_yaml_path_list`, built on the
+existing `_indented_lines`, walk a dotted path of nested keys instead --
+the same reuse `_dvc_stages`/`_dvc_lock_params` already make of
+`_indented_lines` for DVC's nested `stages:` shape, extended rather than
+forked, per the golden-paths brief's own instruction not to write a second
+parser. One shape difference from DVC's own YAML needed a real fix, found
+by running a real sweep rather than guessing from `dvc.yaml`'s style:
+Hydra's dumper writes a block list's `- item` lines at the *same* indent
+as the key introducing them (`task:` and `- lr=0.01` are both at indent
+4), not one level deeper as DVC's writer does, so `_yaml_path_list` scans
+forward while a line is a list item rather than requiring a deeper indent.
+
+**Metrics come from any JSON/CSV file in an arm's directory, not a
+Hydra-specific format**, reusing `metrics_from_payload`/`_csv_rows` the
+same way the ordinary `results/` scan does -- Hydra itself has no metrics
+convention of its own; whatever the driver script writes into its own
+`os.getcwd()` (this example's `metrics.json`) is the record. An arm with
+no such file is skipped, the same refusal an MLflow run with no metric
+files or a DVC stage instance with no metric file on disk gets. A missing
+`.hydra/hydra.yaml` (an older Hydra version, or a directory edited by
+hand) falls back to naming the family after the sweep directory itself
+rather than raising.
+
+`ledger.ADAPTER_CAVEATS` gained a `"hydra"` entry alongside the other
+four, naming the same "final value, not curve" limitation every tracker
+convention here carries, since `_hydra_runs` reads whatever a driver
+script wrote as one snapshot rather than a logged series.
 
 ## What this does not do
 

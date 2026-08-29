@@ -493,7 +493,15 @@ def diagnose_empty(root: Path) -> str:
 # already worked -- see its docstring for the naming detail and for the
 # larger surprise, that offline W&B does not write wandb-summary.json or
 # config.yaml to files/ at all until a run is synced.
-TRACKER_DIRS = ("wandb", "mlruns", "sacred_runs")
+#
+# Hydra's reader was added 2026-08-28, verified against a real `--multirun`
+# sweep (hydra-core 1.3.5, examples/hydra/generate.sh): the one surprise was
+# that hydra-core 1.3.5 no longer changes into each arm's own output
+# directory by default (`hydra.job.chdir` defaults to null, not True, as of
+# Hydra 1.2 -- a backward-compatibility change from Hydra 1.1 and earlier's
+# unconditional chdir), so `--multirun lr=...` alone wrote one shared
+# metrics.json instead of four -- see examples/hydra/train.py's docstring.
+TRACKER_DIRS = ("wandb", "mlruns", "sacred_runs", "multirun")
 
 # Recorded on every RunRecord this module's convention-based reader produces,
 # so `runs.detail` can tell a hand-written results/ tree apart from a tracker
@@ -519,6 +527,72 @@ def _yaml_scalars(path: Path) -> dict[str, str]:
         value = value.strip().strip("'\"")
         if value:
             out[key.strip()] = value
+    return out
+
+
+def _yaml_path_index(lines: list[tuple[int, str, str | None]], path: tuple[str, ...]) -> int | None:
+    """The line index of the nested key at `path`, walking indentation.
+
+    A small generalisation of `_yaml_scalars` for a file where the value
+    this reader wants is not top-level -- `.hydra/hydra.yaml`'s
+    `hydra.job.name` sits three levels deep under `hydra:` -> `job:` ->
+    `name:`. Built on `_indented_lines` rather than a new parser, the same
+    reuse `_dvc_stages`/`_dvc_lock_params` already make of it for a nested
+    `stages: <name>: params: ...` shape -- this is that same walk, made
+    reusable for an arbitrary dotted path instead of one fixed shape.
+    Returns None if any segment of `path` is missing, so a caller degrades
+    to a fallback rather than raising on a file an older or newer Hydra
+    version writes slightly differently.
+    """
+    idx = 0
+    indent: int | None = None
+    found: int | None = None
+    for key in path:
+        found = None
+        target_indent: int | None = None
+        i = idx
+        while i < len(lines):
+            line_indent, line_key, _ = lines[i]
+            if indent is not None and line_indent <= indent:
+                break
+            if target_indent is None:
+                target_indent = line_indent
+            if line_indent == target_indent and line_key == key:
+                found = i
+                break
+            i += 1
+        if found is None:
+            return None
+        indent = target_indent
+        idx = found + 1
+    return found
+
+
+def _yaml_path_scalar(
+    lines: list[tuple[int, str, str | None]], path: tuple[str, ...]
+) -> str | None:
+    """The scalar value at a nested `path`, or None -- see `_yaml_path_index`."""
+    i = _yaml_path_index(lines, path)
+    return lines[i][2] if i is not None else None
+
+
+def _yaml_path_list(lines: list[tuple[int, str, str | None]], path: tuple[str, ...]) -> list[str]:
+    """The block-list items under a nested `path`, or `[]` -- see
+    `_yaml_path_index`. Hydra's own YAML dumper writes a list's `- item`
+    lines at the SAME indent as the key introducing them (`task:` and its
+    `- lr=0.01` line are both indent 4), not one level deeper the way this
+    module's DVC helpers assume -- so this scans forward while the line is
+    a list item, rather than requiring a deeper indent as `_dvc_stage_body`
+    does for DVC's own block-list style."""
+    i = _yaml_path_index(lines, path)
+    if i is None:
+        return []
+    out: list[str] = []
+    for _, key, value in lines[i + 1 :]:
+        if key != "-":
+            break
+        if value is not None:
+            out.append(value)
     return out
 
 
@@ -1191,6 +1265,132 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     return records
 
 
+def _hydra_job_name(hydra_yaml: Path) -> str | None:
+    """`hydra.job.name` from an arm's `.hydra/hydra.yaml`, or None.
+
+    Hydra sets this to the driver script's stem (`train.py` -> `train`)
+    unless a config overrides it, and writes it to every arm of a sweep --
+    unlike W&B's `run.name`, never written locally in offline mode, this
+    one is on disk from the start, the same as Sacred's `experiment.name`.
+    """
+    text = hydra_yaml.read_text(errors="replace")
+    return _yaml_path_scalar(_indented_lines(text), ("hydra", "job", "name"))
+
+
+def _hydra_config(config_yaml: Path) -> dict | None:
+    """An arm's resolved config, from `.hydra/config.yaml`.
+
+    Flat top-level `key: value` pairs -- `_yaml_scalars` already reads
+    exactly this shape, coerced the same way `_wandb_config` coerces its
+    unwrapped values, since Hydra's own dumper leaves ints/floats unquoted.
+    """
+    scalars = _yaml_scalars(config_yaml)
+    return {k: _coerce(v) for k, v in scalars.items()} or None
+
+
+def _hydra_arm_metrics(arm_dir: Path) -> list[Metric]:
+    """Metrics from any JSON/JSONL/CSV file directly in an arm's directory.
+
+    `.hydra/` is excluded -- it holds config and Hydra's own bookkeeping,
+    never a result. Reuses `metrics_from_payload`/`_csv_rows`, the same
+    readers the ordinary `results/` scan in `discover` uses, rather than a
+    Hydra-specific parser: a JSON object of scalars (`metrics.json`, what
+    `examples/hydra/train.py` writes) or a metrics CSV are both already
+    handled shapes.
+    """
+    metrics: list[Metric] = []
+    for path in sorted(arm_dir.glob("*")):
+        if not path.is_file() or path.parent.name == ".hydra":
+            continue
+        if path.suffix in (".json", ".jsonl"):
+            payload = _load(path)
+            if payload is not None:
+                metrics.extend(metrics_from_payload(payload, None, None))
+        elif path.suffix.lower() == ".csv":
+            rows = _csv_rows(path)
+            if rows:
+                metrics.extend(metrics_from_payload(rows, None, None))
+    return metrics
+
+
+def _hydra_runs(root: Path, seen: set[str]) -> list[RunRecord]:
+    """Runs under `multirun/<date>/<time>/<n>/`, one numbered directory per
+    arm of a sweep -- Hydra's own `--multirun` layout.
+
+    Verified 2026-08-28 against a real sweep (hydra-core 1.3.5,
+    examples/hydra/generate.sh): `python train.py --multirun
+    lr=0.01,0.1,1,10 hydra.job.chdir=True` writes `multirun/<date>/<time>/
+    <n>/{.hydra/{config.yaml,hydra.yaml,overrides.yaml}, metrics.json,
+    train.log}` for each of the four arms, plus one `multirun.yaml`
+    summarising the sweep -- see examples/hydra/train.py's own docstring
+    for why `hydra.job.chdir=True` is required: hydra-core 1.3.5 no longer
+    changes the working directory into each arm's own output directory by
+    default, so without it every arm overwrites the same top-level
+    metrics.json instead of writing its own.
+
+    Naming: `<job.name>/<date>/<time>/<n>` is unreadable, so a run is named
+    `<job.name>/<n>` with family `job.name` (read from `.hydra/
+    hydra.yaml`, falling back to the sweep directory's own name when that
+    file is missing or unreadable -- an older Hydra version, or a directory
+    edited by hand). Two sweeps of the same job name collide on `<n>`
+    alone, so a second sweep's arms are qualified with their time
+    directory (`<job.name>/<time>/<n>`) rather than silently dropped --
+    `seen` is shared with every other reader in this module, the same
+    dedup `_wandb_runs`/`_mlflow_runs`/`_sacred_runs`/`_dvc_runs` already
+    participate in.
+
+    Tolerant of a missing `.hydra/hydra.yaml` (family falls back) and of no
+    metrics file in an arm's directory (the arm is skipped, same as an
+    MLflow run with no metric files) -- `_hydra_arm_metrics` degrades to
+    fewer metrics rather than raising on a shape it does not recognise.
+    """
+    sweeps = sorted(p for p in root.glob("multirun/*/*") if p.is_dir())
+    records: list[RunRecord] = []
+    for sweep_dir in sweeps:
+        arm_dirs = sorted(
+            (
+                p
+                for p in sweep_dir.iterdir()
+                if p.is_dir() and (p / ".hydra" / "config.yaml").is_file()
+            ),
+            key=lambda p: p.name,
+        )
+        if not arm_dirs:
+            continue
+
+        hydra_yaml = arm_dirs[0] / ".hydra" / "hydra.yaml"
+        family = _hydra_job_name(hydra_yaml) if hydra_yaml.is_file() else None
+        family = family or sweep_dir.name
+
+        for arm_dir in arm_dirs:
+            metrics = _hydra_arm_metrics(arm_dir)
+            if not metrics:
+                continue  # a spec with no measurement attached -- same as MLflow/DVC
+
+            name = f"{family}/{arm_dir.name}"
+            if name in seen:
+                # a second sweep of the same job name -- qualify with the
+                # time directory rather than silently dropping this arm
+                name = f"{family}/{sweep_dir.name}/{arm_dir.name}"
+            if name in seen:
+                continue
+            seen.add(name)
+
+            records.append(
+                RunRecord(
+                    project=root.name,
+                    name=name,
+                    source_path=str(arm_dir),
+                    family=family,
+                    status="recorded",
+                    config=_hydra_config(arm_dir / ".hydra" / "config.yaml"),
+                    metrics=metrics,
+                    adapter="hydra",
+                )
+            )
+    return records
+
+
 def _result_name(stem: str, result: Path, base: Path, dirname: str, seen: set[str]) -> str:
     """A run name that does not collide with one already recorded.
 
@@ -1319,4 +1519,5 @@ def discover(root: Path) -> list[RunRecord]:
     records.extend(_mlflow_runs(root, seen))
     records.extend(_sacred_runs(root, seen))
     records.extend(_dvc_runs(root, seen))
+    records.extend(_hydra_runs(root, seen))
     return records

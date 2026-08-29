@@ -168,24 +168,26 @@ def test_dspy_never_enters_the_library():
     The spec's refusal condition: if dspy cannot be kept out of the runtime
     import path, the design is abandoned.
 
-    mlflow, wandb, sacred and dvc are the same kind of optional dependency
-    (examples/flows/training/train_mlflow.py, examples/wandb/generate.py,
-    examples/sacred/generate.py, examples/dvc/generate.sh): the ledger READS
-    mlruns/, wandb/, sacred_runs/ and dvc.yaml/dvc.lock (ledger_adapters/
-    generic.py's `_mlflow_runs`, `_wandb_runs`, `_sacred_runs` and
-    `_dvc_runs`, named as such in comments and the
-    `adapter="mlflow"`/`adapter="wandb"`/`adapter="sacred"`/`adapter="dvc"`
-    labels) without ever importing the libraries that write them -- dvc.yaml
-    and dvc.lock are hand-parsed YAML, not run through the `dvc` package at
+    mlflow, wandb, sacred, dvc and hydra are the same kind of optional
+    dependency (examples/flows/training/train_mlflow.py, examples/wandb/
+    generate.py, examples/sacred/generate.py, examples/dvc/generate.sh,
+    examples/hydra/generate.sh): the ledger READS mlruns/, wandb/,
+    sacred_runs/, dvc.yaml/dvc.lock and multirun/ (ledger_adapters/
+    generic.py's `_mlflow_runs`, `_wandb_runs`, `_sacred_runs`, `_dvc_runs`
+    and `_hydra_runs`, named as such in comments and the
+    `adapter="mlflow"`/`adapter="wandb"`/`adapter="sacred"`/`adapter="dvc"`/
+    `adapter="hydra"` labels) without ever importing the libraries that
+    write them -- dvc.yaml/dvc.lock and .hydra/config.yaml/hydra.yaml are
+    all hand-parsed YAML, not run through the `dvc` or `hydra` packages at
     all -- so this checks for an import, not the word. tensorflow
     (examples/tensorflow/generate.py) needed no new adapter function at all:
     CSVLogger's CSV and a plain metrics JSON already fit `results/*.csv`/
     `*.json`, the generic adapter's oldest convention -- it is guarded here
-    for the same reason as the other four, not because the ledger reads a
+    for the same reason as the other five, not because the ledger reads a
     TensorFlow-specific directory."""
     src = Path(__file__).resolve().parents[1] / "src" / "attestation"
     files = list(src.rglob("*.py"))
-    for name in ("dspy", "mlflow", "wandb", "sacred", "dvc", "tensorflow"):
+    for name in ("dspy", "mlflow", "wandb", "sacred", "dvc", "tensorflow", "hydra"):
         pattern = re.compile(rf"^\s*(import|from)\s+{name}\b", re.MULTILINE)
         offenders = [str(p.relative_to(src)) for p in files if pattern.search(p.read_text())]
         assert offenders == [], f"{name} imported under src/: {offenders}"
