@@ -1,11 +1,11 @@
 # examples/citations/check_citations.py
 """Drives cite.sources, cite.check, cite.lookup and cite.search over stdio.
 
-`attest claims` (see `attestation.cli.cmd_claims`) calls `claims.check()` with
-no resolver, so it never runs the citation lint -- only `runs.claims_check`
-over MCP (which injects one, see `attestation.mcp.claims_tools`) and the
-`cite.*` tools do. That is a finding about the CLI, not a defect fixed here;
-this script is how this path demonstrates the lint that the CLI cannot show.
+`attest claims` (see `attestation.cli.cmd_claims`) now builds its own
+resolver and runs the citation lint too, so `attest claims DRAFT.md` and
+this script report the same `uncited` verdict. This script remains the
+MCP-side demonstration: it is still the only path to `cite.lookup` and
+`cite.search`, and to `cite.sources`' `offline: true` reporting.
 
 Pattern copied from `examples/flows/mcp_e2e.py`'s `run_surface`: spawn
 `attest-mcp` over stdio with `ATTEST_TOOLS=knowledge ATTEST_EXPAND=1` (the
