@@ -482,6 +482,22 @@ def _score(stats: dict[str, list[int]], key: str) -> float:
     return (u + 1) / (u + n + 2)  # Laplace-smoothed; 0.5 = neutral
 
 
+def top_and_bottom_keys(conn, user_id: int, n: int = 5) -> tuple[list[str], list[str]]:
+    """The `n` feature keys this reader has scored highest and lowest, by the
+    same Laplace-smoothed score the preference term ranks with. Public so the
+    profile-status tool stops importing `_key_stats`/`_score` across the
+    module boundary; the smoothing is not reimplemented. A key counts as
+    liked only above 0.5 (neutral) and disliked only below it, so a reader
+    with fewer than `n` clicks on either side gets a shorter list rather than
+    a padded one.
+    """
+    stats = _key_stats(conn, user_id)
+    scored = sorted(((k, _score(stats, k)) for k in stats), key=lambda kv: kv[1], reverse=True)
+    liked = [k for k, v in scored[:n] if v > 0.5]
+    disliked = [k for k, v in reversed(scored[-n:]) if v < 0.5]
+    return liked, disliked
+
+
 def _item_keys(conn, item_ids: list[int]) -> dict[int, list[str]]:
     keys: dict[int, list[str]] = {i: [] for i in item_ids}
     # Chunk below SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (32766): item_ids can be

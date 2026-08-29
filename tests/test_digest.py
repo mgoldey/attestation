@@ -265,3 +265,28 @@ def test_the_digest_message_counts_what_it_actually_shipped(tmp_path, monkeypatc
         assert "not shown" in out["message"], (
             f"message says {considered} item(s), payload has {shipped}: {out['message']!r}"
         )
+
+
+def test_digest_budget_accounts_for_per_topic_truncation():
+    """`_allocate_digest_budget` is the pure allocator `_digest_body` calls:
+    given grouped topics, leftover unclustered items, a per-topic cap and a
+    total budget, `shipped` must equal what actually ends up in the returned
+    payload -- topics' shown items plus shown unclustered -- not a count that
+    forgets per-topic truncation. That mismatch is the bug this seam existed
+    to give a DB-free regression test for (see the digest-truncation test
+    above): every live persona read "16 item(s)" while shipping 6 to 11.
+    """
+    from attestation.mcp.feed import _allocate_digest_budget
+
+    item = {"item_id": 0}
+    grouped = {
+        "a": [dict(item, item_id=i) for i in range(8)],
+        "b": [dict(item, item_id=i) for i in range(2)],
+    }
+    unclustered = [dict(item, item_id=i) for i in range(100, 105)]
+    out = _allocate_digest_budget(grouped, unclustered, per_topic=3, budget=12)
+    in_topics = sum(len(t["items"]) for t in out["topics"])
+    assert out["shipped"] == in_topics + len(out["shown_unclustered"])
+    assert [t["label"] for t in out["topics"]] == ["a", "b"]  # largest first
+    assert out["topics"][0]["n_total"] == 8 and len(out["topics"][0]["items"]) == 3
+    assert out["shipped"] == 3 + 2 + 5 and len(out["shown_unclustered"]) == 5

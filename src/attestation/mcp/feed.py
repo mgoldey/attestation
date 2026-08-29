@@ -602,15 +602,14 @@ def _list_users(conn) -> dict:
     label="profile_status",
 )
 def _profile_status(conn, user_row) -> dict:
-    from attestation.features import _key_stats, _score
+    from attestation.features import top_and_bottom_keys
     from attestation.rank import blend_weight
 
     user = user_row["name"]
     n_clicks = conn.execute(
         "SELECT COUNT(*) c FROM clicks WHERE user_id = ?", (user_row["id"],)
     ).fetchone()["c"]
-    stats = _key_stats(conn, user_row["id"])
-    scored = sorted(((k, _score(stats, k)) for k in stats), key=lambda kv: kv[1], reverse=True)
+    top_liked, top_disliked = top_and_bottom_keys(conn, user_row["id"])
     by_source = {
         r["source"]: r["n"]
         for r in conn.execute(
@@ -624,8 +623,8 @@ def _profile_status(conn, user_row) -> dict:
         "clicks": n_clicks,
         "clicks_by_source": by_source,
         "blend_weight": round(blend_weight(n_clicks), 3),
-        "top_liked": [k for k, v in scored[:5] if v > 0.5],
-        "top_disliked": [k for k, v in reversed(scored[-5:]) if v < 0.5],
+        "top_liked": top_liked,
+        "top_disliked": top_disliked,
         "message": (
             f"{n_clicks} click(s); ranking is {round(blend_weight(n_clicks) * 100)}% "
             "driven by observed behavior and the rest by the interests text"
@@ -672,8 +671,10 @@ RELEVANCE_FLOOR = 0.90
 RELEVANCE_ANCHOR = 3
 
 
-def _semantic_hits(conn, embedder, query: str, k: int) -> dict[int, float]:
-    """item_id -> similarity, via the sqlite-vec index.
+def _vector_search(conn, embedder, query: str, k: int) -> dict[int, float]:
+    """item_id -> similarity, via the sqlite-vec index. The query half of
+    `_semantic_hits`, split from `_apply_relevance_floor`'s policy so each can
+    be read and tested on its own.
 
     Indexed with DOC_PROMPT and searched with QUERY_PROMPT: embed.py's prompts
     are asymmetric because the model was trained that way, and mixing them
@@ -689,7 +690,15 @@ def _semantic_hits(conn, embedder, query: str, k: int) -> dict[int, float]:
         " WHERE embedding MATCH ? AND k = ? ORDER BY distance",
         (vec.tobytes(), k),
     ).fetchall()
-    sims = {r["rowid"]: 1.0 - (r["distance"] ** 2) / 2.0 for r in rows}
+    return {r["rowid"]: 1.0 - (r["distance"] ** 2) / 2.0 for r in rows}
+
+
+def _apply_relevance_floor(sims: dict[int, float]) -> dict[int, float]:
+    """Keep hits within RELEVANCE_FLOOR of the RELEVANCE_ANCHOR-averaged best
+    similarity in `sims`. The policy half of `_semantic_hits`, over a plain
+    item_id -> similarity dict so the three rounds of live tuning documented
+    above can be regression-tested with no database and no model.
+    """
     if not sims:
         return sims
     # sqlite-vec returns k rows whether or not they are relevant, so without a
@@ -699,6 +708,20 @@ def _semantic_hits(conn, embedder, query: str, k: int) -> dict[int, float]:
     top = sorted(sims.values(), reverse=True)[:RELEVANCE_ANCHOR]
     best = sum(top) / len(top)
     return {rid: sim for rid, sim in sims.items() if sim >= best * RELEVANCE_FLOOR}
+
+
+def _semantic_hits(conn, embedder, query: str, k: int) -> dict[int, float]:
+    """item_id -> similarity, via the sqlite-vec index.
+
+    Indexed with DOC_PROMPT and searched with QUERY_PROMPT: embed.py's prompts
+    are asymmetric because the model was trained that way, and mixing them
+    measurably degrades retrieval. `embed_query` existed for exactly this and
+    had no caller until now.
+
+    Vectors are L2-normalised by truncate_normalize, so sqlite-vec's L2
+    distance d relates to cosine similarity as cos = 1 - d^2/2.
+    """
+    return _apply_relevance_floor(_vector_search(conn, embedder, query, k))
 
 
 def _resolved_tag(conn, tag: str | None) -> str | None:
@@ -913,6 +936,45 @@ def _cluster(items: list, members: list, cached: dict) -> tuple[dict[str, list],
     return grouped, unclustered
 
 
+def _allocate_digest_budget(
+    grouped: dict[str, list], unclustered: list, per_topic: int, budget: int
+) -> dict:
+    """Spend `budget` items across `grouped` topics (largest first, capped at
+    `per_topic` each) then on leftover `unclustered` items, and report exactly
+    what was shipped. Pure so the undercount this function's own history
+    recorded -- every live persona's digest said "16 item(s)" while shipping
+    6 to 11 -- has a DB-free regression test: `shipped` must equal what is
+    actually in the returned topics plus `shown_unclustered`, not a count
+    that forgets truncation inside a shown topic.
+    """
+    topics = []
+    shipped_in_topics = 0
+    for label, group in sorted(grouped.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if budget <= 0:
+            break
+        shown = group[: max(1, min(int(per_topic), budget))]
+        budget -= len(shown)
+        shipped_in_topics += len(shown)
+        topics.append({"label": label, "n_total": len(group), "items": shown})
+
+    # Unclustered draws from the SAME budget, after topics: they are the
+    # leftovers, and a digest that spent its whole allowance on them would bury
+    # the grouping that is the point of the tool.
+    shown_unclustered = unclustered[: max(0, budget)]
+    # Count ITEMS not shown, from all three causes. This counted omitted groups
+    # and leftover unclustered items but never items cut inside a SHOWN topic
+    # by per_topic -- so every live persona read "16 item(s)" while shipping
+    # 6 to 11. The existing guard asserts n_total per topic and never the
+    # message, which is how it passed.
+    shipped = shipped_in_topics + len(shown_unclustered)
+    return {
+        "topics": topics,
+        "shown_unclustered": shown_unclustered,
+        "shipped": shipped,
+        "dropped_in_topics": sum(len(g) for g in grouped.values()) - shipped_in_topics,
+    }
+
+
 @tool(
     empty={"topics": [], "unclustered": [], "ranking_quality": {}, "window_days": 0},
     needs_user=True,
@@ -945,33 +1007,13 @@ def _digest_body(conn, user_row, days: int = 7, per_topic: int = 3, limit: int =
 
     grouped, unclustered = _cluster(items, members, cached)
 
-    topics = []
-    shipped_in_topics = 0
-    budget = MAX_DIGEST_ITEMS
-    for label, group in sorted(grouped.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        if budget <= 0:
-            break
-        shown = group[: max(1, min(int(per_topic), budget))]
-        budget -= len(shown)
-        shipped_in_topics += len(shown)
-        topics.append({"label": label, "n_total": len(group), "items": shown})
-
-    # Unclustered draws from the SAME budget, after topics: they are the
-    # leftovers, and a digest that spent its whole allowance on them would bury
-    # the grouping that is the point of the tool.
-    shown_unclustered = unclustered[: max(0, budget)]
-    # Count ITEMS not shown, from all three causes. This counted omitted groups
-    # and leftover unclustered items but never items cut inside a SHOWN topic
-    # by per_topic -- so every live persona read "16 item(s)" while shipping
-    # 6 to 11. The existing guard asserts n_total per topic and never the
-    # message, which is how it passed.
-    shipped = shipped_in_topics + len(shown_unclustered)
-    dropped = len(items) - shipped
-    note = f"; showing {shipped} -- {dropped} not shown" if dropped else ""
+    out = _allocate_digest_budget(grouped, unclustered, per_topic, MAX_DIGEST_ITEMS)
+    dropped = len(items) - out["shipped"]
+    note = f"; showing {out['shipped']} -- {dropped} not shown" if dropped else ""
     return {
         "message": f"{len(items)} item(s) in {len(grouped)} topic(s){note}",
-        "topics": topics,
-        "unclustered": shown_unclustered,
+        "topics": out["topics"],
+        "unclustered": out["shown_unclustered"],
         "ranking_quality": ranking_quality(conn, row["id"]),
         "window_days": days,
     }

@@ -613,3 +613,17 @@ def test_a_tag_the_corpus_does_not_use_is_refused_not_answered_with_zero(search_
     unknown = feed_mod._search_feed("ana", "", tag="definitely-not-a-concept", limit=5)
     assert unknown["ok"] is False, "an unknown tag returned a successful empty result"
     assert "kg.concepts" in unknown["message"], unknown["message"]
+
+
+def test_relevance_floor_keeps_hits_near_the_top_anchor():
+    """`_apply_relevance_floor` is the pure policy `_semantic_hits` applies
+    after the sqlite-vec query: keep whatever is within RELEVANCE_FLOOR of the
+    RELEVANCE_ANCHOR-averaged best similarity. A literal dict in, no database
+    and no embedder, is the regression test the three rounds of live tuning
+    documented in the comments above never had.
+    """
+    from attestation.mcp.feed import _apply_relevance_floor
+
+    kept = _apply_relevance_floor({1: 0.62, 2: 0.60, 3: 0.61, 4: 0.30})
+    assert set(kept) == {1, 2, 3}
+    assert _apply_relevance_floor({}) == {}

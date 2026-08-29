@@ -444,3 +444,26 @@ def test_run_tagging_stops_at_an_unreachable_backend_and_says_so(tmp_path):
     assert stats["chat_down"] is True
     assert stats["tagged"] == 0
     assert len(calls) == 1, "a dead socket was retried, or a second item was attempted"
+
+
+def test_top_and_bottom_keys_matches_key_stats_and_score(tmp_path):
+    """`top_and_bottom_keys` is the public function `mcp/feed._profile_status`
+    now calls instead of importing `_key_stats`/`_score` directly -- no
+    private name should cross the module boundary. Two useful clicks on
+    items tagged 'dft' should surface 'tag:dft' as the top liked key, with
+    no disliked keys (nothing was marked not-useful).
+    """
+    from attestation.features import top_and_bottom_keys
+
+    conn = seeded_db(tmp_path / "t.db")
+    uid = _matt(conn)
+    a, b = (add_item(conn, t) for t in ("a", "b"))
+    _tag(conn, a, "paper", ["dft"])
+    _tag(conn, b, "paper", ["dft"])
+    _click(conn, uid, a, useful=1)
+    _click(conn, uid, b, useful=1)
+    conn.commit()
+
+    liked, disliked = top_and_bottom_keys(conn, uid)
+    assert liked[0] == "tag:dft"
+    assert disliked == []
