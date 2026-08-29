@@ -153,101 +153,6 @@ three in parallel, each on its own subagent with its own brief.
 
 ## Deviations and findings
 
-**Twelve paths shipped, not ten.** The scope table above lists six new
-integration paths plus the four retrofits, for ten; `mlflow/` and
-`tensorflow/` were added during implementation at the user's request, and
-`citations/` grew a BibTeX-software amendment (generate real `.bib` files
-with `bibtexparser` rather than typing one to look like real output) also
-at the user's request, so the "real library, not hand-typed" rule the spec
-already stated for wandb/sacred/dvc/hydra was extended to citations' own
-fixture instead of being the one hand-written exception. The catalogue,
-`examples/README.md`, lists all twelve; the success-criteria bullet above
-still says "ten" as a record of what the spec asked for, not a bug.
-
-- **The expected wandb finding was false; the real one was upstream of
-  it.** The spec's table guessed `_wandb_runs` globs `run-*` while real
-  offline runs are named `offline-run-*`. Reading the code: it walks every
-  child of `wandb/` with no name filter, so both names already worked —
-  only the reader's docstring described a narrower pattern than the code
-  implemented. The actual finding: offline W&B never writes
-  `wandb-summary.json` or `config.yaml` to `files/` at all (confirmed
-  against wandb 0.17.6 through 0.29.0; corroborated on wandb's own issue
-  tracker, #7227, #9646, #1768). Every logged value still reaches disk,
-  inside the run's binary `.wandb` transaction log. `examples/wandb/
-  generate.py` materialises the two missing files locally by decoding that
-  log with `wandb.sdk.internal.datastore` — the community's published
-  workaround — and pins `wandb==0.17.6` (offline materialisation is not
-  stable across releases; `generate.py` refuses to run under any other
-  installed version rather than silently produce a fixture its own
-  docstring no longer describes).
-- **MLflow's committed fixture reports final values, never curves** — one
-  `metrics/<name>` file per run holding the last-logged value, matching the
-  ledger-wide convention (final values, no direction inference) rather than
-  MLflow's own append-only metric history.
-- **The `attest claims` CLI never ran the citation lint.** `cmd_claims`
-  called `claims.check()` with no resolver, so a claim citing a key no
-  configured source could resolve printed as plain "supported" — only
-  `runs.claims_check` and `cite.check` over MCP ever surfaced the uncited
-  verdict. Fixed in `4fb6007` (`cmd_claims` now builds a resolver and passes
-  it through), found by `examples/citations/`'s own path, not a synthetic
-  test.
-- **`family_of` returned `None` for a bare `<token>_<value>` stem.**
-  `examples/tensorflow/`'s four arms are named `results/lr_0.001.json` ..
-  `lr_0.03.json`; the existing `_SPLIT` regex recognised `lr` as a
-  variant-token prefix but, for a stem that is *only* that token plus its
-  value, stripping the token emptied the whole stem and every arm grouped
-  to no family at all — `attest runs compare lr` failed outright. Fixed in
-  `ca08646`: when stripping the recognised token leaves nothing behind, the
-  token's own name is the family (`lr_0.001` groups as `lr`), and the
-  existing sweep/series shapes are unchanged.
-- **Hydra 1.3 does not chdir into each arm's own output directory by
-  default.** `hydra.job.chdir=True` is required or `train.py`'s
-  `open("metrics.json", "w")` writes into the directory the sweep was
-  launched from, and all four arms silently overwrite the same file — a
-  real `--multirun lr=0.01,0.1,1,10` run with no override produced one
-  `metrics.json`, not four. `examples/hydra/generate.sh` passes the
-  override explicitly; `_hydra_runs` reads only the layout that override
-  produces.
-- **DVC's `dvc.lock` records the whole swept `foreach` list, not the one
-  value each stage instance ran with** — every `train@<lr>` entry carries
-  the same `params.yaml: lr: [0.01, 0.1, 1, 10]` literal, because DVC is
-  quoting the source the instance was generated from, not the value it was
-  instantiated with. `_dvc_runs` takes each arm's `lr` from the stage
-  instance name itself (`train@0.1` implies `lr=0.1`) rather than trusting
-  `dvc.lock`'s echoed list. Relatedly, `metrics/` is already one of
-  `generic.py`'s own `RESULT_DIRS`, so an unguarded scan would read
-  `metrics/0.1.json` twice — once as a bare-named run, once as
-  `_dvc_runs`'s `train@0.1`; `discover()` now computes which metric files
-  `dvc.yaml`'s stages claim before the ordinary scan runs, and skips them.
-- **`conf/` collides with `CONFIG_DIRS`.** Hydra's own config directory
-  (`conf/config.yaml`) is one of `generic.py`'s existing `CONFIG_DIRS`, so
-  `attest runs scan` reads it as an ordinary config spec named `config`
-  alongside the four sweep arms — the same "a spec with no result attached
-  is recorded as a run with no metrics" honesty every config file gets.
-  Not a bug: `conf/` really is a config directory, and the ledger has no
-  way to know it is a Hydra input rather than an ordinary one.
-- **Attribution-guard rulings**, both narrowing `test_no_committed_
-  example_carries_attribution_or_machine_paths` to catch real leaks rather
-  than collisions with unrelated content: the ambient username matches only
-  as a whole word, case-sensitive (a bare substring on a short name like
-  "matt" also matches "mattered"); and `mlflow.user`/`git@` are checked
-  only outside `.py`/`.sh`/`.md` source, since a scrubber's own code and
-  its docs must be free to name the tag or prefix it strips
-  (`train_mlflow.py`'s `_SCRUB_TAGS` names `mlflow.user` verbatim — the
-  tag's real name, not a leaked value). A third ruling landed after CI
-  caught a case the first two didn't: GitHub Actions sets `$USER=runner`,
-  and "runner" is an ordinary word in hydra's own README prose ("a GitHub
-  Actions runner") — the ambient-username check is now skipped under `CI`
-  or when the username is a generic account name (`runner`, `root`,
-  `user`, `ubuntu`, `admin`, `ci`), while the fixed needles (`/home/`,
-  `github.com`) still apply everywhere. The guard was also generalised from
-  `examples/flows/` alone to all of `examples/**`, and extended to scan
-  non-text suffixes (e.g. TensorBoard's `events.out.tfevents.<ts>.v2`) as
-  raw bytes for the same two needles, since a binary format can still embed
-  a plain attribution string even though it is not itself readable text.
-
-## Deviations and findings
-
 **Twelve paths shipped, not ten.** The scope table above named six new
 integration paths plus four retrofits (workspace, flows, prompt-evals,
 agents) for a planned total of ten. Two more were added at the user's
@@ -261,6 +166,12 @@ disk" scope at the user's request: the fixture BibTeX library is generated
 by real `bibtexparser` software rather than hand-written, matching the rule
 already binding on wandb/sacred/dvc/hydra/tensorflow that a generated
 artifact comes from the real library.
+
+**The repo README's "Demonstrations" paragraph became the golden-paths
+section, and "Prompt evals and the optimizer" was reduced to a pointer
+paragraph.** The quickstart block itself is byte-identical; only the prose
+around it changed to point at `examples/README.md`'s catalogue rather than
+describing each flow inline a second time.
 
 **Offline W&B writes no summary/config files at all, confirmed against wandb
 0.17.6–0.29.0.** The scope table's listed risk was a possible directory-naming
@@ -338,12 +249,6 @@ unconditionally. The guard was also generalised from `examples/flows/`
 alone to all of `examples/**`, and extended to scan non-text suffixes (e.g.
 tensorboard's `events.out.tfevents.<ts>.v2`) as raw bytes for `/home/` and
 the username, rather than skipping binaries outright.
-
-**The repo README's "Demonstrations" paragraph became the golden-paths
-section, and "Prompt evals and the optimizer" was reduced to a pointer
-paragraph.** The quickstart block itself is byte-identical; only the prose
-around it changed to point at `examples/README.md`'s catalogue rather than
-describing each flow inline a second time.
 
 **sacred/dvc/hydra generators were unpinned until 2026-08-29 (this
 commit).** `examples/wandb/generate.py`'s `WANDB_VERSION` pin-and-refuse
