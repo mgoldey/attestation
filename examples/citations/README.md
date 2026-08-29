@@ -37,8 +37,16 @@ which is why `check_citations.py` spawns `attest-mcp` with this directory as
 9 run(s) across 2 project(s)
 ```
 
-Abridged -- `attest claims DRAFT.md` prints one line per claim, all four
-`supported` (the citation lint does not run here; see *What it demonstrates*),
+Abridged -- `attest claims DRAFT.md` prints one line per claim: four
+`supported` on the numbers, plus a fifth verdict, `uncited`, for the claim
+whose `cite=doe2099imaginary` resolves nowhere (see *What it demonstrates*):
+
+```
+  uncited       DRAFT.md:28                  wer=0.0659  no configured source has 'doe2099imaginary' (checked: bibtex)
+
+4 claim(s): 4 supported, 1 uncited
+```
+
 then `check_citations.py` prints `cite.sources`, `cite.check`, one successful
 and one refused `cite.lookup`, and a `cite.search` hit count, ending:
 
@@ -58,20 +66,24 @@ it -- that would need a model, and every verdict this module produces is
 deterministic. `doe2099imaginary` fails the same way a typo would: the lint
 cannot distinguish "this paper does not exist" from "you misspelled the key."
 
-**`attest claims` has no citation command -- a finding, not a defect to fix
-here.** `cmd_claims` in `src/attestation/cli.py` calls
-`claims.check(conn, target)` with no `resolver=` argument, so the CLI's own
-codepath through `check_citations()` never runs; all four claims above print
-`supported` and the process exits 0, key `doe2099imaginary` and all. The MCP
-tool with the same job, `runs.claims_check`
-(`src/attestation/mcp/claims_tools.py`), builds a resolver with
-`citations.Resolver.from_env()` and passes it in, so calling that tool (or
-`cite.check` directly) over MCP is the only way this repository currently
-surfaces an `uncited` verdict. `check_citations.py` drives `cite.sources`,
-`cite.check`, `cite.lookup` and `cite.search` over stdio -- the pattern in
+**`attest claims` runs the citation lint too.** `cmd_claims` in
+`src/attestation/cli.py` builds a resolver with its own
+`_citation_resolver()` (`citations.Resolver.from_env()`, the same call the
+MCP side makes) and passes it to `claims.check(conn, target,
+resolver=...)`, so the CLI's own codepath through `check_citations()` now
+runs; the fifth line above, `uncited ... doe2099imaginary`, is the CLI
+reporting it directly, and the process still exits 0 -- an uncited key is a
+lint, not a contradiction. The MCP tool with the same job, `runs.claims_check`
+(`src/attestation/mcp/claims_tools.py`), builds its own resolver the same
+way and passes it in, so `runs.claims_check` and `cite.check` over MCP report
+the same `uncited` verdict, just addressed to an agent rather than a
+terminal. `check_citations.py` drives `cite.sources`, `cite.check`,
+`cite.lookup` and `cite.search` over stdio -- the pattern in
 `examples/flows/mcp_e2e.py`'s `run_surface`, spawning `attest-mcp` with
-`ATTEST_TOOLS=knowledge ATTEST_EXPAND=1` -- because that is the only path in
-this repository that actually reports the lint.
+`ATTEST_TOOLS=knowledge ATTEST_EXPAND=1` -- and stays here as the MCP-side
+demonstration: `cite.lookup` and `cite.search` have no CLI equivalent, and
+`cite.sources`' `offline: true` reporting is worth seeing from the tool that
+would have done the leaving.
 
 **`cite.sources` reports `offline: true`.** With no Zotero library on this
 machine and `ATTEST_CITATION_WEB` unset, the only configured reader is

@@ -258,6 +258,39 @@ def test_claims_exits_nonzero_on_a_contradiction(tmp_path, capsys):
     assert "contradicted" in capsys.readouterr().out
 
 
+def test_claims_reports_uncited_citation_key(tmp_path, monkeypatch, capsys):
+    """`attest claims` must run the citation lint too, not just the numeric
+    check -- a claim whose number agrees but whose `cite=` key resolves
+    nowhere should not print as plain `supported`."""
+    from attestation.claims import VerdictKind
+
+    db = tmp_path / "t.db"
+    artifact = tmp_path / "result.json"
+    artifact.write_text("{}")
+    conn = seeded_db(db)
+    conn.execute(
+        "INSERT INTO runs(project, name, source_path) VALUES ('p', 'r', ?)", (str(artifact),)
+    )
+    conn.execute("INSERT INTO run_metrics(run_id, metric, value) VALUES (1, 'wer', 0.1)")
+    conn.commit()
+    conn.close()
+    (tmp_path / "doc.md").write_text("<!-- claim: p/r metric=wer value=0.1 cite=nosuchkey -->\n")
+
+    # No .bib file here, and no Zotero library either: Resolver.from_env()
+    # globs *.bib in Path.cwd(), so an empty cwd guarantees nothing resolves
+    # `nosuchkey` -- the lint must fire regardless.
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+
+    rc = main(["claims", "--db", str(db), str(tmp_path)])
+
+    out = capsys.readouterr().out
+    assert VerdictKind.UNCITED.value in out
+    assert "nosuchkey" in out
+    assert rc == 0  # an uncited lint result is not a contradiction
+
+
 def test_compare_header_names_the_shared_corpus(tmp_path, capsys, monkeypatch):
     """Naming the corpus says the comparison was checked, not assumed. A
     reader cannot tell those apart from the numbers alone."""

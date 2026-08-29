@@ -391,6 +391,23 @@ def cmd_warmup(args: argparse.Namespace) -> int:
     return 0
 
 
+def _citation_resolver():
+    """The configured bibliographic sources.
+
+    Imported here rather than at module scope, matching
+    `attestation.mcp.claims_tools._citation_resolver`: `claims.check` takes
+    the resolver as an injected argument precisely so the ledger does not
+    depend on the citation readers at import time, and this wiring should not
+    undo that. `Resolver.from_env()` only stores paths and reads
+    `ATTEST_CITATION_WEB` -- it does not touch a `.bib` file or Zotero's
+    sqlite database until a lookup happens, so there is nothing here to guard
+    against with a broad except.
+    """
+    from attestation import citations
+
+    return citations.Resolver.from_env()
+
+
 def cmd_claims(args: argparse.Namespace) -> int:
     from attestation import claims as claims_mod
     from attestation import ledger
@@ -414,7 +431,7 @@ def cmd_claims(args: argparse.Namespace) -> int:
         return 0
 
     with open_db(args.db) as conn:
-        out = claims_mod.check(conn, target)
+        out = claims_mod.check(conn, target, resolver=_citation_resolver())
 
     for problem in out["malformed"]:
         print(f"  malformed  {problem}")
