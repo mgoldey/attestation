@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# examples/hydra/generate.sh
+#
+# Runs the real Hydra multirun sweep (hydra-core 1.3.5, confirmed by the
+# pinned version below) against this directory's conf/config.yaml and
+# train.py, then scrubs what it wrote and commits it. Regenerating rewrites
+# multirun/ in place: lr in {0.01, 0.1, 1, 10} is fixed, train.py's
+# random_state and split are fixed, so the four arms and their metric
+# values are stable across a regeneration; only the date/time sweep
+# directory Hydra names changes.
+#
+# `hydra.job.chdir=True` is required -- see train.py's module docstring for
+# why: hydra-core 1.3.5 does not chdir into each job's own output directory
+# by default, so without this override all four arms would overwrite one
+# top-level metrics.json instead of writing into multirun/<date>/<time>/<n>/.
+#
+#     uv run --with hydra-core --with scikit-learn --no-project python \
+#         train.py --multirun lr=0.01,0.1,1,10 hydra.job.chdir=True
+#
+# Hydra writes, per arm, multirun/<date>/<time>/<n>/{.hydra/{config.yaml,
+# hydra.yaml,overrides.yaml}, metrics.json, train.log} plus one
+# multirun/<date>/<time>/multirun.yaml for the sweep as a whole. `_hydra_runs`
+# in ledger_adapters/generic.py never reads train.log or multirun.yaml --
+# only .hydra/config.yaml, .hydra/hydra.yaml (for hydra.job.name), and
+# metrics.json. scrub.py deletes both unread files outright (train.log is
+# empty here since train.py prints to stdout, not Hydra's job logger;
+# multirun.yaml duplicates the same absolute paths hydra.yaml carries).
+set -euo pipefail
+cd "$(dirname "$0")"
+
+HYDRA_VERSION="1.3.5" # pin used to produce the committed fixture -- informational only
+
+rm -rf multirun
+
+uv run --with hydra-core --with scikit-learn --no-project python \
+  train.py --multirun lr=0.01,0.1,1,10 hydra.job.chdir=True
+
+uv run --with hydra-core --no-project python scrub.py
+
+echo "hydra $HYDRA_VERSION wrote:"
+for f in multirun/*/*/*/metrics.json; do
+  echo "  $f"
+done
+echo "regenerated $(find multirun -name 'metrics.json' | wc -l | tr -d ' ') arm(s)"

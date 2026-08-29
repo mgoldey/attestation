@@ -1,0 +1,5 @@
+# examples/hydra/conf/config.yaml
+# The one config key train.py reads: `cfg.lr`. Overridden per arm by
+# generate.sh's `--multirun lr=0.01,0.1,1,10`; this file's own value (0.1)
+# is what a plain, non-multirun `python train.py` would train with.
+lr: 0.1
