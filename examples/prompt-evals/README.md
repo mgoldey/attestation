@@ -147,7 +147,14 @@ verbatim.
 why the histogram prints beside the score) and a confidence histogram;
 `run_explanation_eval.py` prints refusal precision/recall (refused vs.
 should-refuse), because the explanation prompt's refusal clause is
-load-bearing and nothing else in the repo guards it. `score_verdicts` is
+load-bearing and nothing else in the repo guards it. The ten refusal cases
+are two families: `refuse-other-*` (a different field entirely — marine
+ecology, astronomy, macroeconomics, linguistics) and `refuse-bait-*`
+(content-free AI-for-science prose that names no real topic). A missed
+refusal in the second family means the clause is defeated by AI-adjacent
+wording specifically — the failure `explain.py`'s refusal clause was
+written against — so the two recalls are not interchangeable; the live
+2026-08-28 run recorded refusal recall 0.400. `score_verdicts` is
 defined once, in `evals/reaction_eval.py`, and `examples/flows/
 persona_eval.py` imports it rather than keeping its own copy.
 

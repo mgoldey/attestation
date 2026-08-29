@@ -19,10 +19,16 @@ from __future__ import annotations
 import json
 import pathlib
 import statistics
+import sys
 import time
 from collections.abc import Callable
 
-from tagging_eval import EvalResult, gate
+# evals/ is not a package (see tagging_eval.py's own docstring): every script
+# here puts this directory on sys.path and imports its modules top-level, so
+# `gate`/`EvalResult` -- the acceptance logic -- stay one definition rather
+# than a copy per task.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from tagging_eval import EvalResult, gate  # re-exported
 
 from attestation.explain import Explanation, explanation_messages
 
@@ -43,12 +49,13 @@ __all__ = [
 CASES_PATH = pathlib.Path(__file__).parent / "explanation_cases.json"
 SPLITS = ("train", "dev")
 
-# The mandated refusal string. Read from the production renderer's own system
-# message rather than hard-coded a second time in explain.py, tests assert
-# this equals explanation_messages("x", "y", "z")[0]["content"]'s wording --
-# the prompt requires the model return these exact words when nothing shared.
+# The mandated refusal string. Pinned to the prompt by a test
+# (test_refusal_constant_is_read_from_the_production_prompt); a second copy
+# that a test keeps honest -- the prompt requires the model return these
+# exact words when nothing shared.
 REFUSAL = "Outside your stated interests."
 
+# Catches the two preambles measured in practice, not preambles in general.
 _PREAMBLES = ("you will find", "this item")
 
 

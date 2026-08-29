@@ -214,6 +214,22 @@ def test_eval_result_and_gate_are_imported_from_tagging_eval_not_copied():
     assert ee.gate is te.gate
 
 
+def test_module_loaded_by_file_path_can_still_import_tagging_eval():
+    """Guards the sys.path insert itself: loading explanation_eval.py by file
+    path (as a caller with no `evals/` on sys.path would) must not raise
+    ModuleNotFoundError on `from tagging_eval import ...`."""
+    import importlib.util
+
+    import tagging_eval as te
+
+    spec = importlib.util.spec_from_file_location(
+        "explanation_eval_by_path", str(ROOT / "evals" / "explanation_eval.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.EvalResult is te.EvalResult
+
+
 # --- the renderer mutation test: the eval must call the production builder --
 
 

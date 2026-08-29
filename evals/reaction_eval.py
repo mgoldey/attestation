@@ -100,7 +100,7 @@ def score_one(case: dict, out: dict) -> dict:
     return result
 
 
-def score_verdicts(reactions: list[dict], labels: dict[int, bool]) -> dict:
+def score_verdicts(reactions: list[dict], labels: dict[int | str, bool]) -> dict:
     """Confusion matrix, precision, recall, and AUC of a signed confidence.
 
     Moved verbatim from `examples/flows/persona_eval.py` (same keys); that
@@ -147,7 +147,7 @@ def score_verdicts(reactions: list[dict], labels: dict[int, bool]) -> dict:
     }
 
 
-def rank_auc(order: list[int], labels: dict[int, bool]) -> float | None:
+def rank_auc(order: list[int | str], labels: dict[int | str, bool]) -> float | None:
     """AUC of a ranking: earlier = higher score. None on a single class.
 
     Moved verbatim from `examples/flows/persona_eval.py`.
