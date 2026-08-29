@@ -324,3 +324,30 @@ four numeric verdicts (commit `4fb6007`). **Rule:** two code paths doing the
 function) can silently diverge when one forgets to wire a parameter — a
 golden path that exercises the CLI path for real is what caught it, not a
 read of the source.
+
+## 7. 2026-08-29: three seam tests passed against the mutants they were written to catch
+
+The onion-seams plan (`docs/superpowers/specs/2026-08-29-onion-seams-design.md`)
+named, for each seam, the DB-free test that would prove the cut and the
+mutation that test should kill: `avg_ranks` → `ranks` in `rank_rows`
+(the tie-averaged no-op), `collapse_to_last` keyed on `(metric, split)`
+instead of the name (the live worst case that collapsed nothing), and
+`RELEVANCE_ANCHOR` 3 → 1 (the anchor width three rounds of live tuning
+settled on). All three tests were written, went RED before the seam and
+GREEN after, passed task review, and passed the full suite. The final
+whole-branch review ran the three mutants with `scripts/mutate.py` and
+**all three tests stayed green.** Each test had been built from the
+spec's *example* — a tidy input on which the mutant and the real code
+agree — rather than from the *failure* the mutant reproduces.
+
+The fix was mechanical once named (an input where tied preferences make
+`ranks` and `avg_ranks` disagree; two rows sharing a metric name with
+different `split`s; a fourth similarity that the anchor-of-three keeps and
+the anchor-of-one drops), and each mutant now fails with a concrete
+assertion. What is worth recording is the sequence: RED → GREEN → task
+review → suite green is **not** evidence a test bites, because none of
+those steps applies the mutation. Section 4's rule stands and gains a
+corollary: when a spec names the mutant a test exists to kill, the task
+that writes the test runs that mutant before commit, and the report
+carries its red output — the same discipline `scripts/mutate.py` was
+written for, applied at authoring time rather than at final review.
