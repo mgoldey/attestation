@@ -9,7 +9,8 @@ reports the LogisticRegression's own held-out accuracy/auc as the run's
 summary -- the same split train_mlflow.py uses between a curve-producing
 surrogate and the metric that is actually reported). Run via:
 
-    WANDB_MODE=offline uv run --with wandb==0.17.6 --with scikit-learn --no-project python generate.py
+    WANDB_MODE=offline uv run --with wandb==0.17.6 --with scikit-learn \
+        --no-project python generate.py
 
 The version pin matches the WANDB_VERSION constant below and is load-bearing,
 not cosmetic: offline materialisation regressed between releases (see that
