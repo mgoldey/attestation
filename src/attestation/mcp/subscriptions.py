@@ -60,12 +60,11 @@ def register(mcp) -> None:
 def _add_feed(conn, url: str, title: str | None = None) -> dict:
     from attestation import feeds as feeds_mod
 
-    out = feeds_mod.add_feed(conn, url, title)
-    # feeds.add_feed returns its own envelope; a URL that does not parse is a
-    # caller-fixable refusal, not a bug, so its message is passed through verbatim
-    if not out["ok"]:
-        raise ToolError(out["message"])
-    return {"message": out["message"], "feed_id": out["feed_id"]}
+    try:
+        feed_id, message = feeds_mod.add_feed(conn, url, title)
+    except feeds_mod.FeedError as exc:
+        raise ToolError(str(exc)) from exc
+    return {"message": message, "feed_id": feed_id}
 
 
 @tool(empty={"feeds": []}, label="list_feeds")
@@ -86,19 +85,21 @@ def _remove_feed(conn, feed_id: ItemId, confirm: bool = False) -> dict:
             "unsubscribes the feed; its existing items and your feedback on "
             "them are kept."
         )
-    out = feeds_mod.remove_feed(conn, feed_id)
-    if not out["ok"]:
-        raise ToolError(out["message"])
-    return {"message": out["message"], "orphaned_items": out["orphaned_items"]}
+    try:
+        orphaned_items, message = feeds_mod.remove_feed(conn, feed_id)
+    except feeds_mod.FeedError as exc:
+        raise ToolError(str(exc)) from exc
+    return {"message": message, "orphaned_items": orphaned_items}
 
 
 @tool(empty={"title": None, "entries": []}, needs_db=False, label="preview_feed")
 def _preview_feed(url: str, limit: int = 5) -> dict:
     from attestation import feeds as feeds_mod
 
-    out = feeds_mod.preview_feed(url, limit=min(limit, MAX_LIST_LIMIT))
-    if not out["ok"]:
-        raise ToolError(out["message"])
+    try:
+        out = feeds_mod.preview_feed(url, limit=min(limit, MAX_LIST_LIMIT))
+    except feeds_mod.FeedError as exc:
+        raise ToolError(str(exc)) from exc
     return {"message": out["message"], "title": out["title"], "entries": out["entries"]}
 
 

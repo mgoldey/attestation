@@ -20,6 +20,12 @@ import feedparser
 CANDIDATES_PATH = Path(__file__).resolve().parent / "feed_candidates.toml"
 
 
+class FeedError(ValueError):
+    """A caller-fixable refusal -- a URL that does not parse, an unknown feed
+    id -- raised instead of returned as `ok: False`, so the MCP layer maps it
+    to ToolError the way it does every other refusal."""
+
+
 def _looks_like_feed(parsed) -> bool:
     """A usable feed has entries, or at least a title we can show."""
     if getattr(parsed, "entries", None):
@@ -33,23 +39,19 @@ def add_feed(
     url: str,
     title: str | None = None,
     parse=feedparser.parse,
-) -> dict:
-    """Register a feed after checking it parses. Does NOT ingest its items."""
+) -> tuple[int, str]:
+    """Register a feed after checking it parses. Does NOT ingest its items.
+
+    Returns (feed_id, message). Raises FeedError if the URL does not parse
+    as a feed -- a caller-fixable refusal, not a bug.
+    """
     existing = conn.execute("SELECT id FROM feeds WHERE url = ?", (url,)).fetchone()
     if existing is not None:
-        return {
-            "ok": True,
-            "feed_id": existing["id"],
-            "message": f"already subscribed to {url}",
-        }
+        return existing["id"], f"already subscribed to {url}"
 
     parsed = parse(url)
     if not _looks_like_feed(parsed):
-        return {
-            "ok": False,
-            "feed_id": None,
-            "message": f"{url} did not parse as an RSS/Atom feed; nothing was added",
-        }
+        raise FeedError(f"{url} did not parse as an RSS/Atom feed; nothing was added")
 
     resolved_title = title or (getattr(parsed, "feed", None) or {}).get("title") or url
     try:
@@ -65,19 +67,16 @@ def add_feed(
         raced = conn.execute("SELECT id FROM feeds WHERE url = ?", (url,)).fetchone()
         if raced is None:
             raise
-        return {
-            "ok": True,
-            "feed_id": raced["id"],
-            "message": f"already subscribed to {url}",
-        }
-    return {
-        "ok": True,
-        "feed_id": feed_id,
-        "message": (
-            f"subscribed to {resolved_title!r}. Items appear after the next ingest "
-            "(run `attest ingest`, or wait for the hourly refresh)."
-        ),
-    }
+        return raced["id"], f"already subscribed to {url}"
+    if feed_id is None:
+        # cur.lastrowid is None only when the statement was not an INSERT, or
+        # the table has no rowid -- neither is possible here, so this is a
+        # real failure worth surfacing rather than asserting past.
+        raise FeedError(f"insert for {url} did not return a row id")
+    return feed_id, (
+        f"subscribed to {resolved_title!r}. Items appear after the next ingest "
+        "(run `attest ingest`, or wait for the hourly refresh)."
+    )
 
 
 def list_feeds(conn: sqlite3.Connection) -> list[dict]:
@@ -100,12 +99,15 @@ def list_feeds(conn: sqlite3.Connection) -> list[dict]:
     ]
 
 
-def remove_feed(conn: sqlite3.Connection, feed_id: int) -> dict:
+def remove_feed(conn: sqlite3.Connection, feed_id: int) -> tuple[int, str]:
     """Unsubscribe. Items are ORPHANED, never deleted -- their clicks trained
-    the ranker, and cascading would destroy that feedback."""
+    the ranker, and cascading would destroy that feedback.
+
+    Returns (orphaned_items, message). Raises FeedError for an unknown feed_id.
+    """
     row = conn.execute("SELECT title FROM feeds WHERE id = ?", (feed_id,)).fetchone()
     if row is None:
-        return {"ok": False, "message": f"unknown feed_id: {feed_id}", "orphaned_items": 0}
+        raise FeedError(f"unknown feed_id: {feed_id}")
 
     orphaned = conn.execute(
         "SELECT COUNT(*) AS n FROM items WHERE feed_id = ?", (feed_id,)
@@ -117,32 +119,26 @@ def remove_feed(conn: sqlite3.Connection, feed_id: int) -> dict:
     conn.execute("UPDATE items SET feed_id = NULL WHERE feed_id = ?", (feed_id,))
     conn.execute("DELETE FROM feeds WHERE id = ?", (feed_id,))
     conn.commit()
-    return {
-        "ok": True,
-        "message": (
-            f"unsubscribed from {row['title']!r}; {orphaned} existing item(s) and all "
-            "feedback on them were kept"
-        ),
-        "orphaned_items": orphaned,
-    }
+    return orphaned, (
+        f"unsubscribed from {row['title']!r}; {orphaned} existing item(s) and all "
+        "feedback on them were kept"
+    )
 
 
 def preview_feed(url: str, limit: int = 5, parse=feedparser.parse) -> dict:
-    """Fetch and show recent entries WITHOUT subscribing."""
+    """Fetch and show recent entries WITHOUT subscribing.
+
+    Returns {title, entries, message} -- no `ok` key. Raises FeedError if the
+    URL does not parse as a feed.
+    """
     parsed = parse(url)
     if not _looks_like_feed(parsed):
-        return {
-            "ok": False,
-            "message": f"{url} did not parse as an RSS/Atom feed",
-            "title": None,
-            "entries": [],
-        }
+        raise FeedError(f"{url} did not parse as an RSS/Atom feed")
     feed_meta = getattr(parsed, "feed", None) or {}
     entries = [
         {"title": e.get("title"), "url": e.get("link")} for e in list(parsed.entries)[:limit]
     ]
     return {
-        "ok": True,
         "message": f"{len(entries)} recent entrie(s); not subscribed",
         "title": feed_meta.get("title") or url,
         "entries": entries,
@@ -153,20 +149,16 @@ def _load_candidates() -> list[dict]:
     return tomllib.loads(CANDIDATES_PATH.read_text()).get("candidates", [])
 
 
-def suggest_feeds(conn: sqlite3.Connection, user_id: int, limit: int = 5) -> list[dict]:
-    """Score the curated candidate list against tags this user marked useful."""
-    liked = {
-        r["tag"]
-        for r in conn.execute(
-            "SELECT DISTINCT t.tag FROM clicks c JOIN item_tags t ON t.item_id = c.item_id"
-            " WHERE c.user_id = ? AND c.useful = 1",
-            (user_id,),
-        )
-    }
-    subscribed = {r["url"] for r in conn.execute("SELECT url FROM feeds")}
+def _score_candidates(
+    liked: set[str], subscribed: set[str], candidates: list[dict], limit: int
+) -> list[dict]:
+    """Rank candidates by tag overlap with `liked`, dropping `subscribed` URLs.
 
+    Pure: no database, no file I/O -- just the sets and the candidate list.
+    Ties break by title so the order is deterministic. Highest score first.
+    """
     scored = []
-    for cand in _load_candidates():
+    for cand in candidates:
         if cand["url"] in subscribed:
             continue
         overlap = liked & set(cand.get("tags", []))
@@ -184,3 +176,17 @@ def suggest_feeds(conn: sqlite3.Connection, user_id: int, limit: int = 5) -> lis
         )
     scored.sort(key=lambda pair: (-pair[0], pair[1]["title"]))
     return [entry for _, entry in scored[:limit]]
+
+
+def suggest_feeds(conn: sqlite3.Connection, user_id: int, limit: int = 5) -> list[dict]:
+    """Score the curated candidate list against tags this user marked useful."""
+    liked = {
+        r["tag"]
+        for r in conn.execute(
+            "SELECT DISTINCT t.tag FROM clicks c JOIN item_tags t ON t.item_id = c.item_id"
+            " WHERE c.user_id = ? AND c.useful = 1",
+            (user_id,),
+        )
+    }
+    subscribed = {r["url"] for r in conn.execute("SELECT url FROM feeds")}
+    return _score_candidates(liked, subscribed, _load_candidates(), limit)
