@@ -348,25 +348,16 @@ def _detail(conn, project: str, name: str) -> dict:
     # orders by (metric, step) -- while 32 other metrics vanished from a run
     # whose shape is exactly those 33 names. A caller reading one run wants to
     # know what was measured; runs.compare is where a series belongs.
-    # Keyed on the metric NAME alone. Keying on (metric, split) collapsed
-    # nothing on the live worst case: that run's `split` carries the sweep
-    # coordinate, so all 429 rows were distinct pairs and only 4 of its 33
-    # metric names survived the cap. `split` varies per project and cannot be
-    # relied on to mean train/test here.
-    last: dict[str, dict] = {}
-    seen: dict[str, int] = {}
-    for row in metrics:
-        last[row["metric"]] = row
-        seen[row["metric"]] = seen.get(row["metric"], 0) + 1
-    collapsed = list(last.values())[:MAX_METRIC_ROWS]
+    distinct = ledger.collapse_to_last(metrics)
+    collapsed = distinct[:MAX_METRIC_ROWS]
 
     found = {**found, "metrics": collapsed, "n_metrics": total}
     message = f"{total} metric row(s)"
     if total > len(collapsed):
         message += (
             f"; showing the last of {len(collapsed)} distinct metric(s)"
-            f" of {len(last)} -- use runs.compare for a series"
-            if len(last) > len(collapsed)
+            f" of {len(distinct)} -- use runs.compare for a series"
+            if len(distinct) > len(collapsed)
             else f"; showing the last value of each of {len(collapsed)} metric(s)"
         )
     return {"message": message, "run": found}

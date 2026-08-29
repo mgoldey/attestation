@@ -561,6 +561,18 @@ def _split_rank(split: str | None) -> int:
     return len(_EVAL_SPLITS)
 
 
+def collapse_to_last(metrics: list[dict]) -> list[dict]:
+    """A step series collapsed to its last row per metric NAME, first-appearance
+    order kept. Keyed on the name alone: on the live worst case `split` carried
+    the sweep coordinate, so keying on (metric, split) collapsed nothing and 4
+    of 33 names survived a row cap. Truncation is the caller's budget, not this
+    function's."""
+    last: dict[str, dict] = {}
+    for row in metrics:
+        last[row["metric"]] = row
+    return list(last.values())
+
+
 def nested_arms(values: list[dict]) -> dict[str, list[dict]]:
     """Group a run's metric rows by nested split key, when it has several.
 
@@ -777,6 +789,137 @@ def _arms_for_run(run, values: list[dict], n_value, direction: str) -> list[dict
     ]
 
 
+def _compare_rows(
+    conn: sqlite3.Connection, family: str, project: str | None
+) -> tuple[list[dict], dict[str, int]]:
+    """The runs of one family plus, when nothing narrower is asked for yet, a
+    count of how many arms report each metric name.
+
+    Metric discovery needs `counts` before the values query can run (the
+    metric is not known until one is picked), so this reader returns both
+    rather than splitting on a boundary the caller cannot use independently.
+    Counting is skipped -- and an empty dict returned -- once a caller already
+    knows the metric it wants, since the GROUP BY would be discarded work.
+    """
+    rows = _family_rows(conn, family, project)
+    _refuse_cross_project(family, rows)
+    if not rows:
+        return rows, {}
+    run_ids = [r["id"] for r in rows]
+    placeholders = ",".join("?" * len(run_ids))
+    counts: dict[str, int] = {}
+    for m in conn.execute(
+        f"SELECT run_id, metric FROM run_metrics WHERE run_id IN ({placeholders})"
+        " GROUP BY run_id, metric",
+        run_ids,
+    ):
+        counts[m["metric"]] = counts.get(m["metric"], 0) + 1
+    return rows, counts
+
+
+def _compare_values(
+    conn: sqlite3.Connection, run_ids: list[int], metric: str
+) -> tuple[dict[int, list[dict]], dict[int, float]]:
+    """Every recorded value of `metric`, and the `n_records` count, for each
+    run in `run_ids`.
+
+    Two grouped queries instead of two-per-arm: run_id IN (...) covers every
+    arm at once, so an N-arm family costs a constant number of round trips
+    rather than 2N.
+    """
+    placeholders = ",".join("?" * len(run_ids))
+    values_by_run: dict[int, list[dict]] = {rid: [] for rid in run_ids}
+    for v in conn.execute(
+        f"SELECT run_id, value, step, split FROM run_metrics"
+        f" WHERE run_id IN ({placeholders}) AND metric = ?",
+        (*run_ids, metric),
+    ):
+        values_by_run[v["run_id"]].append(dict(v))
+    n_by_run: dict[int, float] = {}
+    for row in conn.execute(
+        f"SELECT run_id, MAX(value) AS value FROM run_metrics"
+        f" WHERE run_id IN ({placeholders}) AND metric = 'n_records' GROUP BY run_id",
+        run_ids,
+    ):
+        n_by_run[row["run_id"]] = row["value"]
+    return values_by_run, n_by_run
+
+
+def _pick_metric(counts: dict[str, int], directions: dict[str, str], family: str) -> str:
+    """The metric to rank by when the caller did not name one: whichever
+    directed metric the most arms share, so the comparison covers the family.
+
+    Raises rather than guessing when no recorded metric has a known
+    direction -- ranking one would risk ordering an ablation backwards.
+    """
+    known = {k: v for k, v in counts.items() if _metric_direction(k, directions)}
+    if not known:
+        # Names the fix, not just the problem. Its sibling refusal below
+        # (single named metric) already pointed at the file to edit; this
+        # one listed what it found and stopped, and it is the one a new
+        # user hits FIRST -- `runs compare` on the shipped example data
+        # refuses this way, which is the flagship capability's first
+        # impression. An error that states a rule without stating the
+        # remedy reads as a dead end rather than a step.
+        raise ValueError(_no_direction_message(family, counts))
+    return sorted(known.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+
+
+def _compare(
+    runs: list[dict],
+    values_by_run: dict[int, list[dict]],
+    n_by_run: dict[int, float],
+    metric: str,
+    directions: dict[str, str],
+    family: str,
+) -> dict:
+    """Rank every arm of an ablation family by `metric` -- the pure decision
+    half of `compare()`. Takes rows and already-fetched values so it can be
+    exercised with literal dicts and no database.
+    """
+    direction = _metric_direction(metric, directions)
+    if direction is None:
+        raise ValueError(
+            f"unknown direction for metric {metric!r} -- refusing to rank."
+            f" Declare it under [metric_direction] in {_metric_direction_path()};"
+            " guessing would rank ablation arms backwards."
+        )
+
+    arms = []
+    for r in runs:
+        arms.extend(_arms_for_run(r, values_by_run[r["id"]], n_by_run.get(r["id"]), direction))
+
+    scored = [a for a in arms if a["value"] is not None]
+
+    def rank_key(arm: dict) -> tuple[float, str]:
+        """Sort key: best value first regardless of direction, ties broken
+        by name. See the comment above the `float()` call for why the None
+        case is resolved here rather than inline in a lambda."""
+        # Bind through a local float so the None-ness is resolved once, where
+        # the `scored` filter above already guarantees it. Negating inside the
+        # lambda read as `-None` to a type checker, and it was right to ask.
+        value = float(arm["value"])
+        return (value if direction == "lower_is_better" else -value, arm["name"])
+
+    scored.sort(key=rank_key)
+    missing = sorted((a for a in arms if a["value"] is None), key=lambda a: a["name"])
+
+    shared, corpus_caveats = _corpus_agreement(runs, metric)
+    return {
+        "family": family,
+        "metric": metric,
+        "direction": direction,
+        "arms": scored + missing,
+        "winner": scored[0]["name"] if scored else None,
+        "without_metric": [a["name"] for a in missing],
+        "corpus": shared,
+        # Reader caveats last: they qualify how every number here was
+        # obtained, which is context for the ranking rather than a reason to
+        # distrust one arm over another.
+        "caveats": _all_caveats(scored, metric, corpus_caveats, runs),
+    }
+
+
 def compare(
     conn: sqlite3.Connection,
     family: str,
@@ -798,9 +941,7 @@ def compare(
     name, so the collision ERASED the disagreement and the tool reported "all
     arms on aishell-1" for arms half of which ran on librispeech.
     """
-    rows = _family_rows(conn, family, project)
-    _refuse_cross_project(family, rows)
-    runs = rows
+    runs, counts = _compare_rows(conn, family, project)
     if not runs:
         # A dead end here is the same failure as an unexplained empty scan.
         # `compare <project>` is the intuitive first guess and finds nothing,
@@ -874,89 +1015,10 @@ def compare(
         }
 
     directions = metric_directions()
+    metric = metric or _pick_metric(counts, directions, family)
     run_ids_all = [r["id"] for r in runs]
-    all_placeholders = ",".join("?" * len(run_ids_all))
-
-    if metric is None:
-        counts: dict[str, int] = {}
-        for m in conn.execute(
-            f"SELECT run_id, metric FROM run_metrics WHERE run_id IN ({all_placeholders})"
-            " GROUP BY run_id, metric",
-            run_ids_all,
-        ):
-            counts[m["metric"]] = counts.get(m["metric"], 0) + 1
-        # the metric the most arms share, so the comparison covers the family
-        known = {k: v for k, v in counts.items() if _metric_direction(k, directions)}
-        if not known:
-            # Names the fix, not just the problem. Its sibling refusal below
-            # (single named metric) already pointed at the file to edit; this
-            # one listed what it found and stopped, and it is the one a new
-            # user hits FIRST -- `runs compare` on the shipped example data
-            # refuses this way, which is the flagship capability's first
-            # impression. An error that states a rule without stating the
-            # remedy reads as a dead end rather than a step.
-            raise ValueError(_no_direction_message(family, counts))
-        metric = sorted(known.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
-
-    direction = _metric_direction(metric, directions)
-    if direction is None:
-        raise ValueError(
-            f"unknown direction for metric {metric!r} -- refusing to rank."
-            f" Declare it under [metric_direction] in {_metric_direction_path()};"
-            " guessing would rank ablation arms backwards."
-        )
-
-    # Two grouped queries instead of two-per-arm: run_id IN (...) covers every
-    # arm at once, so an N-arm family costs a constant number of round trips
-    # rather than 2N.
-    values_by_run: dict[int, list[dict]] = {rid: [] for rid in run_ids_all}
-    for v in conn.execute(
-        f"SELECT run_id, value, step, split FROM run_metrics"
-        f" WHERE run_id IN ({all_placeholders}) AND metric = ?",
-        (*run_ids_all, metric),
-    ):
-        values_by_run[v["run_id"]].append(dict(v))
-    n_by_run: dict[int, float] = {}
-    for row in conn.execute(
-        f"SELECT run_id, MAX(value) AS value FROM run_metrics"
-        f" WHERE run_id IN ({all_placeholders}) AND metric = 'n_records' GROUP BY run_id",
-        run_ids_all,
-    ):
-        n_by_run[row["run_id"]] = row["value"]
-
-    arms = []
-    for r in runs:
-        arms.extend(_arms_for_run(r, values_by_run[r["id"]], n_by_run.get(r["id"]), direction))
-
-    scored = [a for a in arms if a["value"] is not None]
-
-    def rank_key(arm: dict) -> tuple[float, str]:
-        """Sort key: best value first regardless of direction, ties broken
-        by name. See the comment above the `float()` call for why the None
-        case is resolved here rather than inline in a lambda."""
-        # Bind through a local float so the None-ness is resolved once, where
-        # the `scored` filter above already guarantees it. Negating inside the
-        # lambda read as `-None` to a type checker, and it was right to ask.
-        value = float(arm["value"])
-        return (value if direction == "lower_is_better" else -value, arm["name"])
-
-    scored.sort(key=rank_key)
-    missing = sorted((a for a in arms if a["value"] is None), key=lambda a: a["name"])
-
-    shared, corpus_caveats = _corpus_agreement(runs, metric)
-    return {
-        "family": family,
-        "metric": metric,
-        "direction": direction,
-        "arms": scored + missing,
-        "winner": scored[0]["name"] if scored else None,
-        "without_metric": [a["name"] for a in missing],
-        "corpus": shared,
-        # Reader caveats last: they qualify how every number here was
-        # obtained, which is context for the ranking rather than a reason to
-        # distrust one arm over another.
-        "caveats": _all_caveats(scored, metric, corpus_caveats, runs),
-    }
+    values_by_run, n_by_run = _compare_values(conn, run_ids_all, metric)
+    return _compare(runs, values_by_run, n_by_run, metric, directions, family)
 
 
 # Below this many samples, a difference between arms is not worth reading as a

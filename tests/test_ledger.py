@@ -1497,3 +1497,66 @@ def test_an_empty_ledger_says_so_rather_than_blaming_the_filenames():
     named = compare(populated, "kdsweep")
     assert "EMPTY" not in named["message"], named["message"]
     assert "filename prefix" in named["message"], named["message"]
+
+
+def test_compare_picks_the_majority_metric_with_no_db():
+    from attestation.ledger import _compare
+
+    rows = [
+        {
+            "id": 1,
+            "name": "asr_a",
+            "family": "asr",
+            "project": "p",
+            "status": "recorded",
+            "source_path": "/tmp/asr_a.json",
+            "corpus_id": None,
+            "adapter": None,
+        },
+        {
+            "id": 2,
+            "name": "asr_b",
+            "family": "asr",
+            "project": "p",
+            "status": "recorded",
+            "source_path": "/tmp/asr_b.json",
+            "corpus_id": None,
+            "adapter": None,
+        },
+        {
+            "id": 3,
+            "name": "asr_c",
+            "family": "asr",
+            "project": "p",
+            "status": "recorded",
+            "source_path": "/tmp/asr_c.json",
+            "corpus_id": None,
+            "adapter": None,
+        },
+    ]
+    values = {
+        1: [{"run_id": 1, "value": 0.30, "step": None, "split": None}],
+        2: [{"run_id": 2, "value": 0.20, "step": None, "split": None}],
+        3: [],
+    }
+    out = _compare(
+        rows, values, {}, metric="wer", directions={"wer": "lower_is_better"}, family="asr"
+    )
+    assert out["metric"] == "wer" and out["direction"] == "lower_is_better"
+    assert out["winner"] == "asr_b"
+    assert out["without_metric"] == ["asr_c"]
+    assert [a["name"] for a in out["arms"]] == ["asr_b", "asr_a", "asr_c"]
+    assert isinstance(out["caveats"], list)
+
+
+def test_collapse_to_last_keeps_the_last_row_per_metric_name():
+    from attestation.ledger import collapse_to_last
+
+    metrics = [
+        {"metric": "loss", "step": 1, "value": 0.9},
+        {"metric": "acc", "step": 1, "value": 0.5},
+        {"metric": "loss", "step": 2, "value": 0.4},
+    ]
+    out = collapse_to_last(metrics)
+    assert [m["metric"] for m in out] == ["loss", "acc"]  # first-appearance order
+    assert out[0]["step"] == 2
