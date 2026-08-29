@@ -668,6 +668,94 @@ def test_dvc_non_foreach_stage_declaring_metrics_is_one_run(tmp_path):
     assert run.family is None
 
 
+def test_dvc_metrics_dir_does_not_double_count_an_unrelated_file(tmp_path):
+    """`metrics/` is one of the generic reader's own RESULT_DIRS -- unlike
+    wandb/, mlruns/ or sacred_runs/, which live in a directory name of
+    their own. A project with a real DVC sweep AND an unrelated hand-
+    written `metrics/baseline.json` (not declared by any dvc.yaml stage)
+    must read the DVC files exactly once, as `dvc`, and the unrelated file
+    exactly once, as `generic` -- no double-count from the ordinary
+    metrics/ walk re-reading a DVC output, and no over-exclusion of a file
+    DVC never claimed."""
+    proj = tmp_path / "p"
+    _dvc_project(proj, items=("0.1",), metrics={"0.1": {"auc": 0.95}})
+    (proj / "metrics" / "baseline.json").write_text(json.dumps({"wer": 0.4}))
+
+    runs = generic.discover(proj)
+    by_name = {r.name: r for r in runs}
+    assert set(by_name) == {"train@0.1", "baseline"}, [r.name for r in runs]
+    assert by_name["train@0.1"].adapter == "dvc"
+    assert by_name["train@0.1"].family == "train"
+    assert by_name["baseline"].adapter == "generic"
+    assert by_name["baseline"].family != "train"
+
+
+def test_dvc_metrics_list_item_with_a_trailing_comment_is_still_read(tmp_path):
+    """A hand-edited dvc.yaml can carry a trailing `# comment` on a
+    `metrics:` list item -- `dvc repro` itself never writes one, but a
+    person editing the file by hand routinely does. Before the comment was
+    stripped, the metric path was read as
+    "metrics/${item}.json  # note" -- a path that never exists on disk --
+    so the stage produced zero metrics, the DVC run vanished, and
+    metrics/0.1.json reappeared as a family-less generic run: a wrong run,
+    not merely a missing one. The fix must produce the real DVC run, not
+    just avoid a crash.
+    """
+    proj = tmp_path / "p"
+    proj.mkdir(parents=True)
+    (proj / "dvc.yaml").write_text(
+        "stages:\n"
+        "  train:\n"
+        "    foreach: ${lr}\n"
+        "    do:\n"
+        "      cmd: python train.py ${item}\n"
+        "      params:\n"
+        "        - lr\n"
+        "      metrics:\n"
+        "        - metrics/${item}.json  # note\n"
+    )
+    (proj / "params.yaml").write_text("lr: [0.1]\n")
+    (proj / "metrics").mkdir()
+    (proj / "metrics" / "0.1.json").write_text(json.dumps({"auc": 0.95}))
+
+    (run,) = generic.discover(proj)
+    assert run.name == "train@0.1"
+    assert run.adapter == "dvc"
+    assert run.family == "train"
+
+
+def test_dvc_flow_style_metrics_list_is_still_read(tmp_path):
+    """A hand-edited dvc.yaml can declare `metrics: [a, b]` inline instead
+    of DVC's own block style (`metrics:` then `- a` on the next line) --
+    both are legal YAML, and `dvc repro` reads either. Before the flow
+    style was parsed, `_list_after` only ever looked for block-style items
+    following the key, so `metrics:` with an inline `[...]` value read as
+    an empty list -- the stage was excluded as having no metrics entirely,
+    the DVC run vanished, and metrics/0.1.json reappeared as a family-less
+    generic run.
+    """
+    proj = tmp_path / "p"
+    proj.mkdir(parents=True)
+    (proj / "dvc.yaml").write_text(
+        "stages:\n"
+        "  train:\n"
+        "    foreach: ${lr}\n"
+        "    do:\n"
+        "      cmd: python train.py ${item}\n"
+        "      params: [lr]\n"
+        "      metrics: [metrics/${item}.json]\n"
+    )
+    (proj / "params.yaml").write_text("lr: [0.1]\n")
+    (proj / "metrics").mkdir()
+    (proj / "metrics" / "0.1.json").write_text(json.dumps({"auc": 0.95}))
+
+    (run,) = generic.discover(proj)
+    assert run.name == "train@0.1"
+    assert run.adapter == "dvc"
+    assert run.family == "train"
+    assert run.config.get("lr") == "0.1"
+
+
 def test_the_reader_scans_the_real_committed_dvc_fixture():
     """examples/dvc/ is real: written by `dvc repro` (dvc 3.x, generate.sh,
     2026-08-28), not transcribed from documentation."""

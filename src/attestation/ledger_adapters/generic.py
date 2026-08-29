@@ -865,13 +865,28 @@ def _sacred_runs(root: Path, seen: set[str]) -> list[RunRecord]:
 # following lines) -- the atom `_dvc_stages`/`_dvc_lock_stages` build a tree
 # from. Comments and blank lines are dropped; DVC's own writer never quotes
 # a plain scalar or emits flow-style mappings in these files, so a full YAML
-# grammar buys nothing a machine-written file needs.
+# grammar buys nothing a machine-written file needs. A hand-edited dvc.yaml
+# can still carry a trailing `# comment` on a line, or a flow-style list
+# (`metrics: [a, b]`) instead of DVC's own block style -- both are handled
+# rather than left to degrade silently into a misattributed generic run
+# (see `_strip_inline_comment` and the flow-list check in `_dvc_stage_body`).
+def _strip_inline_comment(text: str) -> str:
+    """A trailing ` #...` comment, dropped -- never a `#` inside a value.
+
+    DVC's own writer never emits one, but a hand-edited dvc.yaml commonly
+    does (`- metrics/${item}.json  # note`). Only a `#` preceded by
+    whitespace counts, so a literal `#` glued to a path or token (unusual,
+    but not this module's business to reject) is left alone.
+    """
+    return re.sub(r"(?:^|\s)#.*$", "", text).rstrip()
+
+
 def _indented_lines(text: str) -> list[tuple[int, str, str | None]]:
     out: list[tuple[int, str, str | None]] = []
     for raw in text.splitlines():
-        line = raw.rstrip()
+        line = _strip_inline_comment(raw.rstrip())
         stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        if not stripped:
             continue
         indent = len(line) - len(line.lstrip(" "))
         if stripped.startswith("- "):
@@ -921,21 +936,40 @@ def _dvc_stages(dvc_yaml: Path) -> dict[str, dict]:
 def _dvc_stage_body(block: list[tuple[int, str, str | None]]) -> dict:
     """One stage's `foreach`/`params`/`metrics`, from a plain stage or from
     inside its `do:` block -- both shapes are the same list of (indent, key,
-    value) lines, just nested one level deeper for `do:`."""
+    value) lines, just nested one level deeper for `do:`.
+
+    `params:`/`metrics:` accept DVC's own block-list style (`metrics:` then
+    `- a` / `- b` on following lines) and a flow-style list on the key's own
+    line (`metrics: [a, b]`) -- both were confirmed against real `dvc repro`
+    output for the block style, and the flow style is DVC-legal YAML a
+    hand-edited dvc.yaml can use even though `dvc repro` itself never
+    writes it. A trailing `# comment` anywhere in the file, block or flow,
+    is stripped by `_indented_lines`/`_strip_inline_comment` before this
+    function ever sees a line.
+    """
     foreach = next((v for _, k, v in block if k == "foreach"), None)
     # `foreach: ${lr}` -> "lr"
     foreach_param = foreach.strip("${}") if foreach else None
 
     def _list_after(key: str) -> list[str]:
-        for idx, (_, k, _) in enumerate(block):
-            if k == key:
-                out = []
-                for _, item_key, item_val in block[idx + 1 :]:
-                    if item_key != "-":
-                        break
-                    if item_val is not None:
-                        out.append(item_val)
-                return out
+        for idx, (_, k, v) in enumerate(block):
+            if k != key:
+                continue
+            if v is not None:
+                # `metrics: [metrics/${item}.json]` -- a flow-style list
+                # given inline on the key's own line, rather than DVC's own
+                # block style (`metrics:` then `- ...` lines below). Parsed
+                # the same way params.yaml's flow lists already are, so a
+                # hand-edited dvc.yaml using either style is read, not
+                # silently dropped into no run at all.
+                return _dvc_flow_list(v)
+            out = []
+            for _, item_key, item_val in block[idx + 1 :]:
+                if item_key != "-":
+                    break
+                if item_val is not None:
+                    out.append(item_val)
+            return out
         return []
 
     return {
