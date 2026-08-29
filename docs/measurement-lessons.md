@@ -198,3 +198,98 @@ with the reason written next to the result is a design decision.
 optimizer never saw, and treat the optimizer's own number as the artifact it
 is. If the bar turns out to be wrong, change it where the next reader will
 see why.
+
+---
+
+## 6. 2026-08-28/29: what the golden paths and corpora overturned
+
+Twelve golden paths and three task corpora landed together. Measurement
+overturned something in nearly every one of them.
+
+**A passing transfer gate is a sample, not a certificate.** The tagging
+transfer gate recorded `PASS` on 2026-08-27 at `repeat=2`. Re-run at
+`repeat=1` on 2026-08-28 with the identical prompt and cases, it recorded
+`FAIL` — `hermes3:8b` landed at 0.798 against a 0.818 baseline, where the
+committed run had it the other way (`evals/prompts/transfer-2026-08-28.md`).
+Nothing about the candidate changed; the sample did. The rule stands from
+§4 above, applied to a gate rather than a guard: the committed, dated
+artifact is the record, and a single re-run at lower `repeat` is a
+demonstration of the mechanism, not a re-certification.
+
+**Offline W&B writes no summary or config files at all, and the docstring
+that said otherwise was also wrong about which detail mattered.** The
+reader's docstring assumed the run-directory name (`run-<timestamp>-<id>`)
+was the risk; a real offline run (`examples/wandb/generate.py`, wandb
+0.17.6) named its directory `offline-run-<timestamp>-<id>` instead, but the
+reader never filtered on that prefix, so nothing broke. The real gap was
+upstream of naming: `wandb-summary.json` and `config.yaml` do not exist in
+`files/` until `wandb sync` uploads to a server — every logged value stays
+inside the run's binary `.wandb` transaction log until then. The committed
+fixture's summary/config files were materialised by decoding that binary
+log directly (`wandb.sdk.internal.datastore`), the documented community
+workaround, not a real synced run. See
+`docs/superpowers/specs/2026-08-22-tracker-adapters-design.md`'s 2026-08-28
+update.
+
+**Hydra 1.3 does not chdir into each arm's directory by default.** The
+golden-paths brief assumed Hydra changes the working directory per job —
+true through Hydra 1.1, changed in 1.2. Without `hydra.job.chdir=True`
+passed explicitly, a real `--multirun lr=0.01,0.1,1,10` sweep wrote a
+single top-level `metrics.json`, overwritten by each of the four arms in
+turn, not four separate files under `multirun/`. The Hydra golden path
+(`examples/hydra/generate.sh`) now passes the override explicitly and the
+reader documents why it is required, in
+`docs/superpowers/specs/2026-08-22-tracker-adapters-design.md`'s Hydra
+subsection.
+
+**A fixture with fixed dates empties a 14-day demo with no test going red.**
+The flows corpus originally carried an `<updated>` element dated August
+2026 on each entry; `feed.list`/`rank_items` default to a 14-day window, so
+the demo would have shown fewer items every week and nothing by
+mid-September, silently, since no test asserts freshness. The entry-level
+dates were dropped — see
+`docs/superpowers/specs/2026-08-28-example-flows-design.md`.
+
+**The attribution guard matched CI's own ambient username, not a leak.**
+`test_no_committed_example_carries_attribution_or_machine_paths` scans every
+committed example for the machine's username as a whole word. GitHub Actions
+sets `$USER=runner`, and "runner" is ordinary prose in Hydra's own README
+("a GitHub Actions runner") — a real CI failure (run 33233059347), not a
+leak the guard was meant to catch. Ruling: the ambient-username check is
+skipped under `CI`, and for a short list of generic account names (`runner`,
+`root`, `user`, `ubuntu`, `admin`, `ci`) even off CI; the guard's job is
+catching a real leaked path or handle, not colliding with the environment it
+runs in. See `docs/superpowers/specs/2026-08-28-golden-paths-design.md`.
+
+**`family_of` returned no family at all for a bare hyperparameter stem.**
+`lr_0.001` and `lr_0.01` have no shared prefix beyond the recognised split
+token itself — stripping the token the way a sweep or series case does
+leaves nothing. `family_of` now falls back to the token's own name (`lr`)
+as the family when it consumed the entire stem, so `attest runs compare lr`
+groups a four-arm learning-rate sweep that a real Keras/CSVLogger run
+produced (`examples/tensorflow/`). See
+`src/attestation/ledger_adapters/generic.py::family_of`.
+
+**Four items were never enough to know the explanation and reaction prompts
+worked.** `explain.py`'s refusal clause — fixed after it once claimed a
+termite-feed paper shared "advanced topics like AI" — had never been scored
+on more than the four items that found the bug. Measured properly on the
+new 40-case corpus: refusal precision 1.0, recall 0.4 — it under-refuses on
+6 of 10 unrelated items, not the near-perfect guard four items suggested
+(`examples/prompt-evals/README.md`). `simulate.py`'s reaction `confidence`
+field was similarly assumed to carry signal; scored on the 100-case reaction
+corpus it stayed near-inert (a histogram concentrated at `{4: 7, 5: 92}`),
+confirming on a real corpus what four items could only hint at. Both are
+now measured by a corpus rather than remembered from the incident that
+prompted them.
+
+**`attest claims` never ran the citation lint for its whole life, until a
+golden path drove it.** `check_citations()` existed and was wired into the
+MCP tools (`cite.check`, `runs.claims_check`), but the CLI's `cmd_claims`
+had no resolver to pass it, so every `cite=<key>` annotation checked from
+the terminal was silently skipped. Building `examples/citations/` — a
+draft with one citation key that resolves nowhere on purpose — required
+running `attest claims` against it and noticing the fifth verdict never
+appeared. `cmd_claims` now builds a resolver with `_citation_resolver()`
+the same way the MCP side does, and the CLI reports `uncited` alongside the
+four numeric verdicts (commit `4fb6007`).

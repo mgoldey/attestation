@@ -69,11 +69,35 @@ configuration from noise — is the part that earns its keep, and the
 `contradicted` verdict is a number in a document that no longer matches the
 artifact it came from.
 
-`examples/README.md` is the catalogue of every golden path — twelve, each
-with its own README, `run.sh`, and measured runtime; the most thorough is
-`examples/flows/`, ninety seconds offline that scores forty labelled items
-for two personas, drives every MCP tool over stdio, and trains and reads
-back four MLflow arms:
+## Golden paths
+
+A golden path is a directory under `examples/` with a README in seven fixed
+sections, a `run.sh` that runs those README commands verbatim, and its own
+inputs on disk — `tests/test_golden_paths.py` runs every one whose
+prerequisite is `none` and pins a line of its output, so the docs are what
+the suite asserts. `examples/README.md` is the full catalogue, with a runtime
+for each. Twelve paths, grouped by prerequisite:
+
+**None — pure local computation:**
+
+- `workspace/` — the ledger and claim checker, three claims wrong on purpose
+- `flows/` — forty items scored, every MCP tool over stdio, four MLflow arms
+- `model-servers/` — `attest ingest`/`tag` against an in-process stub server
+- `mlflow/` — a real MLflow directory, four arms, one contradicted claim
+- `citations/` — a BibTeX library, a draft, one citation key that resolves nowhere
+- `agents/` — the install doctor, `attest emit`'s configs, one surface over stdio
+- `wandb/` — a real offline W&B run directory, four arms ranked
+- `sacred/` — a real Sacred `FileStorageObserver` directory, four arms ranked
+- `dvc/` — a real `dvc repro` pipeline, four `foreach` arms ranked
+- `tensorflow/` — a real Keras/CSVLogger run, four learning-rate arms ranked
+- `hydra/` — a real Hydra `--multirun` sweep, four arms ranked
+
+**A model server at `LLM_BASE_URL`:**
+
+- `prompt-evals/` — the tagging prompt's dev score and the transfer gate
+
+See `examples/README.md` for what each demonstrates and how long it takes.
+The most thorough is `flows/`:
 
 ```bash
 uv run --group examples python examples/flows/run_all.py --offline
@@ -575,16 +599,32 @@ dormant for months. Adoption cost is the design constraint: a tool needing new
 discipline gets used for a week, while one that reads what is already there
 keeps working after you forget it exists.
 
-That argument cuts the other way for trackers you already run, so a scan does
-read existing `wandb/` and `mlruns/` trees (`TRACKER_DIRS` in
-`src/attestation/ledger_adapters/generic.py`) — they are conventions in the
-strict sense, since the tool picks the directory name, not you. Two honest
-caveats: it records **final values, not curves**, because a ledger that
-compares finished arms has no use for the whole series; and **neither reader
-has been run against a real directory.** There was no `wandb/` or `mlruns/` on
-the machine where they were written, so both are built from the published
-layouts and tested against transcribed fixtures — plausible, not verified. If
-you have a real one, point this at it.
+That argument cuts the other way for trackers you already run, so a scan also
+reads five tracker layouts as conventions of their own, since the tool picks
+the directory name, not you — all read as **final values, not curves**,
+because a ledger that compares finished arms has no use for the whole series:
+
+| tracker | layout | one-line caveat |
+|---|---|---|
+| W&B | `wandb/<run>/files/wandb-summary.json` | offline mode writes no summary/config files until synced |
+| MLflow | `mlruns/<exp>/<run>/{metrics,params,tags}` | each metric is the final line of its per-step log file |
+| Sacred | `FileStorageObserver` dirs, `run.json` + `metrics.json` | `run.json`'s own `result` field is read as a metric too |
+| DVC | `dvc.yaml`'s declared `metrics:` files + `params.yaml` | each metric file is a snapshot overwritten on every `dvc repro` |
+| Hydra | `--multirun` sweep dirs | needs `hydra.job.chdir=true` or all arms overwrite one `metrics.json` |
+
+Every one of these was verified against a real directory produced by the real
+tool (see `docs/superpowers/specs/2026-08-22-tracker-adapters-design.md` for
+the per-tracker findings) — earlier drafts of this ledger read only the
+published layouts, and some of what they assumed turned out to be wrong once
+run for real.
+
+One more grouping rule worth knowing: `family_of()` groups sibling runs by
+their shared filename prefix, so `dit_small_rope_crossattn` and
+`dit_small_rope_melmask` group under `dit_small_rope`. A **bare
+hyperparameter stem** with no separate prefix — `lr_0.001`, `lr_0.01` — has
+nowhere to strip down to, so the recognised token itself (`lr`) becomes the
+family, letting `attest runs compare lr` group a learning-rate sweep that has
+no shared name beyond the parameter varied.
 
 It reads the conventions research repos already use — `results/`, `logs/`,
 `configs/`, `outputs/`, `benchmarks/` holding JSON, JSONL, CSV, YAML or TOML —
@@ -635,6 +675,12 @@ Five verdicts, and the distinctions are the design. `supported`: a run agrees.
 other needs a correction. `ambiguous` exists because silently taking the first
 of several matches is how a checker reports a confident wrong answer.
 `attest claims` exits non-zero on a contradiction, so it can gate a commit.
+
+A claim can also carry `cite=<key>`, and that key is linted too — `uncited`
+when no configured `.bib` or Zotero source has it — from the CLI (`attest
+claims`) as well as the `cite.check` / `runs.claims_check` MCP tools. It is a
+lint ("no source has this key"), never "the paper does not support this
+claim". See `examples/citations/` for a worked run of both linters together.
 
 `--coverage` is the inverse, and the more useful half for adoption: a document
 with zero contradicted claims can still assert a dozen unverifiable numbers.
@@ -699,11 +745,24 @@ or it refuses to open the database at all — `attest browse` handles that.
     uv run ty check                         # type check
     uv run radon cc -s -n C src/attestation      # complexity report (empty = nothing worse than B)
 
+`tests/test_golden_paths.py` runs every `examples/` path whose prerequisite is
+`none — pure local computation` and pins one line of its output, so the
+README under each path is asserted, not just written. CI's `flows` job runs
+`examples/flows/run_all.py --offline` on every push.
+
 ### Prompt evals and the optimizer
 
-Every model-driven prompt is scored, not tuned by taste, and only tagging
-has an optimizer today (DSPy GEPA, `uv run --group optimize python
-evals/optimize_tagging.py`). See `examples/prompt-evals/` for the
+Every model-driven prompt is scored against its own labelled corpus, not
+tuned by taste: tagging (`evals/tagging_cases.json`, 51 cases), reaction
+(`evals/reaction_cases.json`, 100 cases) and explanation
+(`evals/explanation_cases.json`, 40 cases). Only tagging has an optimizer
+today (DSPy GEPA, `uv run --group optimize python
+evals/optimize_tagging.py`) — reaction and explanation have the corpus and
+the scorer but no optimizer yet. See `examples/prompt-evals/` for the
 eval → transfer-gate golden path: the commands, a live run's output, and
 why the gate's bar is transfer across model families rather than a single
-score.
+score. That gate is genuinely sample-sensitive: a `repeat=2` run recorded
+2026-08-27 passed it, and a `repeat=1` re-run on 2026-08-28
+(`evals/prompts/transfer-2026-08-28.md`) failed it on the same prompt and
+cases — sampling variance, not a regression, and the reason the gate's
+record is a committed, dated artifact rather than a claim in prose.

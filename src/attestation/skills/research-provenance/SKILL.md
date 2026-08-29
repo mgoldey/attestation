@@ -138,7 +138,8 @@ and it is read once when the server registers its tools:
 | `knowledge` | `kg.*`, `feed.search`, `cite.*` | Exploratory, read-only. |
 | `symbolic` | `sym.*` | Sandboxed subprocess, touches no database. |
 
-Unset serves all 50 tools. An unknown value **raises** rather than falling
+Unset serves all 46 tools (this count moves -- re-measure rather than
+quoting it, per CLAUDE.md). An unknown value **raises** rather than falling
 back — a restriction that quietly stopped restricting is the failure worth
 preventing, so a typo takes the server down loudly.
 
@@ -588,6 +589,14 @@ runs.compare(family="kdsweep", metric="wer")
 **A family is a shared filename prefix, not a project.** `runs.compare` with
 a project name is the commonest mistake, and the error says so and lists what
 is comparable -- read it rather than guessing again.
+
+**The ledger also reads W&B, MLflow, Sacred, DVC and Hydra directories, not
+just `results/` JSON and CSV.** A project's sweep may live in `wandb/`,
+`mlruns/`, `sacred_runs/`, a `dvc.yaml`-declared `metrics:` file, or a Hydra
+`multirun/` tree, and `runs.scan` reads all of them the same way. `runs.compare`
+carries a per-adapter caveat for whichever of these produced the arms being
+ranked -- always "final values, not curves" in substance, though the wording
+differs per tracker -- and relaying it is not optional.
 
 **Report every caveat, verbatim.** They are the point of the tool:
 
