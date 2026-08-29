@@ -162,7 +162,7 @@ class EvalResult:
     per_case: dict[str, float]
     runs: dict[str, list[dict]]
     latencies: list[float]
-    tags: list[str]
+    tags: list[str] = dataclasses.field(default_factory=list)
 
     @property
     def overall(self) -> float:

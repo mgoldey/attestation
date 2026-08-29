@@ -5,11 +5,10 @@ Mirrors tagging_eval.py: `evaluate()` renders every case through
 `generate_explanation` calls, so a score here is a score of the prompt
 `feed.explain` actually sends.
 
-No optimizer exists for this prompt yet (see the task-corpora design doc) --
-this module only makes one possible, by giving it a renderer to call and a
-corpus to score against. When one lands, its acceptance gate is
-`tagging_eval.gate()` imported, not copied: there is one acceptance rule,
-not one per task.
+`EvalResult` and `gate` are imported from tagging_eval, not copied -- there
+is one result shape and one acceptance rule, not one per task. No optimizer
+exists for this prompt yet (see the task-corpora design doc); importing
+`gate` now means one exists to call the day one lands.
 
 Nothing here calls a model; run_explanation_eval.py is the only place a live
 model is touched.
@@ -17,14 +16,29 @@ model is touched.
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import pathlib
 import statistics
 import time
 from collections.abc import Callable
 
+from tagging_eval import EvalResult, gate
+
 from attestation.explain import Explanation, explanation_messages
+
+__all__ = [
+    "CASES_PATH",
+    "SPLITS",
+    "REFUSAL",
+    "EvalResult",
+    "gate",
+    "load_cases",
+    "score_one",
+    "evaluate",
+    "refusal_precision_recall",
+    "dspy_fields",
+    "to_dspy_example",
+]
 
 CASES_PATH = pathlib.Path(__file__).parent / "explanation_cases.json"
 SPLITS = ("train", "dev")
@@ -112,43 +126,30 @@ def score_one(case: dict, out: dict) -> dict:
     return result
 
 
-@dataclasses.dataclass
-class EvalResult:
-    per_case: dict[str, float]
-    runs: dict[str, list[dict]]
-    latencies: list[float]
+def refusal_precision_recall(result: EvalResult, cases: list[dict]) -> dict:
+    """Precision/recall of refusing when a case says `refuse: true`.
 
-    @property
-    def overall(self) -> float:
-        return statistics.mean(self.per_case.values()) if self.per_case else 0.0
-
-    @property
-    def median_latency(self) -> float:
-        return statistics.median(self.latencies) if self.latencies else 0.0
-
-    def refusal_precision_recall(self, cases: list[dict]) -> dict:
-        """Precision/recall of refusing when a case says `refuse: true`.
-
-        "Refused" is read off the same exact-match the scorer uses (a text
-        equal to REFUSAL), not off the case's expectation -- so a model that
-        refuses a topic case it should have answered counts as a false
-        refusal, not a free pass.
-        """
-        by_id = {c["id"]: c for c in cases}
-        tp = fp = fn = 0
-        for case_id, runs in self.runs.items():
-            case = by_id.get(case_id)
-            if case is None:
-                continue
-            should = bool(case["refuse"])
-            for r in runs:
-                refused = r.get("text") == REFUSAL
-                tp += refused and should
-                fp += refused and not should
-                fn += (not refused) and should
-        precision = tp / (tp + fp) if tp + fp else 0.0
-        recall = tp / (tp + fn) if tp + fn else 0.0
-        return {"tp": tp, "fp": fp, "fn": fn, "precision": precision, "recall": recall}
+    "Refused" is read off the same exact-match the scorer uses (a text equal
+    to REFUSAL), not off the case's expectation -- so a model that refuses a
+    topic case it should have answered counts as a false refusal, not a free
+    pass. A free function, not a method on `EvalResult`, because that class
+    is imported from tagging_eval and shared across tasks.
+    """
+    by_id = {c["id"]: c for c in cases}
+    tp = fp = fn = 0
+    for case_id, runs in result.runs.items():
+        case = by_id.get(case_id)
+        if case is None:
+            continue
+        should = bool(case["refuse"])
+        for r in runs:
+            refused = r.get("text") == REFUSAL
+            tp += refused and should
+            fp += refused and not should
+            fn += (not refused) and should
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    return {"tp": tp, "fp": fp, "fn": fn, "precision": precision, "recall": recall}
 
 
 def evaluate(

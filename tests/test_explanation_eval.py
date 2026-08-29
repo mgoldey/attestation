@@ -201,8 +201,17 @@ def test_refusal_precision_recall():
 
     cases = [TOPIC_CASE, REFUSE_CASE]
     r = ee.evaluate(fake, cases)
-    rp = r.refusal_precision_recall(cases)
+    rp = ee.refusal_precision_recall(r, cases)
     assert rp == {"tp": 1, "fp": 1, "fn": 0, "precision": 0.5, "recall": 1.0}
+
+
+def test_eval_result_and_gate_are_imported_from_tagging_eval_not_copied():
+    """The brief's binding constraint: EvalResult and gate are imported, not
+    redefined -- one result shape and one acceptance rule, not one per task."""
+    import tagging_eval as te
+
+    assert ee.EvalResult is te.EvalResult
+    assert ee.gate is te.gate
 
 
 # --- the renderer mutation test: the eval must call the production builder --
