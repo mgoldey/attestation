@@ -123,3 +123,30 @@ class CitationPort(Protocol):
         key present".
         """
         ...
+
+
+class BackendUnreachable(RuntimeError):
+    """The model backend refused or never answered the socket.
+
+    Raised by callers that must stop a whole run on the condition (tagging)
+    so the run can catch it narrowly; `backend_unreachable` classifies the
+    raw transport error for callers that keep the original exception.
+
+    Here rather than in llm.py because it is the contract of any backend, and
+    the domain must be able to name it without naming a provider.
+    """
+
+
+def backend_unreachable(exc: BaseException) -> bool:
+    """Whether this failure means the model backend is unreachable.
+
+    Matched on the transport exception rather than on message text: httpx
+    raises ConnectError/ConnectTimeout for a refused or unanswered socket,
+    which is exactly the "Ollama is not running" case. Shared by ingest (the
+    embedder) and tagging (the chat model): both stop at the first such
+    failure and say so once, instead of failing every remaining item against
+    a dead socket.
+    """
+    import httpx
+
+    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import feedparser
 
-from attestation.llm import DEFAULT_BASE_URL, backend_unreachable
+from attestation.ports import backend_unreachable
 
 log = logging.getLogger(__name__)
 
@@ -185,10 +185,10 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
                 if not stats.get("embedder_down"):
                     stats["embedder_down"] = True
                     log.warning(
-                        "embedding model unreachable at %s -- is ollama running?"
-                        " (`attest install --check` diagnoses this). Skipping the"
-                        " remaining feeds; nothing can be embedded until it is back.",
-                        os.environ.get("LLM_BASE_URL", DEFAULT_BASE_URL),
+                        "embedding model unreachable (LLM_BASE_URL=%s) -- is ollama"
+                        " running? (`attest install --check` diagnoses this). Skipping"
+                        " the remaining feeds; nothing can be embedded until it is back.",
+                        os.environ.get("LLM_BASE_URL", "default"),
                     )
                 break
             # A genuine per-feed failure still names the feed. No stack trace:

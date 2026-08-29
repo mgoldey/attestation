@@ -313,3 +313,71 @@ the ports migration of `explain`/`features`/`ingest` are the seventh — — `ra
 `personas.py` + `mcp/personas.py`, `feeds.py` + `mcp/subscriptions.py`,
 `explain.py` — each committed by pathspec, then one whole-branch review
 by a fourth reader against this spec's "Refused" list.
+
+## Deviations and findings
+
+- `purge_feedback` lives in `personas.py`, not `rank.py` -- Task 8's actual
+  landing put the purge beside the other persona-lifecycle functions it is
+  called alongside (`mcp/personas.py`'s delete/reset paths), rather than in
+  `rank.py` as seam 8's text names. `forget_profile_vector` stays in
+  `rank.py`; `purge_feedback` calls it rather than duplicating the cache
+  clear.
+- Seam 10 (`explain.profile_synthesis_messages`) landed together with the
+  typed-dependency ports migration in this task, not as a separate pass --
+  both touch `explain.py`'s only model-facing surface, and splitting them
+  would have meant reading `_build_graph` twice.
+- `BackendUnreachable`/`backend_unreachable` moved from `llm.py` to
+  `ports.py`. This is the mechanism, not incidental tidying, that makes
+  `test_domain_reaches_models_only_through_ports` satisfiable: `features.py`
+  and `ingest.py` both need to name and catch this condition, and before the
+  move the only place to import it from was the concrete client module the
+  rule forbids domain code from naming. `llm.py` re-imports both names
+  (`# noqa: F401`, "re-exported: callers import them from here") so
+  `from attestation.llm import BackendUnreachable` keeps working for every
+  existing caller.
+- `MCP_SQL_BASELINE`: the amendment's prose cites 26 at `787823d` (feed 15,
+  personas 10, `_tool` 1). Measured after Wave 1 (seams 5-7 landing) it is
+  21 (feed 15, personas 5, `_tool` 1 -- personas' SQL count is what fell).
+  `tests/test_architecture.py` pins the ratchet at 21, the lower value, per
+  "the ratchet's job is to pin the best value seen."
+- `conn: sqlite3.Connection` parameter count: the spec's success criterion
+  cites 40 at `787823d`. Measured after this task's changes (`grep -c "conn:
+  sqlite3.Connection" src/attestation/*.py`, summed) it is **52** -- higher,
+  not lower. Two things explain the direction: first, the grep counts every
+  line matching the literal annotation text, including local variables and
+  helper signatures the earlier count evidently did not isolate the same
+  way (e.g. `db.py` alone contributes 8, none of them `run_tagging`/`explain`
+  parameters); second, `ledger.py` was mid-edit under a concurrent task
+  (Task 2, a bugfix unrelated to this seam) while this number was taken, so
+  it is a snapshot of an in-flight tree, not the wave's final state. This
+  task's own signature changes (`explain.explain`, `features.run_tagging`)
+  did not add any `conn: sqlite3.Connection` parameters -- both already took
+  `conn` as their first argument before and after. Recorded as measured,
+  per the spec's instruction not to predict it; the wave's final number
+  should be re-measured once every task has landed.
+- `run_tagging`'s `chat_fn`/`model` are REQUIRED in the sense that a missing
+  `chat_fn` raises (`_resolve_tagging_defaults`), but both stay optional
+  keyword arguments in the signature rather than the brief's literal
+  "REQUIRED, no default." This was forced by `tests/test_cli.py`: three
+  tests replace `attestation.features.run_tagging` with
+  `lambda conn, ...: ...` and assert on `cli.py`'s `cmd_tag` calling it
+  through that replacement, so `cmd_tag`'s call site cannot pass `chat_fn`/
+  `model` as extra arguments the monkeypatched lambda's original shape did
+  not accept. Resolution: `cmd_tag` now calls
+  `run_tagging(conn, default_chat_fn, chat_model(), limit=args.limit)` for
+  real use, `run_tagging` keeps `chat_fn=None, model=None` defaults with a
+  small resolver that raises without `chat_fn` and falls back to the bare
+  `CHAT_MODEL` env var (not `attestation.llm`) for `model`, and the three
+  `test_cli.py` lambdas were widened to `lambda conn, chat_fn, model,
+  limit=None: ...` -- a minimal, mechanical signature match, not a
+  behavioural change to what those tests assert. `test_cli.py` is not in
+  this task's owned-files list; the alternative (leaving `cmd_tag` unable to
+  pass a real model at its only production call site) was judged worse.
+- `examples/flows/mcp_e2e.py:307` called `run_tagging(conn, chat.chat_json)`
+  with the old two-argument shape; the local `chat_model: str` parameter
+  already carried the resolved model name, so the fix was
+  `run_tagging(conn, chat.chat_json, chat_model)`. Found and fixed after the
+  controller flagged two golden-path test failures
+  (`test_golden_paths.py::test_an_offline_path_runs_green_and_prints_its_pinned_line[flows]`
+  and `[agents]`) that the brief's file list had missed; no other call site
+  in `examples/` or `evals/` calls `run_tagging` or `explain` directly.

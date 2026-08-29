@@ -12,8 +12,6 @@ import sqlite3
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
-from attestation.llm import default_chat_fn
-
 log = logging.getLogger(__name__)
 
 
@@ -66,6 +64,21 @@ def explanation_messages(profile: str, title: str, summary: str) -> list[dict]:
     ]
 
 
+def profile_synthesis_messages(titles: list[str]) -> list[dict]:
+    """The ONE renderer of the profile-synthesis fallback prompt.
+
+    `synthesize_profile` calls this when a persona has clicks but no stored
+    interests text -- see its docstring for why that stays the fallback
+    rather than the default. Giving it a renderer is what makes it scoreable
+    the way the other three prompts already are (no corpus or optimizer is
+    added by this change; the renderer only makes one possible).
+    """
+    return [
+        {"role": "system", "content": "Summarize this reader in one sentence."},
+        {"role": "user", "content": "Recently useful titles:\n- " + "\n- ".join(titles)},
+    ]
+
+
 def _build_graph(conn: sqlite3.Connection, chat_fn):
     def synthesize_profile(state: ExplainState) -> dict:
         """The `profile` node: prefer stored interests text, synthesize only
@@ -104,16 +117,7 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
             # clicks but no interests text.
             return {"profile": interests}
         try:
-            out = chat_fn(
-                [
-                    {"role": "system", "content": "Summarize this reader in one sentence."},
-                    {
-                        "role": "user",
-                        "content": "Recently useful titles:\n- " + "\n- ".join(titles),
-                    },
-                ],
-                Explanation.model_json_schema(),
-            )
+            out = chat_fn(profile_synthesis_messages(titles), Explanation.model_json_schema())
             return {"profile": Explanation.model_validate(out).text}
         except Exception:
             log.debug("explain attempt failed", exc_info=True)
@@ -146,7 +150,7 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
     return graph.compile()
 
 
-def explain(conn, user_id: int, item_id: int, chat_fn=default_chat_fn) -> str | None:
+def explain(conn, user_id: int, item_id: int, chat_fn) -> str | None:
     """Why this item was ranked here for this reader, cached after the first
     successful call.
 

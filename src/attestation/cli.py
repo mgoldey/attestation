@@ -716,10 +716,12 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 @_documented("tag")
 def cmd_tag(args: argparse.Namespace) -> int:
     import attestation.features
-    from attestation.llm import base_url
+    from attestation.llm import base_url, chat_model, default_chat_fn
 
     with open_db(args.db) as conn:
-        stats = attestation.features.run_tagging(conn, limit=args.limit)
+        stats = attestation.features.run_tagging(
+            conn, default_chat_fn, chat_model(), limit=args.limit
+        )
     print(stats)
     if stats.get("chat_down"):
         # Same words ingest uses for the same condition. The stats dict alone

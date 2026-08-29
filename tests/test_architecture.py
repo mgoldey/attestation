@@ -1077,3 +1077,84 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
                 f"{path.relative_to(root)}: ATTEST_TOOLS={surface} claims {claimed} "
                 f"tools, live surface has {actual}"
             )
+
+
+DOMAIN = {
+    "explain",
+    "features",
+    "ingest",
+    "simulate",
+    "rank",
+    "kg",
+    "claims",
+    "ledger",
+    "corpus",
+    "citations",
+    "implicit",
+    "personas",
+    "feeds",
+}
+MODEL_IMPORTERS_ALLOWED = {"embed", "cli", "server", "install", "mcp_server", "mcp._shared"}
+
+
+def _imports_of(path: pathlib.Path, module: str) -> list[str]:
+    """Names imported from `module` anywhere in the file, function bodies included:
+    a lazy import of the concrete client is still the concrete client."""
+    tree = ast.parse(path.read_text())
+    names = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == module:
+            names.extend(a.name for a in node.names)
+        if isinstance(node, ast.Import):
+            names.extend(a.name for a in node.names if a.name == module)
+    return names
+
+
+def test_domain_reaches_models_only_through_ports():
+    """ports.py is load-bearing only if the domain uses it. At 787823d explain,
+    features and ingest imported the concrete client; a second provider would
+    have meant editing domain code."""
+    offenders = {}
+    for path in _modules():
+        name = _module_name(path)
+        if name in DOMAIN:
+            found = _imports_of(path, "attestation.llm")
+            if found:
+                offenders[_rel(path)] = found
+    assert not offenders, f"domain modules importing the concrete client: {offenders}"
+
+
+_SQL = re.compile(r"""["'](SELECT|INSERT|UPDATE|DELETE|WITH) """)
+MCP_SQL_BASELINE = 21  # measured after the Wave-1 seams: feed 15, personas 5, _tool 1
+
+
+def test_mcp_layer_sql_only_ratchets_down():
+    """The presentation layer writing its own queries is the braid the onion
+    was for. Pinned, not banned: it falls as seams move queries into domain
+    readers, and a new query up here needs a reason in a spec."""
+    counts = {
+        _rel(p): len(_SQL.findall(p.read_text())) for p in _modules() if p.parent.name == "mcp"
+    }
+    total = sum(counts.values())
+    assert total <= MCP_SQL_BASELINE, f"SQL in mcp/ rose to {total}: {counts}"
+
+
+def test_no_mcp_module_imports_a_private_domain_name():
+    """A private name crossing a module boundary is a missing public function."""
+    offenders = {}
+    for path in _modules():
+        if path.parent.name != "mcp":
+            continue
+        tree = ast.parse(path.read_text())
+        private = [
+            f"{n.module}.{a.name}"
+            for n in ast.walk(tree)
+            if isinstance(n, ast.ImportFrom)
+            and (n.module or "").startswith("attestation.")
+            and not (n.module or "").startswith("attestation.mcp")
+            for a in n.names
+            if a.name.startswith("_")
+        ]
+        if private:
+            offenders[_rel(path)] = private
+    assert not offenders, f"mcp modules importing private domain names: {offenders}"

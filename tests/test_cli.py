@@ -87,7 +87,9 @@ def test_tag_command_prints_stats(tmp_path, capsys, monkeypatch):
     db = tmp_path / "t.db"
     seeded_db(db).close()
     monkeypatch.setattr(
-        attestation.features, "run_tagging", lambda conn, limit=None: {"tagged": 0, "failed": 0}
+        attestation.features,
+        "run_tagging",
+        lambda conn, chat_fn, model, limit=None: {"tagged": 0, "failed": 0},
     )
     rc = main(["tag", "--db", str(db)])
     assert rc == 0
@@ -100,7 +102,9 @@ def test_tag_command_exit_1_on_total_failure(tmp_path, monkeypatch):
     db = tmp_path / "t.db"
     seeded_db(db).close()
     monkeypatch.setattr(
-        attestation.features, "run_tagging", lambda conn, limit=None: {"tagged": 0, "failed": 3}
+        attestation.features,
+        "run_tagging",
+        lambda conn, chat_fn, model, limit=None: {"tagged": 0, "failed": 3},
     )
     assert main(["tag", "--db", str(db)]) == 1
 
@@ -708,7 +712,7 @@ def test_tag_command_names_the_cause_when_the_chat_backend_is_down(tmp_path, cap
     monkeypatch.setattr(
         attestation.features,
         "run_tagging",
-        lambda conn, limit=None: {"tagged": 0, "failed": 0, "chat_down": True},
+        lambda conn, chat_fn, model, limit=None: {"tagged": 0, "failed": 0, "chat_down": True},
     )
     assert main(["tag", "--db", str(db)]) == 1
     streams = capsys.readouterr()

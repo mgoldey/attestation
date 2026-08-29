@@ -1,3 +1,6 @@
+import ast
+import pathlib
+
 from conftest import seeded_db
 
 from attestation.db import get_db
@@ -227,3 +230,50 @@ def test_merging_personas_drops_the_loser_and_keeper_explanations(tmp_path, monk
 
     left = conn.execute("SELECT COUNT(*) FROM explanations").fetchone()[0]
     assert left == 0, f"{left} explanation(s) survived a merge that changed the interests"
+
+
+def test_synthesize_profile_renders_through_profile_synthesis_messages():
+    from attestation.explain import profile_synthesis_messages
+
+    msgs = profile_synthesis_messages(["A paper", "B paper"])
+    assert msgs[0]["role"] == "system"
+    assert msgs[0]["content"] == "Summarize this reader in one sentence."
+    assert msgs[1]["content"] == "Recently useful titles:\n- A paper\n- B paper"
+
+
+def test_explain_module_has_exactly_two_system_prompts_both_in_renderers():
+    """The one-renderer rule, machine-checked: every `{"role": "system"}`
+    literal in explain.py must live inside a function named `*_messages`, so
+    a third inline prompt cannot creep back in beside the two renderers."""
+    path = pathlib.Path(__file__).resolve().parent.parent / "src" / "attestation" / "explain.py"
+    tree = ast.parse(path.read_text())
+
+    def _in_messages_fn(node, ancestors):
+        return any(
+            isinstance(a, (ast.FunctionDef, ast.AsyncFunctionDef)) and a.name.endswith("_messages")
+            for a in ancestors
+        )
+
+    found = []
+    stack = [(tree, [])]
+    while stack:
+        node, ancestors = stack.pop()
+        if (
+            isinstance(node, ast.Dict)
+            and any(
+                isinstance(k, ast.Constant) and k.value == "role"
+                for k in node.keys
+                if k is not None
+            )
+            and any(
+                isinstance(v, ast.Constant) and v.value == "system"
+                for k, v in zip(node.keys, node.values)
+                if isinstance(k, ast.Constant) and k.value == "role"
+            )
+        ):
+            found.append(_in_messages_fn(node, ancestors))
+        for child in ast.iter_child_nodes(node):
+            stack.append((child, [*ancestors, node]))
+
+    assert len(found) == 2, f"expected exactly two system-role prompts, found {len(found)}"
+    assert all(found), "a system-role prompt literal lives outside a *_messages renderer"

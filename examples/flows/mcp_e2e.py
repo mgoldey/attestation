@@ -304,7 +304,7 @@ def _tag_and_click(db_path: Path, base_url: str, chat_model: str, users: dict) -
 
     conn = get_db(db_path)
     chat = ChatClient(base_url=base_url, model=chat_model)
-    run_tagging(conn, chat.chat_json)
+    run_tagging(conn, chat.chat_json, chat_model)
     items = conn.execute("SELECT * FROM items ORDER BY id LIMIT 20").fetchall()
     for name in users:
         simulate_feedback(conn, chat.chat_json, name, items)
