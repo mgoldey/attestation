@@ -69,20 +69,20 @@ configuration from noise — is the part that earns its keep, and the
 `contradicted` verdict is a number in a document that no longer matches the
 artifact it came from.
 
-`examples/README.md` walks through the rest. When you want the feed, the
-knowledge graph, or tagging, keep reading — those need a model server.
-
-## Demonstrations
+`examples/README.md` is the catalogue of every golden path — twelve, each
+with its own README, `run.sh`, and measured runtime; the most thorough is
+`examples/flows/`, ninety seconds offline that scores forty labelled items
+for two personas, drives every MCP tool over stdio, and trains and reads
+back four MLflow arms:
 
 ```bash
 uv run --group examples python examples/flows/run_all.py --offline
 ```
 
-Ninety seconds, no Ollama and no network: forty labelled items scored for two
-personas, every MCP tool driven over stdio, and four MLflow arms trained and
-read back by the ledger. [`examples/flows/README.md`](examples/flows/README.md)
-explains each flow; `examples/flows/RESULTS.md` records what the live run
-measured.
+[`examples/flows/README.md`](examples/flows/README.md) explains each flow;
+`examples/flows/RESULTS.md` records what the live run measured. When you
+want the feed, the knowledge graph, or tagging, keep reading — those need a
+model server.
 
 ## Feed ranking
 
@@ -701,19 +701,9 @@ or it refuses to open the database at all — `attest browse` handles that.
 
 ### Prompt evals and the optimizer
 
-Every model-driven prompt is scored, not tuned by taste: tagging
-(`evals/tagging_cases.json`, 51 cases), reaction (`evals/reaction_cases.json`,
-100 cases) and explanation (`evals/explanation_cases.json`, 40 cases) each
-have a corpus and a model-free scorer that renders through the same function
-production calls, so a score is always a score of the prompt that ships.
-
-    uv run python evals/run_tagging_eval.py --split dev
-    uv run python evals/run_reaction_eval.py --split dev
-    uv run python evals/run_explanation_eval.py --split dev
-
-Only tagging has an optimizer today (DSPy GEPA — the candidate that ships
-tied the model it was optimized for, 0.807 vs 0.807 on gemma4:e2b, and beat
-the two it never saw, +0.110 on gemma4:e4b and +0.086 on hermes3:8b, with a
-narrower spread across them, which is why the gate's bar is transfer rather
-than a single score). See `examples/prompt-evals/` for the eval →
-transfer-gate golden path.
+Every model-driven prompt is scored, not tuned by taste, and only tagging
+has an optimizer today (DSPy GEPA, `uv run --group optimize python
+evals/optimize_tagging.py`). See `examples/prompt-evals/` for the
+eval → transfer-gate golden path: the commands, a live run's output, and
+why the gate's bar is transfer across model families rather than a single
+score.

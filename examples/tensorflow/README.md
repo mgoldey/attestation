@@ -138,7 +138,7 @@ committed `results/` and `tb/` in place, deleting and retraining all four
 arms:
 
 ```bash
-uv run --with tensorflow-cpu --with tensorboard --with scikit-learn --no-project python generate.py
+uv run --with tensorflow-cpu==2.20.0 --with tensorboard --with scikit-learn --no-project python generate.py
 ```
 
 Installing `tensorflow-cpu` and `tensorboard` together is roughly 500 MB

@@ -10,7 +10,7 @@ uses `sklearn.datasets.load_breast_cancer` instead, the same surrogate
 over `learning_rate in {1e-3, 3e-3, 1e-2, 3e-2}`, five epochs each, CPU
 only. Run via:
 
-    uv run --with tensorflow-cpu --with tensorboard --with scikit-learn \
+    uv run --with tensorflow-cpu==2.20.0 --with tensorboard --with scikit-learn \
         --no-project python generate.py
 
 `tensorboard` is required alongside `tensorflow-cpu` -- without it,

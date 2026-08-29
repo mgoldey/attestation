@@ -138,11 +138,47 @@ def test_the_catalogue_lists_only_paths_that_exist():
 # is the tag's real name, not a leaked value, and a README explaining the
 # scrub needs the same freedom in prose) -- `/home/` and `github.com` have
 # no such legitimate source-or-prose use and still apply to every file.
+#
+# A non-text suffix (e.g. tensorboard's `events.out.tfevents.<ts>.v2`) is
+# never decoded as text -- it is scanned as raw bytes instead, for `/home/`
+# and the username as a whole word, since a binary format can still embed a
+# plain attribution string (a hostname, a username) even though it is not
+# itself readable text.
+#
+# The ambient-username needle exists to catch the developer's own name
+# leaking onto their own machine's clone -- it is not meant to fire on a CI
+# runner's generic service account. GitHub Actions sets `$USER` to `runner`,
+# and "runner" is an ordinary English word that appears in prose (e.g.
+# hydra/README.md's "GitHub Actions runner") -- run 33233059347 failed on
+# exactly that collision. So the ambient-username check is skipped outright
+# under `CI` (any value; that env var is set by every common CI provider,
+# not just GitHub Actions), and also for generic account names that are not
+# a person's identity even off CI. The fixed needles (`/home/`, `github.com`,
+# and the tag-name ones with their .py/.sh/.md exemption) still apply
+# everywhere, on CI or not -- only the ambient-username heuristic is scoped.
+_GENERIC_ACCOUNT_NAMES = {"runner", "root", "user", "ubuntu", "admin", "ci"}
+
+
+def _skip_ambient_username(user: str) -> bool:
+    return (
+        len(user) < 4 or os.environ.get("CI") is not None or user.lower() in _GENERIC_ACCOUNT_NAMES
+    )
+
+
 def test_no_committed_example_carries_attribution_or_machine_paths():
     user = os.environ.get("USER", "")
+    check_user = not _skip_ambient_username(user)
+    user_bytes_re = re.compile(rb"\b" + re.escape(user.encode()) + rb"\b") if check_user else None
     hits = []
     for f in EXAMPLES.rglob("*"):
-        if not f.is_file() or f.suffix not in TEXT_SUFFIXES or "__pycache__" in f.parts:
+        if not f.is_file() or "__pycache__" in f.parts:
+            continue
+        if f.suffix not in TEXT_SUFFIXES:
+            data = f.read_bytes()
+            if b"/home/" in data:
+                hits.append(f"{f.relative_to(EXAMPLES)}: /home/")
+            if user_bytes_re and user_bytes_re.search(data):
+                hits.append(f"{f.relative_to(EXAMPLES)}: {user}")
             continue
         text = f.read_text(errors="replace")
         is_source = f.suffix in (".py", ".sh", ".md")
@@ -150,9 +186,21 @@ def test_no_committed_example_carries_attribution_or_machine_paths():
         for needle in needles:
             if needle in text:
                 hits.append(f"{f.relative_to(EXAMPLES)}: {needle}")
-        if len(user) >= 4 and re.search(rf"\b{re.escape(user)}\b", text):
+        if check_user and re.search(rf"\b{re.escape(user)}\b", text):
             hits.append(f"{f.relative_to(EXAMPLES)}: {user}")
     assert not hits, "\n".join(hits)
+
+
+def test_the_ambient_username_guard_is_skipped_on_ci(monkeypatch):
+    # hydra/README.md's prose contains "runner" (as in "a GitHub Actions
+    # runner"); on a CI box where $USER=runner, that word must not be
+    # flagged as leaked attribution. Reproduce the CI run's own conditions
+    # by monkeypatching CI/USER rather than depending on the real ambient
+    # environment, so this test means the same thing locally and in CI.
+    monkeypatch.setenv("CI", "1")
+    monkeypatch.setenv("USER", "runner")
+    assert "runner" in (EXAMPLES / "hydra" / "README.md").read_text()
+    test_no_committed_example_carries_attribution_or_machine_paths()
 
 
 def _offline(readme: Path) -> bool:
