@@ -11,7 +11,13 @@ reported number -- `auc`, also `@ex.main`'s return value, which Sacred
 records separately as `run.json`'s `result` -- always comes from the
 LogisticRegression fit on the same split. Run via:
 
-    uv run --python 3.12 --with sacred --with scikit-learn --no-project python generate.py
+    uv run --python 3.12 --with sacred==0.8.7 --with scikit-learn --no-project python generate.py
+
+The version pin matches the SACRED_VERSION constant below and is
+load-bearing, not cosmetic, the same way examples/wandb/generate.py pins
+wandb: main() refuses to run under any other installed sacred version
+rather than silently produce a fixture this file's own docstring no longer
+accurately describes.
 
 `Experiment("lr_sweep")` with a `FileStorageObserver("sacred_runs")`, run
 four times via `ex.run(config_updates={"lr": ...})`. FileStorageObserver
@@ -62,9 +68,10 @@ FAMILY = "lr_sweep"
 ARMS = (0.001, 0.01, 0.1, 1.0)
 HERE = Path(__file__).resolve().parent
 
-# The sacred version this fixture was produced with, and the Python version
-# it needs -- see the module docstring's pkg_resources note. Applied in
-# run.sh, not here; this file has no opinion on how it is invoked.
+# The sacred version this fixture was produced with, and the only one this
+# file will run under -- see _require_pinned_sacred_version(). The Python
+# version note is separate, see the module docstring's pkg_resources
+# paragraph; that constraint is applied in run.sh, not here.
 SACRED_VERSION = "0.8.7"
 
 # Keys run.json's `experiment` object writes that name this machine or this
@@ -106,8 +113,27 @@ def scrub(sacred_dir: Path) -> None:
         run_json_path.write_text(json.dumps(run_json, indent=2, sort_keys=True) + "\n")
 
 
+def _require_pinned_sacred_version(sacred_module) -> None:
+    """Refuse to run under any sacred but the one this file was verified against.
+
+    SACRED_VERSION is not decorative -- see examples/wandb/generate.py's
+    identical guard for the precedent this follows. Failing loudly here,
+    before any run is created, is cheaper than debugging a fixture whose
+    shape silently drifted from what this file's docstring describes.
+    """
+    if sacred_module.__version__ != SACRED_VERSION:
+        raise SystemExit(
+            f"generate.py was verified against sacred=={SACRED_VERSION} and refuses to"
+            f" run under sacred=={sacred_module.__version__}. install the pinned version,"
+            f" e.g.:\n\n"
+            f"    uv run --python 3.12 --with sacred=={SACRED_VERSION}"
+            f" --with scikit-learn --no-project python generate.py"
+        )
+
+
 def train(out: Path, seed: int = 0) -> list[dict]:
     import numpy as np
+    import sacred as sacred_module
     from sacred import Experiment
     from sacred.observers import FileStorageObserver
     from sklearn.datasets import load_breast_cancer
@@ -115,6 +141,8 @@ def train(out: Path, seed: int = 0) -> list[dict]:
     from sklearn.metrics import roc_auc_score
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import StandardScaler
+
+    _require_pinned_sacred_version(sacred_module)
 
     X, y = load_breast_cancer(return_X_y=True)
     X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, stratify=y, random_state=seed)

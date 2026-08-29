@@ -14,8 +14,14 @@
 # by default, so without this override all four arms would overwrite one
 # top-level metrics.json instead of writing into multirun/<date>/<time>/<n>/.
 #
-#     uv run --with hydra-core --with scikit-learn --no-project python \
+#     uv run --with hydra-core==1.3.5 --with scikit-learn --no-project python \
 #         train.py --multirun lr=0.01,0.1,1,10 hydra.job.chdir=True
+#
+# The pin matches HYDRA_VERSION below and is load-bearing, not cosmetic, the
+# same way examples/wandb/generate.py pins wandb: after the sweep runs, this
+# script checks the installed version against HYDRA_VERSION and exits 1
+# rather than silently commit a fixture this file no longer accurately
+# describes.
 #
 # Hydra writes, per arm, multirun/<date>/<time>/<n>/{.hydra/{config.yaml,
 # hydra.yaml,overrides.yaml}, metrics.json, train.log} plus one
@@ -28,14 +34,22 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-HYDRA_VERSION="1.3.5" # pin used to produce the committed fixture -- informational only
+HYDRA_VERSION="1.3.5" # pin used to produce the committed fixture -- enforced below, not just echoed
 
 rm -rf multirun
 
-uv run --with hydra-core --with scikit-learn --no-project python \
+uv run --with hydra-core=="$HYDRA_VERSION" --with scikit-learn --no-project python \
   train.py --multirun lr=0.01,0.1,1,10 hydra.job.chdir=True
 
-uv run --with hydra-core --no-project python scrub.py
+INSTALLED_HYDRA_VERSION="$(uv run --with hydra-core=="$HYDRA_VERSION" --no-project python -c \
+  'import hydra; print(hydra.__version__)')"
+if [ "$INSTALLED_HYDRA_VERSION" != "$HYDRA_VERSION" ]; then
+  echo "generate.sh was verified against hydra-core==$HYDRA_VERSION and refuses to commit a" >&2
+  echo "fixture produced by hydra-core==$INSTALLED_HYDRA_VERSION -- install the pinned version." >&2
+  exit 1
+fi
+
+uv run --with hydra-core=="$HYDRA_VERSION" --no-project python scrub.py
 
 echo "hydra $HYDRA_VERSION wrote:"
 for f in multirun/*/*/*/metrics.json; do

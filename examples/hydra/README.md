@@ -144,11 +144,14 @@ Regenerating the fixture is deliberate and explicit -- it rewrites the
 committed `multirun/` in place:
 
 ```bash
-uv run --with hydra-core --with scikit-learn --no-project python \
+uv run --with hydra-core==1.3.5 --with scikit-learn --no-project python \
     train.py --multirun lr=0.01,0.1,1,10 hydra.job.chdir=True
 ```
 
-Or run `./generate.sh`, which does the same thing, then scrubs this
+The pin matches `HYDRA_VERSION` in `generate.sh`, which exits 1 if the
+installed `hydra.__version__` disagrees -- the same guard
+`examples/wandb/generate.py` established first. Or run `./generate.sh`,
+which does the same thing, checks that version, then scrubs this
 machine's absolute path out of every arm's `.hydra/hydra.yaml`
 (`hydra.runtime.cwd`, `hydra.runtime.output_dir`, and the `conf/` entry in
 `hydra.runtime.config_sources`) and deletes each arm's `train.log` and the

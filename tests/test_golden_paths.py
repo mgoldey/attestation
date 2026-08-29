@@ -128,6 +128,18 @@ def test_the_catalogue_lists_only_paths_that_exist():
         assert (EXAMPLES / name / "README.md").is_file(), name
 
 
+def test_the_catalogue_is_ordered_by_prerequisite_then_name():
+    # `none` paths first, alphabetical within each prerequisite group.
+    # catalogue_rows() is a dict, so its iteration order is the table's own
+    # row order -- this asserts against that order directly rather than
+    # re-deriving it, so a future re-sort of the table is what this test
+    # exists to catch.
+    order = {"none — pure local computation": 0, "network": 1, "a model server at LLM_BASE_URL": 2}
+    rows = list(catalogue_rows().items())
+    expected = sorted(rows, key=lambda row: (order[row[1]], row[0]))
+    assert rows == expected, rows
+
+
 # Two rules narrow this guard so it catches real leaks, not collisions with
 # unrelated content: (1) the username matches only as a whole word, case
 # sensitive -- a bare substring match on a short name (e.g. "matt") also

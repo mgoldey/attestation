@@ -103,10 +103,14 @@ before reading anything else from the directory.
   unknown family does -- `_sacred_runs` groups strictly by
   `experiment.name`, so the family name is always exactly what
   `Experiment(...)` was constructed with.
-- Regenerating with the plain `--with sacred` in the module docstring's
-  install command under a Python other than 3.12 fails at import time with
-  `ModuleNotFoundError: No module named 'pkg_resources'` -- see
-  `generate.py`'s module docstring for why Python 3.12 is required.
+- Regenerating with the module docstring's install command under a Python
+  other than 3.12 fails at import time with `ModuleNotFoundError: No module
+  named 'pkg_resources'` -- see `generate.py`'s module docstring for why
+  Python 3.12 is required.
+- Regenerating with any sacred version other than 0.8.7 exits 1 with a
+  clear message rather than silently producing a fixture the docstring no
+  longer describes -- `generate.py`'s `_require_pinned_sacred_version`
+  checks this before training starts.
 
 ## Next
 
@@ -114,8 +118,12 @@ Regenerating the fixture is deliberate and explicit -- it rewrites the
 committed `sacred_runs/` in place:
 
 ```bash
-uv run --python 3.12 --with sacred --with scikit-learn --no-project python generate.py
+uv run --python 3.12 --with sacred==0.8.7 --with scikit-learn --no-project python generate.py
 ```
+
+The pin matches `SACRED_VERSION` in `generate.py`, which refuses to run
+under any other installed sacred version -- the same guard
+`examples/wandb/generate.py` established first.
 
 The catalogue at `examples/README.md` lists the other golden paths, and
 `examples/wandb/` is the W&B equivalent of this same verification, done

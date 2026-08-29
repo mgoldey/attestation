@@ -338,3 +338,28 @@ unconditionally. The guard was also generalised from `examples/flows/`
 alone to all of `examples/**`, and extended to scan non-text suffixes (e.g.
 tensorboard's `events.out.tfevents.<ts>.v2`) as raw bytes for `/home/` and
 the username, rather than skipping binaries outright.
+
+**The repo README's "Demonstrations" paragraph became the golden-paths
+section, and "Prompt evals and the optimizer" was reduced to a pointer
+paragraph.** The quickstart block itself is byte-identical; only the prose
+around it changed to point at `examples/README.md`'s catalogue rather than
+describing each flow inline a second time.
+
+**sacred/dvc/hydra generators were unpinned until 2026-08-29 (this
+commit).** `examples/wandb/generate.py`'s `WANDB_VERSION` pin-and-refuse
+pattern was established first and not propagated to the other three
+generated fixtures at the time: `examples/sacred/generate.py` documented a
+bare `--with sacred` with no runtime check; `examples/dvc/generate.sh` and
+`examples/hydra/generate.sh` both declared a version constant
+(`DVC_VERSION`, `HYDRA_VERSION`) that was echoed in output but never passed
+to `--with` or checked against what actually ran. All three now pin the
+installed command to the constant and refuse (a `SystemExit` for sacred, an
+`exit 1` after a version check for dvc/hydra) when the installed version
+disagrees, matching wandb's and tensorflow's existing precedent.
+
+**`generic.py` reached ~1500 lines across five tracker conventions
+(wandb, mlflow, sacred, dvc, hydra) by the time this pass landed.** A split
+into `ledger_adapters/trackers.py`, one reader per tracker, is recommended
+but not done here — out of scope for a fix-up pass, and a real
+refactor deserves its own review rather than riding along with unrelated
+version pins.

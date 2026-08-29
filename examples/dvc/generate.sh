@@ -12,8 +12,14 @@
 # repo (this directory is not one) and its own `.git`-style bookkeeping;
 # `dvc repro -q` runs every stage dvc.yaml declares and writes dvc.lock.
 #
-#     uv run --with dvc --with scikit-learn --no-project bash -c \
+#     uv run --with dvc==3.67.1 --with scikit-learn --no-project bash -c \
 #         'dvc init --no-scm -q && dvc repro -q'
+#
+# The pin matches DVC_VERSION below and is load-bearing, not cosmetic, the
+# same way examples/wandb/generate.py pins wandb: after `dvc repro` runs,
+# this script checks the installed version against DVC_VERSION and exits 1
+# rather than silently commit a fixture this file no longer accurately
+# describes.
 #
 # `dvc init` writes `.dvc/config` (small, path-free: `[core]\n no_scm =
 # true\n` -- kept, see below), `.dvc/cache` (a content-addressed blob store,
@@ -25,12 +31,19 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-DVC_VERSION="3.67.1" # pin used to produce the committed fixture -- informational only
+DVC_VERSION="3.67.1" # pin used to produce the committed fixture -- enforced below, not just echoed
 
 rm -rf dvc.lock metrics .dvc .dvcignore
 
-uv run --with dvc --with scikit-learn --no-project bash -c \
+uv run --with dvc=="$DVC_VERSION" --with scikit-learn --no-project bash -c \
   'dvc init --no-scm -q && dvc repro -q'
+
+INSTALLED_DVC_VERSION="$(uv run --with dvc=="$DVC_VERSION" --no-project dvc --version | head -n1)"
+if [ "$INSTALLED_DVC_VERSION" != "$DVC_VERSION" ]; then
+  echo "generate.sh was verified against dvc==$DVC_VERSION and refuses to commit a" >&2
+  echo "fixture produced by dvc==$INSTALLED_DVC_VERSION -- install the pinned version." >&2
+  exit 1
+fi
 
 rm -rf .dvc/cache .dvc/tmp
 rm -f .dvcignore

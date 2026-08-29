@@ -16,7 +16,13 @@ The mlruns/ this writes is committed beside it: it is the first real MLflow
 directory the ledger reader has read, and tests/test_examples.py pins it
 without needing mlflow installed. Regenerating changes the run ids and is a
 deliberate act -- running with no --out deletes and rewrites the committed
-mlruns/ and FINDINGS.md in place.
+mlruns/ and FINDINGS.md in place. The committed fixture was produced
+against mlflow-skinny 3.15.2, the version uv.lock currently resolves for
+the `examples` dependency group (`pyproject.toml` pins `mlflow-skinny>=2.20`,
+a range rather than an exact version -- unlike wandb/sacred/dvc/hydra-core,
+there is no known regression across mlflow-skinny releases in the small
+surface this reader touches, so this file does not refuse to run under a
+different resolved version the way those generators do).
 
 mlflow also writes personal attribution and machine-specific absolute paths
 (tags/mlflow.user, the git remote URL, this machine's home directory in

@@ -119,11 +119,14 @@ Regenerating the fixture is deliberate and explicit -- it rewrites the
 committed `dvc.lock` and `metrics/*.json` in place:
 
 ```bash
-uv run --with dvc --with scikit-learn --no-project bash -c \
+uv run --with dvc==3.67.1 --with scikit-learn --no-project bash -c \
     'dvc init --no-scm -q && dvc repro -q'
 ```
 
-Or run `./generate.sh`, which does the same thing and then deletes
+The pin matches `DVC_VERSION` in `generate.sh`, which exits 1 if the
+installed `dvc --version` disagrees -- the same guard
+`examples/wandb/generate.py` established first. Or run `./generate.sh`,
+which does the same thing, checks that version, and then deletes
 `.dvc/cache`, `.dvc/tmp` and `.dvcignore` before printing what it wrote.
 
 The catalogue at `examples/README.md` lists the other golden paths, and
