@@ -21,36 +21,59 @@ why an agent can use this tool without learning a layout: it calls
 `runs.compare`, and the tool surface, not the directory tree, is what was
 measured against a 2B model until it routed.
 
-## What Cookiecutter DS decides, and what this repo decides instead
+## Cookiecutter Data Science: the ideas taken, the ideas left, and the difference
+
+Cookiecutter DS is the convention most data-science projects start from,
+and several of its opinions are this repo's opinions too. This is not a
+compatibility target — attestation is not a project template and does
+not promise to read any particular layout — it is the nearest published
+philosophy to compare against, so the borrowings and the departures can
+be named one by one.
 
 The v2 template generates `data/{external,interim,processed,raw}`,
 `docs/`, `models/`, `notebooks/`, `references/`, `reports/figures/`, a
 `Makefile`, `pyproject.toml`, and a module with `config.py`,
 `dataset.py`, `features.py`, `modeling/{train,predict}.py`, `plots.py`.
-Its opinions page states ten principles. Side by side:
+Its opinions page states ten principles. Each one, with whether the idea
+is taken here, and in what form:
 
-| Cookiecutter DS opinion | attestation's stance |
-|---|---|
-| "Data analysis is a directed acyclic graph" | Provenance is a DAG too — runs → claims → citations — but it is *discovered from artifacts* (`ledger.scan`, `claims.check_claim`), never declared in a build file. `compare()` refuses to rank arms across corpora rather than trusting a declared edge. |
-| "Raw data is immutable" | The ledger only reads a workspace; it never writes into one. Example fixtures come from a committed generator that ran the real tool, then scrubbed — never edited to look right (`tests/test_golden_paths.py`). |
-| "Data should (mostly) not be kept in source control" | The database is not. The three eval corpora *are* (`evals/*_cases.json`, 191 cases): small, labelled, and the thing the prompts are optimised against — they are the program, so they are versioned like one. |
-| "Tools for DAGs" (Make) | None. `dvc.yaml` and Hydra's `multirun/` are read as conventions, not executed; the tool has no pipeline runner and does not want one. |
-| "Notebooks are for exploration and communication, source files are for repetition" | No notebooks. Twelve golden paths (`examples/`) with a pinned "What it prints" line play the communication role, and `examples/flows/RESULTS.md` the exploration record. This is a gap a notebook-first reviewer would name (below). |
-| "Refactor the good parts into source code" | The same rule, applied to the tool itself: a seam is added when a test can name what it decomplects (`docs/superpowers/specs/2026-08-29-onion-seams-design.md`). |
-| "Keep your modeling organized" | This is the product. The ledger organises runs *after the fact*, for projects that did not — five tracker layouts plus bare `results/` files, with caveats where the format cannot say what a reader needs. |
-| "Build from the environment up" | `uv.lock` with `--frozen` everywhere, CI on `only-managed` Pythons, models named exactly (`gemma4:e2b-it-q4_K_M`, `embeddinggemma`), and a docs site that builds `--strict`. |
-| "Keep secrets and configuration out of version control" | Nothing leaves the machine, so there are no service secrets to keep out; the analogue here is *identity*: the attribution guard fails the suite on a home path, a username, or a repo URL in a committed fixture. |
-| "Encourage adaptation from a consistent default" | The golden path is the consistent default — seven sections, one of three prerequisite labels, a `run.sh` that must match the README — enforced by discovery, so a new one needs no test edit. |
+| Cookiecutter DS opinion | taken? | attestation's stance |
+|---|---|---|
+| "Data analysis is a directed acyclic graph" | taken, inverted | Provenance is a DAG too — runs → claims → citations — but it is *discovered from artifacts* (`ledger.scan`, `claims.check_claim`), never declared in a build file. `compare()` refuses to rank arms across corpora rather than trusting a declared edge. |
+| "Raw data is immutable" | taken | The ledger only reads a workspace; it never writes into one. Example fixtures come from a committed generator that ran the real tool, then scrubbed — never edited to look right (`tests/test_golden_paths.py`). |
+| "Data should (mostly) not be kept in source control" | half | The database is not. The three eval corpora *are* (`evals/*_cases.json`, 191 cases): small, labelled, and the thing the prompts are optimised against — they are the program, so they are versioned like one. |
+| "Tools for DAGs" (Make) | left | None. `dvc.yaml` and Hydra's `multirun/` are read as conventions, not executed; the tool has no pipeline runner and does not want one. |
+| "Notebooks are for exploration and communication, source files are for repetition" | left, deliberately | No notebooks. Twelve golden paths (`examples/`) with a pinned "What it prints" line play the communication role, and `examples/flows/RESULTS.md` the exploration record. This is a gap a notebook-first reviewer would name (below). |
+| "Refactor the good parts into source code" | taken | The same rule, applied to the tool itself: a seam is added when a test can name what it decomplects (`docs/superpowers/specs/2026-08-29-onion-seams-design.md`). |
+| "Keep your modeling organized" | taken — it is the product | This is the product. The ledger organises runs *after the fact*, for projects that did not — five tracker layouts plus bare `results/` files, with caveats where the format cannot say what a reader needs. |
+| "Build from the environment up" | taken | `uv.lock` with `--frozen` everywhere, CI on `only-managed` Pythons, models named exactly (`gemma4:e2b-it-q4_K_M`, `embeddinggemma`), and a docs site that builds `--strict`. |
+| "Keep secrets and configuration out of version control" | transposed | Nothing leaves the machine, so there are no service secrets to keep out; the analogue here is *identity*: the attribution guard fails the suite on a home path, a username, or a repo URL in a committed fixture. |
+| "Encourage adaptation from a consistent default" | taken | The golden path is the consistent default — seven sections, one of three prerequisite labels, a `run.sh` that must match the README — enforced by discovery, so a new one needs no test edit. |
 
-The difference in one sentence: Cookiecutter's contract is a position
-(`data/processed/` *means* processed); attestation's contract is an
-interface (`RunRecord` *means* a run, however it was laid out). The
-consequence worth testing: a Cookiecutter project should be readable by
-attestation with zero adaptation — `models/` and `reports/` are just
-directories with result files in them. There is no golden path proving
-that yet; `examples/cookiecutter-ds/` (generate a v2 project with the
-real `cookiecutter`, train something in `make train` for a few seconds,
-`attest runs scan` it) would be the honest way to claim compatibility.
+What distinguishes this approach, stated so it can be argued with:
+
+- **Interfaces over positions.** Cookiecutter's contract is a place
+  (`data/processed/` *means* processed); attestation's is an interface
+  with a test (`RunRecord` *means* a run, however it was laid out). A
+  producer never has to move a file to be read; a consumer never has to
+  know where one is.
+- **The consumer is standardised, not the producer.** The template shapes
+  the project that makes the results; this tool shapes what may be asked
+  of results that already exist — and reads five tracker layouts and bare
+  `results/` files as conventions of their own, with caveats where a
+  format cannot say what a reader needs.
+- **Provenance is discovered, then doubted.** A declared DAG is exact;
+  a discovered one is caveated. `compare()` refuses to rank arms across
+  corpora and `_caveats()` says what the artifacts cannot; the tool would
+  rather return a caveat than a verdict it cannot back.
+- **The agent is a measured consumer.** Every integration point below is
+  a typed, bounded, refusable call that a 2B model was tested against;
+  a directory convention has no schema, no envelope and nothing to
+  measure.
+- **Fully local, and identity stays out of the tree.** Nothing leaves the
+  machine, so the secret to keep out of version control is not a
+  credential but a person: paths, usernames and remotes are what the
+  guard rejects.
 
 ## The integration points, catalogued
 
@@ -127,7 +150,7 @@ person's opinion.
 | **Simon Willison** (small tools, SQLite everywhere, documentation-driven) | is every piece of state one `datasette` away, and does every feature ship with its docs? | the DB opens in Datasette (`datasette.yml`); the docs-are-tested rule is the same instinct; would ask for a plugin hook where surfaces are | low priority — mostly agreement |
 | **Jeremy Howard** (nbdev, notebooks-first) | where is the exploratory record, and why is none of it executable prose? | the dissent: golden paths are prose *with* a pinned output line, but no notebook renders a result inline; would propose `examples/*/README.md` be executed, which `test_golden_paths` half does | run as the designated dissent |
 | **Dmitry Petrov** (DVC: declare the DAG) | why discover provenance from artifacts instead of declaring it? | the second dissent: declared DAGs are exact where discovery is caveated; the answer is that the tool serves projects that never declared one, and reads `dvc.yaml` when they did | run as the designated dissent |
-| **Peter Bull** (Cookiecutter DS) | would a CCDS project work here unchanged? | probably yes, unproven — the `examples/cookiecutter-ds/` golden path above | yes, as a golden path rather than a review |
+| **Peter Bull** (Cookiecutter DS) | which of the ten opinions survive when the producer is not yours to standardise? | the table above is the first answer; a review would test whether "interfaces over positions" holds at every integration point or only at the ledger | later, after the seams land |
 | **the 2B agent** (not a person: the measured consumer) | does a small model route, render and refuse correctly? | the lens this repo already runs on every surface change; keep running it | always |
 
 Recommended next round, in order: Ousterhout on the tool surface,
