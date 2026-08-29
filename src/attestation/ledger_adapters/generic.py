@@ -370,7 +370,10 @@ def family_of(stem: str) -> str | None:
     Three shapes, all common:
 
     - a *sweep*: `dit_small_rope_crossattn` / `dit_small_rope_melmask` differ in
-      a trailing variant token, so the family is everything before it.
+      a trailing variant token, so the family is everything before it --
+      returned hyphen-joined regardless of which separator (`-` or `_`) the
+      input used, so this pair's family is `dit-small-rope`, not
+      `dit_small_rope`.
     - a *series*: `eval_step_22000` / `eval_step_18000_cfg2.0` are the same run
       at different steps, so stripping the step and variant tokens leaves the
       family directly.

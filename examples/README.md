@@ -9,7 +9,7 @@ the suite asserts.
 | path | what it shows | prerequisite | runtime |
 |---|---|---|---|
 | `agents/` | the install doctor's report, the per-surface agent configs `attest emit` generates, and one `AGENT_SURFACES` surface driven over stdio the way hermes-agent actually drives it | `none — pure local computation` | ~10 s |
-| `citations/` | a four-entry BibTeX library written by bibtexparser, a draft citing three real keys and one that resolves nowhere, and the citation lint that only `cite.check`/`runs.claims_check` over MCP surface — `attest claims` does not | `none — pure local computation` | ~4 s |
+| `citations/` | a four-entry BibTeX library written by bibtexparser, a draft citing three real keys and one that resolves nowhere, and the citation lint that `cite.check`/`runs.claims_check` over MCP and `attest claims` from the CLI both run | `none — pure local computation` | ~4 s |
 | `dvc/` | the run ledger reading a real `dvc repro` pipeline — four `foreach` sweep arms ranked, and `dvc.lock`'s own recorded param list read apart from each arm's actual value, with no dependency on the `dvc` package | `none — pure local computation` | ~1 s |
 | `flows/` | forty labelled items scored for two personas, every MCP tool driven over stdio, four MLflow arms read back by the ledger | `none — pure local computation` | ~75 s |
 | `hydra/` | the run ledger reading a real Hydra `--multirun` sweep — four sweep arms ranked, and the finding that `hydra.job.chdir=True` is required or all four arms silently overwrite one shared `metrics.json` | `none — pure local computation` | ~1 s |

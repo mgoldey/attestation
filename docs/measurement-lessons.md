@@ -211,10 +211,10 @@ transfer gate recorded `PASS` on 2026-08-27 at `repeat=2`. Re-run at
 `repeat=1` on 2026-08-28 with the identical prompt and cases, it recorded
 `FAIL` — `hermes3:8b` landed at 0.798 against a 0.818 baseline, where the
 committed run had it the other way (`evals/prompts/transfer-2026-08-28.md`).
-Nothing about the candidate changed; the sample did. The rule stands from
-§4 above, applied to a gate rather than a guard: the committed, dated
-artifact is the record, and a single re-run at lower `repeat` is a
-demonstration of the mechanism, not a re-certification.
+Nothing about the candidate changed; the sample did. **Rule:** treat a gate
+verdict as a sample from the run that produced it, not a property of the
+candidate — the committed, dated artifact is the record, and a lower-repeat
+re-run is a demonstration of the mechanism, not a re-certification.
 
 **Offline W&B writes no summary or config files at all, and the docstring
 that said otherwise was also wrong about which detail mattered.** The
@@ -229,7 +229,9 @@ fixture's summary/config files were materialised by decoding that binary
 log directly (`wandb.sdk.internal.datastore`), the documented community
 workaround, not a real synced run. See
 `docs/superpowers/specs/2026-08-22-tracker-adapters-design.md`'s 2026-08-28
-update.
+update. **Rule:** a guessed bug list and a fixture both built from the same
+documentation share a blind spot — only running the real tool against a
+real directory finds the gap that documentation does not mention.
 
 **Hydra 1.3 does not chdir into each arm's directory by default.** The
 golden-paths brief assumed Hydra changes the working directory per job —
@@ -240,7 +242,9 @@ turn, not four separate files under `multirun/`. The Hydra golden path
 (`examples/hydra/generate.sh`) now passes the override explicitly and the
 reader documents why it is required, in
 `docs/superpowers/specs/2026-08-22-tracker-adapters-design.md`'s Hydra
-subsection.
+subsection. **Rule:** a tool's own version history can invalidate a
+convention "everyone knows" — verify the default against the installed
+version rather than against memory of an older one.
 
 **A fixture with fixed dates empties a 14-day demo with no test going red.**
 The flows corpus originally carried an `<updated>` element dated August
@@ -248,7 +252,10 @@ The flows corpus originally carried an `<updated>` element dated August
 the demo would have shown fewer items every week and nothing by
 mid-September, silently, since no test asserts freshness. The entry-level
 dates were dropped — see
-`docs/superpowers/specs/2026-08-28-example-flows-design.md`.
+`docs/superpowers/specs/2026-08-28-example-flows-design.md`. **Rule:** a
+fixture whose correctness depends on wall-clock time is a bug with a delay
+timer attached — remove the date rather than trusting a future test run to
+notice it went stale.
 
 **The attribution guard matched CI's own ambient username, not a leak.**
 `test_no_committed_example_carries_attribution_or_machine_paths` scans every
@@ -260,28 +267,48 @@ skipped under `CI`, and for a short list of generic account names (`runner`,
 `root`, `user`, `ubuntu`, `admin`, `ci`) even off CI; the guard's job is
 catching a real leaked path or handle, not colliding with the environment it
 runs in. See `docs/superpowers/specs/2026-08-28-golden-paths-design.md`.
+**Rule:** a guard that reads the ambient environment can be defeated by that
+same environment — a username check must exclude the generic account names
+the environment itself is likely to hand it, on and off CI alike.
 
-**`family_of` returned no family at all for a bare hyperparameter stem.**
-`lr_0.001` and `lr_0.01` have no shared prefix beyond the recognised split
-token itself — stripping the token the way a sweep or series case does
-leaves nothing. `family_of` now falls back to the token's own name (`lr`)
-as the family when it consumed the entire stem, so `attest runs compare lr`
-groups a four-arm learning-rate sweep that a real Keras/CSVLogger run
-produced (`examples/tensorflow/`). See
-`src/attestation/ledger_adapters/generic.py::family_of`.
+**`family_of` returned no family at all for a bare hyperparameter stem, and
+joins on a separator its own worked example did not state.** `lr_0.001`
+and `lr_0.01` have no shared prefix beyond the recognised split token
+itself — stripping the token the way a sweep or series case does leaves
+nothing. `family_of` now falls back to the token's own name (`lr`) as the
+family when it consumed the entire stem, so `attest runs compare lr` groups
+a four-arm learning-rate sweep that a real Keras/CSVLogger run produced
+(`examples/tensorflow/`). Separately, the *sweep* case's own worked example
+under-specified its output: `family_of('dit_small_rope_crossattn')` returns
+`dit-small-rope` — hyphen-joined regardless of whether the input used `-`
+or `_` — not the underscored `dit_small_rope` the docstring's prose implied
+before this pass corrected it. See
+`src/attestation/ledger_adapters/generic.py::family_of`. **Rule:** run a
+function's own worked examples through the function before publishing them
+— a docstring that only describes behavior in prose can drift from what the
+code actually returns without any test catching it, since prose is not
+executable.
 
-**Four items were never enough to know the explanation and reaction prompts
-worked.** `explain.py`'s refusal clause — fixed after it once claimed a
-termite-feed paper shared "advanced topics like AI" — had never been scored
-on more than the four items that found the bug. Measured properly on the
-new 40-case corpus: refusal precision 1.0, recall 0.4 — it under-refuses on
-6 of 10 unrelated items, not the near-perfect guard four items suggested
-(`examples/prompt-evals/README.md`). `simulate.py`'s reaction `confidence`
-field was similarly assumed to carry signal; scored on the 100-case reaction
-corpus it stayed near-inert (a histogram concentrated at `{4: 7, 5: 92}`),
-confirming on a real corpus what four items could only hint at. Both are
-now measured by a corpus rather than remembered from the incident that
-prompted them.
+**The explanation prompt's refusal clause under-refuses more than four
+items could show.** `explain.py`'s refusal clause — fixed after it once
+claimed a termite-feed paper shared "advanced topics like AI" — had never
+been scored on more than the four items that found the bug. Measured
+properly on the new 40-case corpus: refusal precision 1.0, recall 0.4 — it
+misses 6 of 10 unrelated items, not the near-perfect guard four items
+suggested (`examples/prompt-evals/README.md`). **Rule:** a fix verified
+against the items that exposed the bug is verified against a sample of one
+failure mode — score it against a corpus built to cover the space the bug
+came from before trusting the fix generalizes.
+
+**The reaction prompt's confidence field carries no signal a corpus can
+detect.** `simulate.py`'s `confidence` field was assumed, from the incident
+that renamed `strength` to `confidence`, to now carry real information;
+scored on the 100-case reaction corpus it stayed near-inert, a histogram
+concentrated at `{4: 7, 5: 92}` — confirming on a real corpus what four
+items could only hint at (`examples/prompt-evals/README.md`). **Rule:**
+"the rename fixed the bug" and "the field now carries signal" are different
+claims — the first is a code fix, the second needs a distribution measured
+across enough cases to show variance, or its absence.
 
 **`attest claims` never ran the citation lint for its whole life, until a
 golden path drove it.** `check_citations()` existed and was wired into the
@@ -292,4 +319,8 @@ draft with one citation key that resolves nowhere on purpose — required
 running `attest claims` against it and noticing the fifth verdict never
 appeared. `cmd_claims` now builds a resolver with `_citation_resolver()`
 the same way the MCP side does, and the CLI reports `uncited` alongside the
-four numeric verdicts (commit `4fb6007`).
+four numeric verdicts (commit `4fb6007`). **Rule:** two code paths doing the
+"same" job (a CLI command and an MCP tool calling the same library
+function) can silently diverge when one forgets to wire a parameter — a
+golden path that exercises the CLI path for real is what caught it, not a
+read of the source.
