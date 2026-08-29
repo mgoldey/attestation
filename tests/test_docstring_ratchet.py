@@ -38,8 +38,16 @@ BASELINE = 0
 
 def _module_name(path: Path) -> str:
     """`src/attestation/mcp/_tool.py` -> `attestation.mcp._tool`;
-    `.../__init__.py` -> the package name itself, dropping the filename."""
-    rel = path.relative_to(SRC.parent.parent).with_suffix("")
+    `.../__init__.py` -> the package name itself, dropping the filename.
+
+    Relative to `SRC.parent` (the `src/` directory), not `SRC.parent.parent`
+    (the repo root) -- the latter produced `src.attestation.cli`, an import
+    path nothing installs under, which resolved by accident under one
+    pytest invocation (rootdir on sys.path put a `src` namespace package
+    there too) and raised ModuleNotFoundError under another (the package
+    installed normally, with no bare `src` on sys.path at all).
+    """
+    rel = path.relative_to(SRC.parent).with_suffix("")
     parts = rel.parts[:-1] if rel.parts[-1] == "__init__" else rel.parts
     return ".".join(parts)
 
