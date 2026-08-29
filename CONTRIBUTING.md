@@ -274,6 +274,12 @@ smallest signature change that lets a DB-free test name it, with the
 stale cached vector when the embedder is down is a decision no outer layer
 can make).
 
+The seams currently proposed under that rule — nine cuts that three
+independent review lenses converged on — are in
+`docs/superpowers/specs/2026-08-29-onion-seams-design.md`; read it before
+proposing a tenth, since its "Refused" list records what a reviewer will
+say no to.
+
 ## Prompt optimisation with DSPy
 
 Every model-facing prompt in this repo is **data with one renderer**, so an
