@@ -701,35 +701,6 @@ or it refuses to open the database at all — `attest browse` handles that.
 
 ### Prompt evals and the optimizer
 
-The tagging prompt is scored, not tuned by taste. `evals/tagging_cases.json`
-holds 51 labelled items drawn from the real feeds (arXiv cs.LG and chem-ph,
-the Nature family, the Hugging Face blog, Hacker News, Simon Willison), each
-with a `note` naming the failure it targets — the largest family is
-`bait-*`: off-vocabulary items the live corpus tagged `optimization` or
-`representation-learning` because the prompt says to prefer the vocabulary.
-Cases carry a `split` (`train`/`dev`); the optimizer never sees `dev`.
-
-    uv run python evals/run_tagging_eval.py                       # current default prompt, dev split
-    uv run python evals/run_tagging_eval.py --artifact evals/prompts/strict.json --split all
-    uv run --group optimize python evals/optimize_tagging.py      # GEPA, writes evals/prompts/tagging-<date>.json
-    uv run python evals/transfer_matrix.py --artifact evals/prompts/tagging-<date>.json
-
-All three render the prompt through `attestation.features.tag_messages`, the
-function `attest tag` uses, so a score is always a score of the prompt that
-ships. The optimizer (DSPy GEPA, instruction-only, in its own `optimize`
-dependency group so nothing under `src/` can import it) writes a candidate
-artifact; `transfer_matrix.py` decides whether it may ship, and the bar is
-transfer rather than score: not worse than the current default on the
-optimizer's model, better on two other model families, with no wider a
-spread across them. A candidate that clears the gate becomes
-`DEFAULT_TAG_INSTRUCTION` (a test pins the two together); `ATTEST_TAG_PROMPT`
-runs any other artifact, e.g. `evals/prompts/hand-written.json`, the
-original prompt.
-
-The first run (2026-08-27, `evals/prompts/transfer-2026-08-27.md`) is a
-worked example of why the bar is transfer: the candidate tied the model it
-was optimized for (0.807 vs 0.807 on gemma4:e2b) and beat the two it never
-saw (+0.110 on gemma4:e4b, +0.086 on hermes3:8b) with a narrower spread.
-It is the default prompt now. The gate's first rule originally demanded a
-strict win on the primary and would have refused it on the tie; it was
-amended to "not worse" with that run as the recorded reason.
+The tagging prompt is scored, not tuned by taste. See
+`examples/prompt-evals/` for the eval → transfer-gate golden path and the
+optimizer this repo used to produce the prompt that ships today.
