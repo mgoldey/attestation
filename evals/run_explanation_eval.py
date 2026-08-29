@@ -25,7 +25,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from explanation_eval import evaluate, load_cases
+from explanation_eval import evaluate, load_cases, refusal_precision_recall
 
 from attestation.llm import ChatClient, chat_model
 
@@ -49,7 +49,7 @@ def main() -> int:
             print(f"         - {e}")
 
     result = evaluate(client.chat_json, cases, repeat=args.repeat, on_case=report)
-    rp = result.refusal_precision_recall(cases)
+    rp = refusal_precision_recall(result, cases)
     print(f"\n  model              {model}")
     print(f"  overall            {result.overall:.3f}")
     print(f"  refusal precision  {rp['precision']:.3f}  (tp={rp['tp']} fp={rp['fp']})")
