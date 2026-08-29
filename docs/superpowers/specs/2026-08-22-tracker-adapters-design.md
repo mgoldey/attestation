@@ -12,7 +12,10 @@ directory is named `offline-run-<timestamp>-<id>`, not `run-<timestamp>-
 <id>` as this spec assumed, but `_wandb_runs` never filtered on that prefix
 so both already worked and no reader code changed. The larger finding was
 upstream of naming -- see the "Verification" section below, rewritten in
-light of it, and the module docstring in `ledger_adapters/generic.py`.
+light of it, and the module docstring in `ledger_adapters/generic.py`. A
+third convention, Sacred, was added 2026-08-28 as part of the golden-paths
+work (`2026-08-28-golden-paths-design.md`) -- see the "Sacred" subsection
+below.
 **Roadmap:** spec 3 of `2026-08-21-architecture-roadmap.md`
 **Depends on:** nothing. The adapter seam already exists.
 
@@ -92,6 +95,57 @@ ledger, and should be told so in the docstring rather than discovering it.
 `meta.yaml`'s `lifecycle_stage: deleted` means the run was deleted in the
 MLflow UI. Skip those: resurrecting a run the user deleted is worse than
 missing it.
+
+### Sacred (added 2026-08-28)
+
+```
+sacred_runs/
+  1/                          run number, starting at 1
+    run.json                  experiment.name, status, start_time, stop_time, result
+    config.json               the resolved config for this run
+    metrics.json              {name: {"steps": [...], "values": [...]}}
+    cout.txt                  captured stdout/stderr (not read; not committed)
+  _sources/                   hashed copies of the driver script (not read; not committed)
+```
+
+Verified 2026-08-28 against a real directory (sacred 0.8.7,
+`examples/sacred/generate.py`) rather than transcribed from documentation --
+`_sacred_runs` in `ledger_adapters/generic.py` was written and tested
+against the real layout from the start, not retrofitted the way the W&B
+reader's docstring was. The layout matched what `FileStorageObserver`'s own
+source describes with no surprises: one numbered directory per run, no
+"offline" mode to opt into (everything stays on disk unconditionally, so
+there was no W&B-shaped gap to find), and `experiment.name` written straight
+to `run.json` rather than needing a filename-derived fallback the way W&B's
+family did.
+
+Two decisions, both extending rules already made for W&B and MLflow rather
+than adding new ones:
+
+- **`metrics.json`'s series collapse to a final value and its last step**,
+  the same decision `_mlflow_metric` made for MLflow's metric-per-file log
+  and for the same reason: `Metric` carries one value, and recording every
+  logged point would flood `run_metrics`.
+- **`run.json`'s own `result` field becomes a metric named `result`, read
+  separately from `metrics.json`.** Sacred is the first of the three
+  trackers where a run's headline number can live somewhere `_run.log_scalar`
+  never touches: `@ex.main`'s return value is recorded as `result` on
+  `run.json` regardless of whether the driver script logs anything at all.
+  Skipping it would mean a driver that only returns a value and never calls
+  `log_scalar` scans to zero metrics and is dropped as an unmeasured spec.
+  Only a numeric `result` is recorded; Sacred allows any JSON-serialisable
+  return value, and a dict or string is silently not a metric, the same
+  refusal every other shape in this module gets.
+- **Only `status == "COMPLETED"` runs are recorded.** Sacred writes
+  `run.json` for a crashed run too (`FAILED`, `INTERRUPTED`), and reading it
+  the same way as a finished run would misreport a crash as a measurement --
+  the same rule MLflow's `lifecycle_stage: deleted` check serves, applied to
+  a different failure.
+
+`ledger.ADAPTER_CAVEATS` gained a `"sacred"` entry alongside `"wandb"` and
+`"mlflow"`, stating the same final-value-not-curve limitation; without it
+`runs.compare` would rank Sacred arms silently while carrying the caveat for
+every other tracker.
 
 ## What this does not do
 

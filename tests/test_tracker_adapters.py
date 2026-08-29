@@ -449,6 +449,29 @@ def test_the_reader_scans_the_real_committed_sacred_fixture():
         assert {"train_loss", "auc", "result"} <= metrics, metrics
 
 
+def test_detail_attaches_the_sacred_caveat(tmp_path):
+    """Same rule as wandb/mlflow: a value read from metrics.json's series is
+    the last one, not the curve or the best step, and runs.detail must say
+    so -- ledger.ADAPTER_CAVEATS needs a "sacred" entry for this reader."""
+    from attestation import ledger
+    from attestation.db import get_db
+
+    ws = tmp_path / "ws"
+    proj = ws / "proj"
+    proj.mkdir(parents=True)
+    _sacred_run(proj, 1, config={"lr": 0.01}, metrics={"auc": {"steps": [0], "values": [0.9]}})
+
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, ws)
+    found = ledger.detail(conn, "proj", "lr_sweep/1")
+
+    assert found["adapter"] == "sacred"
+    caveats = " ".join(found["caveats"])
+    assert "sacred" in caveats
+    assert "final" in caveats.lower() or "last" in caveats.lower()
+    conn.close()
+
+
 # --------------------------------------------------------------------------
 # Coexistence and shape tolerance
 # --------------------------------------------------------------------------

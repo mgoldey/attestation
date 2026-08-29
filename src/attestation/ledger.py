@@ -467,6 +467,10 @@ ADAPTER_CAVEATS: dict[str, str] = {
         "read by the mlflow adapter: each metric is the FINAL line of its"
         " metrics file, not the curve and not the best step"
     ),
+    "sacred": (
+        "read by the sacred adapter: each metric is the LAST value in"
+        " metrics.json's series, not the curve and not the best step"
+    ),
 }
 
 
