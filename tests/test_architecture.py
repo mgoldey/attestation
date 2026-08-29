@@ -1098,7 +1098,16 @@ DOMAIN = {
 
 def _imports_of(path: pathlib.Path, module: str) -> list[str]:
     """Names imported from `module` anywhere in the file, function bodies included:
-    a lazy import of the concrete client is still the concrete client."""
+    a lazy import of the concrete client is still the concrete client.
+
+    `module` is a dotted path such as "attestation.llm". Three import forms
+    all count: `from attestation.llm import x`, `import attestation.llm`, and
+    `from attestation import llm [as x]` -- the last is this codebase's own
+    dominant deferred-import idiom (`cli.py` uses it eight times,
+    `mcp/subscriptions.py` and `mcp/feed.py` once each), so a guard that only
+    caught the first two forms had a hole through the likeliest evasion.
+    """
+    package, _, leaf = module.rpartition(".")
     tree = ast.parse(path.read_text())
     names = []
     for node in ast.walk(tree):
@@ -1106,6 +1115,8 @@ def _imports_of(path: pathlib.Path, module: str) -> list[str]:
             names.extend(a.name for a in node.names)
         if isinstance(node, ast.Import):
             names.extend(a.name for a in node.names if a.name == module)
+        if isinstance(node, ast.ImportFrom) and node.module == package:
+            names.extend(f"{module} as {a.asname}" for a in node.names if a.name == leaf)
     return names
 
 

@@ -21,14 +21,20 @@ import sys
 # file -> highest cyclomatic complexity permitted, measured 2026-08-21.
 # Lower these when the tree improves. Raising one requires a reason.
 BASELINE = {
-    "src/attestation/ledger.py": 29,  # compare -- +1 for the split-preference guard
+    "src/attestation/ledger.py": 27,  # _caveats -- lowered 2026-08-29: the
+    # onion-seams split moved compare()'s decision logic into _compare/
+    # _pick_metric, so compare itself is no longer the worst function here.
     "src/attestation/ledger_adapters/generic.py": 29,  # discover
     "src/attestation/kg.py": 20,  # communities
-    "src/attestation/mcp/feed.py": 11,  # _score_matches: relevance blend
+    "src/attestation/mcp/feed.py": 10,  # _score_matches: relevance blend --
+    # lowered 2026-08-29 after the onion-seams split moved the relevance-floor
+    # policy into the pure _apply_relevance_floor.
     "src/attestation/corpus.py": 17,  # detect_in_source
     "src/attestation/claims.py": 15,  # check_claim
     "src/attestation/cli.py": 14,  # cmd_claims
-    "src/attestation/rank.py": 13,  # rank_items
+    "src/attestation/rank.py": 12,  # _ranking_quality -- lowered 2026-08-29:
+    # the onion-seams split moved rank_items's blend into the pure rank_rows,
+    # so rank_items is no longer the worst function here.
     # route_feed is a rule table: each intent is one branch, and flattening it
     # into data would hide the ordering that the tests pin (a mutation like
     # "add X to my feeds" must be tested before the listing it mentions).

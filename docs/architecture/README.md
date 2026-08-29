@@ -23,7 +23,7 @@ estimates. If either changes materially, redraw rather than letting the
 figures drift -- a diagram nobody trusts is worse than no diagram.
 
 Neither figure yet shows the golden paths under `examples/` or the three task
-corpora under `evals/` that landed 2026-08-28/29 -- twelve runnable
+corpora under `evals/` that landed 2026-08-28/29 -- thirteen runnable
 demonstrations and 191 labelled cases (tagging, reaction, explanation) that
 exercise the same ledger, claim checker, and MCP surface these diagrams
 already draw, plus a fifth adapter convention (Hydra) the ledger now reads.

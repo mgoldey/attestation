@@ -1119,6 +1119,25 @@ def test_rank_rows_blends_three_dict_rows_without_a_database():
     same = rank_rows(rows, profile, click_rows=clicks, pref=np.full(3, 0.5), n_clicks=1)
     assert [r.item_id for r in same] == [2, 3, 1]
 
+    # avg_ranks vs. ranks only diverges when pref has a NON-constant tie
+    # structure: two items tied with each other, but not with the third, and
+    # profile order disagreeing with that tie. Item 1 and item 2 share pref
+    # 0.8 (item 3 trails at 0.2); profile ranks item 2 above item 1. With
+    # avg_ranks, the tied pair share one rank (0.5) and profile similarity
+    # breaks the tie, keeping item 2 first. ranks() instead breaks the tie by
+    # array position (item 1 before item 2, argsort is stable), so at a
+    # blend weight where the click/pref term outweighs profile (n_clicks=5,
+    # blend_weight=0.5) it pulls item 1 ahead of item 2 -- an order avg_ranks
+    # never produces. This is the seam's named mutation target: swapping
+    # avg_ranks for ranks in rank_rows must fail this assertion.
+    tied_rows = [_row(1, [0.5, 0.5, 0.0]), _row(2, [0.9, 0.1, 0.0]), _row(3, [0.1, 0.9, 0.0])]
+    tied_pref = np.array([0.8, 0.8, 0.2])
+    tie_broken = rank_rows(tied_rows, profile, click_rows=None, pref=tied_pref, n_clicks=5)
+    assert [r.item_id for r in tie_broken] == [2, 1, 3], (
+        "avg_ranks's tie-averaging should let profile similarity break the tie "
+        "between items 1 and 2, keeping item 2 (higher profile sim) first"
+    )
+
 
 def test_rank_items_is_fetch_plus_rank_rows(tmp_path, fake_embedder):
     """The seam did not change the order rank_items serves."""

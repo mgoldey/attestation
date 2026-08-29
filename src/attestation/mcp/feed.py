@@ -971,7 +971,6 @@ def _allocate_digest_budget(
         "topics": topics,
         "shown_unclustered": shown_unclustered,
         "shipped": shipped,
-        "dropped_in_topics": sum(len(g) for g in grouped.values()) - shipped_in_topics,
     }
 
 

@@ -627,3 +627,12 @@ def test_relevance_floor_keeps_hits_near_the_top_anchor():
     kept = _apply_relevance_floor({1: 0.62, 2: 0.60, 3: 0.61, 4: 0.30})
     assert set(kept) == {1, 2, 3}
     assert _apply_relevance_floor({}) == {}
+
+    # Pins the ANCHOR, not just the FLOOR: with the top-3 average as the
+    # anchor, best = (0.70+0.62+0.61)/3 = 0.6433 and the floor 0.90x that is
+    # 0.579, which keeps item 4 at 0.60. An anchor of 1 (best-only, the
+    # regression the comments above describe) would instead average just
+    # 0.70, giving floor 0.63 -- which drops items 2, 3 AND 4, keeping only
+    # the single best hit. RELEVANCE_ANCHOR going from 3 to 1 must fail this.
+    anchored = _apply_relevance_floor({1: 0.70, 2: 0.62, 3: 0.61, 4: 0.60})
+    assert set(anchored) == {1, 2, 3, 4}, "anchor-of-3 should keep item 4 at 0.60"

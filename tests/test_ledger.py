@@ -1561,6 +1561,19 @@ def test_collapse_to_last_keeps_the_last_row_per_metric_name():
     assert [m["metric"] for m in out] == ["loss", "acc"]  # first-appearance order
     assert out[0]["step"] == 2
 
+    # The live worst case the docstring names: `split` carries the sweep
+    # coordinate, so keying on (metric, split) does not collapse a series at
+    # all -- each split value gets kept as its own "last" row. Two rows share
+    # the metric name "loss" but differ in split; the function must collapse
+    # to the single LAST row by name alone, regardless of split.
+    split_metrics = [
+        {"metric": "loss", "split": "train", "step": 1, "value": 0.9},
+        {"metric": "loss", "split": "eval", "step": 2, "value": 0.4},
+    ]
+    split_out = collapse_to_last(split_metrics)
+    assert len(split_out) == 1, "keying on (metric, split) would keep one row per split"
+    assert split_out[0]["split"] == "eval" and split_out[0]["step"] == 2
+
 
 def test_compare_skips_the_metric_count_query_when_a_metric_is_named(conn, workspace):
     """`_compare_rows` only counts how many arms report each metric name when

@@ -724,9 +724,12 @@ def cmd_tag(args: argparse.Namespace) -> int:
         )
     print(stats)
     if stats.get("chat_down"):
-        # Same words ingest uses for the same condition. The stats dict alone
-        # said `failed: 2` and left the cause -- Ollama is not running -- to be
-        # guessed.
+        # Same diagnosis ingest gives for the same condition (is ollama
+        # running? run --check): this composition root may import llm and
+        # print the resolved URL; ingest.py is a domain module and may not,
+        # so its sibling message names LLM_BASE_URL instead. The stats dict
+        # alone said `failed: 2` and left the cause -- Ollama is not running
+        # -- to be guessed.
         print(
             f"chat model unreachable at {base_url()} -- is ollama running?"
             " (`attest install --check` diagnoses this)",
