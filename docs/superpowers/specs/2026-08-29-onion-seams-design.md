@@ -1,8 +1,15 @@
 # Onion seams: nine cuts three lenses agree on
 
 **Date:** 2026-08-29
-**Status:** approved 2026-08-29 (with the typed-dependency amendment below);
-implementation follows in the plan of the same name.
+**Status:** implemented 2026-08-29 — nine commits `d2526ed..9cd7e70` (five
+parallel file-owner tasks, then the ports migration and the ranking golden
+path), plus the final-review fix wave `ed6ac5c`; deviations and the revisited
+success criteria are recorded below. The final whole-branch review
+(Feathers/Bernhardt lens) found no Critical issues and three Important ones,
+all fixed and re-verified: the ports test missed `from attestation import
+llm`; an ingest log line pretended to know an unset URL; and three seam tests
+passed against the very mutants this spec named for them — recorded in
+`docs/measurement-lessons.md` §7.
 **Depends on:** the tool-surface design (`2026-08-21-tool-surface-design.md`),
 which superseded the full onion (`2026-08-21-onion-refactor-design.md`) and
 left the standing rule this spec applies.
