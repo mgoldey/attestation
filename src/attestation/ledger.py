@@ -790,20 +790,22 @@ def _arms_for_run(run, values: list[dict], n_value, direction: str) -> list[dict
 
 
 def _compare_rows(
-    conn: sqlite3.Connection, family: str, project: str | None
+    conn: sqlite3.Connection, family: str, project: str | None, *, need_counts: bool
 ) -> tuple[list[dict], dict[str, int]]:
-    """The runs of one family plus, when nothing narrower is asked for yet, a
-    count of how many arms report each metric name.
+    """The runs of one family plus, when `need_counts` is true, a count of how
+    many arms report each metric name.
 
     Metric discovery needs `counts` before the values query can run (the
     metric is not known until one is picked), so this reader returns both
     rather than splitting on a boundary the caller cannot use independently.
-    Counting is skipped -- and an empty dict returned -- once a caller already
-    knows the metric it wants, since the GROUP BY would be discarded work.
+    `need_counts=False` is what a caller who already named a metric passes: the
+    GROUP BY below never runs for it, which is the same one-fewer-round-trip
+    behaviour `compare()` had before this split, when the counts query was
+    guarded by `if metric is None:`.
     """
     rows = _family_rows(conn, family, project)
     _refuse_cross_project(family, rows)
-    if not rows:
+    if not rows or not need_counts:
         return rows, {}
     run_ids = [r["id"] for r in rows]
     placeholders = ",".join("?" * len(run_ids))
@@ -941,7 +943,7 @@ def compare(
     name, so the collision ERASED the disagreement and the tool reported "all
     arms on aishell-1" for arms half of which ran on librispeech.
     """
-    runs, counts = _compare_rows(conn, family, project)
+    runs, counts = _compare_rows(conn, family, project, need_counts=metric is None)
     if not runs:
         # A dead end here is the same failure as an unexplained empty scan.
         # `compare <project>` is the intuitive first guess and finds nothing,

@@ -1560,3 +1560,30 @@ def test_collapse_to_last_keeps_the_last_row_per_metric_name():
     out = collapse_to_last(metrics)
     assert [m["metric"] for m in out] == ["loss", "acc"]  # first-appearance order
     assert out[0]["step"] == 2
+
+
+def test_compare_skips_the_metric_count_query_when_a_metric_is_named(conn, workspace):
+    """`_compare_rows` only counts how many arms report each metric name when
+    the caller has not already named one -- that GROUP BY exists purely to
+    pick a metric, so running it after the caller already picked one is a
+    wasted round trip. The original, unsplit `compare()` guarded this query
+    with `if metric is None:`; the split must keep the same guard rather than
+    running it unconditionally now that it lives in a separate reader.
+    """
+    ledger.scan(conn, workspace)
+
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+    try:
+        ledger.compare(conn, "eval", metric="wer")
+    finally:
+        conn.set_trace_callback(None)
+    assert not any("GROUP BY run_id, metric" in s for s in statements), statements
+
+    statements.clear()
+    conn.set_trace_callback(statements.append)
+    try:
+        ledger.compare(conn, "eval")
+    finally:
+        conn.set_trace_callback(None)
+    assert any("GROUP BY run_id, metric" in s for s in statements), statements
