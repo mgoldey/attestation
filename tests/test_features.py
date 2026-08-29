@@ -125,9 +125,9 @@ def test_run_tagging_tags_all_untagged_then_is_idempotent(tmp_path):
     conn = seeded_db(tmp_path / "t.db")
     for n in range(3):
         add_item(conn, f"item {n}")
-    stats = run_tagging(conn, chat_fn=good_chat_fn)
+    stats = run_tagging(conn, chat_fn=good_chat_fn, model="test-model")
     assert (stats["tagged"], stats["failed"]) == (3, 0)
-    again = run_tagging(conn, chat_fn=good_chat_fn)
+    again = run_tagging(conn, chat_fn=good_chat_fn, model="test-model")
     assert (again["tagged"], again["failed"]) == (0, 0)
 
 
@@ -208,19 +208,18 @@ def test_item_with_no_usable_tags_still_fails():
         ItemTags.model_validate({"content_type": "paper", "tags": ["!!!", "###"]})
 
 
-def test_run_tagging_reports_the_model_it_used(tmp_path, monkeypatch):
+def test_run_tagging_reports_the_model_it_used(tmp_path):
     """item_features records a model per row, but nothing surfaced it, so a run
-    against the wrong model looked exactly like a correct one. run_tagging now
-    returns the model it resolved, and every row it writes must match it --
-    resolved once up front rather than per item, so a mid-run environment
-    change cannot split one run across two models.
+    against the wrong model looked exactly like a correct one. run_tagging
+    returns the model its caller resolved, and every row it writes must match
+    it -- the caller resolves it once up front (see cli.py's cmd_tag), so a
+    mid-run environment change cannot split one run across two models.
     """
-    monkeypatch.setenv("CHAT_MODEL", "test-model:1b")
     conn = seeded_db(tmp_path / "t.db")
     for n in range(3):
         add_item(conn, f"item {n}")
 
-    stats = run_tagging(conn, chat_fn=good_chat_fn)
+    stats = run_tagging(conn, chat_fn=good_chat_fn, model="test-model:1b")
 
     assert stats["model"] == "test-model:1b"
     written = {r["model"] for r in conn.execute("SELECT DISTINCT model FROM item_features")}
@@ -231,7 +230,7 @@ def test_run_tagging_newest_first_and_limit(tmp_path):
     conn = seeded_db(tmp_path / "t.db")
     old = add_item(conn, "old", days_ago=5)
     new = add_item(conn, "new", days_ago=0)
-    stats = run_tagging(conn, chat_fn=good_chat_fn, limit=1)
+    stats = run_tagging(conn, chat_fn=good_chat_fn, model="test-model", limit=1)
     assert stats["tagged"] == 1
     assert conn.execute("SELECT 1 FROM item_features WHERE item_id = ?", (new,)).fetchone()
     assert conn.execute("SELECT 1 FROM item_features WHERE item_id = ?", (old,)).fetchone() is None
@@ -247,7 +246,7 @@ def test_run_tagging_counts_failures_and_continues(tmp_path):
             raise ValueError("ollama down for this one")
         return {"content_type": "paper", "tags": ["dft"]}
 
-    stats = run_tagging(conn, chat_fn=chat_fn)
+    stats = run_tagging(conn, chat_fn=chat_fn, model="test-model")
     assert (stats["tagged"], stats["failed"]) == (1, 1)
 
 
@@ -261,7 +260,7 @@ def test_new_tags_enter_vocabulary_within_a_run(tmp_path):
         prompts.append(messages[1]["content"])
         return {"content_type": "paper", "tags": ["fresh-tag"]}
 
-    run_tagging(conn, chat_fn=chat_fn)
+    run_tagging(conn, chat_fn=chat_fn, model="test-model")
     assert "fresh-tag" not in prompts[0]  # vocab empty on first item
     assert "fresh-tag" in prompts[1]  # second item sees the new tag
 
@@ -411,7 +410,11 @@ def test_the_vocabulary_is_not_re_read_for_every_item(tmp_path):
 
     features.tag_vocabulary = counting
     try:
-        run_tagging(conn, chat_fn=lambda m, s: {"content_type": "paper", "tags": ["settled-tag"]})
+        run_tagging(
+            conn,
+            chat_fn=lambda m, s: {"content_type": "paper", "tags": ["settled-tag"]},
+            model="test-model",
+        )
     finally:
         features.tag_vocabulary = real
 
@@ -440,7 +443,7 @@ def test_run_tagging_stops_at_an_unreachable_backend_and_says_so(tmp_path):
         calls.append(1)
         raise httpx.ConnectError("connection refused")
 
-    stats = run_tagging(conn, chat_fn=chat_fn)
+    stats = run_tagging(conn, chat_fn=chat_fn, model="test-model")
     assert stats["chat_down"] is True
     assert stats["tagged"] == 0
     assert len(calls) == 1, "a dead socket was retried, or a second item was attempted"

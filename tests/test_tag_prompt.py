@@ -139,7 +139,7 @@ def test_run_tagging_uses_the_artifact_named_by_the_environment(tmp_path, monkey
         seen.append(messages)
         return {"content_type": "paper", "tags": ["dft"]}
 
-    stats = run_tagging(conn, chat_fn=chat_fn)
+    stats = run_tagging(conn, chat_fn=chat_fn, model="test-model")
     assert stats["tagged"] == 1
     assert seen[0][0]["content"] == "FROM ARTIFACT"
     # A run must say which prompt produced its tags, the way it says which model.
@@ -149,7 +149,11 @@ def test_run_tagging_uses_the_artifact_named_by_the_environment(tmp_path, monkey
 def test_run_tagging_reports_the_default_prompt_when_none_is_set(tmp_path, monkeypatch):
     monkeypatch.delenv("ATTEST_TAG_PROMPT", raising=False)
     conn = seeded_db(tmp_path / "t.db")
-    stats = run_tagging(conn, chat_fn=lambda m, s: {"content_type": "paper", "tags": ["x"]})
+    stats = run_tagging(
+        conn,
+        chat_fn=lambda m, s: {"content_type": "paper", "tags": ["x"]},
+        model="test-model",
+    )
     assert stats["prompt"] == "default"
 
 
@@ -159,7 +163,7 @@ def test_run_tagging_refuses_a_broken_artifact_before_touching_the_model(tmp_pat
     conn = seeded_db(tmp_path / "t.db")
     calls = []
     with pytest.raises(ValueError):
-        run_tagging(conn, chat_fn=lambda m, s: calls.append(1))
+        run_tagging(conn, chat_fn=lambda m, s: calls.append(1), model="test-model")
     assert calls == []
 
 

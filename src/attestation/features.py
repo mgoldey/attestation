@@ -375,46 +375,18 @@ def _minted_first_use(conn, item_id: int, parsed_tags) -> bool:
     return row is None
 
 
-def _resolve_tagging_defaults(chat_fn, model: str | None) -> str:
-    """Guard + fallback for `run_tagging`'s two model-facing arguments.
-
-    Split out from `run_tagging` to keep the loop's own branching from
-    absorbing this one -- `chat_fn` and `model` are the caller's concrete
-    backend and its resolved name; this module reaches the model only
-    through them, never through `attestation.llm` directly, so a second
-    provider needs no change here.
-
-    Both default to None for the composition roots that already resolved
-    them (cli.py's `cmd_tag` cannot pass them explicitly: doing so breaks
-    `tests/test_cli.py`'s monkeypatched `run_tagging` replacements, which
-    predate this change and stay in the shape `lambda conn, ...: ...` for
-    the call THEY intercept -- see the onion-seams spec's Deviations
-    section). Falling back to the bare CHAT_MODEL env var here (rather than
-    importing `attestation.llm.chat_model`) is the one place this module
-    still knows the env var's name, not the concrete client -- it never
-    names the default model string or constructs a transport.
-
-    Returns the resolved model name; raises if `chat_fn` is missing.
-    """
-    if chat_fn is None:
-        raise ValueError("run_tagging requires chat_fn -- no domain-level default is available")
-    if model is not None:
-        return model
-    # "unresolved" (rather than duplicating llm.DEFAULT_CHAT_MODEL here) is a
-    # deliberately visible placeholder: a caller that forgot to resolve the
-    # model at its own composition root sees it in item_features instead of a
-    # silently wrong guess at the default model name.
-    return os.environ.get("CHAT_MODEL", "unresolved")
-
-
-def run_tagging(conn, chat_fn=None, model: str | None = None, limit: int | None = None) -> dict:
+def run_tagging(conn, chat_fn, model: str, limit: int | None = None) -> dict:
     """Tag every untagged item, newest first. Returns {"tagged": n, "failed": n}.
 
     Failed items are skipped (stay untagged) and retried on the next run.
-    See `_resolve_tagging_defaults` for how `chat_fn`/`model` are required
-    in practice but stay optional in the signature.
+    `chat_fn` and `model` are the caller's concrete backend and its resolved
+    name, required rather than defaulted -- this module reaches the model
+    only through them, never through `attestation.llm` directly, so a second
+    provider needs no change here. A silent domain-level default was tried
+    and rejected: it fell back to the literal string "unresolved" as a model
+    name with nothing exercising that path, which is a worse failure mode
+    than the TypeError a caller who forgot to resolve `model` now gets.
     """
-    model = _resolve_tagging_defaults(chat_fn, model)
     from tqdm import tqdm  # lazy: keeps the rank path free of tagging-only imports
 
     sql = (

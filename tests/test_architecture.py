@@ -1094,7 +1094,6 @@ DOMAIN = {
     "personas",
     "feeds",
 }
-MODEL_IMPORTERS_ALLOWED = {"embed", "cli", "server", "install", "mcp_server", "mcp._shared"}
 
 
 def _imports_of(path: pathlib.Path, module: str) -> list[str]:

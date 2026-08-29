@@ -301,7 +301,9 @@ appears; the same for a second store.
   ones named here.
 - The count of `conn: sqlite3.Connection` parameters in domain signatures
   falls (it is 40 at `787823d`; the number after is recorded here when the
-  plan lands, not predicted).
+  plan lands, not predicted). **Revisited below**: it rose to 44, and turned
+  out to be the wrong proxy for what this criterion wanted -- see "Success
+  criteria, revisited."
 - No new class, protocol, or module was added; the diff is functions and
   tests.
 
@@ -340,39 +342,56 @@ by a fourth reader against this spec's "Refused" list.
   21 (feed 15, personas 5, `_tool` 1 -- personas' SQL count is what fell).
   `tests/test_architecture.py` pins the ratchet at 21, the lower value, per
   "the ratchet's job is to pin the best value seen."
-- `conn: sqlite3.Connection` parameter count: the spec's success criterion
-  cites 40 at `787823d`. Measured after this task's changes (`grep -c "conn:
-  sqlite3.Connection" src/attestation/*.py`, summed) it is **52** -- higher,
-  not lower. Two things explain the direction: first, the grep counts every
-  line matching the literal annotation text, including local variables and
-  helper signatures the earlier count evidently did not isolate the same
-  way (e.g. `db.py` alone contributes 8, none of them `run_tagging`/`explain`
-  parameters); second, `ledger.py` was mid-edit under a concurrent task
-  (Task 2, a bugfix unrelated to this seam) while this number was taken, so
-  it is a snapshot of an in-flight tree, not the wave's final state. This
-  task's own signature changes (`explain.explain`, `features.run_tagging`)
-  did not add any `conn: sqlite3.Connection` parameters -- both already took
-  `conn` as their first argument before and after. Recorded as measured,
-  per the spec's instruction not to predict it; the wave's final number
-  should be re-measured once every task has landed.
-- `run_tagging`'s `chat_fn`/`model` are REQUIRED in the sense that a missing
-  `chat_fn` raises (`_resolve_tagging_defaults`), but both stay optional
-  keyword arguments in the signature rather than the brief's literal
-  "REQUIRED, no default." This was forced by `tests/test_cli.py`: three
-  tests replace `attestation.features.run_tagging` with
-  `lambda conn, ...: ...` and assert on `cli.py`'s `cmd_tag` calling it
-  through that replacement, so `cmd_tag`'s call site cannot pass `chat_fn`/
-  `model` as extra arguments the monkeypatched lambda's original shape did
-  not accept. Resolution: `cmd_tag` now calls
-  `run_tagging(conn, default_chat_fn, chat_model(), limit=args.limit)` for
-  real use, `run_tagging` keeps `chat_fn=None, model=None` defaults with a
-  small resolver that raises without `chat_fn` and falls back to the bare
-  `CHAT_MODEL` env var (not `attestation.llm`) for `model`, and the three
-  `test_cli.py` lambdas were widened to `lambda conn, chat_fn, model,
-  limit=None: ...` -- a minimal, mechanical signature match, not a
-  behavioural change to what those tests assert. `test_cli.py` is not in
-  this task's owned-files list; the alternative (leaving `cmd_tag` unable to
-  pass a real model at its only production call site) was judged worse.
+- `conn: sqlite3.Connection` parameter count, measured the way the spec's
+  success criterion measures it -- the thirteen domain files only
+  (`grep -c "conn: sqlite3.Connection" src/attestation/{rank,ledger,claims,
+  kg,features,explain,simulate,corpus,citations,ingest,feeds,implicit,
+  personas}.py`, summed): **44**, up from 40 at `787823d`, not down. This is
+  a bad proxy for what the spec wanted, and the reason is structural rather
+  than measurement noise: every seam this wave landed added a small typed
+  reader (`_compare_rows`, `_compare_values`, `_survey_rows`,
+  `purge_feedback`, and others) beside the pure function it extracted from a
+  larger one -- exactly the shape the spec asked for -- and each new reader
+  is one more function that takes `conn`. Splitting a function in two adds a
+  parameter count even when it strictly reduces what needs a database to
+  test. See "Success criteria, revisited" below for the measure that
+  actually tracks the spec's goal.
+- `run_tagging(conn, chat_fn, model, limit=None)`: `chat_fn` and `model` are
+  now REQUIRED with no default, matching the brief's interface line exactly
+  (fix round 1). The first landing gave both defaults and a private
+  `_resolve_tagging_defaults` helper that fell back to the model name
+  `"unresolved"` when neither the caller nor the environment supplied one --
+  a silent behavioural narrowing from the pre-task `chat_model()` resolution,
+  and nothing exercised that fallback path. Review caught it: a tag row
+  recording `"unresolved"` as its model is worse than a `TypeError`.
+  `_resolve_tagging_defaults` is deleted; there is nothing left for it to
+  resolve. `chat_fn` raising was already the chosen behaviour for a `None`
+  value, so "required, no default" subsumes it rather than adding a second
+  mechanism.
+  This forced call-site edits in two test files, not one: `tests/
+  test_cli.py`'s three `run_tagging` monkeypatch replacements
+  (`lambda conn, ...: ...`, predating this feature) needed widening to
+  `lambda conn, chat_fn, model, limit=None: ...` so `cmd_tag`'s call
+  (`run_tagging(conn, default_chat_fn, chat_model(), limit=args.limit)`)
+  still matches their shape -- unchanged from the first round. New this
+  round: `tests/test_features.py` (8 call sites: two calls in one
+  idempotency test, plus six single calls) and `tests/test_tag_prompt.py`
+  (3 call sites) previously called `run_tagging(conn, chat_fn=...)` with no
+  `model`, relying on the deleted fallback; all eleven now pass
+  `model="test-model"` (or `"test-model:1b"` where the test asserts the
+  returned value). `test_run_tagging_reports_the_model_it_used` no longer
+  sets `CHAT_MODEL` via `monkeypatch.setenv` -- that environment variable is
+  never read by `run_tagging` any more, so keeping the `setenv` call would
+  have implied a resolution path that no longer exists; the test now checks
+  only that the explicitly-passed `model` round-trips into `stats["model"]`
+  and every written row. These are call-site signature edits (the permitted
+  class per the global constraints), not assertion changes: every test
+  still checks the same behaviour it did before, against an explicit
+  `model` instead of an implicit one. Neither test file is in this task's
+  owned-files list; both were already touched in the first round for
+  `test_cli.py`, and `test_features.py`/`test_tag_prompt.py` join it for the
+  same reason -- `run_tagging`'s real signature cannot be satisfied any
+  other way.
 - `examples/flows/mcp_e2e.py:307` called `run_tagging(conn, chat.chat_json)`
   with the old two-argument shape; the local `chat_model: str` parameter
   already carried the resolved model name, so the fix was
@@ -381,3 +400,45 @@ by a fourth reader against this spec's "Refused" list.
   (`test_golden_paths.py::test_an_offline_path_runs_green_and_prints_its_pinned_line[flows]`
   and `[agents]`) that the brief's file list had missed; no other call site
   in `examples/` or `evals/` calls `run_tagging` or `explain` directly.
+
+## Success criteria, revisited
+
+The `conn: sqlite3.Connection` parameter count (see the Deviations item
+above) rose 40 → 44 across the wave, the opposite of the direction the
+original success criterion named. Read literally, that criterion is not
+met. But the count was always a proxy, and this wave shows exactly how it
+can move the wrong way while the actual goal is served: a seam that splits
+`compare(conn, ...)` into `_compare_rows(conn, ...)` (a reader) and
+`_compare(rows, ...)` (pure) adds one `conn`-taking function, not zero,
+even though the whole point of the split was to make the blend/selection
+logic testable without a database. The parameter count cannot distinguish
+"a function that needs `conn` because it always did" from "a function that
+needs `conn` because it is now the one-line reader beside a pure sibling."
+
+The number that tracks the spec's actual goal is: how many of the tests
+named in "The nine seams" now exist and run with no database and no model
+server. Counted directly (no `seeded_db`, `tmp_path`, or `fake_embedder`
+anywhere in the test function's own parameters or body):
+
+| test | file | DB-free? |
+|---|---|---|
+| `test_rank_rows_blends_three_dict_rows_without_a_database` | `test_rank.py` | yes |
+| `test_ranking_quality_flags_near_single_class_history` | `test_rank.py` | yes |
+| `test_compare_picks_the_majority_metric_with_no_db` | `test_ledger.py` | yes |
+| `test_collapse_to_last_keeps_the_last_row_per_metric_name` | `test_ledger.py` | yes |
+| `test_digest_budget_accounts_for_per_topic_truncation` | `test_digest.py` | yes |
+| `test_relevance_floor_keeps_hits_near_the_top_anchor` | `test_search.py` | yes |
+| `test_survey_suggests_nearest_by_interest_overlap` | `test_persona_hygiene.py` | yes |
+| `test_suggest_feeds_ranks_by_tag_overlap_ties_by_title` | `test_feeds.py` | yes |
+| `test_synthesize_profile_renders_through_profile_synthesis_messages` | `test_explain.py` | yes |
+| `test_purge_feedback_clears_clicks_explanations_and_cache` | `test_persona_hygiene.py` | no (takes the `seeded` fixture, itself built on `tmp_path` + `get_db`) |
+
+**9 of the 10 named tests are DB-free.** The tenth was never claimed to be:
+seam 8's own text calls the purge test out as needing "an in-memory sqlite
+with three inserts -- deletes are I/O by nature." A newcomer can rank three
+dict rows, compare three dict arms, allocate a digest budget, apply the
+relevance floor, suggest a merge, score feed candidates, and render the
+profile-synthesis prompt from a REPL with no database file and no model
+server -- nine of the ten things this spec promised, with the tenth
+correctly excluded by the spec's own reasoning. That is the criterion this
+spec actually cared about, and it is met.
