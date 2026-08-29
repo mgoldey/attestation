@@ -1,8 +1,8 @@
 # Onion seams: nine cuts three lenses agree on
 
 **Date:** 2026-08-29
-**Status:** design, awaiting review; implementation follows in a plan of the
-same name once approved.
+**Status:** approved 2026-08-29 (with the typed-dependency amendment below);
+implementation follows in the plan of the same name.
 **Depends on:** the tool-surface design (`2026-08-21-tool-surface-design.md`),
 which superseded the full onion (`2026-08-21-onion-refactor-design.md`) and
 left the standing rule this spec applies.
@@ -227,13 +227,57 @@ this path is the DB-free one.
   BEGIN/COMMIT, or `server.py`'s per-thread connection.** All three
   reports list these as correct on purpose, each with its reason.
 
+## Typed dependency rules (amendment, 2026-08-29)
+
+Asked whether providers, storage, embedding, graph and MCP code should be
+separated by type, the tree gave a two-part answer. `ports.py`'s
+Protocols are mentioned only by `ports.py` and `mcp/_shared.py`;
+`explain.py`, `features.py`, `ingest.py` and `mcp/feed.py` import the
+concrete `attestation.llm` client at module scope, so the provider
+boundary exists on paper and the code walks around it. And the MCP layer
+writes its own SQL — 15 literals in `mcp/feed.py`, 10 in
+`mcp/personas.py`, 1 in `mcp/_tool.py` — which is the outermost layer
+doing storage's job. Every other type has exactly one member (one DB,
+one embedder, one graph module, one provider).
+
+The decision: **separate by rule now, by directory when a type gets its
+second member** — `ledger_adapters/` became a package at five readers,
+and that trigger is the precedent. A one-file `providers/` or `storage/`
+package is the shallow move the superseded onion was refused for. Two
+structural tests in `tests/test_architecture.py` carry the rule instead:
+
+- `test_domain_reaches_models_only_through_ports` — no domain module
+  (`explain`, `features`, `ingest`, `simulate`, `rank`, `kg`, `claims`,
+  `ledger`, `corpus`, `citations`, `implicit`, `personas`, `feeds`)
+  imports `attestation.llm` at module scope. Allowed importers are the
+  adapter (`embed.py`) and the composition roots (`cli.py`, `server.py`,
+  `install.py`, `mcp_server.py`, `mcp/_shared.py`). Domain functions
+  that need a model take a `ChatPort`/`EmbedderPort` argument, which
+  makes `ports.py` load-bearing for the first time. Deferred imports
+  inside function bodies count: a lazy import of the concrete client is
+  still the concrete client.
+- `test_mcp_layer_sql_only_ratchets_down` — the count of SQL literals
+  across `mcp/*.py` is pinned at its measured value (26 at `787823d`)
+  and may only fall; the failure names the file and the new count.
+  Seams 5, 6 and 7 lower it; when it reaches zero, `mcp/` is a pure
+  presentation type by test rather than by folder.
+
+Moving `explain`/`features`/`ingest` onto the ports is part of this spec
+(it is what the first test names); it is a signature change per module —
+`chat: ChatPort` in, the client constructed at the composition root —
+not a new package. The day `llm.py` gets a sibling, the first test
+becomes "nothing outside `providers/` imports it" and the directory
+appears; the same for a second store.
+
 ## What is tested
 
 - Each seam lands with the test named above, in the existing test module
   for that code, and the test uses no database or model unless the seam
   says otherwise (8a).
-- `test_no_mcp_module_imports_a_private_domain_name` is a new structural
-  rule in `tests/test_architecture.py`.
+- `test_no_mcp_module_imports_a_private_domain_name`,
+  `test_domain_reaches_models_only_through_ports` and
+  `test_mcp_layer_sql_only_ratchets_down` are new structural rules in
+  `tests/test_architecture.py`.
 - No existing test changes except to import a renamed private helper;
   the whole suite and all eight gates stay green; tool count, response
   budgets and the CLI reference are byte-identical.
@@ -263,7 +307,8 @@ this path is the DB-free one.
 
 ## Implementation shape
 
-Six independent tasks by file owner — `rank.py` (+ the golden path),
+Seven independent tasks by file owner — the typed-dependency rules and
+the ports migration of `explain`/`features`/`ingest` are the seventh — — `rank.py` (+ the golden path),
 `ledger.py` + `mcp/provenance.py`, `mcp/feed.py` + `features.py`,
 `personas.py` + `mcp/personas.py`, `feeds.py` + `mcp/subscriptions.py`,
 `explain.py` — each committed by pathspec, then one whole-branch review
