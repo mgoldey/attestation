@@ -286,11 +286,11 @@ Commit the two paths separately.
 
 ---
 
-### Task 3: `examples/citations/`
+### Task 3: `examples/citations/` — citation management with BibTeX software
 
-**Files:** Create `examples/citations/{README.md,run.sh,references.bib,DRAFT.md}`; modify `examples/README.md`, `CLAUDE.md`.
+**Files:** Create `examples/citations/{README.md,run.sh,generate.py,references.bib,DRAFT.md}`; modify `examples/README.md`, `CLAUDE.md`.
 
-Hand-write `references.bib` with four entries (real, well-known works with correct DOIs are fine — cite them accurately; e.g. Vaswani 2017, Hohenberg–Kohn 1964, Kingma–Ba 2015, Hinton 2015 distillation) keyed `vaswani2017attention` etc. Write `DRAFT.md` with claims carrying `cite=` fields — read `src/attestation/claims.py` for the exact field syntax (`<!-- claim: <project>/<run> metric=… value=… cite=<key> -->`) — where three keys resolve and one (`doe2099imaginary`) does not, plus a copy of `examples/workspace/speech-distill/results/` runs? No: point `RESEARCH_ROOT` at `../workspace` and reference `speech-distill/kdsweep_t4` metrics so the numeric claims are `supported` while the citation lint is what varies. *Prerequisites*: `none — pure local computation`. *Run it* (from the path's directory so `Path.cwd().glob("*.bib")` finds the file — `Resolver.from_env` reads the cwd):
+**Amended 2026-08-28 at the user's request: the `.bib` comes from real BibTeX software.** `generate.py` builds the four entries as `bibtexparser` (`uv run --with bibtexparser --no-project python generate.py`; use bibtexparser v2's `Library`/`Entry`/`Field` API — read its docs first, the v1 and v2 APIs differ) records and writes `references.bib` through its writer, so the file's formatting is the library's, not hand-typed; the README's *What it demonstrates* explains how the same file is what JabRef and Zotero's Better BibTeX export produce, that `attestation.citations.ZoteroReader` reads `~/Zotero/zotero.sqlite` directly when present (documented, not staged — a fake Zotero database would be the author-writes-the-fixture failure), and that keys are the contract between the draft and the library. Write the four entries (real, well-known works with correct DOIs are fine — cite them accurately; e.g. Vaswani 2017, Hohenberg–Kohn 1964, Kingma–Ba 2015, Hinton 2015 distillation) keyed `vaswani2017attention` etc. Write `DRAFT.md` with claims carrying `cite=` fields — read `src/attestation/claims.py` for the exact field syntax (`<!-- claim: <project>/<run> metric=… value=… cite=<key> -->`) — where three keys resolve and one (`doe2099imaginary`) does not, plus a copy of `examples/workspace/speech-distill/results/` runs? No: point `RESEARCH_ROOT` at `../workspace` and reference `speech-distill/kdsweep_t4` metrics so the numeric claims are `supported` while the citation lint is what varies. *Prerequisites*: `none — pure local computation`. *Run it* (from the path's directory so `Path.cwd().glob("*.bib")` finds the file — `Resolver.from_env` reads the cwd):
 ```bash
 export RESEARCH_ROOT=$PWD/../workspace
 uv run attest runs scan --root ../workspace
@@ -363,6 +363,16 @@ Runs in parallel with Tasks 2–5 (disjoint files).
 
 ---
 
+### Task 8b: `examples/tensorflow/`
+
+**Files:** Create `examples/tensorflow/{README.md,run.sh,generate.py}` + committed `results/` output; modify `tests/test_tag_prompt.py` (guard gains `tensorflow`), `examples/README.md`, `CLAUDE.md`. Added at the user's request (2026-08-28).
+
+`generate.py`: a Keras model (two dense layers) on scikit-learn's `load_breast_cancer` (or `tf.keras.datasets` is network — do not), four arms over `learning_rate ∈ {1e-3, 3e-3, 1e-2, 3e-2}`, five epochs each, CPU only (`tf.config.set_visible_devices([], "GPU")`), seeded; per arm `tf.keras.callbacks.CSVLogger("results/lr_<lr>.csv")` for the epoch curve and a final `results/lr_<lr>.json` with `accuracy`, `precision`, `recall`, `auc` on the held-out split (`tf.keras.metrics` or sklearn — say which). Run via `uv run --with tensorflow-cpu --with scikit-learn --no-project python generate.py` (the install is ~500 MB and a minute; the README says so; the committed artifacts mean nobody else needs it). Also write ONE TensorBoard run via `tf.keras.callbacks.TensorBoard("tb/")`, commit the (small) `events.out.tfevents.*` file, and let the README state honestly that the ledger does not read event files (binary protobuf; out of scope by the golden-paths spec) — the CSV/JSON beside it is what the ledger reads, and CSVLogger is the recommended way to make a Keras run legible to it. Scrub: nothing personal is expected in CSV/JSON; check the tfevents file's header for the hostname (it embeds `file_version` and may embed the host in the filename `events.out.tfevents.<ts>.<host>.<pid>.v2`) — rename the file to drop the host and pid.
+
+Reader: no `src/` change expected — `results/*.csv` and `results/*.json` are existing conventions (`generic.discover`, `family_of("lr_0.001")` → family `lr`; verify the stem/variant rule reads `lr_0.001` as family `lr` — if `family_of` splits on the wrong token, that is a real finding: fix in `generic.py` with a test, its own commit). *Prerequisites*: `none — pure local computation`. *Run it*: `uv run attest runs scan --root .` / `uv run attest runs list` / `uv run attest runs compare lr --metric auc`. Pin `winner:`. Runs after Task 8 (no `generic.py` edit expected, but it may need one — sequential to be safe).
+
+---
+
 ### Task 9: Front door and closing
 
 **Files:** Modify `README.md` (one line after "Try it in 60 seconds" → the catalogue; shorten "Prompt evals and the optimizer" to a pointer at `examples/prompt-evals/`), `CLAUDE.md` (Key API Patterns: one line on golden paths — the seven sections, README⇔run.sh agreement enforced by `test_golden_paths.py`, the three labels, the attribution guard now covering all of `examples/`), `docs/superpowers/specs/2026-08-28-golden-paths-design.md` (Status: implemented, with any deviations — the wandb `offline-run-*` finding, whatever DVC/Hydra needed).
@@ -373,7 +383,7 @@ Run the whole suite and the gates; run every offline `run.sh` once more by hand 
 
 ## Self-review
 
-**Spec coverage.** Shape + test + catalogue (Task 1); retrofits: workspace and flows (Task 1), prompt-evals and agents (Task 2); integrations: citations (3), model servers (4), wandb (5), mlflow front door (5b), sacred (6), dvc (7), hydra (8); front door and status (9). Convention rules (final values, no direction inference, `NAMED` empty, own function, tolerance test, docstring names the library version) appear in Tasks 6–8 and the global constraints. Attribution guard generalised to `examples/**` (Task 1). `src/` import guard extended (Tasks 5–8).
+**Spec coverage.** Shape + test + catalogue (Task 1); retrofits: workspace and flows (Task 1), prompt-evals and agents (Task 2); integrations: citations (3), model servers (4), wandb (5), mlflow front door (5b), sacred (6), dvc (7), hydra (8), tensorflow (8b); front door and status (9). Convention rules (final values, no direction inference, `NAMED` empty, own function, tolerance test, docstring names the library version) appear in Tasks 6–8 and the global constraints. Attribution guard generalised to `examples/**` (Task 1). `src/` import guard extended (Tasks 5–8).
 
 **Placeholders.** The framework test is complete code; each path task names its files, commands, the reader's exact inputs and naming rule, its scrub list and its pinned line. Real-library layouts are stated as expectations to *verify against the real output*, which is the point of generating them.
 
