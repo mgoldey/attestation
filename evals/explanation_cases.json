@@ -1,0 +1,533 @@
+[
+  {
+    "id": "topic-chem-01",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:chem-01, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Photoredox C–H alkylation of unactivated arenes with alkyl bromides",
+    "summary": "A visible-light photoredox protocol couples unactivated arenes with primary and secondary alkyl bromides at room temperature. The reaction tolerates esters, free alcohols and basic heterocycles, runs on gram scale in a flow reactor, and the mechanism is supported by radical-clock and Stern–Volmer studies.",
+    "refuse": false,
+    "must_mention_any": [
+      "photoredox",
+      "alkylation",
+      "arenes",
+      "alkyl bromides"
+    ]
+  },
+  {
+    "id": "topic-chem-02",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:chem-02, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Nickel-catalysed cross-coupling of secondary alkyl chlorides with aryl zinc reagents",
+    "summary": "A bipyridine-ligated nickel catalyst couples unactivated secondary alkyl chlorides with aryl zinc reagents while preserving stereochemistry at the alkyl centre in most substrates. Kinetic studies and radical-clock probes point to a fast oxidative addition step rather than a long-lived alkyl radical, and the method is demonstrated on a gram-scale flow setup.",
+    "refuse": false,
+    "must_mention_any": [
+      "cross-coupling",
+      "nickel",
+      "alkyl chlorides",
+      "aryl zinc"
+    ]
+  },
+  {
+    "id": "topic-chem-03",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:chem-03, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Electrochemical Shono oxidation for scalable amine synthesis",
+    "summary": "An undivided electrochemical cell with a graphite anode performs Shono-type oxidation of cyclic carbamates to generate N-acyliminium ions in situ, which are trapped by silyl enol ethers to give substituted pyrrolidines. The protocol avoids stoichiometric chemical oxidants and has been run continuously for 48 hours in a flow cell without electrode fouling.",
+    "refuse": false,
+    "must_mention_any": [
+      "electrochemical",
+      "shono",
+      "oxidation",
+      "amine synthesis"
+    ]
+  },
+  {
+    "id": "topic-chem-04",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:chem-04, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Total synthesis of (-)-pallambins C and D via a transannular Diels–Alder",
+    "summary": "A twelve-step total synthesis constructs the tetracyclic core of pallambins C and D using a transannular Diels–Alder reaction on a macrocyclic triene to set three contiguous stereocentres in one operation. Late-stage oxidation-state adjustment and a chemoselective lactonisation complete the synthesis in 4.2% overall yield.",
+    "refuse": false,
+    "must_mention_any": [
+      "total synthesis",
+      "diels-alder",
+      "pallambins"
+    ]
+  },
+  {
+    "id": "topic-chem-05",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:chem-05, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Continuous-flow Buchwald–Hartwig amination with immobilised palladium",
+    "summary": "A packed-bed reactor with silica-immobilised palladium nanoparticles performs Buchwald–Hartwig amination of aryl bromides with secondary amines at residence times under three minutes. Metal leaching stays below 0.5 ppm across 200 hours of continuous operation, and the reactor is compatible with a wide range of phosphine ligands dosed as a co-stream.",
+    "refuse": false,
+    "must_mention_any": [
+      "flow",
+      "buchwald-hartwig",
+      "amination",
+      "palladium"
+    ]
+  },
+  {
+    "id": "topic-chem-06",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:chem-06, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Mechanistic study of copper-catalysed Chan–Lam coupling under aerobic conditions",
+    "summary": "Kinetic isotope effects and in situ EPR spectroscopy establish that Chan–Lam coupling of arylboronic acids with anilines proceeds through a Cu(III) intermediate rather than a radical chain pathway under the standard aerobic conditions. The finding rationalises why electron-poor boronic acids give consistently lower yields and suggests a ligand modification that recovers them.",
+    "refuse": false,
+    "must_mention_any": [
+      "chan-lam",
+      "coupling",
+      "copper",
+      "mechanistic"
+    ]
+  },
+  {
+    "id": "topic-chem-07",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:chem-07, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Iridium-catalysed asymmetric hydrogenation of tetrasubstituted enamides",
+    "summary": "A chiral phosphine-oxazoline iridium catalyst hydrogenates tetrasubstituted enamides that are unreactive under standard rhodium-DuPhos conditions, delivering the saturated amines in up to 98% ee. Deuterium-labelling experiments locate the enantiodetermining step at coordination of the enamide rather than at hydride transfer.",
+    "refuse": false,
+    "must_mention_any": [
+      "hydrogenation",
+      "iridium",
+      "asymmetric",
+      "enamides"
+    ]
+  },
+  {
+    "id": "topic-chem-08",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:chem-08, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Flow-chemistry route to a key fragment for a kinase inhibitor programme",
+    "summary": "A three-step telescoped flow sequence converts a commercial pyrazole into a boronate fragment used in a kinase inhibitor programme, replacing a five-day batch process with 40 minutes of total residence time. In-line IR monitoring triggers automatic quench of the unstable organolithium intermediate, removing the need for cryogenic batch handling.",
+    "refuse": false,
+    "must_mention_any": [
+      "flow-chemistry",
+      "kinase inhibitor",
+      "flow sequence"
+    ]
+  },
+  {
+    "id": "topic-chem-09",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:chem-09, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Directed C–H borylation of pyridines using a removable Lewis acid auxiliary",
+    "summary": "Coordinating pyridine nitrogen to a boron Lewis acid auxiliary redirects iridium-catalysed C–H borylation to the normally unreactive C3 position, and the auxiliary is removed under mild aqueous conditions after the borylation step. The method gives complementary regioselectivity to existing directed metalation approaches on eleven substituted pyridines.",
+    "refuse": false,
+    "must_mention_any": [
+      "c-h borylation",
+      "pyridines",
+      "lewis acid"
+    ]
+  },
+  {
+    "id": "topic-chem-10",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:chem-10, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Optimisation of a Negishi coupling for a pilot-plant campaign using design of experiments",
+    "summary": "A response-surface design of experiments campaign identifies catalyst loading and temperature as the dominant factors controlling protodehalogenation byproduct in a Negishi coupling slated for pilot-plant scale-up. The optimised conditions cut byproduct formation from 6% to under 0.3% while holding conversion above 99% at the ton scale.",
+    "refuse": false,
+    "must_mention_any": [
+      "negishi coupling",
+      "optimisation",
+      "pilot-plant"
+    ]
+  },
+  {
+    "id": "topic-chem-11",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:chem-11, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Photocatalytic decarboxylative allylation using an organic dye catalyst",
+    "summary": "An acridinium organic photocatalyst promotes decarboxylative allylation of redox-active esters with allyl sulfones under blue LED irradiation, replacing an iridium photocatalyst used in the original protocol. Reaction quantum yield measurements and radical trapping experiments support a chain mechanism that explains the reaction's tolerance to catalyst loadings below 0.5 mol%.",
+    "refuse": false,
+    "must_mention_any": [
+      "photocatalytic",
+      "decarboxylative",
+      "allylation"
+    ]
+  },
+  {
+    "id": "topic-chem-12",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:chem-12, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Stereoretentive Suzuki coupling of secondary alkylboronates",
+    "summary": "A palladium catalyst bearing a bulky trialkylphosphine ligand couples secondary alkylboronates with aryl iodides with full retention of configuration at the boron-bearing carbon. The reaction proceeds through a rapid transmetalation that outcompetes epimerisation, and eighteen examples spanning cyclic and acyclic substrates are reported at consistently high stereoretention.",
+    "refuse": false,
+    "must_mention_any": [
+      "suzuki coupling",
+      "alkylboronates",
+      "stereoretentive"
+    ]
+  },
+  {
+    "id": "topic-mlsys-01",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:mlsys-01, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Overlapping gradient all-reduce with backward computation in PyTorch FSDP",
+    "summary": "We measure how much of the backward pass can hide collective communication when sharding a 7B parameter model across 64 GPUs. Bucketing gradients by layer group recovers 18% step time; mixed-precision reduce in bf16 recovers a further 6% with no loss in evaluation accuracy.",
+    "refuse": false,
+    "must_mention_any": [
+      "gradient all-reduce",
+      "fsdp",
+      "distributed training"
+    ]
+  },
+  {
+    "id": "topic-mlsys-02",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:mlsys-02, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "INT4 weight-only quantisation with a learned per-channel clipping range",
+    "summary": "A per-channel clipping range learned during a short calibration pass reduces the perplexity gap between INT4 weight-only quantisation and the bf16 baseline from 0.41 to 0.09 on a 13B model. Inference throughput on a single A100 increases 2.7x over the unquantised model with the custom dequantise-and-matmul kernel.",
+    "refuse": false,
+    "must_mention_any": [
+      "int4",
+      "quantisation",
+      "clipping range"
+    ]
+  },
+  {
+    "id": "topic-mlsys-03",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:mlsys-03, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Continuous batching for transformer inference under bursty request arrival",
+    "summary": "Replacing static request batching with continuous batching that admits and evicts sequences at every decode step raises median throughput 3.1x under a bursty Poisson arrival trace, while keeping p99 latency within 12% of the unloaded baseline. The scheduler tracks per-sequence KV-cache memory to avoid the eviction storms that static batching causes under load.",
+    "refuse": false,
+    "must_mention_any": [
+      "continuous batching",
+      "inference",
+      "throughput"
+    ]
+  },
+  {
+    "id": "topic-mlsys-04",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:mlsys-04, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "A data loader that prefetches sharded parquet with async double buffering",
+    "summary": "An async double-buffered data loader overlaps parquet shard decompression with GPU compute, closing a 22% data-starvation gap observed on an 8-GPU training node reading from network storage. The loader exposes the same iterator interface as the existing PyTorch DataLoader, so the change to a training script is a one-line swap.",
+    "refuse": false,
+    "must_mention_any": [
+      "data loader",
+      "prefetch",
+      "parquet"
+    ]
+  },
+  {
+    "id": "topic-mlsys-05",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:mlsys-05, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Deterministic evaluation harness for comparing checkpoints across training restarts",
+    "summary": "Non-deterministic kernel selection in cuDNN was found to shift downstream evaluation accuracy by up to 0.6 points between otherwise identical runs, confounding small ablations. Pinning kernel algorithms and seeding the data loader's shuffle independently of the model RNG makes evaluation scores reproducible to four decimal places across restarts.",
+    "refuse": false,
+    "must_mention_any": [
+      "evaluation harness",
+      "deterministic",
+      "checkpoints"
+    ]
+  },
+  {
+    "id": "topic-mlsys-06",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:mlsys-06, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Pipeline-parallel schedule that interleaves microbatches to cut bubble time",
+    "summary": "An interleaved pipeline schedule assigns each device multiple non-contiguous model chunks, cutting pipeline bubble time from 34% to 11% of step time on a 32-stage pipeline. The change requires no additional activation memory beyond the standard 1F1B schedule and is validated on both dense and mixture-of-experts architectures.",
+    "refuse": false,
+    "must_mention_any": [
+      "pipeline-parallel",
+      "microbatches",
+      "bubble time"
+    ]
+  },
+  {
+    "id": "topic-mlsys-07",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:mlsys-07, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Fused attention kernel reduces memory traffic for long-context inference",
+    "summary": "A fused kernel that keeps the attention softmax and the value matmul in shared memory avoids materialising the full attention matrix in HBM, cutting memory traffic by 4.3x at a 32k context length. End-to-end decode latency on a 34B model drops 38% relative to the unfused implementation with no change to numerical outputs.",
+    "refuse": false,
+    "must_mention_any": [
+      "fused attention kernel",
+      "inference",
+      "memory traffic"
+    ]
+  },
+  {
+    "id": "topic-mlsys-08",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:mlsys-08, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Elastic checkpointing that resumes distributed training after a node failure in under a minute",
+    "summary": "An elastic checkpointing scheme writes optimiser shards asynchronously to local NVMe and replicates only the delta since the last snapshot to a backup node, cutting recovery time after a single-node failure from eleven minutes to 47 seconds on a 256-GPU training job. The scheme is evaluated across three simulated failure rates representative of a large shared cluster.",
+    "refuse": false,
+    "must_mention_any": [
+      "elastic checkpointing",
+      "distributed training",
+      "node failure"
+    ]
+  },
+  {
+    "id": "topic-mlsys-09",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:mlsys-09, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Mixed-precision optimiser state compression halves memory footprint on trainer nodes",
+    "summary": "Storing Adam's second-moment estimate in a dynamically-scaled 8-bit format instead of fp32 halves optimiser memory on each trainer node, enabling a 30B model to train without activation offload on the same hardware. Loss curves track the fp32 baseline within noise across a 50,000-step run.",
+    "refuse": false,
+    "must_mention_any": [
+      "mixed-precision",
+      "optimiser state",
+      "compression"
+    ]
+  },
+  {
+    "id": "topic-mlsys-10",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:mlsys-10, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Speculative decoding with a draft model trained on the target model's own rejections",
+    "summary": "Fine-tuning the draft model on tokens the target model previously rejected during speculative decoding raises the average accepted run length from 2.1 to 3.4 tokens, giving a further 1.4x decode speedup over a draft model trained only on generic text. The gain holds across three target model sizes without retraining the target.",
+    "refuse": false,
+    "must_mention_any": [
+      "speculative decoding",
+      "draft model"
+    ]
+  },
+  {
+    "id": "topic-mlsys-11",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:mlsys-11, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Profiling GPU kernel launch overhead in small-batch inference serving",
+    "summary": "At batch size one, kernel launch overhead accounts for 41% of end-to-end latency on a transformer decoder layer, dominated by the many small elementwise operations in layer normalisation and the residual add. Fusing these into a single custom kernel removes the overhead and cuts single-request latency by 26% with no accuracy change.",
+    "refuse": false,
+    "must_mention_any": [
+      "gpu kernel",
+      "launch overhead",
+      "inference serving"
+    ]
+  },
+  {
+    "id": "topic-mlsys-12",
+    "split": "train",
+    "note": "shared-topic case from fixture item urn:flows:mlsys-12, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "A reproducible training harness that pins every random seed touched by a distributed run",
+    "summary": "A training harness centralises every source of randomness — data shuffling, dropout, initialisation, and NCCL's collective ordering — behind a single derived seed per rank, closing the last sources of run-to-run variance found in an audit of a 128-GPU training pipeline. Two independent runs from the same seed now produce bitwise-identical loss curves for the first 500 steps.",
+    "refuse": false,
+    "must_mention_any": [
+      "reproducible",
+      "training harness",
+      "random seed"
+    ]
+  },
+  {
+    "id": "topic-hand-flow-chem",
+    "split": "dev",
+    "note": "hand-written shared-topic case: flow chemistry methodology, bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "A modular flow platform for telescoped multistep synthesis",
+    "summary": "A modular flow platform strings together three catalytic steps without intermediate purification, giving a gram-scale route to a substituted pyrrolidine in one continuous run.",
+    "refuse": false,
+    "must_mention_any": [
+      "flow",
+      "synthesis",
+      "catalytic",
+      "multistep"
+    ]
+  },
+  {
+    "id": "topic-hand-mechanism",
+    "split": "dev",
+    "note": "hand-written shared-topic case: reaction mechanism study, bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Radical-clock evidence for a stepwise mechanism in an aerobic oxidation",
+    "summary": "Radical-clock probes and Hammett analysis argue for a stepwise single-electron mechanism in a copper-catalysed aerobic oxidation, overturning the concerted pathway assumed in earlier mechanistic work.",
+    "refuse": false,
+    "must_mention_any": [
+      "mechanism",
+      "radical-clock",
+      "oxidation",
+      "copper-catalysed"
+    ]
+  },
+  {
+    "id": "topic-hand-electrocatalysis",
+    "split": "dev",
+    "note": "hand-written shared-topic case: electrochemical catalysis, bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Paired electrolysis couples anodic oxidation to cathodic reduction in one cell",
+    "summary": "A paired electrolysis design uses the cathodic half-reaction to consume the byproduct of the anodic oxidation, doubling atom economy in an electrochemical cross-coupling run at bench scale.",
+    "refuse": false,
+    "must_mention_any": [
+      "electrolysis",
+      "electrochemical",
+      "cross-coupling",
+      "anodic"
+    ]
+  },
+  {
+    "id": "topic-hand-inference-latency",
+    "split": "dev",
+    "note": "hand-written shared-topic case: inference latency, ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Batching window tuning cuts p99 latency on a shared inference cluster",
+    "summary": "Adaptively shrinking the request-batching window under load keeps p99 decode latency within budget on a shared GPU inference cluster, at a small cost to average throughput.",
+    "refuse": false,
+    "must_mention_any": [
+      "inference",
+      "latency",
+      "batching",
+      "gpu"
+    ]
+  },
+  {
+    "id": "topic-hand-training-repro",
+    "split": "dev",
+    "note": "hand-written shared-topic case: reproducibility of training runs, ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Bitwise-reproducible data shuffling across a resumed distributed training job",
+    "summary": "Deriving the shuffle seed from the global step rather than wall-clock time makes a resumed distributed training run read data in the same order as the original run, closing a source of silent evaluation drift.",
+    "refuse": false,
+    "must_mention_any": [
+      "reproducib",
+      "distributed training",
+      "shuffl",
+      "evaluation"
+    ]
+  },
+  {
+    "id": "topic-hand-quantisation",
+    "split": "dev",
+    "note": "hand-written shared-topic case: quantisation, ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Mixed INT8/FP16 kernels close the accuracy gap on edge inference hardware",
+    "summary": "Routing only the attention projections through FP16 while quantising the rest of the network to INT8 recovers most of the accuracy lost to naive quantisation, at a small increase in inference latency.",
+    "refuse": false,
+    "must_mention_any": [
+      "quantis",
+      "int8",
+      "inference",
+      "gpu kernel"
+    ]
+  },
+  {
+    "id": "refuse-other-01-bench-chemist",
+    "split": "train",
+    "note": "refusal case from fixture item urn:flows:other-01 labelled false, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Seasonal migration of coral reef fish tracked with acoustic telemetry",
+    "summary": "Three years of acoustic tagging on a Pacific atoll show that parrotfish move between lagoon and fore-reef habitats on a lunar cycle. The pattern is strongest in adults and weakens where fishing pressure is high, which has consequences for the placement of no-take zones.",
+    "refuse": true,
+    "must_mention_any": []
+  },
+  {
+    "id": "refuse-other-02-ml-engineer",
+    "split": "dev",
+    "note": "refusal case from fixture item urn:flows:other-02 labelled false, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "A faint debris disk detected around a nearby M-dwarf with coronagraphic imaging",
+    "summary": "Ground-based coronagraphic imaging resolves a faint, asymmetric debris disk around a nearby M-dwarf, with a brightness asymmetry consistent with dynamical sculpting by an unseen low-mass planet. The disk's inferred age and dust temperature are compared against evolutionary models for low-mass pre-main-sequence stars.",
+    "refuse": true,
+    "must_mention_any": []
+  },
+  {
+    "id": "refuse-other-03-bench-chemist",
+    "split": "dev",
+    "note": "refusal case from fixture item urn:flows:other-03 labelled false, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Sovereign bond spreads and central bank forward guidance during disinflation episodes",
+    "summary": "A panel study of twelve emerging-market economies finds that credible forward guidance narrows sovereign bond spreads faster during disinflation episodes than the pace of actual rate cuts alone would predict. The effect is largest where the central bank has an established track record of meeting its own inflation targets.",
+    "refuse": true,
+    "must_mention_any": []
+  },
+  {
+    "id": "refuse-other-04-ml-engineer",
+    "split": "train",
+    "note": "refusal case from fixture item urn:flows:other-04 labelled false, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Case-marking syncretism in a previously undocumented Trans-New-Guinea language",
+    "summary": "Fieldwork on a previously undocumented Trans-New-Guinea language describes a case-marking system in which ergative and instrumental morphology have merged into a single syncretic suffix, a pattern rare among the language family's otherwise well-documented members. The paper situates the merger within a broader typological account of syncretism under morphological erosion.",
+    "refuse": true,
+    "must_mention_any": []
+  },
+  {
+    "id": "refuse-bait-01-bench-chemist",
+    "split": "dev",
+    "note": "refusal case from fixture item urn:flows:bait-01 labelled false, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "AI is transforming science: a perspective",
+    "summary": "Machine learning is reshaping how research is done across every discipline. This perspective surveys the opportunities and challenges that artificial intelligence brings to the scientific enterprise and calls for interdisciplinary collaboration to realise its promise.",
+    "refuse": true,
+    "must_mention_any": []
+  },
+  {
+    "id": "refuse-bait-02-ml-engineer",
+    "split": "train",
+    "note": "refusal case from fixture item urn:flows:bait-02 labelled false, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Announcing a new open dataset for the research community",
+    "summary": "We are pleased to release a new dataset intended to accelerate research across a wide range of scientific domains. The dataset was assembled with input from the community and is freely available for download, and we invite researchers everywhere to build on it.",
+    "refuse": true,
+    "must_mention_any": []
+  },
+  {
+    "id": "refuse-bait-05-bench-chemist",
+    "split": "dev",
+    "note": "refusal case from fixture item urn:flows:bait-05 labelled false, persona bench-chemist",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "Five ways artificial intelligence is accelerating research today",
+    "summary": "From literature review to experiment design, artificial intelligence is already changing how researchers work day to day. This roundup highlights five broad areas where the impact is being felt and offers general thoughts on where the trend may be heading next.",
+    "refuse": true,
+    "must_mention_any": []
+  },
+  {
+    "id": "refuse-bait-07-ml-engineer",
+    "split": "train",
+    "note": "refusal case from fixture item urn:flows:bait-07 labelled false, persona ml-engineer",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Why open science matters more than ever",
+    "summary": "Open science practices are becoming increasingly important as research grows more complex and collaborative. This opinion piece makes the case for wider adoption of open data and open methods and discusses general barriers that continue to slow progress across the field.",
+    "refuse": true,
+    "must_mention_any": []
+  },
+  {
+    "id": "bait-refuse-termite-feed",
+    "split": "dev",
+    "note": "termite-style bait case from the spec: a model claimed this shared 'advanced topics like AI and machine learning' with an ML persona; must refuse",
+    "interests": "Training and serving machine learning systems: distributed training, mixed\nprecision, quantisation, inference latency, GPU kernels, data loaders,\nevaluation harnesses, and reproducibility of model training runs.",
+    "title": "Effects of a chitosan feed additive on termite colony growth rates",
+    "summary": "Supplementing the diet of laboratory termite colonies with a chitosan additive increased colony growth rate by 14% over twelve weeks relative to an unsupplemented control diet.",
+    "refuse": true,
+    "must_mention_any": []
+  },
+  {
+    "id": "bait-refuse-sourdough",
+    "split": "dev",
+    "note": "termite-style bait case: a food-science item with no chemistry-methodology overlap must refuse for bench-chemist, not stretch to 'reaction' language",
+    "interests": "Synthetic organic chemistry: total synthesis, C-H activation, photoredox and\nelectrochemical catalysis, cross-coupling, flow chemistry, and practical\nmethodology I can run at the bench. Reaction optimisation and mechanism.",
+    "title": "A community survey of home sourdough starter maintenance practices",
+    "summary": "A survey of two hundred home bakers finds wide variation in how often a sourdough starter is fed and at what ambient temperature it is kept, with no consistent relationship to reported loaf quality.",
+    "refuse": true,
+    "must_mention_any": []
+  }
+]

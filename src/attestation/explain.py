@@ -28,6 +28,40 @@ class ExplainState(BaseModel):
     explanation: str | None = None
 
 
+def explanation_messages(profile: str, title: str, summary: str) -> list[dict]:
+    """The ONE renderer of the explanation prompt.
+
+    `generate_explanation` and `evals/explanation_eval.py` both call this, so
+    a score is always a score of the prompt `feed.explain` actually sends.
+    """
+    return [
+        {
+            "role": "system",
+            "content": (
+                # Measured against gemma4:e2b over four items, one of them
+                # deliberately irrelevant. The previous wording ("You
+                # explain feed rankings. One sentence, second person,
+                # grounded ONLY in the reader profile given. No hedging.")
+                # produced 26-word sentences at 2.0s that opened "You will
+                # find that..." and manufactured a connection for a paper
+                # about termite feed additives. This runs at 1.5s and 9
+                # words, and the refusal clause is what makes it honest --
+                # without it the model still claimed the termite paper
+                # shared "scientific evaluation methodology".
+                "Name the one topic this item shares with the reader's"
+                " interests. Under 15 words. Address them as 'you'."
+                " No preamble."
+                " If it shares nothing, say 'Outside your stated"
+                " interests.' and stop."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (f"Reader's interests: {profile}\nItem: {title}\n{summary[:400]}"),
+        },
+    ]
+
+
 def _build_graph(conn: sqlite3.Connection, chat_fn):
     def synthesize_profile(state: ExplainState) -> dict:
         titles = [
@@ -83,35 +117,7 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
         item = conn.execute(
             "SELECT title, summary FROM items WHERE id = ?", (state.item_id,)
         ).fetchone()
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    # Measured against gemma4:e2b over four items, one of them
-                    # deliberately irrelevant. The previous wording ("You
-                    # explain feed rankings. One sentence, second person,
-                    # grounded ONLY in the reader profile given. No hedging.")
-                    # produced 26-word sentences at 2.0s that opened "You will
-                    # find that..." and manufactured a connection for a paper
-                    # about termite feed additives. This runs at 1.5s and 9
-                    # words, and the refusal clause is what makes it honest --
-                    # without it the model still claimed the termite paper
-                    # shared "scientific evaluation methodology".
-                    "Name the one topic this item shares with the reader's"
-                    " interests. Under 15 words. Address them as 'you'."
-                    " No preamble."
-                    " If it shares nothing, say 'Outside your stated"
-                    " interests.' and stop."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Reader's interests: {state.profile}\n"
-                    f"Item: {item['title']}\n{item['summary'][:400]}"
-                ),
-            },
-        ]
+        messages = explanation_messages(state.profile, item["title"], item["summary"])
         for _ in range(2):  # one retry per spec
             try:
                 out = chat_fn(messages, Explanation.model_json_schema())
