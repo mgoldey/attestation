@@ -1,32 +1,46 @@
 """W&B and MLflow local artifact directories, read through `generic`.
 
-**These fixtures were transcribed from published examples, not observed --
-except for MLflow.** The MLflow reader was run against a real directory on
-2026-08-28 (examples/flows/training/mlruns, written by mlflow-skinny 3.x via
-train_mlflow.py) and read four runs with final values and steps; run_name did
-land in meta.yaml as documented, so no fallback to tags/mlflow.runName was
-needed. tests/test_examples.py pins that committed directory directly. The
-W&B fixtures below are still transcribed, not observed -- there was no wandb/
-on the machine this was written on (`find ~ -maxdepth 4 -type d -name wandb`
-returned nothing), so that layout still comes from the tool's own
-documentation:
+**Both readers have now been run against a real directory, not just the
+transcribed fixtures below.** The MLflow reader was run against a real
+directory on 2026-08-28 (examples/flows/training/mlruns, written by
+mlflow-skinny 3.x via train_mlflow.py) and read four runs with final values
+and steps; run_name did land in meta.yaml as documented, so no fallback to
+tags/mlflow.runName was needed. tests/test_examples.py pins that committed
+directory directly.
 
-  W&B run directory layout:
-    https://docs.wandb.ai/guides/track/save-restore
+The W&B reader was run against a real directory the same day
+(examples/wandb/wandb, written by wandb 0.17.6 via generate.py), and
+`test_the_reader_scans_the_real_committed_wandb_fixture` below pins it
+directly. The run directory is named `offline-run-<timestamp>-<id>`, not
+`run-<timestamp>-<id>` as the fixtures below (still transcribed from
+https://docs.wandb.ai/guides/track/save-restore, unchanged) assume -- but
+`_wandb_runs` never filtered on that prefix, so both names already worked
+and no reader code changed. The real surprise was upstream of naming:
+offline W&B does not write wandb-summary.json or config.yaml to files/ at
+all until the run is synced to a server. examples/wandb/generate.py's
+docstring has the full finding, upstream references, and the local decode
+step (via `wandb.sdk.internal.datastore`, a maintainer-endorsed workaround
+for reading an offline `.wandb` log without syncing) that makes the
+committed fixture real data rather than a fabricated stand-in.
 
-That is a real weakness. `CLAUDE.md` names this repo's recurring failure mode
-as "tests that pass against the bug they were written to catch", and a fixture
-written by the parser's own author is that with extra steps. The mitigation is
-the shape-tolerance tests at the bottom: the parser's job is to be un-surprised
-by a directory that does not match these fixtures exactly.
+The fixtures below stay synthetic on purpose: they are what the
+shape-tolerance tests at the bottom exercise, targeted at specific edge
+cases (a crashed run, a malformed file) a training run would not
+reliably reproduce on demand. `CLAUDE.md` names this repo's recurring
+failure mode as "tests that pass against the bug they were written to
+catch"; the mitigation is that the shape-tolerance tests are no longer the
+only line of defense -- the real fixture is now load-bearing too.
 """
 
 import json
 import math
+from pathlib import Path
 
 import pytest
 
 from attestation.ledger_adapters import generic
+
+WANDB_EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "wandb"
 
 
 def _wandb_run(root, run_id, summary, config=None, metadata=None):
@@ -158,6 +172,28 @@ def test_wandb_run_without_summary_yields_nothing(tmp_path):
     (proj / "wandb" / "run-1-abc" / "files").mkdir(parents=True)
 
     assert generic.discover(proj) == []
+
+
+def test_the_reader_scans_the_real_committed_wandb_fixture():
+    """examples/wandb/wandb is real: written by wandb 0.17.6 (generate.py,
+    2026-08-28), not transcribed from documentation like the fixtures above.
+
+    Its run directories are named `offline-run-<timestamp>-<id>`, which the
+    reader's docstring once claimed it did not look for -- it does, because
+    `_wandb_runs` never filtered on the directory name at all. This is the
+    test that would have failed had that been false.
+    """
+    runs = generic.discover(WANDB_EXAMPLE)
+    assert len(runs) == 4, [r.name for r in runs]
+    assert all(r.adapter == "wandb" for r in runs)
+    assert all(r.name.startswith("generate/") for r in runs), [r.name for r in runs]
+    by_lr = {r.config["lr"]: r for r in runs}
+    assert set(by_lr) == {0.001, 0.01, 0.1, 1.0}
+    for run in runs:
+        metrics = {m.metric for m in run.metrics}
+        assert {"train_loss", "accuracy", "auc"} <= metrics, metrics
+        assert run.started and run.started.startswith("2026-"), run.started
+        assert not any(k.startswith("_") for k in run.config), run.config
 
 
 # --------------------------------------------------------------------------

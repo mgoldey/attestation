@@ -6,8 +6,13 @@ MLflow open question resolved as written -- final values, not curves.
 Neither reader had run against a real directory until 2026-08-28, when
 `examples/flows/training/train_mlflow.py` produced a real `mlruns/`
 (mlflow-skinny 3.x) that the reader scanned successfully -- run_name landed
-in meta.yaml as documented. The W&B reader has still not run against a real
-directory; see the module docstring in `ledger_adapters/generic.py`.
+in meta.yaml as documented. The W&B reader met a real directory the same
+day (`examples/wandb/wandb`, wandb 0.17.6 via `generate.py`): its run
+directory is named `offline-run-<timestamp>-<id>`, not `run-<timestamp>-
+<id>` as this spec assumed, but `_wandb_runs` never filtered on that prefix
+so both already worked and no reader code changed. The larger finding was
+upstream of naming -- see the "Verification" section below, rewritten in
+light of it, and the module docstring in `ledger_adapters/generic.py`.
 **Roadmap:** spec 3 of `2026-08-21-architecture-roadmap.md`
 **Depends on:** nothing. The adapter seam already exists.
 
@@ -129,6 +134,39 @@ author as the parser is that failure mode with extra steps. Mitigations:
 
 Until someone points it at a real directory, this adapter is *plausible*, not
 *verified*, and saying so is cheaper than discovering it later.
+
+### 2026-08-28 update: both readers verified, and the real gap was not the one guessed
+
+Both trackers were finally run for real (`examples/flows/training/
+train_mlflow.py` for MLflow, `examples/wandb/generate.py` for W&B). MLflow
+matched the documented layout exactly. W&B did not, but not in the way this
+spec's "Verification" section above anticipated:
+
+- The run directory is named `offline-run-<timestamp>-<id>`, not
+  `run-<timestamp>-<id>`. This looked, before checking, like the kind of gap
+  mitigation 2 above was written for. It was not one: `_wandb_runs` walks
+  every child of `wandb/` with no name filter, so both names already worked.
+  Only the docstring's claim was too narrow; no reader code changed.
+- The real gap: **offline W&B does not write `wandb-summary.json` or
+  `config.yaml` to `files/` at all.** Every logged value reaches disk, but
+  only inside the run's binary `.wandb` transaction log; the plain files
+  this reader was written to read exist only after `wandb sync` uploads to
+  a real server. This is not specific to this repo's reader -- it is
+  documented, known upstream behaviour (wandb's own issue tracker, #7227
+  and #9646; a maintainer's answer on #1768 confirms there is no local API
+  for it). `generate.py`'s module docstring has the full account and the
+  local decode step (`wandb.sdk.internal.datastore`, the community's own
+  workaround) that makes the committed fixture real data.
+- A second, smaller gap: `_wandb_runs` groups arms by the training script's
+  filename (`wandb-metadata.json`'s `program`), because that is the only
+  run-identity field committed to any of the three files it reads. W&B's
+  own `run.name` is never written to a local file in offline mode.
+
+The lesson generalizes past this spec: a fixture "transcribed from
+documentation" and a bug list guessed from that same documentation share a
+blind spot, because both are one step removed from the tool's actual
+behaviour. Mitigation 1 (transcribe from real examples) reduced the risk;
+it did not remove it. Only running the library did.
 
 ## Success criteria
 

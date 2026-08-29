@@ -472,11 +472,14 @@ def diagnose_empty(root: Path) -> str:
 # only surprise: mlflow-skinny 3.x refuses a `file:` tracking URI unless
 # MLFLOW_ALLOW_FILE_STORE=true is set (the local filesystem backend is in
 # maintenance mode upstream); run_name did land in meta.yaml as documented,
-# so no fallback to tags/mlflow.runName was needed. The W&B reader has
-# still not been -- it remains built from the tool's published layout and
-# tested only against a transcribed fixture; the shape-tolerance tests in
-# tests/test_tracker_adapters.py say what should happen when the layout
-# differs, but only a real library proves what it actually does.
+# so no fallback to tags/mlflow.runName was needed. The W&B reader was run
+# against a real offline directory on 2026-08-28 (examples/wandb/wandb,
+# written by wandb 0.17.6 via generate.py): the run directory is named
+# `offline-run-<timestamp>-<id>`, not `run-<timestamp>-<id>` as the prior
+# docstring assumed, but `_wandb_runs` never filtered on that prefix, so both
+# already worked -- see its docstring for the naming detail and for the
+# larger surprise, that offline W&B does not write wandb-summary.json or
+# config.yaml to files/ at all until a run is synced.
 TRACKER_DIRS = ("wandb", "mlruns")
 
 # Recorded on every RunRecord this module's convention-based reader produces,
@@ -554,12 +557,35 @@ def _coerce(text: str):
 
 
 def _wandb_runs(root: Path, seen: set[str]) -> list[RunRecord]:
-    """Runs under `wandb/run-<timestamp>-<id>/files/`.
+    """Runs under `wandb/<any-dir>/files/`.
+
+    Verified 2026-08-28 against a real offline directory (wandb 0.17.6,
+    examples/wandb/generate.py): the run directory is named
+    `offline-run-<timestamp>-<id>`, not `run-<timestamp>-<id>` as an earlier
+    version of this docstring claimed -- but this function never filtered by
+    that prefix. It walks every child of `wandb/` looking for `files/
+    wandb-summary.json`, so both names, and any future one, already worked;
+    only the docstring's claim was too narrow.
 
     `wandb-summary.json` is a flat object of scalars, which
     `metrics_from_payload` already handles -- the mapping is nearly free. The
     work here is naming: `run-20260814_101133-a1b2c3d4` is a timestamp and a
     hash, and a ledger listing forty of those is unreadable.
+
+    The real surprise was upstream of naming: **offline W&B does not write
+    wandb-summary.json or config.yaml to files/ at all.** Every logged value
+    reaches disk, but only inside the run's binary `.wandb` transaction log;
+    the plain files this function reads exist only after `wandb sync`
+    uploads to a real server (confirmed against wandb 0.17.6 through 0.29.0;
+    also github.com/wandb/wandb issues #7227, #9646, and a maintainer's own
+    answer on #1768 that no local API exists for this). examples/wandb/
+    generate.py materialises them locally by decoding the `.wandb` log with
+    `wandb.sdk.internal.datastore` -- the community's own workaround for
+    this exact gap -- so the committed fixture is what a real synced run's
+    files/ looks like, built from values wandb itself logged. A directory
+    from `wandb.init(mode="offline")` alone, never synced and never run
+    through that decode step, will scan to zero runs: not a bug in this
+    reader, but the documented behaviour of the tool it reads.
     """
     base = root / "wandb"
     if not base.is_dir():

@@ -448,8 +448,9 @@ def list_runs(
 # no user of the tool ever reads. A wandb-derived run looked identical in
 # `runs.list` and `runs.detail` to a hand-written JSON one, so the reader had
 # no way to know that the number in front of them is the FINAL logged value
-# rather than the best step, or that the reader that produced it has never been
-# exercised against a real directory.
+# rather than the best step, or that an offline W&B run carries no metrics at
+# all in files/ until it is synced (see ledger_adapters/generic.py's
+# _wandb_runs docstring).
 #
 # Keyed by adapter name, so a reader with no caveats (the generic one) attaches
 # none. A caveat on every run is boilerplate, and boilerplate is what teaches a
@@ -458,8 +459,9 @@ ADAPTER_CAVEATS: dict[str, str] = {
     "wandb": (
         "read by the wandb adapter: values come from wandb-summary.json, which"
         " holds each metric's final logged value rather than its curve or its"
-        " best step. The adapter has never been run against a real wandb"
-        " directory -- it is built from the published layout and fixtures"
+        " best step. Offline W&B does not write that file until a run is"
+        " synced -- see examples/wandb/generate.py for how the committed"
+        " fixture's was materialised without a network call"
     ),
     "mlflow": (
         "read by the mlflow adapter: each metric is the FINAL line of its"
