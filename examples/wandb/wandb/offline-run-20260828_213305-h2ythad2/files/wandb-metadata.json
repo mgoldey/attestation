@@ -1,0 +1,102 @@
+{
+  "os": "Linux-6.8.0-138-generic-x86_64-with-glibc2.39",
+  "python": "3.11.14",
+  "heartbeatAt": "2026-08-29T01:33:06.871296",
+  "startedAt": "2026-08-29T01:33:05.902896",
+  "docker": null,
+  "cuda": null,
+  "args": [],
+  "state": "running",
+  "program": "generate.py",
+  "codePathLocal": "generate.py",
+  "cpu_count": 6,
+  "cpu_count_logical": 12,
+  "cpu_freq": {
+    "current": 3600.5972500000003,
+    "min": 1200.0,
+    "max": 3800.0
+  },
+  "cpu_freq_per_core": [
+    {
+      "current": 3600.305,
+      "min": 1200.0,
+      "max": 3800.0
+    },
+    {
+      "current": 3600.309,
+      "min": 1200.0,
+      "max": 3800.0
+    },
+    {
+      "current": 3600.278,
+      "min": 1200.0,
+      "max": 3800.0
+    },
+    {
+      "current": 3600.346,
+      "min": 1200.0,
+      "max": 3800.0
+    },
+    {
+      "current": 3599.797,
+      "min": 1200.0,
+      "max": 3800.0
+    },
+    {
+      "current": 3600.317,
+      "min": 1200.0,
+      "max": 3800.0
+    },
+    {
+      "current": 3600.323,
+      "min": 1200.0,
+      "max": 3800.0
+    },
+    {
+      "current": 3600.285,
+      "min": 1200.0,
+      "max": 3800.0
+    },
+    {
+      "current": 3600.32,
+      "min": 1200.0,
+      "max": 3800.0
+    },
+    {
+      "current": 3599.685,
+      "min": 1200.0,
+      "max": 3800.0
+    },
+    {
+      "current": 3600.349,
+      "min": 1200.0,
+      "max": 3800.0
+    },
+    {
+      "current": 3600.323,
+      "min": 1200.0,
+      "max": 3800.0
+    }
+  ],
+  "disk": {
+    "/": {
+      "total": 3663.850730895996,
+      "used": 3329.938320159912
+    }
+  },
+  "gpu": "NVIDIA GeForce GTX 1080",
+  "gpu_count": 2,
+  "gpu_devices": [
+    {
+      "name": "NVIDIA GeForce GTX 1080",
+      "memory_total": 8589934592
+    },
+    {
+      "name": "NVIDIA GeForce GTX 1080",
+      "memory_total": 8589934592
+    }
+  ],
+  "memory": {
+    "total": 23.365062713623047
+  }
+}

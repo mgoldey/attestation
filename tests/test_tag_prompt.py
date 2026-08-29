@@ -168,14 +168,16 @@ def test_dspy_never_enters_the_library():
     The spec's refusal condition: if dspy cannot be kept out of the runtime
     import path, the design is abandoned.
 
-    mlflow is the same kind of optional dependency
-    (examples/flows/training/train_mlflow.py): the ledger READS mlruns/
-    directories (ledger_adapters/generic.py's `_mlflow_runs`, named as such
-    in comments and the `adapter="mlflow"` label) without ever importing the
-    library that writes them, so this checks for an import, not the word."""
+    mlflow and wandb are the same kind of optional dependency
+    (examples/flows/training/train_mlflow.py, examples/wandb/generate.py):
+    the ledger READS mlruns/ and wandb/ directories (ledger_adapters/
+    generic.py's `_mlflow_runs` and `_wandb_runs`, named as such in comments
+    and the `adapter="mlflow"`/`adapter="wandb"` labels) without ever
+    importing the libraries that write them, so this checks for an import,
+    not the word."""
     src = Path(__file__).resolve().parents[1] / "src" / "attestation"
     files = list(src.rglob("*.py"))
-    for name in ("dspy", "mlflow"):
+    for name in ("dspy", "mlflow", "wandb"):
         pattern = re.compile(rf"^\s*(import|from)\s+{name}\b", re.MULTILINE)
         offenders = [str(p.relative_to(src)) for p in files if pattern.search(p.read_text())]
         assert offenders == [], f"{name} imported under src/: {offenders}"

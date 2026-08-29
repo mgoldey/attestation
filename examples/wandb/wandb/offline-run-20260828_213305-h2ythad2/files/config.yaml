@@ -1,0 +1,15 @@
+wandb_version: 1
+
+lr:
+  desc: null
+  value: 0.1
+seed:
+  desc: null
+  value: 0
+dataset:
+  desc: null
+  value: "sklearn:breast_cancer"
+_wandb:
+  desc: null
+  value:
+    cli_version: 0.17.6
