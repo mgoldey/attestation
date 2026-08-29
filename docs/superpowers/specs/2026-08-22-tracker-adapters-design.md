@@ -15,7 +15,7 @@ upstream of naming -- see the "Verification" section below, rewritten in
 light of it, and the module docstring in `ledger_adapters/generic.py`. A
 third convention, Sacred, was added 2026-08-28 as part of the golden-paths
 work (`2026-08-28-golden-paths-design.md`) -- see the "Sacred" subsection
-below.
+below. A fourth, DVC, followed the same day -- see the "DVC" subsection.
 **Roadmap:** spec 3 of `2026-08-21-architecture-roadmap.md`
 **Depends on:** nothing. The adapter seam already exists.
 
@@ -146,6 +146,88 @@ than adding new ones:
 `"mlflow"`, stating the same final-value-not-curve limitation; without it
 `runs.compare` would rank Sacred arms silently while carrying the caveat for
 every other tracker.
+
+### DVC (added 2026-08-28)
+
+```
+dvc.yaml         declares stages; a foreach stage expands over params.yaml
+params.yaml      the values a foreach stage (and ordinary params:) reads
+dvc.lock         written by `dvc repro`: cmd, recorded params, output hashes
+metrics/*.json   the metric files a stage's `metrics:` list points at
+```
+
+Verified 2026-08-28 against a real `dvc repro` (dvc 3.67.1,
+`examples/dvc/generate.sh`) rather than transcribed from documentation --
+`_dvc_runs` in `ledger_adapters/generic.py` was written and tested against
+the real layout from the start. Running `dvc repro` on a `foreach: ${lr}`
+stage over `params.yaml`'s `lr: [0.01, 0.1, 1, 10]` produced four stage
+instances named `train@0.01`, `train@0.1`, `train@1`, `train@10` in
+`dvc.lock` -- exactly the documented `foreach` expansion, with one genuine
+surprise found only by running it (below).
+
+**No dependency on the `dvc` package, or on PyYAML.** `dvc.yaml`,
+`params.yaml` and `dvc.lock` are all read by a small, hand-rolled
+indentation parser (`_indented_lines` and the stage/params helpers built on
+it), the same reasoning `_yaml_scalars` and `_config_shape` already state
+for `meta.yaml` and TOML configs (see `generic.py`'s own comment on the
+`networkx` lesson). `PyYAML` is on this repo's disk only as a transitive
+dependency of dev tools (`pre-commit`, `bandit`) -- never a direct one --
+and reaching for it here would be exactly that mistake repeated. DVC itself
+is never imported or shelled out to by the reader; only `generate.sh`
+(a dev-time fixture script, not shipped code) runs the real `dvc` CLI.
+
+**The real finding: `dvc.lock` records the whole `foreach`-swept list for
+its own key, not the one value each stage instance ran with.** Every
+`train@<lr>` entry's `params: params.yaml:` block carries the *identical*
+`lr: [0.01, 0.1, 1, 10]` list -- DVC is echoing the source value each
+instance was generated from, not the item it actually ran with. Trusting
+that block verbatim would give all four arms the same useless config.
+`_dvc_runs` instead reads the `foreach` param's per-instance value from the
+stage-instance name itself (`train@0.1` implies `lr=0.1`), the same
+"the name already carries the answer" move `_wandb_runs` makes for its
+program-derived family and `_sacred_runs` makes for `experiment.name`.
+Other, non-`foreach` params declared in `params:` still come from
+`dvc.lock`'s recorded value directly, since those genuinely are scalars
+there -- only the swept key needed the override. This was found only by
+running `dvc repro` for real and reading its output; a fixture transcribed
+from DVC's documentation, which does not dwell on this echo, would not have
+surfaced it.
+
+**A second, smaller finding: DVC substitutes `${item}` using the literal
+text `params.yaml` wrote, not `str(float(...))`.** `examples/dvc/train.py`
+originally wrote its output as `metrics/{float(argv[1])}.json`, which
+produced `metrics/1.0.json` for the arm `dvc.yaml` calls `train@1` --
+`dvc repro` then failed outright with `output 'metrics/1.json' does not
+exist`, because the declared output path uses `params.yaml`'s own token
+(`1`), not Python's `float` repr. `train.py`'s fix (write the file using
+the raw argv string, not the parsed float) is the same category of bug
+`_sacred_runs`'s decisions were meant to prevent: a naming convention
+transcribed from documentation that the tool's actual behaviour quietly
+contradicts.
+
+**`metrics/` collides with `RESULT_DIRS`, unlike every other tracker
+directory.** `wandb/`, `mlruns/` and `sacred_runs/` are directory names of
+their own, invisible to the generic reader's ordinary `results/`-style
+scan. DVC routinely writes its metric files into `metrics/`, one of
+`RESULT_DIRS` -- so without a guard, a DVC project was scanned twice: once
+by `_dvc_runs` as `train@0.1`, and again by the ordinary `metrics/` walk as
+a bare `0.1`, for the same file. `discover()` now computes the set of
+metric file paths `dvc.yaml`'s stages claim before the `RESULT_DIRS` walk
+runs, and skips them there -- the one piece of cross-talk between a tracker
+reader and the generic scan any of the four conventions has needed.
+
+**A stage declaring no `metrics:` is not a run**, the same refusal the
+generic reader gives a config file with no result attached: a `prepare` or
+`preprocess` stage with only `outs:` is excluded by `_dvc_stages` before
+`_dvc_runs` ever looks at it. **A plain (non-`foreach`) stage gets no
+`family`** -- there is no sibling to group it with, the same reason
+`_mlflow_runs` leaves `family` unset for a run with no `run_name`.
+
+`ledger.ADAPTER_CAVEATS` gained a `"dvc"` entry alongside the other three,
+naming DVC's own limitation: each metric file is a snapshot overwritten on
+every `dvc repro`, not a curve -- there is no history of a prior run's
+value once a stage reruns, a different shape of "final value, not curve"
+than the per-line logs W&B, MLflow and Sacred each read.
 
 ## What this does not do
 

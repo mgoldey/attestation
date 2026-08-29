@@ -1,0 +1,9 @@
+stages:
+  train:
+    foreach: ${lr}
+    do:
+      cmd: python train.py ${item}
+      params:
+        - lr
+      metrics:
+        - metrics/${item}.json

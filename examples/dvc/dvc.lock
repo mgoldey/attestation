@@ -1,0 +1,58 @@
+schema: '2.0'
+stages:
+  train@0.01:
+    cmd: python train.py 0.01
+    params:
+      params.yaml:
+        lr:
+        - 0.01
+        - 0.1
+        - 1
+        - 10
+    outs:
+    - path: metrics/0.01.json
+      hash: md5
+      md5: 90b3861e88b145113217aaec9e11547f
+      size: 133
+  train@0.1:
+    cmd: python train.py 0.1
+    params:
+      params.yaml:
+        lr:
+        - 0.01
+        - 0.1
+        - 1
+        - 10
+    outs:
+    - path: metrics/0.1.json
+      hash: md5
+      md5: 00b97a6b442519104e07db53f0c3c86b
+      size: 133
+  train@1:
+    cmd: python train.py 1
+    params:
+      params.yaml:
+        lr:
+        - 0.01
+        - 0.1
+        - 1
+        - 10
+    outs:
+    - path: metrics/1.json
+      hash: md5
+      md5: 21da798162cf50d5e7a4ac8358c9649e
+      size: 117
+  train@10:
+    cmd: python train.py 10
+    params:
+      params.yaml:
+        lr:
+        - 0.01
+        - 0.1
+        - 1
+        - 10
+    outs:
+    - path: metrics/10.json
+      hash: md5
+      md5: fed134daafa819b2d0574c6f1a7d759e
+      size: 117

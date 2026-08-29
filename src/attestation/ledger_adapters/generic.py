@@ -1003,7 +1003,13 @@ def _dvc_lock_params(dvc_lock: Path) -> dict[str, dict[str, str]]:
             elif in_params_file and file_key_indent is None and value is None:
                 file_key_indent = indent  # the "params.yaml:" line itself
             elif in_params_file and file_key_indent is not None:
-                if indent == file_key_indent + 2 and value is not None:
+                if indent == file_key_indent + 2 and key != "-" and value is not None:
+                    # A scalar param recorded directly, e.g. `epochs: 10`.
+                    # `key == "-"` is the foreach param's own value instead
+                    # spelled as a YAML list (`lr:` with `- 0.01` etc. on the
+                    # following lines) -- not one scalar to record here, so
+                    # it is skipped; `_dvc_runs` sources that key from the
+                    # stage-instance name, which is the one true value.
                     params[key] = value
                 elif indent <= file_key_indent:
                     in_params_file = False
