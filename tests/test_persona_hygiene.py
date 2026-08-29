@@ -237,3 +237,63 @@ def test_a_persona_name_that_is_only_whitespace_is_refused(tmp_path, monkeypatch
         assert "must not be empty" in out["message"], out["message"]
 
     assert _create_persona(name="real-reader", interests="science")["ok"] is True
+
+
+def test_survey_suggests_nearest_by_interest_overlap():
+    from attestation.personas import _annotate_survey
+
+    rows = [
+        {
+            "id": 1,
+            "name": "new",
+            "interests": "protein folding dynamics",
+            "clicks": 0,
+            "trainable": 0,
+            "trainable_positive": 0,
+        },
+        {
+            "id": 2,
+            "name": "far",
+            "interests": "graph databases",
+            "clicks": 3,
+            "trainable": 3,
+            "trainable_positive": 1,
+        },
+        {
+            "id": 3,
+            "name": "near",
+            "interests": "protein folding simulations",
+            "clicks": 3,
+            "trainable": 3,
+            "trainable_positive": 3,
+        },
+    ]
+    out = _annotate_survey(rows)
+    assert out[0]["nearest"] == "near" and out[0]["nearest_overlap"] == round(2 / 4, 3)
+    assert "nearest" not in out[1] and out[1]["classifier_ready"] is True
+    assert out[2]["classifier_ready"] is False  # all positive
+    assert "nearest" not in _annotate_survey(rows[:1])[0]  # single persona: no key
+
+
+def test_purge_feedback_clears_clicks_explanations_and_cache(seeded):
+    from attestation.personas import purge_feedback
+    from attestation.rank import _PROFILE_VEC_CACHE, _db_identity
+
+    conn = seeded
+    uid = conn.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()["id"]
+    conn.execute("INSERT INTO explanations(user_id, item_id, text) VALUES (?, 1, 'x')", (uid,))
+    _PROFILE_VEC_CACHE[(_db_identity(conn), uid)] = ("h", None)
+    purge_feedback(conn, uid)
+    assert (
+        conn.execute("SELECT COUNT(*) n FROM clicks WHERE user_id = ?", (uid,)).fetchone()["n"] == 0
+    )
+    assert (
+        conn.execute("SELECT COUNT(*) n FROM explanations WHERE user_id = ?", (uid,)).fetchone()[
+            "n"
+        ]
+        == 0
+    )
+    assert (_db_identity(conn), uid) not in _PROFILE_VEC_CACHE
+    assert conn.execute("SELECT 1 FROM users WHERE id = ?", (uid,)).fetchone() is not None
+    purge_feedback(conn, uid, delete_user=True)
+    assert conn.execute("SELECT 1 FROM users WHERE id = ?", (uid,)).fetchone() is None

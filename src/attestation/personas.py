@@ -97,15 +97,11 @@ def _overlap(a: str, b: str) -> float:
     return len(wa & wb) / len(wa | wb)
 
 
-def survey(conn: sqlite3.Connection) -> list[dict]:
-    """Every persona with what it actually has to rank on.
-
-    `clicks` is the raw count and `trainable` excludes bootstrap rows, because
-    a persona with 30 seeded clicks and no real ones is untrained and a bare
-    count says the opposite. Personas with no trainable feedback carry their
-    nearest neighbour by interest overlap, so a caller proposing a merge has a
-    target rather than just a complaint.
-    """
+def _survey_rows(conn: sqlite3.Connection) -> list[dict]:
+    """Per-persona feedback counts, one query round-trip per user, no derived
+    fields. `clicks` is the raw count; `trainable`/`trainable_positive`
+    exclude bootstrap rows, because a persona with 30 seeded clicks and no
+    real ones is untrained and a bare count says the opposite."""
     users = conn.execute("SELECT id, name, interests FROM users ORDER BY id").fetchall()
     placeholders = ",".join("?" * len(TRAINABLE_SOURCES))
     out = []
@@ -118,25 +114,71 @@ def survey(conn: sqlite3.Connection) -> list[dict]:
             f" WHERE user_id = ? AND source IN ({placeholders})",
             (u["id"], *TRAINABLE_SOURCES),
         ).fetchone()
-        row = {
-            "name": u["name"],
-            "interests": u["interests"],
-            "clicks": total,
-            "trainable": trainable["n"],
-            "trainable_positive": trainable["pos"] or 0,
-            # Both classes are what the click classifier needs to fire at all.
-            "classifier_ready": bool(
-                trainable["n"] and 0 < (trainable["pos"] or 0) < trainable["n"]
-            ),
-        }
-        if not trainable["n"]:
-            others = [o for o in users if o["id"] != u["id"]]
-            if others:
-                best = max(others, key=lambda o: _overlap(u["interests"], o["interests"]))
-                row["nearest"] = best["name"]
-                row["nearest_overlap"] = round(_overlap(u["interests"], best["interests"]), 3)
-        out.append(row)
+        out.append(
+            {
+                "id": u["id"],
+                "name": u["name"],
+                "interests": u["interests"],
+                "clicks": total,
+                "trainable": trainable["n"],
+                "trainable_positive": trainable["pos"] or 0,
+            }
+        )
     return out
+
+
+def _annotate_survey(rows: list[dict]) -> list[dict]:
+    """Add `classifier_ready` and, for an untrained persona with another
+    persona to compare against, its nearest neighbour by interest overlap --
+    so a caller proposing a merge has a target rather than just a complaint.
+    Pure over `_survey_rows`' output: no database, no caller-visible `id`.
+    """
+    out = []
+    for row in rows:
+        annotated = dict(row)
+        # Both classes are what the click classifier needs to fire at all.
+        annotated["classifier_ready"] = bool(
+            row["trainable"] and 0 < row["trainable_positive"] < row["trainable"]
+        )
+        if not row["trainable"]:
+            others = [o for o in rows if o["id"] != row["id"]]
+            if others:
+                best = max(others, key=lambda o: _overlap(row["interests"], o["interests"]))
+                annotated["nearest"] = best["name"]
+                annotated["nearest_overlap"] = round(
+                    _overlap(row["interests"], best["interests"]), 3
+                )
+        del annotated["id"]
+        out.append(annotated)
+    return out
+
+
+def survey(conn: sqlite3.Connection) -> list[dict]:
+    """Every persona with what it actually has to rank on.
+
+    `clicks` is the raw count and `trainable` excludes bootstrap rows, because
+    a persona with 30 seeded clicks and no real ones is untrained and a bare
+    count says the opposite. Personas with no trainable feedback carry their
+    nearest neighbour by interest overlap, so a caller proposing a merge has a
+    target rather than just a complaint.
+    """
+    return _annotate_survey(_survey_rows(conn))
+
+
+def purge_feedback(conn: sqlite3.Connection, user_id: int, *, delete_user: bool = False) -> None:
+    """Remove a persona's residue -- clicks, cached explanations, its cached
+    profile vector -- and optionally the persona row. Never commits: merge()
+    spans one transaction over several personas and the tools commit once
+    after, so commit timing stays with the caller. Explanations go with the
+    clicks because implicit.harvest reads an explanation with no click as a
+    weak positive, and users.id is a rowid SQLite reuses."""
+    from attestation.rank import forget_profile_vector
+
+    conn.execute("DELETE FROM clicks WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM explanations WHERE user_id = ?", (user_id,))
+    if delete_user:
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    forget_profile_vector(conn, user_id)
 
 
 def _merge_interests(texts: list[str]) -> str:
@@ -219,10 +261,7 @@ def merge(conn: sqlite3.Connection, *, into: str, drop: list[str]) -> dict:
             " SELECT ?, item_id, text FROM explanations WHERE user_id = ?",
             (keeper["id"], loser["id"]),
         )
-        conn.execute("DELETE FROM clicks WHERE user_id = ?", (loser["id"],))
-        conn.execute("DELETE FROM explanations WHERE user_id = ?", (loser["id"],))
-        conn.execute("DELETE FROM users WHERE id = ?", (loser["id"],))
-        forget_profile_vector(conn, loser["id"])
+        purge_feedback(conn, loser["id"], delete_user=True)
         if loser["interests"]:
             interests.append(loser["interests"])
 

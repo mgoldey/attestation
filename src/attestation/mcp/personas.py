@@ -10,6 +10,7 @@ does not exist. This is a source split, not a namespace change.
 """
 
 from attestation.mcp._tool import ToolError, tool
+from attestation.personas import purge_feedback
 from attestation.rank import forget_profile_vector
 
 
@@ -86,14 +87,8 @@ def _delete_persona(conn, user_row, confirm: bool = False) -> dict:
             f"refusing to delete {name!r} without confirm=true. This would "
             f"permanently remove the persona and its {n} click(s) of training data."
         )
-    conn.execute("DELETE FROM clicks WHERE user_id = ?", (user_row["id"],))
-    # users.id is a rowid alias SQLite reuses after the highest-id row is
-    # deleted -- without this, a future persona created at the same id
-    # would inherit this persona's cached explanations verbatim.
-    conn.execute("DELETE FROM explanations WHERE user_id = ?", (user_row["id"],))
-    conn.execute("DELETE FROM users WHERE id = ?", (user_row["id"],))
+    purge_feedback(conn, user_row["id"], delete_user=True)
     conn.commit()
-    forget_profile_vector(conn, user_row["id"])
     return {"message": f"deleted persona {name!r} and its {n} click(s)"}
 
 
@@ -111,15 +106,6 @@ def _reset_feedback(conn, user_row, confirm: bool = False) -> dict:
     explained = conn.execute(
         "SELECT COUNT(*) c FROM explanations WHERE user_id = ?", (user_row["id"],)
     ).fetchone()["c"]
-    conn.execute("DELETE FROM clicks WHERE user_id = ?", (user_row["id"],))
-    # Explanations go too. implicit.harvest reads an explanation with no click
-    # as a weak positive, and its docstring promises "a stated 'not useful' is
-    # never flipped to useful by the reader's own curiosity" -- a promise the
-    # LEFT JOIN keeps only while the click exists. Clearing clicks alone
-    # removed the guard's evidence and not its subject, so the next harvest
-    # resurrected every cleared rating as useful=1. Negatives are the class
-    # this ranker is starving for, so that is the worst available direction.
-    conn.execute("DELETE FROM explanations WHERE user_id = ?", (user_row["id"],))
+    purge_feedback(conn, user_row["id"])
     conn.commit()
-    forget_profile_vector(conn, user_row["id"])
     return {"message": f"cleared {n} click(s) and {explained} explanation(s) for {name!r}"}
