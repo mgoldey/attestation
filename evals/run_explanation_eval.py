@@ -11,6 +11,7 @@ corpus, and is non-deterministic. It is a measurement tool, run deliberately.
 
     uv run python evals/run_explanation_eval.py                # dev split
     uv run python evals/run_explanation_eval.py --split all --repeat 2
+    uv run python evals/run_explanation_eval.py --offline       # no Ollama, no network
     uv run python evals/run_explanation_eval.py --model hermes3:8b
 
 The prompt is rendered by `attestation.explain.explanation_messages`, the
@@ -24,6 +25,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "examples" / "flows"))
 
 from explanation_eval import evaluate, load_cases, refusal_precision_recall
 
@@ -35,11 +37,21 @@ def main() -> int:
     ap.add_argument("--split", default="dev", choices=["train", "dev", "all"])
     ap.add_argument("--repeat", type=int, default=1, help="runs per case, for stability")
     ap.add_argument("--model", default=None)
+    ap.add_argument("--offline", action="store_true", help="use the stub model server")
     args = ap.parse_args()
 
+    server = None
+    if args.offline:
+        import stub_openai
+
+        server, url = stub_openai.start()
+        model = stub_openai.MODEL
+        client = ChatClient(base_url=url, model=model)
+    else:
+        client = ChatClient(model=args.model)
+        model = args.model or chat_model()
+
     cases = load_cases(split=None if args.split == "all" else args.split)
-    client = ChatClient(model=args.model)
-    model = args.model or chat_model()
     print(f"model={model}  split={args.split}  cases={len(cases)}  repeat={args.repeat}\n")
 
     def report(case, mean, runs):
@@ -48,7 +60,12 @@ def main() -> int:
         for e in dict.fromkeys(e for r in runs for e in r["errors"]):
             print(f"         - {e}")
 
-    result = evaluate(client.chat_json, cases, repeat=args.repeat, on_case=report)
+    try:
+        result = evaluate(client.chat_json, cases, repeat=args.repeat, on_case=report)
+    finally:
+        if server:
+            server.shutdown()
+
     rp = refusal_precision_recall(result, cases)
     print(f"\n  model              {model}")
     print(f"  overall            {result.overall:.3f}")
