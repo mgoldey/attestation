@@ -160,6 +160,28 @@ def test_every_guide_is_in_the_nav_and_leads_with_an_answer():
         )
 
 
+def test_the_ledger_guide_states_the_csv_label_rule():
+    """A results CSV with no column naming each row's arm scans to zero runs
+    (`_label_of` in `src/attestation/ledger_adapters/generic.py`) -- and
+    until now nothing said so before a scientist hit that failure. Every
+    name `_label_of` tries must appear in the guide.
+    """
+    text = (ROOT / "docs" / "guides" / "ledger.md").read_text()
+    for key in ("config_name", "config", "name", "run", "variant", "arm", "label", "id"):
+        assert f"`{key}`" in text or key in text
+
+
+def test_the_ledger_guide_documents_the_corpus_manifest():
+    """`corpora.toml` is the declare-it-yourself escape hatch for a corpus
+    AST detection cannot find, and it existed only in a design spec --
+    invisible to a reader of the ledger guide. `concepts.md`'s corpus entry
+    should point at it too.
+    """
+    text = (ROOT / "docs" / "guides" / "ledger.md").read_text()
+    assert "corpora.toml" in text and "LEDGER_CORPUS_FILE" in text and "[assign" in text
+    assert "corpora.toml" in (ROOT / "docs" / "concepts.md").read_text()
+
+
 def test_the_concepts_page_defines_the_first_ten_minutes():
     """`docs/concepts.md` is the glossary for the words a newcomer meets
     early: run, family, arm, spec, claim and its verdict kinds, corpus,

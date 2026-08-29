@@ -44,15 +44,20 @@ each against the ledger. See the
 driver-script syntax (AST) rather than from the model's own claims about
 itself — `corpus.detect_in_source()`. `runs.corpus_id` links a run to one;
 `compare()` refuses to rank arms that cross corpora rather than treating a
-different task as a loss. See `src/attestation/corpus.py`.
+different task as a loss. When detection finds nothing or finds the wrong
+thing, a corpus can be declared instead in `corpora.toml`, read by
+`corpus.load_manifest()`. See `src/attestation/corpus.py` and the
+[ledger guide](guides/ledger.md#declaring-a-corpus).
 
 **persona** — a reader identity the feed ranks for: a name and an
 `interests` profile text, plus whatever click history it has accumulated.
-Personas auto-create on read so an agent's first plausible name becomes a
-real (if initially empty) profile rather than a refusal; `attest
-bootstrap-persona` seeds the three demo personas
-(`researcher`/`bench-chemist`/`ml-engineer`) with pseudo-clicks. See the
-[feed guide](guides/feed.md).
+"Persona" is the word used in prose; in code and in the schema the same row
+is a `user` — the `users` table, the `user_id` foreign key — one row, two
+names for it depending on which side of the guide you're reading. Personas
+auto-create on read so an agent's first plausible name becomes a real (if
+initially empty) profile rather than a refusal; `attest bootstrap-persona`
+seeds the three demo personas (`researcher`/`bench-chemist`/`ml-engineer`)
+with pseudo-clicks. See the [feed guide](guides/feed.md).
 
 **provenance** (click provenance) — the recorded source of one click, which decides
 whether it may train the ranker: `ui`, `agent`, `implicit` (inferred from an

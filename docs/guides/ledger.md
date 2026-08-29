@@ -39,7 +39,10 @@ Recognised results directories are `results/`, `logs/`, `outputs/`, `metrics/`,
 are `configs/`, `config/`, `conf/`, `experiments/` and `examples/`. A scan that
 finds nothing says which of these it looked for and where your files actually
 were, rather than reporting an empty success — and `runs compare` on something
-that is not a family names the families that exist.
+that is not a family names the families that exist. A results CSV needs one
+column naming each row's arm — `config_name`, `config`, `name`, `run`,
+`variant`, `arm`, `label`, or `id` — or its rows have nothing to be named
+after and the file scans to zero runs.
 
 **This is deliberately not an experiment tracker.** MLflow, Sacred, W&B and DVC
 all instrument runs at the moment they happen. That does not help a corpus of
@@ -75,6 +78,31 @@ prefix — `lr_0.001`, `lr_0.01` — has nowhere to strip down to, so the
 recognised token itself (`lr`) becomes the family, letting `attest runs
 compare lr` group a learning-rate sweep that has no shared name beyond the
 parameter varied.
+
+### Declaring a corpus
+
+Corpus detection reads driver-script syntax (AST), not the model's own
+claims about itself — see the [concepts glossary](../concepts.md). If
+detection finds nothing, or finds the wrong thing (a loader called through a
+wrapper function, or a path read from an env var), declare it instead of
+editing the driver script to satisfy the detector. Put a `corpora.toml` next
+to your workspace, or point `LEDGER_CORPUS_FILE` at one:
+
+```toml
+[corpus.wikitext2]
+source = "Salesforce/wikitext"
+tokenizer = "gpt2"
+seq_len = 256
+
+[assign]
+family.lm = "wikitext2"
+```
+
+`[corpus.<name>]` declares a corpus; `[assign]`'s `family.<family>` (or
+`run.<run-name>`, for one run rather than a whole family) links it to runs
+already on disk. A declaration is never silently replaced by a later scan —
+it fills gaps in what a weaker, artifact-detected value would have said, but
+an existing declared value stands even when a subsequent scan disagrees.
 
 It reads the conventions research repos already use — `results/`, `logs/`,
 `configs/`, `outputs/`, `benchmarks/` holding JSON, JSONL, CSV, YAML or TOML —

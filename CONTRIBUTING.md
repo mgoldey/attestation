@@ -12,7 +12,7 @@ contribute should carry anyone's machine paths or names.
 
 | you want to… | do this | what guards it |
 |---|---|---|
-| **report a run layout it cannot read** | open an issue with the output of `attest runs scan <dir>` and a *scrubbed* `find <dir> -maxdepth 3` — never the raw tree (it carries your paths) | — |
+| **report a run layout it cannot read** | open an issue with the output of `attest runs scan <dir>` — on an empty scan its message already names what it looked for and where your files were instead, scrubbed by construction (directory names and file counts, never contents); attach a *scrubbed* `find <dir> -maxdepth 3` only if that message doesn't explain a partial miss | — |
 | **report a claim it checked wrongly** | open an issue with the claim line, the metric it should have matched, and `attest claims` output | — |
 | **add a feed source** | a `[[feeds]]` entry in `src/attestation/feeds.toml` (seeds the first ingest) or a `[[candidates]]` entry in `feed_candidates.toml` (offered by `feed.source_suggest`, never subscribed unasked) | `tests/test_feeds.py` |
 | **add a golden path** (a runnable, documented worked example) | `examples/<name>/` — recipe below | `tests/test_golden_paths.py` |
