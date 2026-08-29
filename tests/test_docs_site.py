@@ -163,12 +163,25 @@ def test_every_guide_is_in_the_nav_and_leads_with_an_answer():
 def test_the_ledger_guide_states_the_csv_label_rule():
     """A results CSV with no column naming each row's arm scans to zero runs
     (`_label_of` in `src/attestation/ledger_adapters/generic.py`) -- and
-    until now nothing said so before a scientist hit that failure. Every
-    name `_label_of` tries must appear in the guide.
+    until now nothing said so before a scientist hit that failure. The rule
+    must be stated in one place a reader would actually read it: find the
+    sentence that states it (anchored on "each row's arm", the phrasing
+    that names what the column is for) and require every name `_label_of`
+    tries to be backticked *inside that sentence* -- not merely somewhere
+    in the file, where an unrelated paragraph could satisfy 5 of the 8 bare
+    words (config, name, run, arm, id) with no rule stated at all.
     """
     text = (ROOT / "docs" / "guides" / "ledger.md").read_text()
+    paragraphs = text.split("\n\n")
+    matches = [p for p in paragraphs if "each row's arm" in p]
+    assert matches, "no paragraph in ledger.md states the CSV label rule"
+    flat = " ".join(matches[0].split())
+    sentences = re.split(r"(?<=[.]) (?=[A-Z])", flat)
+    rule_sentences = [s for s in sentences if "each row's arm" in s]
+    assert rule_sentences, "no sentence states the CSV label rule"
+    sentence = rule_sentences[0]
     for key in ("config_name", "config", "name", "run", "variant", "arm", "label", "id"):
-        assert f"`{key}`" in text or key in text
+        assert f"`{key}`" in sentence, f"{key!r} is not backticked in the label-rule sentence"
 
 
 def test_the_ledger_guide_documents_the_corpus_manifest():
