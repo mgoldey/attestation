@@ -132,11 +132,12 @@ def test_the_catalogue_lists_only_paths_that_exist():
 # unrelated content: (1) the username matches only as a whole word, case
 # sensitive -- a bare substring match on a short name (e.g. "matt") also
 # matches ordinary English ("mattered", "matters"), which is not attribution.
-# (2) `mlflow.user` and `git@` are checked only outside .py/.sh source: a
-# scrubber's own code and docs must be free to NAME the tag or prefix it
+# (2) `mlflow.user` and `git@` are checked only outside .py/.sh/.md source: a
+# scrubber's own code and its docs must be free to NAME the tag or prefix it
 # strips (train_mlflow.py's _SCRUB_TAGS names "mlflow.user" verbatim, which
-# is the tag's real name, not a leaked value) -- `/home/` and `github.com`
-# have no such legitimate source-code use and still apply to every file.
+# is the tag's real name, not a leaked value, and a README explaining the
+# scrub needs the same freedom in prose) -- `/home/` and `github.com` have
+# no such legitimate source-or-prose use and still apply to every file.
 def test_no_committed_example_carries_attribution_or_machine_paths():
     user = os.environ.get("USER", "")
     hits = []
@@ -144,7 +145,7 @@ def test_no_committed_example_carries_attribution_or_machine_paths():
         if not f.is_file() or f.suffix not in TEXT_SUFFIXES or "__pycache__" in f.parts:
             continue
         text = f.read_text(errors="replace")
-        is_source = f.suffix in (".py", ".sh")
+        is_source = f.suffix in (".py", ".sh", ".md")
         needles = tuple(n for n in FORBIDDEN if n not in ("mlflow.user", "git@") or not is_source)
         for needle in needles:
             if needle in text:
