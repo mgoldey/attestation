@@ -9,6 +9,7 @@ prose header.
 """
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -974,11 +975,11 @@ def test_a_scan_that_fails_partway_leaves_no_torn_write(workspace, tmp_path, mon
     real_replace = ledger._replace_project
     calls = []
 
-    def exploding_replace(conn_, project, records):
+    def exploding_replace(conn_, project, records, scanned_at):
         calls.append(project)
         if len(calls) > 1:
             raise RuntimeError("disk full partway through the scan")
-        return real_replace(conn_, project, records)
+        return real_replace(conn_, project, records, scanned_at)
 
     monkeypatch.setattr(ledger, "_replace_project", exploding_replace)
 
@@ -1600,3 +1601,66 @@ def test_compare_skips_the_metric_count_query_when_a_metric_is_named(conn, works
     finally:
         conn.set_trace_callback(None)
     assert any("GROUP BY run_id, metric" in s for s in statements), statements
+
+
+def test_detail_reports_when_it_was_scanned(conn, workspace):
+    """A citable run needs an "as of when", separate from the artifact's own
+    `started` time -- a stale artifact re-scanned today has an old `started`
+    and a new `scanned_at`, and collapsing the two would hide exactly the
+    staleness `claims.py`'s `stale` verdict exists to catch."""
+    before = datetime.now(UTC).isoformat(timespec="seconds")
+    ledger.scan(conn, workspace)
+
+    run = ledger.detail(conn, "speech-model", "dit_small_rope_crossattn")
+
+    assert run["scanned_at"] >= before
+
+
+def test_run_ids_survive_a_rescan_of_an_unchanged_project(conn, workspace):
+    """`runs.id` is the only thing a reader can use to cite one run (Datasette
+    row URL); it must not change under a re-scan that found the same
+    project/name pairs, or the citation mechanism is broken by construction."""
+    ledger.scan(conn, workspace)
+    ids = {
+        (r["project"], r["name"]): r["id"]
+        for r in conn.execute("SELECT id, project, name FROM runs")
+    }
+
+    ledger.scan(conn, workspace)
+    again = {
+        (r["project"], r["name"]): r["id"]
+        for r in conn.execute("SELECT id, project, name FROM runs")
+    }
+
+    assert ids == again
+
+
+def test_caveats_do_not_confuse_nested_arm_keys_with_eval_splits():
+    """`_arms_for_run` reuses the `split` key for two different meanings: a
+    genuine eval split (`test`, `val`) and a synthetic nested-arm key
+    (`arms.Treatment_Eigen`) when one file fans out into several arms. The
+    "arms are judged on different splits" caveat must not fire on two arms
+    that are only nested-arm siblings, not different levels of eval trust."""
+    from attestation.ledger import _caveats
+
+    scored = [
+        {
+            "name": "run[arms.A]",
+            "value": 0.9,
+            "split": "arms.A",
+            "step": None,
+            "n": None,
+            "status": "ok",
+            "source_path": "x",
+        },
+        {
+            "name": "run[arms.B]",
+            "value": 0.8,
+            "split": "arms.B",
+            "step": None,
+            "n": None,
+            "status": "ok",
+            "source_path": "x",
+        },
+    ]
+    assert not [c for c in _caveats(scored, "auc") if "different splits" in c]

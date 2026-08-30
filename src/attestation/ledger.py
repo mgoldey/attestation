@@ -29,6 +29,7 @@ import re
 import sqlite3
 import tomllib
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -98,7 +99,30 @@ METRIC_DIRECTION: dict[str, str] = {
 # METRIC_DIRECTION above. Explicit env var, then a per-user config file --
 # never edit installed package source to teach the ledger a new metric.
 METRIC_DIRECTION_PATH_ENV = "LEDGER_METRIC_DIRECTION_FILE"
-_DEFAULT_METRIC_DIRECTION_PATH = Path.home() / ".hermes" / "metric_direction.toml"
+
+
+def _config_ladder(env_var: str, filename: str, workspace: Path | None = None) -> Path:
+    """Where a declared-config TOML lives: `env_var`, then `<workspace>/
+    <filename>` if a workspace is given and the file is there, else
+    `~/.hermes/<filename>`.
+
+    One ladder shared by `metric_direction.toml` and `corpora.toml`, which
+    grew the identical precedence twice (`corpus.py`'s own comment already
+    said not to). Deliberately does NOT check whether the returned path
+    exists -- `_metric_direction_path` needs a path even when the file is
+    absent, to tell a reader where to create it; `corpus.manifest_path`
+    layers its own `is_file()` check on top, since "nothing declared" must
+    read as no manifest rather than a manifest at a path that isn't there.
+    """
+    value = os.environ.get(env_var)
+    if value:
+        return Path(value).expanduser()
+    if workspace is not None:
+        candidate = Path(workspace) / filename
+        if candidate.is_file():
+            return candidate
+    return Path.home() / ".hermes" / filename
+
 
 # Split/phase affixes stripped from a metric name before the METRIC_DIRECTION
 # lookup. The generic adapter extracts metric names verbatim from artifacts,
@@ -147,8 +171,12 @@ def _metric_stem(metric: str) -> str:
 
 
 def _metric_direction_path() -> Path:
-    value = os.environ.get(METRIC_DIRECTION_PATH_ENV)
-    return Path(value).expanduser() if value else _DEFAULT_METRIC_DIRECTION_PATH
+    """Where `metric_direction.toml` lives: `LEDGER_METRIC_DIRECTION_FILE`,
+    else `~/.hermes/metric_direction.toml`. No workspace step -- unlike
+    `corpora.toml`, nothing has ever asked for a per-workspace override here,
+    and this function's other job (naming where to *create* the file in a
+    refusal message) needs a path regardless of whether one exists yet."""
+    return _config_ladder(METRIC_DIRECTION_PATH_ENV, "metric_direction.toml")
 
 
 def metric_directions() -> dict[str, str]:
@@ -252,6 +280,12 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
     # state intent ("these arms were meant to share a corpus").
     manifest, assignments = corpus.load_manifest(root)
 
+    # One timestamp for the whole scan, not one per project read: every run
+    # this call touches was read as of the same moment, and a per-project
+    # timestamp would claim a precision ("this run is one second fresher
+    # than that one") the scan never measured.
+    scanned_at = datetime.now(UTC).isoformat(timespec="seconds")
+
     scanned: dict[str, int] = {}
     empty: list[str] = []
     # Why each empty project was empty. "0 run(s)" with no reason is the one
@@ -290,7 +324,7 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
                 if len(rel.parts) > 1:
                     consumed.add(rel.parts[0])
         _link_corpora(conn, records, manifest, assignments)
-        _replace_project(conn, project_root.name, records)
+        _replace_project(conn, project_root.name, records, scanned_at)
         # NO commit here. Corpora rows and the runs whose corpus_id references
         # them are written across this loop and committed once below, so a
         # per-project commit tears that write: see
@@ -325,16 +359,41 @@ def _link_corpora(
             record.corpus_id = corpus.upsert(conn, entry)
 
 
-def _replace_project(conn: sqlite3.Connection, project: str, records: list[RunRecord]) -> None:
-    conn.execute(
-        "DELETE FROM run_metrics WHERE run_id IN (SELECT id FROM runs WHERE project = ?)",
-        (project,),
-    )
-    conn.execute("DELETE FROM runs WHERE project = ?", (project,))
+def _replace_project(
+    conn: sqlite3.Connection, project: str, records: list[RunRecord], scanned_at: str
+) -> None:
+    """Make `project`'s rows in `runs` match `records` exactly.
+
+    Upserts by `(project, name)` -- the unique index migration 006 adds --
+    rather than deleting every row and re-inserting, so `runs.id` survives a
+    re-scan that finds the same run again. That id is the only thing a reader
+    can cite (a Datasette row URL); reassigning it on every scan would break
+    every citation made before the scan ran. A run whose name no longer
+    appears in `records` is still deleted -- the artifacts on disk are the
+    source of truth, so a run that vanished there vanishes here too.
+    """
+    keep_names = {r.name for r in records}
+    existing = {
+        row["name"]: row["id"]
+        for row in conn.execute("SELECT id, name FROM runs WHERE project = ?", (project,))
+    }
+    stale_ids = [rid for name, rid in existing.items() if name not in keep_names]
+    if stale_ids:
+        placeholders = ",".join("?" * len(stale_ids))
+        conn.execute(f"DELETE FROM run_metrics WHERE run_id IN ({placeholders})", stale_ids)
+        conn.execute(f"DELETE FROM runs WHERE id IN ({placeholders})", stale_ids)
+
     for r in records:
         cur = conn.execute(
             "INSERT INTO runs(project, name, family, status, started, source_path,"
-            " config_json, notes, corpus_id, adapter) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " config_json, notes, corpus_id, adapter, scanned_at) VALUES"
+            " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(project, name) DO UPDATE SET"
+            " family = excluded.family, status = excluded.status,"
+            " started = excluded.started, source_path = excluded.source_path,"
+            " config_json = excluded.config_json, notes = excluded.notes,"
+            " corpus_id = excluded.corpus_id, adapter = excluded.adapter,"
+            " scanned_at = excluded.scanned_at",
             (
                 r.project,
                 r.name,
@@ -346,9 +405,17 @@ def _replace_project(conn: sqlite3.Connection, project: str, records: list[RunRe
                 r.notes,
                 r.corpus_id,
                 r.adapter,
+                scanned_at,
             ),
         )
-        run_id = cur.lastrowid
+        # NOT cur.lastrowid: SQLite's last_insert_rowid() is unreliable across
+        # an UPDATE taken via ON CONFLICT DO UPDATE -- measured returning the
+        # PREVIOUS statement's inserted id (a sibling run from earlier in this
+        # same loop) rather than the row just updated. existing[] was read
+        # before this loop, so it names the true id for every row that
+        # already existed; only a genuinely new row needs lastrowid.
+        run_id = existing.get(r.name, cur.lastrowid)
+        conn.execute("DELETE FROM run_metrics WHERE run_id = ?", (run_id,))
         seen: set[tuple] = set()
         for m in r.metrics:
             key = (m.metric, m.step, m.split)
@@ -624,7 +691,7 @@ def _best_step(values: list[dict], direction: str) -> dict | None:
 def _family_rows(conn: sqlite3.Connection, family: str, project: str | None) -> list[dict]:
     """The runs of one family, optionally narrowed to a project."""
     sql = (
-        "SELECT r.id, r.project, r.name, r.status, r.source_path, r.adapter,"
+        "SELECT r.id, r.project, r.name, r.status, r.source_path, r.adapter, r.notes,"
         # c.source too: upsert records a CONTESTED marker there when one
         # corpus name carries two conflicting declarations, and a comparison
         # must not vouch for a corpus whose own definition is disputed.
@@ -1096,6 +1163,17 @@ def _corpus_agreement(runs: list[dict], metric: str) -> tuple[str | None, list[s
     return (next(iter(known)) if known else None), []
 
 
+def _dvc_hash_caveats(runs: list[dict]) -> list[str]:
+    """One caveat per run whose `notes` names a dvc.lock hash mismatch.
+
+    Only that specific note text is surfaced here -- `notes` also carries a
+    config file's prose header (`test_config_header_is_kept_verbatim`) and
+    other adapter-specific text unrelated to trust, and turning every note
+    into a caveat would print a run's own commentary back as a warning.
+    """
+    return [r["notes"] for r in runs if r.get("notes") and "dvc.lock hash mismatch" in r["notes"]]
+
+
 def _all_caveats(
     scored: list[dict], metric: str, corpus_caveats: list[str], runs: list[dict]
 ) -> list[str]:
@@ -1110,6 +1188,7 @@ def _all_caveats(
     return (
         _caveats(scored, metric)
         + corpus_caveats
+        + _dvc_hash_caveats(runs)
         + adapter_caveats([r.get("adapter") for r in runs])
     )
 

@@ -7,6 +7,7 @@ and CSV result shapes.
 """
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,8 @@ import pytest
 from attestation import ledger
 from attestation.db import get_db
 from attestation.ledger_adapters import generic
+
+REPO = Path(__file__).resolve().parents[1]
 
 
 def write(path: Path, text: str) -> Path:
@@ -149,3 +152,20 @@ def test_family_of_sweep_shape_is_unchanged():
 
 def test_family_of_a_name_with_no_separator_is_still_ungrouped():
     assert generic.family_of("foo") is None
+
+
+def test_dvc_lock_hash_mismatch_is_recorded(tmp_path):
+    """`dvc.lock` records an md5 per output as DVC's own integrity check --
+    reading a metric file whose content no longer matches that recorded
+    digest and saying nothing is worse than not checking at all: it lets a
+    hand-edited metrics/0.01.json silently rescan as a legitimate result."""
+    src = REPO / "examples" / "dvc"
+    dst = tmp_path / "dvc"
+    shutil.copytree(src, dst)
+    metric = next((dst / "metrics").glob("*.json"))
+    metric.write_text('{"auc": 0.5}')  # dvc.lock left untouched
+
+    recs = generic.discover(dst)
+
+    bad = [r for r in recs if r.notes and "dvc.lock hash mismatch" in r.notes]
+    assert len(bad) == 1 and metric.name in bad[0].notes

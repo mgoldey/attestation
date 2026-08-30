@@ -110,6 +110,11 @@ CREATE TABLE IF NOT EXISTS runs(
   -- values, not curves), and without this a wandb-derived run is
   -- indistinguishable in `runs.list` from a hand-written JSON one.
   adapter TEXT,
+  -- When the ledger last read this run's artifact, ISO-8601 UTC. NULL means
+  -- "recorded before this column existed" -- never "just scanned". The
+  -- artifact's own `started` time is a different fact: a stale artifact
+  -- re-scanned today has an old `started` and a fresh `scanned_at`.
+  scanned_at TEXT,
   UNIQUE (project, name)
 );
 -- long format, not wide: projects report entirely different metrics, and a
@@ -123,6 +128,10 @@ CREATE TABLE IF NOT EXISTS run_metrics(
   PRIMARY KEY (run_id, metric, step, split)
 );
 CREATE INDEX IF NOT EXISTS idx_runs_family ON runs(project, family);
+-- Named explicitly (rather than relying on the inline UNIQUE above, which
+-- SQLite backs with an unnamed sqlite_autoindex_*) so migration 006 can
+-- create the identical index by name on a database that predates it.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_project_name ON runs(project, name);
 {corpus_schema}
 CREATE TRIGGER IF NOT EXISTS trg_items_delete_vector AFTER DELETE ON items BEGIN
   DELETE FROM item_vectors WHERE rowid = old.id;
@@ -285,6 +294,29 @@ def _migration_005_add_engagement(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_006_add_runs_scanned_at(conn: sqlite3.Connection) -> None:
+    """Add runs.scanned_at and a unique index on (project, name).
+
+    Purely additive and idempotent. Existing runs get NULL, which is correct:
+    they were recorded before anything tracked when the ledger read them, and
+    backfilling them to "now" would state as fact something nobody measured.
+
+    The unique index is added here too, not as a separate migration: it is
+    what lets `ledger.scan()` upsert a run by (project, name) instead of
+    deleting and re-inserting it, which is what keeps `runs.id` stable across
+    a re-scan of an unchanged project -- the id is the only thing a reader can
+    cite (a Datasette row URL), so a re-scan that silently reassigns it would
+    break every citation made before it ran. `runs` already declares
+    `UNIQUE (project, name)` in fresh-database SCHEMA, so this index is a
+    no-op there and only does real work on a database migrated from before it
+    existed.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
+    if "scanned_at" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN scanned_at TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_project_name ON runs(project, name)")
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -298,6 +330,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (3, _migration_003_add_runs_adapter),
     (4, _migration_004_drop_dead_kg_tables),
     (5, _migration_005_add_engagement),
+    (6, _migration_006_add_runs_scanned_at),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]

@@ -234,3 +234,86 @@ structural.
   the tool surface is 45 with the counts in `CLAUDE.md` and
   `docs/guides/agents.md` matching the live surface.
 - W9 and WB4 record what the test found, not what was hoped.
+
+## Deviations and findings
+
+Recorded during implementation of WB3, WB4, P3, P5, and W9 (ledger code
+task, this wave).
+
+- **W9: GREEN on arrival.** `test_caveats_do_not_confuse_nested_arm_keys_with_eval_splits`
+  passed against `_caveats` unmodified. Traced why: `_split_rank("arms.A")`
+  and `_split_rank("arms.B")` both fall through every `_EVAL_SPLITS`/
+  `_TRAIN_SPLITS` prefix check and return `len(_EVAL_SPLITS)` (7) -- the same
+  value `_split_rank(None)` returns for an unlabelled split. Two nested-arm
+  keys therefore always land at the *same* rank as each other (and as
+  "unlabelled"), so `_caveats`' `len(ranks_seen) > 1` check never sees a
+  difference between them and the "arms are judged on different splits"
+  caveat cannot fire on a nested-arm family. This is accidental correctness,
+  not a documented invariant: the risk Wickham's finding 9 named (a real new
+  eval split colliding in rank with a nested-arm key, e.g. an arm literally
+  named `test.something`) is still live, since `_split_rank` would then
+  return a rank *less than* 7 for that one key and trip the mismatch check
+  for the wrong reason. No change made per the brief (`_caveats` stays
+  byte-identical); flagged here rather than silently trusted.
+
+- **WB4: unstable as found; made stable by upsert.** `test_run_ids_survive_a_rescan_of_an_unchanged_project`
+  was RED before any change: `_replace_project` deleted every row for a
+  project and re-inserted, so `runs.id` (an `INTEGER PRIMARY KEY` rowid)
+  advanced on every scan even when the same `(project, name)` pairs were
+  found again -- despite `runs` already declaring `UNIQUE (project, name)`,
+  which prevented duplicates but did nothing for id stability under
+  delete-then-insert. Fixed: migration 006 adds a named unique index
+  `idx_runs_project_name` (a no-op on a fresh database, which already gets
+  the same index via the inline `UNIQUE` plus an explicit named copy added
+  to `SCHEMA` for consistency; real work only on a database migrated from
+  before it existed), and `_replace_project` now upserts each record via
+  `INSERT ... ON CONFLICT(project, name) DO UPDATE`, deleting only the rows
+  for names that vanished from the artifacts. One implementation pitfall
+  worth recording: `cursor.lastrowid` after an upsert that takes the UPDATE
+  branch is NOT reliable in Python's sqlite3 (measured: it returned the
+  *previous* INSERT's rowid -- a sibling run from earlier in the same loop
+  -- rather than the row just updated, corrupting `run_metrics.run_id`
+  foreign keys on the second scan of a multi-run project). Fixed by looking
+  up each existing id from a `SELECT` taken before the upsert loop runs,
+  and falling back to `cursor.lastrowid` only for a genuinely new row.
+  `docs/guides/ledger.md`'s Browsing section is NOT edited here (owned by
+  another task this wave); this paragraph is the factual basis for whoever
+  writes "the Datasette row id is stable across a re-scan of the same
+  project/name pair" there.
+
+- **Config ladder (P5): the two ladders differed in two ways, not one.**
+  `_metric_direction_path()` (a) took no `workspace` argument -- nothing
+  had ever asked for a per-workspace override of `metric_direction.toml`
+  -- and (b) always returned a `Path` regardless of whether the file
+  existed, because its callers use it to name where to *create* the file in
+  a refusal message (`no metric with a known direction ... Declare one
+  under [metric_direction] in <path>`), and the common case for that
+  message is precisely that the file does not exist yet. `manifest_path()`
+  (a) took an optional `workspace` and checked it, and (b) checked
+  `is_file()` itself and returned `None` when nothing was found, because
+  its caller (`load_manifest`) needs to distinguish "no manifest" from "a
+  manifest at an empty path". Resolution: `ledger._config_ladder(env_var,
+  filename, workspace=None) -> Path` is the shared path-resolution step
+  only (env, then workspace file if present, then `~/.hermes/<filename>`),
+  always returning a path and never checking existence -- each caller keeps
+  its own existence-checking behaviour on top. `_metric_direction_path()`
+  calls it with no workspace and returns the bare path. `corpus.manifest_path()`
+  calls it with the workspace and applies its own `is_file()` check,
+  preserving its `Path | None` return exactly as before (verified: env-path
+  missing, workspace file present, and nothing-anywhere all reproduce the
+  pre-refactor behaviour). `corpus.py` imports `ledger._config_ladder`
+  lazily inside the function body, not at module level, since `ledger.py`
+  already imports `corpus` lazily inside `scan()`/`_link_corpora` -- a
+  module-level import back would cycle.
+
+- **P3 (dvc.lock hash mismatch): adopted as specified.** `_dvc_lock_outs`
+  parses `dvc.lock`'s `outs:` block the same way `_dvc_lock_params` parses
+  `params:` (line-indentation walk, no YAML library). `_dvc_runs` hashes
+  each metric file with `hashlib.md5` when `dvc.lock` records a digest for
+  it and compares; a mismatch sets `RunRecord.notes` to
+  `"dvc.lock hash mismatch: <relpath> changed since dvc repro"`.
+  `ledger._family_rows` now selects `r.notes` (previously omitted) and a
+  new `_dvc_hash_caveats` helper surfaces only notes containing that exact
+  substring as `compare()` caveats -- deliberately narrow, since `notes`
+  also carries unrelated adapter text (a config file's prose header) that
+  must not be reprinted as a trust warning.

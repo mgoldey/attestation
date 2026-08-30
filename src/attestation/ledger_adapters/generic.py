@@ -20,6 +20,7 @@ as `score`, and `compare` will refuse to rank it until someone declares which
 direction is better, because guessing ranks ablations backwards.
 """
 
+import hashlib
 import json
 import math
 import re
@@ -1159,6 +1160,54 @@ def _dvc_lock_params(dvc_lock: Path) -> dict[str, dict[str, str]]:
     return result
 
 
+def _dvc_lock_outs(dvc_lock: Path) -> dict[str, dict[str, str]]:
+    """Each stage instance's recorded `outs:` digests from `dvc.lock`.
+
+    `dvc.lock` nests as `stages: <name>: outs: - path: <relpath> / hash: md5
+    / md5: <digest> / size: <n>`. DVC's whole integrity guarantee is this
+    digest: it is recomputed and compared on every `dvc repro`/`dvc status`,
+    and reading it here for the same purpose costs nothing extra -- the file
+    is already open and walked for `_dvc_lock_params`.
+
+    Returns `{stage_name: {relpath: md5}}`, one entry per `outs:` item that
+    carries an md5 (DVC's default hash; a stage using a different algorithm
+    is skipped rather than compared against the wrong digest).
+    """
+    lines = _indented_lines(dvc_lock.read_text(errors="replace"))
+    result: dict[str, dict[str, str]] = {}
+    i = 0
+    while i < len(lines) and lines[i][:2] != (0, "stages"):
+        i += 1
+    i += 1
+    stage_indent = lines[i][0] if i < len(lines) else None
+    while i < len(lines) and lines[i][0] == stage_indent:
+        stage_name = lines[i][1]
+        i += 1
+        outs: dict[str, str] = {}
+        depth = lines[i][0] if i < len(lines) and lines[i][0] > stage_indent else None
+        in_outs = False
+        outs_indent = None
+        current_path: str | None = None
+        while i < len(lines) and (depth is None or lines[i][0] >= depth):
+            indent, key, value = lines[i]
+            if key == "outs" and value is None:
+                in_outs = True
+                outs_indent = None
+            elif in_outs and outs_indent is None and key == "-":
+                outs_indent = indent  # the "- path: ..." line itself
+                current_path = value.split(":", 1)[1].strip() if value else None
+            elif in_outs and outs_indent is not None:
+                if indent == outs_indent and key == "-":
+                    current_path = value.split(":", 1)[1].strip() if value else None
+                elif indent > outs_indent and key == "md5" and current_path and value is not None:
+                    outs[current_path] = value
+                elif indent <= stage_indent:
+                    in_outs = False
+            i += 1
+        result[stage_name] = outs
+    return result
+
+
 def _dvc_metric_paths(root: Path) -> set[Path]:
     """Every metric file `dvc.yaml`'s declared stages point at, expanded --
     used by `discover` to keep the plain `metrics/` results scan from
@@ -1209,6 +1258,14 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     still read if they exist, just with no recorded config. A stage listing
     four `foreach` items when only two have a metric file on disk (an
     in-progress sweep) yields two runs, not four with two broken.
+
+    Also checks each metric file against `dvc.lock`'s own `outs:` digest --
+    DVC's entire integrity guarantee, recomputed here rather than trusted
+    blindly, since the ledger reads content mtime never touches. A file that
+    no longer hashes to what `dvc.lock` recorded (hand-edited after `dvc
+    repro`, or a stale checkout) gets its value read exactly as before, but
+    `RunRecord.notes` names the mismatch so `compare()` can surface it as a
+    caveat instead of presenting a silently-diverged number as trustworthy.
     """
     dvc_yaml = root / "dvc.yaml"
     if not dvc_yaml.is_file():
@@ -1220,6 +1277,7 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     top_params = _dvc_params_yaml(params_yaml) if params_yaml.is_file() else {}
     dvc_lock = root / "dvc.lock"
     lock_params = _dvc_lock_params(dvc_lock) if dvc_lock.is_file() else {}
+    lock_outs = _dvc_lock_outs(dvc_lock) if dvc_lock.is_file() else {}
 
     records: list[RunRecord] = []
     for stage_name, stage in sorted(stages.items()):
@@ -1230,6 +1288,7 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
         for item in items:
             instance = f"{stage_name}@{item}" if item is not None else stage_name
             metrics: list[Metric] = []
+            mismatches: list[str] = []
             for metric_rel in stage["metrics"]:
                 rel = metric_rel.replace("${item}", item) if item is not None else metric_rel
                 metric_path = root / rel
@@ -1238,6 +1297,12 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
                 payload = _load(metric_path)
                 if payload is not None:
                     metrics.extend(metrics_from_payload(payload, None, None))
+                recorded_md5 = lock_outs.get(instance, {}).get(rel)
+                if (
+                    recorded_md5
+                    and hashlib.md5(metric_path.read_bytes()).hexdigest() != recorded_md5
+                ):
+                    mismatches.append(rel)
             if not metrics:
                 continue  # declared but not yet produced -- not a broken run
 
@@ -1253,6 +1318,13 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
             if foreach_param and item is not None:
                 config[foreach_param] = item
 
+            notes = (
+                "; ".join(
+                    f"dvc.lock hash mismatch: {rel} changed since dvc repro" for rel in mismatches
+                )
+                or None
+            )
+
             records.append(
                 RunRecord(
                     project=root.name,
@@ -1261,6 +1333,7 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
                     family=stage_name if foreach_param else None,
                     status="recorded",
                     config=config or None,
+                    notes=notes,
                     metrics=metrics,
                     adapter="dvc",
                 )

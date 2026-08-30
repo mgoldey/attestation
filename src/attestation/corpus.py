@@ -159,20 +159,18 @@ def from_payload(payload) -> dict | None:
 
 def manifest_path(workspace: Path | None = None) -> Path | None:
     """Where the corpus manifest lives: LEDGER_CORPUS_FILE, then the
-    workspace, then the per-user file. Same ladder as metric_direction.toml --
-    the repo should not grow a second convention for the same idea."""
-    import os
+    workspace, then the per-user file -- `None` if nothing is there to read.
 
-    value = os.environ.get(CORPUS_FILE_ENV)
-    if value:
-        path = Path(value).expanduser()
-        return path if path.is_file() else None
-    if workspace:
-        candidate = Path(workspace) / "corpora.toml"
-        if candidate.is_file():
-            return candidate
-    default = Path.home() / ".hermes" / "corpora.toml"
-    return default if default.is_file() else None
+    Shares `ledger._config_ladder`'s precedence (imported lazily: `ledger`
+    imports this module at call time, so a module-level import back would
+    cycle). Unlike `ledger._metric_direction_path`, this checks existence
+    itself and returns `None` when absent: "nothing declared" must read as
+    no manifest, never as a manifest at a path that isn't there.
+    """
+    from attestation.ledger import _config_ladder
+
+    path = _config_ladder(CORPUS_FILE_ENV, "corpora.toml", workspace)
+    return path if path.is_file() else None
 
 
 def load_manifest(workspace: Path | None = None) -> tuple[dict, dict]:
