@@ -32,7 +32,7 @@ import _common
 # (an .ask router that must return options rather than a default).
 CALLS: list[tuple[str, dict, str]] = [
     # --- feed: personas first, since everything else needs one
-    ("feed.personas", {}, "ok"),
+    ("feed.persona_status", {}, "ok"),
     (
         "feed.persona_create",
         {"name": "flow-temp", "interests": "coral reef ecology and fish telemetry"},
