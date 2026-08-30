@@ -71,6 +71,43 @@ def test_body_fields_override_empty_defaults():
     assert f() == {"ok": True, "message": "", "n": 3, "rows": []}
 
 
+def test_callable_empty_gives_the_failing_branchs_own_envelope():
+    """A callable `empty` is resolved from the call's OWN arguments, so a
+    failure carries exactly the keys the branch that failed would have
+    succeeded with -- not the other branch's keys too.
+
+    This is what `feed.persona_status(user=None)` needed: a fixed `empty=`
+    forced the seven per-user training keys onto the three-key listing
+    branch (and vice versa), so `persona_status(user=None)` returned ten
+    keys instead of three even on success, let alone failure.
+    """
+
+    def shape(kwargs: dict) -> dict:
+        return {"listing": []} if kwargs.get("user") is None else {"detail": None, "user": None}
+
+    @tool(empty=shape, needs_db=False)
+    def f(user: str | None = None, explode: bool = False):
+        if explode:
+            raise ToolError("nope")
+        if user is None:
+            return {"listing": [1, 2]}
+        return {"detail": "trained", "user": user}
+
+    listing_ok = f()
+    assert listing_ok == {"ok": True, "message": "", "listing": [1, 2]}
+
+    listing_fail = f(explode=True)
+    assert listing_fail == {"ok": False, "message": "nope", "listing": []}
+    assert set(listing_fail) == set(listing_ok), "the listing branch's own envelope shape"
+
+    detail_ok = f(user="ana")
+    assert detail_ok == {"ok": True, "message": "", "detail": "trained", "user": "ana"}
+
+    detail_fail = f(user="ana", explode=True)
+    assert detail_fail == {"ok": False, "message": "nope", "detail": None, "user": None}
+    assert "listing" not in detail_fail, "must not carry the OTHER branch's keys"
+
+
 def test_unknown_user_names_the_valid_ones(tmp_path, monkeypatch):
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
 
@@ -127,7 +164,15 @@ def test_connection_is_closed_even_when_the_body_raises(tmp_path, monkeypatch):
 
 def _user_tools():
     """The tools that take a `user`, so an unknown persona forces the failure
-    branch without needing a differently-shaped bad input per tool."""
+    branch without needing a differently-shaped bad input per tool.
+
+    Two shapes both count: `needs_user=True` tools, whose wrapped signature is
+    `(conn, user_row, ...)` -- `@tool` resolves the row before the body runs
+    -- and a tool like `feed.persona_status` that resolves its OWN user by
+    hand and is `needs_user=False`, whose second parameter is still literally
+    named `user`. Both must answer an unknown persona with the full envelope;
+    only the resolution mechanism differs.
+    """
     import inspect
 
     from attestation import mcp_server
@@ -140,7 +185,7 @@ def _user_tools():
             if not (name.startswith("_") and callable(fn) and hasattr(fn, "__wrapped__")):
                 continue
             params = list(inspect.signature(fn.__wrapped__).parameters)
-            if len(params) >= 2 and params[0] == "conn" and params[1] == "user_row":
+            if len(params) >= 2 and params[0] == "conn" and params[1] in ("user_row", "user"):
                 found.append((f"{module.__name__}.{name}", fn))
     assert found, "no user-taking tools discovered"
     assert mcp_server  # imported for its side effect of registering everything

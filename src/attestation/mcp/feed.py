@@ -573,9 +573,19 @@ def _explain_item(conn, user_row, item_id: ItemId) -> dict:
     }
 
 
-@tool(
-    empty={
-        "users": [],
+# Two genuinely different shapes, not one shape with optional fields: the
+# no-user branch is `feed.personas`'s old {message, users} payload verbatim,
+# and forcing the seven per-user training keys onto it (their old fixed
+# `empty=`) meant `persona_status(user=None)` returned ten keys instead of
+# three, four of them meaningless zeros/Nones for a call that never ran a
+# GROUP BY. A callable `empty` keeps each branch's envelope honest.
+def _profile_status_empty(kwargs: dict) -> dict:
+    """The declared shape for whichever `_profile_status` branch this call
+    will take, so a failure -- including "unknown user" -- carries exactly
+    the keys that branch's success would have."""
+    if kwargs.get("user") is None:
+        return {"users": []}
+    return {
         "user": None,
         "interests": None,
         "clicks": 0,
@@ -583,9 +593,10 @@ def _explain_item(conn, user_row, item_id: ItemId) -> dict:
         "blend_weight": 0.0,
         "top_liked": [],
         "top_disliked": [],
-    },
-    label="profile_status",
-)
+    }
+
+
+@tool(empty=_profile_status_empty, label="profile_status")
 def _profile_status(conn, user: str | None = None) -> dict:
     """Every persona (no `user`), or one persona's training detail.
 
@@ -900,7 +911,13 @@ def _digest(
 ) -> dict:
     """`window_days` echoes the window that was ASKED for, on failure as well as
     success -- a caller that got nothing back still needs to know which window
-    came up empty. `empty` cannot carry a per-call value, so it is filled in here.
+    came up empty. `empty=` on `_digest_body` is a plain dict, so it cannot
+    carry this per-call value; a callable `empty` (see `_tool.tool`'s
+    docstring, added for `feed.persona_status`) is not used here on purpose --
+    this value depends on the ARGUMENT alone, not on which of two differently-
+    shaped branches ran, so patching it in after the envelope is simpler than
+    threading it through a lambda. `_digest_body`'s own `empty=` still needs
+    `window_days: 0` as a placeholder so the key exists to overwrite.
     """
     out = _digest_body(user, days, per_topic, limit)
     out["window_days"] = out.get("window_days") or days

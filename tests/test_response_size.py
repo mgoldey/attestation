@@ -749,6 +749,15 @@ def test_no_tool_exceeds_the_hard_ceiling_when_actually_driven(stocked):
                 "INSERT OR IGNORE INTO item_tags(item_id, tag) VALUES (?, ?)",
                 ((group % 40) + 1, f"g{group}_concept_{member}"),
             )
+    # feed.persona_status(user=None) lists every persona -- `stocked` seeds
+    # only "ana", and one row is 131 chars, under the census's 250-char
+    # "thin" floor. A few more make the no-user branch a real measurement
+    # rather than an accidentally-empty-looking one.
+    for extra in ("bel", "cid", "dov"):
+        conn.execute(
+            "INSERT INTO users(name, interests) VALUES (?, ?)",
+            (extra, "a longer interests string so the row is not trivially short"),
+        )
     conn.execute(
         "INSERT INTO runs(project, name, family, status, source_path)"
         " VALUES ('p', 'r', 'f', 'recorded', '/tmp/r.json')"
@@ -775,6 +784,11 @@ def test_no_tool_exceeds_the_hard_ceiling_when_actually_driven(stocked):
         "feed.digest": {"user": "ana"},
         "feed.read": {"user": "ana", "item_id": 1},
         "feed.persona_status": {"user": "ana"},
+        # The no-user listing branch is a genuinely different payload shape
+        # (the old feed.personas), not just the per-user branch with fewer
+        # fields -- O1's fold merged two tools, and the fix round for it
+        # found this branch had never been driven through the census at all.
+        "feed.persona_status@no-user": {},
         "feed.ask": {"user": "ana", "question": "what should I read"},
         "runs.list": {},
         "runs.detail": {"project": "p", "name": "r"},

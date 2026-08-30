@@ -125,9 +125,12 @@ def test_create_and_update_persona(seeded_conn):
 
 def test_persona_status_with_no_user_lists_every_persona(seeded_conn):
     """feed.persona_status(user=None) is the fold-in of the old feed.personas:
-    same payload keys, same message, no training computation."""
+    same payload keys, same message, no training computation -- and, since
+    `empty=` is now a callable branching on `user`, exactly the THREE keys
+    that branch declares, not the seven per-user training keys too."""
     out = mcp_server._profile_status_impl()
 
+    assert set(out) == {"ok", "message", "users"}
     names = [u["name"] for u in out["users"]]
     assert names == sorted(names) and len(names) >= 2
     assert set(out["users"][0]) == {"name", "interests"}

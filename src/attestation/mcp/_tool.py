@@ -28,6 +28,7 @@ know a cache exists.
 
 import contextlib
 import functools
+import inspect
 import logging
 import sqlite3
 from collections.abc import Callable
@@ -84,7 +85,7 @@ class ToolError(Exception):
 
 def tool(
     *,
-    empty: dict | None = None,
+    empty: dict | Callable[[dict], dict] | None = None,
     needs_user: bool = False,
     needs_db: bool = True,
     label: str | None = None,
@@ -100,28 +101,54 @@ def tool(
     call has the same shape as a successful one. That is the property callers
     could not rely on before, and it is now enforced structurally rather than
     by 34 hand-written error branches.
+
+    `empty` may also be a callable `(kwargs: dict) -> dict`, resolved once per
+    call from the tool's OWN arguments -- `conn`/`user_row` excluded, bound by
+    `fn`'s real parameter names so a positional or keyword call sees the same
+    dict -- for a tool whose shape genuinely branches on an argument, such as
+    `feed.persona_status(user=None)` returning `{"users": [...]}` when listing
+    versus the seven per-user training keys when given one. A plain dict is
+    still the right choice whenever one shape covers every call, which is
+    every other tool on this surface; reach for the callable form only when a
+    fixed `empty` would force one branch's keys onto the other's envelope.
     """
-    empty = empty or {}
 
     def decorate(fn: Callable) -> Callable:
         """Bind `fn` inside the ritual described in `tool`'s own docstring."""
         name = label or getattr(fn, "__name__", "tool")
+        # The tool's OWN parameter names, minus the injected `conn`/`user_row`
+        # leaders -- these are exactly the names a caller's positional args
+        # bind to, so a callable `empty` sees the same kwargs regardless of
+        # whether the caller passed them positionally or by keyword.
+        own_params = list(inspect.signature(fn).parameters)
+        if needs_db:
+            own_params = own_params[1:]
+        if needs_user:
+            own_params = own_params[1:]
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
             """The actual per-call ritual: connection, user lookup, the try
             block whose except clauses are documented individually below."""
+            if empty is None:
+                resolved_empty: dict = {}
+            elif isinstance(empty, dict):
+                resolved_empty = empty
+            else:
+                bound = dict(zip(own_params, args, strict=False))
+                bound.update(kwargs)
+                resolved_empty = empty(bound)
 
             def fail(message: str) -> dict:
                 """The failure envelope: `empty`'s fields plus why."""
-                return {"ok": False, "message": message, **empty}
+                return {"ok": False, "message": message, **resolved_empty}
 
             def succeed(result: dict | None) -> dict:
                 """The success envelope: the body's own fields layered over
                 `empty`'s defaults, so both envelopes share every key."""
                 result = dict(result or {})
                 message = result.pop("message", "")
-                return {"ok": True, "message": message, **{**empty, **result}}
+                return {"ok": True, "message": message, **{**resolved_empty, **result}}
 
             try:
                 if not needs_db:
