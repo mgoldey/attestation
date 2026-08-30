@@ -1298,11 +1298,15 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
                 if payload is not None:
                     metrics.extend(metrics_from_payload(payload, None, None))
                 recorded_md5 = lock_outs.get(instance, {}).get(rel)
-                if (
-                    recorded_md5
-                    and hashlib.md5(metric_path.read_bytes()).hexdigest() != recorded_md5
-                ):
-                    mismatches.append(rel)
+                if recorded_md5:
+                    # md5, matching dvc.lock's own recorded algorithm -- an
+                    # integrity comparison against DVC's own digest, not a
+                    # security hash, so usedforsecurity=False.
+                    actual_md5 = hashlib.md5(
+                        metric_path.read_bytes(), usedforsecurity=False
+                    ).hexdigest()
+                    if actual_md5 != recorded_md5:
+                        mismatches.append(rel)
             if not metrics:
                 continue  # declared but not yet produced -- not a broken run
 
