@@ -27,6 +27,7 @@ _EMPTY = {
     "equal": None,
     "symbol": None,
     "parsed_input": None,
+    "traced": None,
 }
 
 

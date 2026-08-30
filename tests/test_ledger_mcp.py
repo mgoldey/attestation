@@ -261,6 +261,44 @@ def test_claims_check_says_nothing_uncited_when_the_key_resolves(workspace, tmp_
     assert out["counts"] == {"supported": 1}
 
 
+def test_claims_check_response_states_what_it_checked(workspace, tmp_path, monkeypatch):
+    """`checked` states the numeric/citation pairing as data, not only in the
+    prose a small model was measured to miss (3/3 on gemma4:e2b, per
+    cite.check's own comment)."""
+    monkeypatch.chdir(tmp_path)  # a resolvable .bib on the path
+    (tmp_path / "refs.bib").write_text(
+        "@article{real2020thing,\n  title = {A Real Thing},\n  year = {2020},\n}\n"
+    )
+    mcp_server._runs_scan_impl(confirm=True)
+    doc = tmp_path / "R.md"
+    doc.write_text("<!-- claim: proj/eval_step_100 metric=wer value=0.4 cite=real2020thing -->\n")
+
+    out = mcp_server._claims_check_impl(str(doc))
+
+    assert out["checked"] == ["numeric", "citation"]
+
+
+def test_claims_check_checked_omits_citation_when_the_resolver_cannot_build(
+    workspace, tmp_path, monkeypatch
+):
+    """An unbuildable resolver means the citation lint did not run, so
+    `checked` must not claim it did -- the same false-clean-bill-of-health
+    failure `cite.check`'s own comment warns against."""
+    from attestation import citations
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("no citation backend available")
+
+    monkeypatch.setattr(citations.Resolver, "from_env", _boom)
+    mcp_server._runs_scan_impl(confirm=True)
+    doc = tmp_path / "R.md"
+    doc.write_text("<!-- claim: proj/eval_step_100 metric=wer value=0.4 -->\n")
+
+    out = mcp_server._claims_check_impl(str(doc))
+
+    assert out["checked"] == ["numeric"]
+
+
 def test_runs_list_does_not_paste_absolute_paths_for_every_run(tmp_path, monkeypatch):
     """`source_path` is the most expensive field in a runs.list row and the
     least useful there.

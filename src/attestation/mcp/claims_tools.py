@@ -52,14 +52,22 @@ def _citation_resolver():
         return None
 
 
-@tool(empty={"claims": [], "counts": {}, "malformed": []}, label="claims_check")
+@tool(empty={"claims": [], "counts": {}, "malformed": [], "checked": []}, label="claims_check")
 def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
     target = _target(path)
     # The citation lint runs alongside the numeric check: a claim whose number
     # agrees but whose `cite=` key no source has is not `supported`, and this
     # is the tool whose name says it checks claims. Claims with no `cite=` are
     # untouched -- see claims.check_citations.
-    out = claims.check(conn, target, resolver=_citation_resolver())
+    resolver = _citation_resolver()
+    out = claims.check(conn, target, resolver=resolver)
+    # States the pairing with cite.check as data, not only in prose: a caller
+    # comparing the two tools' payloads sees the scope difference directly.
+    # "citation" only appears when a resolver could be built -- an unbuildable
+    # resolver means the lint did not run, so claiming it was checked would be
+    # the same false-clean-bill-of-health failure cite.check's own comment
+    # warns about.
+    checked = ["numeric", "citation"] if resolver is not None else ["numeric"]
     rows = [
         {
             "verdict": v.verdict,
@@ -84,6 +92,7 @@ def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
         "claims": rows,
         "counts": out["counts"],
         "malformed": out["malformed"],
+        "checked": checked,
     }
 
 

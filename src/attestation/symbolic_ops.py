@@ -165,6 +165,7 @@ def op_derivation(payload: dict) -> dict:
         out = describe(sp.integrate(expr, symbol))
         out["steps"] = _walk_steps(rule)[:50]
         out["note"] = "step rules from SymPy's manual-integration engine"
+        out["traced"] = True
     else:
         result = sp.diff(expr, symbol)
         out = describe(result)
@@ -176,6 +177,10 @@ def op_derivation(payload: dict) -> dict:
             "SymPy does not expose a step-by-step engine for differentiation, so "
             "this is the result with its input, not a rule-by-rule trace"
         )
+        # A caller checking the response, not only the docstring it may have
+        # read minutes earlier, needs to see that `steps` is prose-shaped here
+        # rather than a genuine rule-by-rule trace.
+        out["traced"] = False
     out["parsed_input"] = str(expr)
     out["symbol"] = str(symbol)
     return out

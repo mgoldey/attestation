@@ -123,6 +123,17 @@ def test_create_and_update_persona(seeded_conn):
     assert status["blend_weight"] == 0.0
 
 
+def test_persona_status_with_no_user_lists_every_persona(seeded_conn):
+    """feed.persona_status(user=None) is the fold-in of the old feed.personas:
+    same payload keys, same message, no training computation."""
+    out = mcp_server._profile_status_impl()
+
+    names = [u["name"] for u in out["users"]]
+    assert names == sorted(names) and len(names) >= 2
+    assert set(out["users"][0]) == {"name", "interests"}
+    assert out["message"] == f"{len(names)} user(s)"
+
+
 def test_destructive_tools_refuse_without_confirm(seeded_conn):
     from attestation.db import resolve_db_path
 

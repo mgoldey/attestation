@@ -422,3 +422,19 @@ def test_cite_check_says_it_only_checked_the_keys(tmp_path):
         f"the result never names the tool that checks the numbers: {message!r}"
     )
     assert "CITATION KEYS only" in message, message
+
+
+def test_cite_check_response_states_what_it_checked(tmp_path):
+    """`checked` states the same scope as data: cite.check only ever checks
+    citation keys, never the numbers -- see test_claims_check_response_states_
+    what_it_checked in test_ledger_mcp.py for the runs.claims_check side of
+    the pairing."""
+    from attestation.mcp.citation import _check
+
+    draft = tmp_path / "paper.md"
+    draft.write_text(
+        "Our system reaches 5.3% WER.\n"
+        "<!-- claim: ablation/stack_4 metric=wer value=0.053 tol=0.001 -->\n"
+    )
+    out = _check(path=str(draft))
+    assert out["checked"] == ["citation"]

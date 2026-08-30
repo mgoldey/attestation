@@ -61,7 +61,6 @@ from attestation.mcp import symbolic as _sym  # noqa: E402
 _list_feed_impl = _feed._list_feed
 _record_feedback_impl = _feed._record_feedback
 _explain_item_impl = _feed._explain_item
-_list_users_impl = _feed._list_users
 _add_feed_impl = _subs._add_feed
 _list_feeds_impl = _subs._list_feeds
 _remove_feed_impl = _subs._remove_feed

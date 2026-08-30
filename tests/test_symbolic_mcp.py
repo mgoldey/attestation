@@ -53,6 +53,16 @@ def test_sym_verify_surfaces_the_verdict():
     assert out["verdict"] == "equal"
 
 
+def test_sym_derivation_flags_untraced_differentiate():
+    """`traced` says, in the response itself, whether `steps` is a genuine
+    rule-by-rule trace or prose noting SymPy has no step engine for it --
+    a fact the docstring stated but the payload did not."""
+    from attestation.mcp.symbolic import _sym_derivation
+
+    assert _sym_derivation("x**2", operation="differentiate")["traced"] is False
+    assert _sym_derivation("x**2", operation="integrate")["traced"] is True
+
+
 def test_all_seven_tools_are_served():
     import asyncio
 

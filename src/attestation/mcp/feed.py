@@ -28,7 +28,7 @@ from attestation.mcp._shared import (
     ranking_quality,
     validate_window,
 )
-from attestation.mcp._tool import ToolError, tool
+from attestation.mcp._tool import ToolError, tool, unknown_user_message
 from attestation.mcp.personas import (
     _create_persona,
     _delete_persona,
@@ -75,8 +75,8 @@ def register(mcp) -> None:
 
         An unrecognised `user` is CREATED, not refused: a new reader is seeded
         from the corpus's most common topics, and the response says so. Do not
-        use this tool to test whether a persona exists -- `feed.personas` lists
-        them without writing.
+        use this tool to test whether a persona exists -- `feed.persona_status`
+        (with no `user`) lists them without writing.
 
         `since_days` bounds how far back the feed reaches -- defaults to 14, so an
         empty result may mean "nothing published in the window" rather than
@@ -127,15 +127,6 @@ def register(mcp) -> None:
         """
         return _explain_item(user, item_id)
 
-    @mcp.tool(name="feed.personas")
-    def list_users() -> dict:
-        """List all available reader personas (users) and their interest profiles.
-
-        Use this to discover which `user` values are valid for `feed.list`,
-        feed.rate, and feed.explain before calling them.
-        """
-        return _list_users()
-
     @mcp.tool(name="feed.persona_create")
     def create_persona(name: str, interests: Interests) -> dict:
         """Create a reader persona from a name and an interests description.
@@ -157,10 +148,13 @@ def register(mcp) -> None:
         return _propose_interests(limit)
 
     @mcp.tool(name="feed.persona_status")
-    def profile_status(user: str) -> dict:
-        """How well-trained a persona is, and on what.
+    def profile_status(user: str | None = None) -> dict:
+        """Who the reader personas are, or how well-trained one of them is.
 
-        Click count, how much of the ranking is driven by behaviour versus the
+        Omit `user` to list every persona's name and interests -- use this to
+        discover which `user` values are valid for `feed.list`, feed.rate, and
+        feed.explain before calling them. Pass `user` for one persona's detail:
+        click count, how much of the ranking is driven by behaviour versus the
         written interests, and the tags this reader liked and disliked most."""
         return _profile_status(user)
 
@@ -579,17 +573,9 @@ def _explain_item(conn, user_row, item_id: ItemId) -> dict:
     }
 
 
-@tool(empty={"users": []}, label="list_users")
-def _list_users(conn) -> dict:
-    rows = conn.execute("SELECT name, interests FROM users ORDER BY name").fetchall()
-    return {
-        "message": f"{len(rows)} user(s)",
-        "users": [{"name": r["name"], "interests": r["interests"]} for r in rows],
-    }
-
-
 @tool(
     empty={
+        "users": [],
         "user": None,
         "interests": None,
         "clicks": 0,
@@ -598,14 +584,34 @@ def _list_users(conn) -> dict:
         "top_liked": [],
         "top_disliked": [],
     },
-    needs_user=True,
     label="profile_status",
 )
-def _profile_status(conn, user_row) -> dict:
-    from attestation.features import top_and_bottom_keys
-    from attestation.rank import blend_weight
+def _profile_status(conn, user: str | None = None) -> dict:
+    """Every persona (no `user`), or one persona's training detail.
 
-    user = user_row["name"]
+    The two questions this answered as separate tools -- "which personas
+    exist" and "how well-trained is this one" -- share one row of the `users`
+    table, so they are one tool distinguished by arity: omitting `user` is the
+    fast, no-training-computation discovery path (today's `feed.personas`
+    payload, unchanged), and passing it runs the `GROUP BY` and
+    `top_and_bottom_keys` a discovery call does not need. `needs_user` is not
+    used here because that resolves-or-refuses before the body runs, and the
+    no-user branch must stay reachable rather than always requiring one.
+    """
+    if user is None:
+        rows = conn.execute("SELECT name, interests FROM users ORDER BY name").fetchall()
+        return {
+            "message": f"{len(rows)} user(s)",
+            "users": [{"name": r["name"], "interests": r["interests"]} for r in rows],
+        }
+
+    from attestation.features import top_and_bottom_keys
+    from attestation.rank import blend_weight, get_user
+
+    user_row = get_user(conn, user)
+    if user_row is None:
+        raise ToolError(unknown_user_message(conn, user))
+
     n_clicks = conn.execute(
         "SELECT COUNT(*) c FROM clicks WHERE user_id = ?", (user_row["id"],)
     ).fetchone()["c"]
@@ -618,7 +624,7 @@ def _profile_status(conn, user_row) -> dict:
         )
     }
     return {
-        "user": user,
+        "user": user_row["name"],
         "interests": user_row["interests"],
         "clicks": n_clicks,
         "clicks_by_source": by_source,

@@ -31,6 +31,7 @@ FEED_CASES = [
     ("show me my feeds", "feed.sources"),
     ("add arxiv cs.CL to my feeds", "feed.source_add"),
     ("how well trained is my persona?", "feed.persona_status"),
+    ("who are the personas?", "feed.persona_status"),
 ]
 RUNS_CASES = [
     ("which arm of my sweep won?", "runs.compare"),

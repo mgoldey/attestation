@@ -58,7 +58,7 @@ def _search(query: str, limit: int = 5) -> dict:
     }
 
 
-@tool(empty={"uncited": [], "n_claims": 0}, needs_db=False, label="cite_check")
+@tool(empty={"uncited": [], "n_claims": 0, "checked": []}, needs_db=False, label="cite_check")
 def _check(path: str) -> dict:
     from pathlib import Path
 
@@ -97,6 +97,9 @@ def _check(path: str) -> dict:
             {"key": v.claim.cite, "where": f"{v.claim.path}:{v.claim.line}", "why": v.message}
             for v in uncited
         ],
+        # States the same pairing runs.claims_check's "checked" states: this
+        # tool only ever checked citation keys, never the numbers.
+        "checked": ["citation"],
     }
 
 

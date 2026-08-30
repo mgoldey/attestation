@@ -47,7 +47,7 @@ Full argument, including what survives for multi-step orchestration:
 ## 2. Prompt tuning: length is zero-sum on a small model
 
 Every intuition here was wrong at least once. Measured on `gemma4:e2b`,
-temp 0, against the live 46-tool MCP surface.
+temp 0, against the live 45-tool MCP surface.
 
 **Longer descriptions make routing worse.** Lengthening the skill description
 for `research-provenance` to assert priority dropped it 12/16 → 9/16. The
@@ -69,7 +69,7 @@ than refusing, every such call risked an empty persona that ranks badly
 forever. Naming the persona in the prompt: 9/9 correct.
 
 **Restricting the tool surface is not automatically a win.** `ATTEST_TOOLS=feed`
-(22 tools) scored *worse* than the full 46 tools (7/12 vs 9/12) before the system
+(21 tools) scored *worse* than the full 45 tools (7/12 vs 9/12) before the system
 prompt was fixed. The failures were the model declining to call anything, not
 choosing wrongly — a framing problem, not a surface-size problem.
 

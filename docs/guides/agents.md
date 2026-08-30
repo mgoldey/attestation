@@ -51,7 +51,7 @@ mcp_servers:
 
 Verify with `hermes mcp list` — you should see `attestation ... ✓ enabled`.
 
-The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 46 tools.
+The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 45 tools.
 These counts move: re-measure rather than quoting this paragraph.
 
 ```bash
@@ -63,7 +63,6 @@ m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
 
 | Tool | What it does | Speed |
 |---|---|---|
-| `feed.personas()` | List reader personas + interest profiles | instant |
 | `feed.list(user, limit)` | Ranked unread items, best first (capped at 13) | fast |
 | `feed.search(user, query, tag, content_type, limit)` | Search the whole archive, ranked for this user; includes already-rated items | fast |
 | `feed.read(user, item_id)` | Read ONE item in full — title, source, abstract | fast |
@@ -72,7 +71,7 @@ m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
 | `feed.persona_create(name, interests)` | Create a reader persona | instant |
 | `feed.persona_update(name, interests)` | Replace a persona's interests text | instant |
 | `feed.persona_suggest_interests(limit)` | Most common tags, to help write an interests string | instant |
-| `feed.persona_status(user)` | Click count, behavior-vs-text blend weight, top liked/disliked tags | instant |
+| `feed.persona_status(user=None)` | Omit `user`: every persona's name + interests. Pass it: click count, behavior-vs-text blend weight, top liked/disliked tags | instant |
 | `feed.persona_delete(name, confirm)` | Delete a persona and its feedback (needs `confirm=true`) | instant |
 | `feed.persona_reset(name, confirm)` | Clear a persona's clicks, keep the persona (needs `confirm=true`) | instant |
 | `feed.harvest_engagement(user)` | Turn past "why is this here?" questions into weak positive feedback | fast |

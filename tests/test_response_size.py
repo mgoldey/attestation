@@ -587,7 +587,6 @@ COMPOSITION_TOOLS = {
     "kg.concepts": "the graph vocabulary, which is the answer",
     "feed.sources": "one row per subscribed feed",
     "feed.digest": "grouped, and separately bounded at MAX_DIGEST_ITEMS",
-    "feed.personas": "one row per reader; small and bounded by persona count",
     "feed.source_suggest": "a scored shortlist the caller picks from",
 }
 
@@ -775,7 +774,6 @@ def test_no_tool_exceeds_the_hard_ceiling_when_actually_driven(stocked):
         "feed.search": {"user": "ana", "query": "topic"},
         "feed.digest": {"user": "ana"},
         "feed.read": {"user": "ana", "item_id": 1},
-        "feed.personas": {},
         "feed.persona_status": {"user": "ana"},
         "feed.ask": {"user": "ana", "question": "what should I read"},
         "runs.list": {},
