@@ -1,12 +1,16 @@
 # attestation
 
-attestation makes research provenance auditable and fully local: it reads
-the experiment runs you already have on disk (results files, W&B/MLflow/
-Sacred/DVC/Hydra directories), checks the numbers in your drafts against
-them, keeps a personalised science feed with a knowledge graph, and does
-symbolic derivations — all exposed to agents as MCP tools, with nothing
-leaving the machine. It is for researchers who keep their own runs and
-drafts and want them checked, locally.
+attestation makes research provenance auditable and fully local, for any
+scientist who reads papers, keeps results files, and writes claims. It keeps
+a personalised science feed and a knowledge graph built from what you read;
+traces a number in your draft to the results file it came from and a
+citation key to your bibliography; and does symbolic derivations — all
+exposed to agents as MCP tools, with nothing leaving the machine. For
+computational work it adds an experiment ledger: it reads the runs you
+already have on disk (results files and W&B/MLflow/Sacred/DVC/Hydra
+directories) and ranks the arms of a sweep with caveats. The feed,
+provenance and symbolic tools assume nothing about your field; only the
+ledger assumes you run experiments.
 
 ## Try it in 60 seconds
 
@@ -47,28 +51,42 @@ artifact it came from.
 
 ## What it does
 
-Four things, plus one way to use all of them:
+Three things for every scientist, one for computational experiments, and
+one way to use all of them:
+
+**For every scientist**
+
+- **The feed and knowledge graph** rank a personalised reading list from
+  cosine similarity plus click-trained terms, and derive a concept graph
+  from the same tagging pass — no separate content pipeline. Any RSS/Atom
+  source; arXiv is a default, not a requirement. See
+  [docs/guides/feed.md](docs/guides/feed.md).
+- **Data and citation provenance** check a number in your prose against
+  the results file that produced it — a JSON or CSV under `results/` from
+  any instrument, script or spreadsheet export, not only a training run —
+  with one of five verdicts (`supported`, `contradicted`, `unsupported`,
+  `ambiguous`, `stale`), and lint a citation key against your BibTeX or
+  Zotero library. See
+  [docs/guides/claims-and-citations.md](docs/guides/claims-and-citations.md).
+- **Symbolic derivations** run in a sandboxed subprocess with a timeout and
+  memory cap, never `eval`-ing input. See `sym.*` in
+  [docs/guides/agents.md](docs/guides/agents.md).
+
+**For computational experiments**
 
 - **The experiment ledger** reads runs from artifacts already on disk — no
   instrumentation, no `log_metric()` calls — and ranks the
   [arms](docs/concepts.md) of a sweep with caveats rather than a silent
   verdict. Five tracker layouts (W&B, MLflow, Sacred, DVC, Hydra) are read
-  as conventions of their own. See
+  as conventions of their own. This is the one part that assumes you run
+  experiments — though a plain `results/` file is read the same way, so
+  the claim checker traces every number through it. See
   [docs/guides/ledger.md](docs/guides/ledger.md).
-- **Verifiable claims and citations** check a number in your prose against
-  the run that produced it, one of five verdicts (`supported`,
-  `contradicted`, `unsupported`, `ambiguous`, `stale`), and lint a citation
-  key against your configured bibliography. See
-  [docs/guides/claims-and-citations.md](docs/guides/claims-and-citations.md).
-- **The feed and knowledge graph** rank a personalised reading list from
-  cosine similarity plus click-trained terms, and derive a concept graph
-  from the same tagging pass — no separate content pipeline. See
-  [docs/guides/feed.md](docs/guides/feed.md).
-- **Symbolic derivations** run in a sandboxed subprocess with a timeout and
-  memory cap, never `eval`-ing input. See `sym.*` in
-  [docs/guides/agents.md](docs/guides/agents.md).
-- **Use it from an agent** — all four are exposed as 46 MCP tools, restricted
-  per session into `feed`/`provenance`/`knowledge`/`symbolic` surfaces. See
+
+**From an agent**
+
+- All of the above are exposed as 45 MCP tools, restricted per session into
+  `feed`/`provenance`/`knowledge`/`symbolic` surfaces. See
   [docs/guides/agents.md](docs/guides/agents.md) and the repo's own
   `src/attestation/skills/research-provenance/SKILL.md`.
 
