@@ -1,3 +1,5 @@
+<!-- checked by tests/test_golden_paths.py -->
+
 # Example citations
 
 ## What you get
@@ -52,7 +54,7 @@ and one refused `cite.lookup`, and a `cite.search` hit count, ending:
 
 ```
 cite.check -> 4 claim(s) scanned for CITATION KEYS only -- 1 claim(s) cite a key no source can resolve. This says nothing about whether the numbers are right: call runs.claims_check for that.
-  uncited key='doe2099imaginary' at .../DRAFT.md:28
+[...]
 ```
 
 ## What it demonstrates

@@ -1,3 +1,5 @@
+<!-- checked by tests/test_golden_paths.py -->
+
 # Example: Sacred
 
 ## What you get
@@ -46,10 +48,10 @@ lr_sweep — ranked by auc (higher_is_better)
 
   arm                                                 auc      n      step  source
   -------------------------------------------- ---------- ------  --------  ------
-  lr_sweep/2                                       0.9970      ?         0  examples/sacred/sacred_runs/2
-  lr_sweep/3                                       0.9960      ?         0  examples/sacred/sacred_runs/3
-  lr_sweep/4                                       0.9957      ?         0  examples/sacred/sacred_runs/4
-  lr_sweep/1                                       0.9937      ?         0  examples/sacred/sacred_runs/1
+  lr_sweep/2                                       0.9970      ?         0  sacred_runs/2
+  lr_sweep/3                                       0.9960      ?         0  sacred_runs/3
+  lr_sweep/4                                       0.9957      ?         0  sacred_runs/4
+  lr_sweep/1                                       0.9937      ?         0  sacred_runs/1
 
 winner: lr_sweep/2
   caveat: some arms report no sample size, so their weight is unknown

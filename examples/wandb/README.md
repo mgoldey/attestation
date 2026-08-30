@@ -1,3 +1,5 @@
+<!-- checked by tests/test_golden_paths.py -->
+
 # Example: W&B
 
 ## What you get
@@ -55,7 +57,7 @@ winner: generate/fsecp1k3
   caveat: some arms report no sample size, so their weight is unknown
   caveat: the top two arms differ by 0.0009921 (0.1%) -- too close to call from these numbers alone
   caveat: each arm is a single run; no seed replication, so this ranking cannot separate configuration from run-to-run variance
-  caveat: read by the wandb adapter: values come from wandb-summary.json, which holds each metric's final logged value rather than its curve or its best step. Offline W&B does not write that file until a run is synced -- see generate.py for how the committed fixture's was materialised without a network call
+  caveat: read by the wandb adapter: values come from wandb-summary.json, which holds each metric's final logged value rather than its curve or its best step. Offline W&B does not write that file until a run is synced -- see examples/wandb/generate.py for how the committed fixture's was materialised without a network call
 ```
 
 The `winner:` line's run id is not pinned above — regeneration reassigns W&B's

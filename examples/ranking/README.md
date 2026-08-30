@@ -1,3 +1,5 @@
+<!-- checked by tests/test_golden_paths.py -->
+
 ## What you get
 
 Twenty hand-built rows ranked with `attestation.rank.rank_rows` -- the same
@@ -21,14 +23,11 @@ sklearn"` to check); nothing here talks to a network or a model.
 ## Run it
 
 ```bash
-./run.sh
-```
-
-or, from the repo root:
-
-```bash
 uv run python examples/ranking/rank_rows.py
 ```
+
+Run from the repo root; `run.sh` runs this same command (`cd` to the repo
+root first, since this README's command is written relative to it).
 
 ## What it prints
 

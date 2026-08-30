@@ -7,7 +7,9 @@ promises, including the three deliberately-wrong claims.
 """
 
 import importlib.util
+import json
 import pathlib
+import re
 
 import pytest
 
@@ -16,6 +18,29 @@ from attestation.db import get_db
 
 WORKSPACE = pathlib.Path(__file__).resolve().parent.parent / "examples" / "workspace"
 FINDINGS = WORKSPACE / "speech-distill" / "FINDINGS.md"
+
+
+def _markdown_table(path: pathlib.Path, header_contains: str) -> list[dict[str, str]]:
+    """Parse the first Markdown table in `path` whose header row contains
+    `header_contains` (case-insensitive). Returns one dict per data row,
+    keyed by the header cells, skipping the `|---|---|` separator row."""
+    lines = path.read_text().splitlines()
+    header_idx = next(
+        i
+        for i, line in enumerate(lines)
+        if line.strip().startswith("|") and header_contains.lower() in line.lower()
+    )
+    header = [c.strip() for c in lines[header_idx].strip().strip("|").split("|")]
+    rows = []
+    for line in lines[header_idx + 1 :]:
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            break
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if all(re.fullmatch(r":?-+:?", c) for c in cells):
+            continue  # the `|---|---|` separator row
+        rows.append(dict(zip(header, cells, strict=True)))
+    return rows
 
 
 @pytest.fixture
@@ -226,6 +251,35 @@ def test_the_committed_mlruns_carries_no_personal_or_machine_attribution():
         if hits:
             offenders.append((str(path.relative_to(TRAINING)), hits))
     assert not offenders, offenders
+
+
+MLFLOW_README = pathlib.Path(__file__).resolve().parent.parent / "examples" / "mlflow" / "README.md"
+
+
+def test_the_committed_mlflow_table_matches_a_live_compare(tmp_path):
+    """examples/mlflow/README.md hand-types a Markdown table of (C, auc) pairs
+    read off a real `runs compare` run. Nothing else in this file (or in CI)
+    reads that table -- if `_mlflow_runs`' final-value-not-curve convention
+    ever changed a decimal, the committed table would go stale silently. This
+    diffs the table against the same live `ledger.compare()` call the other
+    mlflow tests above use, row for row."""
+    rows = _markdown_table(MLFLOW_README, header_contains="auc")
+    assert rows, "no (C, auc) table found in examples/mlflow/README.md"
+
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, TRAINING.parent, project="training")
+    arms = ledger.compare(conn, "c_sweep", metric="auc", project="training")["arms"]
+    configs = {
+        r["name"]: json.loads(r["config_json"])
+        for r in conn.execute(
+            "SELECT name, config_json FROM runs WHERE project = 'training'"
+        ).fetchall()
+    }
+    live = [(configs[arm["name"]]["C"], f"{arm['value']:.4f}") for arm in arms]
+
+    assert [(r["C"], r["auc"]) for r in rows] == live, (
+        f"README table is stale: README={rows} live={live}"
+    )
 
 
 def test_write_findings_refuses_to_write_a_demo_that_would_not_contradict(tmp_path):

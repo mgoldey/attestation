@@ -1,3 +1,5 @@
+<!-- checked by tests/test_golden_paths.py -->
+
 # Example flows
 
 ## What you get

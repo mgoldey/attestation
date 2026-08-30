@@ -136,10 +136,15 @@ by directory — nothing in the tests needs editing — and every path needs:
    `mlflow.user` tag or a `git@` remote — checked byte-for-byte, binaries
    included, by
    `tests/test_golden_paths.py::test_no_committed_example_carries_attribution_or_machine_paths`.
+7. **`README.md` opens with `<!-- checked by tests/test_golden_paths.py -->`**
+   as its first non-blank line — the pointer a reader inside
+   `examples/<name>/` needs to find the suite that governs this file,
+   without already knowing it lives in `tests/`.
+   `tests/test_golden_paths.py::test_every_readme_opens_with_the_checked_by_pointer`.
 
-If the label is `none`, CI actually runs `run.sh` and asserts one pinned
-line from *What it prints* against real stdout, so that section cannot be
-aspirational.
+If the label is `none`, CI actually runs `run.sh` and asserts every fenced
+block of *What it prints* against real stdout (elision lines are exactly
+`...` or `[...]`), so that section cannot be aspirational.
 
 ## Rules the suite enforces
 

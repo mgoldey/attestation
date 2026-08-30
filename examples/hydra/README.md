@@ -1,3 +1,5 @@
+<!-- checked by tests/test_golden_paths.py -->
+
 # Example: Hydra
 
 ## What you get
@@ -46,10 +48,10 @@ train — ranked by auc (higher_is_better)
 
   arm                                                 auc      n      step  source
   -------------------------------------------- ---------- ------  --------  ------
-  train/0                                          0.9970      ?            multirun/2026-08-28/23-36-10/0
-  train/1                                          0.9960      ?            multirun/2026-08-28/23-36-10/1
-  train/2                                          0.9957      ?            multirun/2026-08-28/23-36-10/2
-  train/3                                          0.9940      ?            multirun/2026-08-28/23-36-10/3
+  train/0                                          0.9970      ?            multirun/2026-08-28/23-45-43/0
+  train/1                                          0.9960      ?            multirun/2026-08-28/23-45-43/1
+  train/2                                          0.9957      ?            multirun/2026-08-28/23-45-43/2
+  train/3                                          0.9940      ?            multirun/2026-08-28/23-45-43/3
 
 winner: train/0
   caveat: some arms report no sample size, so their weight is unknown

@@ -103,6 +103,14 @@ def test_the_prerequisite_is_one_of_three_honest_labels(readme):
     assert prerequisite(readme.read_text()) in LABELS, readme
 
 
+def _executed_lines(script_text: str) -> list[str]:
+    return [
+        line
+        for line in script_text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
 @pytest.mark.parametrize("readme", paths(), ids=lambda p: p.parent.name)
 def test_the_readme_commands_are_the_run_sh_commands(readme):
     script = readme.parent / "run.sh"
@@ -111,8 +119,12 @@ def test_the_readme_commands_are_the_run_sh_commands(readme):
     assert text.startswith("#!/usr/bin/env bash") and "set -euo pipefail" in text
     commands = run_commands(readme.read_text())
     assert commands, f"{readme}: Run it has no commands"
+    executed = _executed_lines(text)
     for cmd in commands:
-        assert cmd in text, f"{readme.parent.name}: README command not in run.sh: {cmd!r}"
+        assert any(cmd in line for line in executed), (
+            f"{readme.parent.name}: README command appears only in a comment or not at all"
+            f" in run.sh: {cmd!r}"
+        )
 
 
 @pytest.mark.parametrize("readme", paths(), ids=lambda p: p.parent.name)
@@ -219,8 +231,7 @@ def _offline(readme: Path) -> bool:
     return prerequisite(readme.read_text()).startswith("none")
 
 
-@pytest.mark.parametrize("readme", [p for p in paths() if _offline(p)], ids=lambda p: p.parent.name)
-def test_an_offline_path_runs_green_and_prints_its_pinned_line(readme, tmp_path):
+def run_the_path(readme: Path, tmp_path: Path) -> str:
     env = {**os.environ, "HOME": str(tmp_path), "LLM_BASE_URL": "http://127.0.0.1:9/v1"}
     for var in ("ATTEST_DB", "RSS_DB", "RESEARCH_ROOT"):
         env.pop(var, None)
@@ -230,6 +241,31 @@ def test_an_offline_path_runs_green_and_prints_its_pinned_line(readme, tmp_path)
     assert proc.returncode == 0, (
         f"{readme.parent.name} run.sh failed:\n{proc.stdout}\n{proc.stderr}"
     )
+    return proc.stdout
+
+
+@pytest.mark.parametrize("readme", [p for p in paths() if _offline(p)], ids=lambda p: p.parent.name)
+def test_an_offline_path_runs_green_and_prints_its_pinned_line(readme, tmp_path):
+    stdout = run_the_path(readme, tmp_path)
     pin = pinned_line(readme.read_text())
     assert pin, f"{readme.parent.name}: What it prints has no fenced line to pin"
-    assert pin in proc.stdout, f"{readme.parent.name}: pinned line not in output: {pin!r}"
+    assert pin in stdout, f"{readme.parent.name}: pinned line not in output: {pin!r}"
+
+
+_ELISION_LINES = {"...", "[...]", ""}
+
+
+@pytest.mark.parametrize("readme", [p for p in paths() if _offline(p)], ids=lambda p: p.parent.name)
+def test_every_output_block_of_an_offline_path_is_real(readme, tmp_path):
+    stdout = run_the_path(readme, tmp_path)
+    for line in _fenced(_section(readme.read_text(), "What it prints")):
+        if line.strip() in _ELISION_LINES:
+            continue
+        assert line in stdout, f"{readme.parent.name}: {line!r} is not in real stdout"
+
+
+@pytest.mark.parametrize("readme", paths(), ids=lambda p: p.parent.name)
+def test_every_readme_opens_with_the_checked_by_pointer(readme):
+    assert (
+        readme.read_text().lstrip().startswith("<!-- checked by tests/test_golden_paths.py -->")
+    ), f"{readme.parent.name}: README does not open with the checked-by pointer"
