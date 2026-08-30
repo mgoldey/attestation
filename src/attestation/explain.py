@@ -13,6 +13,8 @@ from typing import Literal, NamedTuple
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
+from attestation.ports import backend_unreachable
+
 log = logging.getLogger(__name__)
 
 
@@ -153,8 +155,8 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
         this, so a bad reply must degrade, not raise.
 
         Also records the LAST attempt's failure kind as `explanation_reason`,
-        so `explain()` can tell "the model was unreachable" (an
-        `OSError`/`ConnectionError` -- retry later) from "the model answered
+        so `explain()` can tell "the model backend is unreachable" (per
+        `ports.backend_unreachable` -- retry later) from "the model answered
         but the reply did not parse" (a validation error -- also worth a
         retry, but a different failure) without re-deriving the distinction
         from a bare `None`.
@@ -171,17 +173,18 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
                     "explanation": Explanation.model_validate(out).text,
                     "explanation_reason": "ok",
                 }
-            except (OSError, ConnectionError):
-                # The chat backend itself is unreachable -- a network/socket
-                # failure, not a reply the model returned. Retrying a dead
-                # connection twice is still the existing contract; only the
-                # reported reason changes.
+            except Exception as exc:
+                # backend_unreachable is the repo's one classifier for "the
+                # model backend itself is unreachable" (ports.py, shared with
+                # ingest.py's embedder-down latch and features.py's tagging
+                # pass) -- matched on the real transport exception
+                # (httpx.ConnectError/ConnectTimeout), not on a bare
+                # OSError/ConnectionError tuple that does not actually catch
+                # what llm.ChatClient raises. Anything else -- chiefly a
+                # pydantic.ValidationError on a malformed reply -- is
+                # "no_answer": the model answered, but not usably.
                 log.debug("explain attempt failed", exc_info=True)
-                reason = "model_unreachable"
-                continue
-            except Exception:
-                log.debug("explain attempt failed", exc_info=True)
-                reason = "no_answer"
+                reason = "model_unreachable" if backend_unreachable(exc) else "no_answer"
                 continue
         return {"explanation": None, "explanation_reason": reason}
 

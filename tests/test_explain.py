@@ -94,13 +94,39 @@ def test_explain_retries_once_then_none(tmp_path):
 
 
 def test_explain_never_raises_on_chat_exception(tmp_path):
+    """A genuinely dead backend raises `httpx.ConnectError`/`ConnectTimeout`
+    -- what `llm.ChatClient` actually raises when Ollama is not running, and
+    the same exception `ports.backend_unreachable` is built to recognise (see
+    `test_run_tagging_stops_at_an_unreachable_backend_and_says_so` in
+    `test_features.py` and `test_a_dead_embedder_is_named_once_not_blamed_on_
+    every_feed` in `test_ingest.py` for the same construction). A bare
+    `ConnectionError` -- Python's own stdlib exception, not httpx's -- does
+    NOT reach `generate_explanation`'s classifier the same way and would pass
+    against a fixture that does not match production.
+    """
+    import httpx
+
     conn = setup_db(tmp_path)
 
     def dead_chat(messages, schema):
-        raise ConnectionError("ollama down")
+        raise httpx.ConnectError("connection refused")
 
     res = explain(conn, user_id=1, item_id=1, chat_fn=dead_chat)
     assert res.text is None and res.reason == "model_unreachable"
+
+
+def test_explain_reports_no_answer_for_a_non_transport_exception(tmp_path):
+    """The sibling case: an exception that is NOT a backend-unreachable
+    transport failure (a plain bug in the chat function, say) must still
+    report `no_answer`, not be swept into `model_unreachable` by a classifier
+    that matches too broadly."""
+    conn = setup_db(tmp_path)
+
+    def broken_chat(messages, schema):
+        raise ValueError("the chat client blew up on a malformed prompt")
+
+    res = explain(conn, user_id=1, item_id=1, chat_fn=broken_chat)
+    assert res.text is None and res.reason == "no_answer"
 
 
 def test_a_persona_with_interests_skips_profile_synthesis(tmp_path):

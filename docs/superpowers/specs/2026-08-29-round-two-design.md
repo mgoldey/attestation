@@ -358,23 +358,33 @@ task, this wave).
   `{added, skipped, failed_feeds}`, unchanged from before the split.
 
 - **Task 2 (O2/O3/W2): `model_unreachable` vs `no_answer` needed a new
-  signal the brief did not specify.** `ExplainResult.reason` promises three
-  distinct failure causes, but the pre-existing `generate_explanation` node
-  caught every exception the same way and returned a bare `None` -- nothing
-  in it distinguished "the chat backend is unreachable" from "the model
-  replied but the reply failed `Explanation.model_validate`". Added
-  `ExplainState.explanation_reason`, set by `generate_explanation`'s except
-  clauses: `OSError`/`ConnectionError` (a transport failure, no reply
-  received) sets `"model_unreachable"`; any other exception (a
-  `pydantic.ValidationError` on a malformed reply, chiefly) sets
-  `"no_answer"`. `explain()` reads it back only when `explanation` stayed
-  `None`. `test_explain_retries_once_then_none` (a validation failure) now
-  asserts `reason == "no_answer"` and `test_explain_never_raises_on_chat_exception`
-  (a raised `ConnectionError`) asserts `reason == "model_unreachable"` --
-  both updated in place rather than added fresh, since they already drove
-  exactly these two paths. This is an inference about which two categories
-  the brief meant by the two non-`unknown_user` reasons, not something
-  stated outright; flagged here rather than assumed silently.
+  signal the brief did not specify -- corrected in fix round 2.**
+  `ExplainResult.reason` promises three distinct failure causes, but the
+  pre-existing `generate_explanation` node caught every exception the same
+  way and returned a bare `None` -- nothing in it distinguished "the chat
+  backend is unreachable" from "the model replied but the reply failed
+  `Explanation.model_validate`". Added `ExplainState.explanation_reason`,
+  set by `generate_explanation`'s except clause. The FIRST version of this
+  (fix round 1's predecessor) matched on a hand-picked `(OSError,
+  ConnectionError)` tuple, which review caught as wrong: `httpx.ConnectError`
+  -- what `llm.ChatClient` actually raises for a dead backend -- is not a
+  subclass of either, so a real dead-backend failure was misclassified as
+  `"no_answer"`, and the one test guarding it raised a bare Python
+  `ConnectionError` that does not occur in production, so RED->GREEN
+  validated a mapping against a fixture that did not match reality. Fixed in
+  fix round 2: classify with `attestation.ports.backend_unreachable(exc)`
+  (the repo's one classifier for this, already shared by `ingest.py`'s
+  embedder-down latch and `features.py`'s tagging pass) inside a single
+  `except Exception as exc` -- `model_unreachable` when it returns `True`,
+  `no_answer` otherwise. `explain.py` still imports nothing from
+  `attestation.llm` (only `attestation.ports`, which itself does not import
+  `llm.py`). `test_explain_never_raises_on_chat_exception` now raises the
+  real `httpx.ConnectError` (matching the construction in
+  `test_features.py`/`test_ingest.py`'s own backend-down tests); a new
+  sibling `test_explain_reports_no_answer_for_a_non_transport_exception`
+  raises a plain `ValueError` and asserts `"no_answer"`. Mutant-proofed: with
+  the old `(OSError, ConnectionError)` tuple restored, the `httpx.ConnectError`
+  test is RED (`AssertionError: ... 'no_answer' == 'model_unreachable'`).
 
 - **Task 2: `_explain_item`'s new `unknown_user` branch is dead code under
   normal MCP calls, by design of `@tool(needs_user=True)`.** `_tool.py`'s
