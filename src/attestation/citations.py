@@ -63,6 +63,32 @@ class Reference:
         hay = " ".join([self.key, self.title, *self.authors]).lower()
         return needle.lower() in hay
 
+    def to_row(self) -> dict:
+        """This reference's `cite.*` wire projection.
+
+        Truncates `authors` to 6 and adds `n_authors` (the true count) so a
+        long author list does not blow out a response -- the same 3-of-n
+        budget pattern `RankedItem.to_row` applies to tags.
+
+        `arxiv_id` is deliberately OMITTED: it is redundant with `doi`/`url`
+        for most records, and dropping it here is a stated decision rather
+        than a silent gap a future editor might "fix" back in inconsistently.
+        """
+        return {
+            "key": self.key,
+            "title": self.title,
+            "authors": self.authors[:6],
+            "n_authors": len(self.authors),
+            "year": self.year,
+            "doi": self.doi,
+            "url": self.url,
+            # The provenance pair, on every record. This is what makes the
+            # offline guarantee's exception inspectable rather than merely
+            # documented.
+            "source": self.source,
+            "fetched_at": self.fetched_at,
+        }
+
 
 def _year(value: str | None) -> int | None:
     """A four-digit year out of whatever a date field holds.

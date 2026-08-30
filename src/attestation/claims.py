@@ -98,7 +98,14 @@ class VerdictKind(StrEnum):
 class Verdict:
     """One claim's outcome: which `VerdictKind`, why, and what it was checked
     against -- `source_path` names the run the ledger read, so an auditor's
-    "from which file?" has an answer without opening the ledger separately."""
+    "from which file?" has an answer without opening the ledger separately.
+
+    `matched_split`/`matched_step` are the MATCHED RUN ROW's split/step --
+    what was actually found -- distinct from `claim.split`/`claim.step`,
+    which are what the document asked for. The two are different quantities
+    that happen to share a name one level down; the `matched_` prefix here
+    keeps a reader from having to guess which is which.
+    """
 
     claim: Claim
     verdict: VerdictKind
@@ -106,8 +113,8 @@ class Verdict:
     actual: float | None = None
     matched: list[str] | None = None
     source_path: str | None = None
-    split: str | None = None
-    step: int | None = None
+    matched_split: str | None = None
+    matched_step: int | None = None
 
 
 def parse_file(path: Path) -> tuple[list[Claim], list[str]]:
@@ -289,8 +296,8 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
             f"(tolerance {claim.tol:g})",
             actual=actual,
             source_path=run["source_path"],
-            split=row["split"],
-            step=row["step"],
+            matched_split=row["split"],
+            matched_step=row["step"],
         )
 
     if not Path(run["source_path"]).exists():
@@ -300,8 +307,8 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
             f"value matches, but evidence file {run['source_path']} no longer exists -- re-verify",
             actual=actual,
             source_path=run["source_path"],
-            split=row["split"],
-            step=row["step"],
+            matched_split=row["split"],
+            matched_step=row["step"],
         )
 
     if _is_stale(claim, run["source_path"]):
@@ -312,8 +319,8 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
             f" after as_of={claim.as_of} -- re-verify",
             actual=actual,
             source_path=run["source_path"],
-            split=row["split"],
-            step=row["step"],
+            matched_split=row["split"],
+            matched_step=row["step"],
         )
 
     return Verdict(
@@ -322,8 +329,8 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
         f"{claim.metric}={actual:g} in {run['name']}{where}",
         actual=actual,
         source_path=run["source_path"],
-        split=row["split"],
-        step=row["step"],
+        matched_split=row["split"],
+        matched_step=row["step"],
     )
 
 

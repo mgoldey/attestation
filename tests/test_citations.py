@@ -197,6 +197,28 @@ def test_every_reference_records_which_reader_produced_it(tmp_path):
     assert ref.fetched_at is None, "a record from disk was never fetched"
 
 
+def test_reference_to_row_omits_arxiv_id_on_purpose():
+    """`to_row` owns the wire projection: `arxiv_id` is dropped on purpose
+    (redundant with `doi`/`url` for most records), not by oversight -- see
+    `Reference.to_row`'s docstring for the stated reason."""
+    r = citations.Reference(
+        key="k",
+        title="t",
+        authors=[f"a{i}" for i in range(8)],
+        year=2020,
+        doi="d",
+        arxiv_id="1234.5678",
+        url="u",
+        source="bib",
+    )
+
+    row = r.to_row()
+
+    assert "arxiv_id" not in row
+    assert row["n_authors"] == 8
+    assert len(row["authors"]) == 6
+
+
 # --------------------------------------------------------------------------
 # BibTeX
 # --------------------------------------------------------------------------

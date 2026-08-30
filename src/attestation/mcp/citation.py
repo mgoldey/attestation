@@ -23,22 +23,6 @@ def _resolver():
     return citations.Resolver.from_env()
 
 
-def _as_dict(ref) -> dict:
-    return {
-        "key": ref.key,
-        "title": ref.title,
-        "authors": ref.authors[:6],
-        "n_authors": len(ref.authors),
-        "year": ref.year,
-        "doi": ref.doi,
-        "url": ref.url,
-        # The provenance pair, on every record. This is what makes the offline
-        # guarantee's exception inspectable rather than merely documented.
-        "source": ref.source,
-        "fetched_at": ref.fetched_at,
-    }
-
-
 @tool(empty={"reference": None}, needs_db=False, label="cite_lookup")
 def _lookup(key: str) -> dict:
     resolver = _resolver()
@@ -46,14 +30,14 @@ def _lookup(key: str) -> dict:
     if found is None:
         configured = ", ".join(s["name"] for s in resolver.sources()) or "none"
         raise ToolError(f"no source has {key!r} (configured: {configured})")
-    return {"reference": _as_dict(found)}
+    return {"reference": found.to_row()}
 
 
 @tool(empty={"references": [], "n_matches": 0}, needs_db=False, label="cite_search")
 def _search(query: str, limit: int = 5) -> dict:
     matches = _resolver().search(query)
     return {
-        "references": [_as_dict(r) for r in matches[:limit]],
+        "references": [r.to_row() for r in matches[:limit]],
         "n_matches": len(matches),
     }
 

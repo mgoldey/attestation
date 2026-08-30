@@ -308,6 +308,26 @@ def multi_split(tmp_path):
     conn.close()
 
 
+def test_verdict_matched_split_is_distinct_from_claim_split():
+    """`Verdict.matched_split`/`matched_step` are the matched run row's
+    values, not the claim's -- a different quantity from `claim.split` that
+    happens to share a name one level up before the rename."""
+    c = claims.Claim(
+        path="p.md", line=1, project="p", run="r", metric="auc", value=0.9, split="train"
+    )
+    v = claims.Verdict(
+        claim=c,
+        verdict=claims.VerdictKind.SUPPORTED,
+        message="",
+        matched_split="test",
+        matched_step=3,
+    )
+
+    assert v.claim.split == "train"
+    assert v.matched_split == "test"
+    assert not hasattr(v, "split")
+
+
 def test_multiple_splits_without_disambiguator_is_ambiguous(multi_split):
     """A claim must not be able to select its own evidence: two different
     claimed values against the same run cannot both come back 'supported'."""
@@ -333,7 +353,7 @@ def test_split_disambiguator_resolves_the_row(multi_split):
     verdict = claims.check(conn, doc)["verdicts"][0]
 
     assert verdict.verdict == "supported"
-    assert verdict.split == "summary.variants.raw"
+    assert verdict.matched_split == "summary.variants.raw"
 
 
 def test_split_disambiguator_can_contradict(multi_split):
