@@ -320,3 +320,18 @@ def test_an_aliased_concept_is_found_by_the_name_people_write():
     # A genuinely unknown name must still be unknown.
     assert kg.neighbors(conn, "no-such-concept-xyz") == []
     assert kg.shortest_path(conn, "no-such-concept-xyz", "transformers") is None
+
+
+def test_resolve_or_raise_reports_the_right_kind_in_its_message():
+    """One canonicalise-check-raise helper serves both `_resolved_tag` (feed.py)
+    and knowledge.py's `_path` resolve loop, over their own membership sets --
+    the message names the kind and the right recovery tool, since a tag and a
+    concept point an agent at different next calls (`kg.concepts(prefix=...)`
+    vs `kg.concepts()`)."""
+    from attestation.kg import resolve_or_raise
+
+    with pytest.raises(ValueError, match="not a tag"):
+        resolve_or_raise("nope", {"llm"}, kind="tag")
+    with pytest.raises(ValueError, match="not a concept"):
+        resolve_or_raise("nope", {"llm"}, kind="concept")
+    assert resolve_or_raise("LLM", {"llm"}, kind="tag") == "llm"  # canonicalised

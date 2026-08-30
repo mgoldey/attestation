@@ -116,6 +116,37 @@ def resolve_query(text: str, adjacency) -> str:
     return text
 
 
+_KIND_MESSAGES = {
+    "tag": (
+        "{name!r} is not a tag in this corpus;"
+        " call kg.concepts(prefix=...) for the names it does use"
+    ),
+    "concept": "{name!r} is not a concept in the graph; call kg.concepts() to list valid names",
+}
+
+
+def resolve_or_raise(name: str, members: set[str], *, kind: str) -> str:
+    """`name` canonicalised and checked against `members`, or a `ValueError`.
+
+    One canonicalise-check-raise shape for two callers that ask the same
+    question against two different membership sets: `mcp/feed._resolved_tag`
+    (every stored tag, since a tag used once is a legitimate search filter
+    even though it never enters the graph) and `mcp/knowledge._path` (graph
+    concepts only). `kind` ('tag' or 'concept') parametrises the message so
+    each refusal still names the right recovery tool -- `kg.concepts(prefix=
+    ...)` for a tag, `kg.concepts()` for a concept -- rather than flattening
+    the two into one generic wording.
+
+    Raises rather than returning a sentinel because both callers already
+    convert a raised error into their own `ToolError`; this only supplies the
+    kind-specific message once instead of twice.
+    """
+    resolved = resolve_query(name, {member: () for member in members})
+    if resolved not in members:
+        raise ValueError(_KIND_MESSAGES[kind].format(name=name))
+    return resolved
+
+
 def canonical(tag: str) -> str:
     """Map a tag to its canonical spelling. Identity for unmapped tags.
 

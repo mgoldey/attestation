@@ -373,6 +373,6 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         """Lazy-loaded "why this?" text for one item, plain text so the
         page's own JS can drop it straight into the DOM without escaping."""
         u = require_user(user)
-        return explain(connection(), u["id"], item_id, chat_fn=chat_fn) or ""
+        return explain(connection(), u["id"], item_id, chat_fn=chat_fn).text or ""
 
     return app

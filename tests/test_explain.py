@@ -36,12 +36,24 @@ def test_explain_unknown_user_is_handled_quietly(tmp_path, caplog):
 
     with caplog.at_level(logging.WARNING, logger="attestation.explain"):
         # user 99 does not exist; seeded_db plants ids 1-3 only
-        assert explain(conn, user_id=99, item_id=1, chat_fn=good_chat) is None
+        res = explain(conn, user_id=99, item_id=1, chat_fn=good_chat)
+        assert res.text is None and res.reason == "unknown_user"
 
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR], (
         "unknown user must not produce an ERROR/traceback"
     )
     assert any("unknown user_id" in r.message for r in caplog.records)
+
+
+def test_explain_distinguishes_unknown_user_from_model_down(tmp_path):
+    """`ExplainResult.reason` tells the caller which of three unrelated causes
+    produced no text -- an unknown user_id is the caller's argument being
+    wrong, not the model being unreachable, and the two need different
+    responses (`_explain_item` raises a different `ToolError` for each)."""
+    conn = seeded_db(tmp_path / "t.db")
+    ok_chat = lambda messages, schema: {"text": "You follow this topic."}  # noqa: E731
+    res = explain(conn, user_id=999_999, item_id=1, chat_fn=ok_chat)
+    assert res.text is None and res.reason == "unknown_user"
 
 
 def test_explain_returns_and_caches(tmp_path):
@@ -52,11 +64,13 @@ def test_explain_returns_and_caches(tmp_path):
         calls.append(1)
         return good_chat(messages, schema)
 
-    text = explain(conn, user_id=1, item_id=1, chat_fn=counting_chat)
+    res = explain(conn, user_id=1, item_id=1, chat_fn=counting_chat)
+    text = res.text
     assert text == "Because you clicked similar ranking papers."
+    assert res.reason == "ok"
     n_first = len(calls)
     # second call: served from cache, no new LLM calls
-    assert explain(conn, user_id=1, item_id=1, chat_fn=counting_chat) == text
+    assert explain(conn, user_id=1, item_id=1, chat_fn=counting_chat).text == text
     assert len(calls) == n_first
     row = conn.execute("SELECT text FROM explanations WHERE user_id=1 AND item_id=1").fetchone()
     assert row["text"] == text
@@ -70,7 +84,8 @@ def test_explain_retries_once_then_none(tmp_path):
         attempts.append(1)
         return {"wrong_key": 42}  # fails pydantic validation every time
 
-    assert explain(conn, user_id=1, item_id=1, chat_fn=bad_chat) is None
+    res = explain(conn, user_id=1, item_id=1, chat_fn=bad_chat)
+    assert res.text is None and res.reason == "no_answer"
     # Explain node only, twice. The profile node no longer calls the model
     # when the persona has interests text -- synthesis produced vaguer
     # profiles than the stored string and cost 2.1s, so it is now a fallback.
@@ -84,7 +99,8 @@ def test_explain_never_raises_on_chat_exception(tmp_path):
     def dead_chat(messages, schema):
         raise ConnectionError("ollama down")
 
-    assert explain(conn, user_id=1, item_id=1, chat_fn=dead_chat) is None
+    res = explain(conn, user_id=1, item_id=1, chat_fn=dead_chat)
+    assert res.text is None and res.reason == "model_unreachable"
 
 
 def test_a_persona_with_interests_skips_profile_synthesis(tmp_path):

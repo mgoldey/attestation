@@ -356,3 +356,55 @@ task, this wave).
   `stats["embedder_down"] = True` only when at least one outcome reports
   it, otherwise the key is absent -- so a normal run's dict is exactly
   `{added, skipped, failed_feeds}`, unchanged from before the split.
+
+- **Task 2 (O2/O3/W2): `model_unreachable` vs `no_answer` needed a new
+  signal the brief did not specify.** `ExplainResult.reason` promises three
+  distinct failure causes, but the pre-existing `generate_explanation` node
+  caught every exception the same way and returned a bare `None` -- nothing
+  in it distinguished "the chat backend is unreachable" from "the model
+  replied but the reply failed `Explanation.model_validate`". Added
+  `ExplainState.explanation_reason`, set by `generate_explanation`'s except
+  clauses: `OSError`/`ConnectionError` (a transport failure, no reply
+  received) sets `"model_unreachable"`; any other exception (a
+  `pydantic.ValidationError` on a malformed reply, chiefly) sets
+  `"no_answer"`. `explain()` reads it back only when `explanation` stayed
+  `None`. `test_explain_retries_once_then_none` (a validation failure) now
+  asserts `reason == "no_answer"` and `test_explain_never_raises_on_chat_exception`
+  (a raised `ConnectionError`) asserts `reason == "model_unreachable"` --
+  both updated in place rather than added fresh, since they already drove
+  exactly these two paths. This is an inference about which two categories
+  the brief meant by the two non-`unknown_user` reasons, not something
+  stated outright; flagged here rather than assumed silently.
+
+- **Task 2: `_explain_item`'s new `unknown_user` branch is dead code under
+  normal MCP calls, by design of `@tool(needs_user=True)`.** `_tool.py`'s
+  wrapper resolves `user_row` from the caller's `user` name *before*
+  `_explain_item`'s body runs, and returns the failure envelope directly if
+  the name does not resolve -- so `explain_item_fn(conn, user_row["id"], ...)`
+  is always called with an id that was valid a moment earlier.
+  `ExplainResult.reason == "unknown_user"` can therefore only be reached if
+  the persona is deleted in the window between that lookup and this call (a
+  real but narrow race), or by a caller of `explain()` outside the MCP tool
+  layer (`server.py`'s `/explanation` route, which does not branch on
+  `reason` at all and just falls back to `""`). Implemented anyway per the
+  brief's explicit instruction ("`_explain_item` raises a reason-specific
+  `ToolError` for `unknown_user`"); no test exercises this branch through
+  `_explain_item` itself for that reason -- `test_explain_distinguishes_
+  unknown_user_from_model_down` exercises `explain()` directly instead, as
+  the brief's own test code does.
+
+- **Task 2: shared-tree resets.** Twice during this task a concurrent
+  implementer's `git reset`/`git stash` (on files outside this task's
+  ownership) reverted the whole working tree, including uncommitted edits
+  in this task's own files (`kg.py`, `rank.py`, `mcp/feed.py`). Both times
+  the loss was caught by re-running the target tests immediately after and
+  seeing them fail RED again; both times the edits were reapplied from
+  scratch rather than recovered from a stash, since by the time it was
+  noticed the affected files had already diverged further. Final state was
+  cross-checked line-by-line against the dropped stash commit the
+  coordinator later pointed at (`ed5dd33`) and found to be a strict
+  superset of it for every file this task owns. No code or test content was
+  lost in the end, but the sequence is worth naming: a shared-tree wave
+  without per-task worktrees can silently discard a concurrent task's
+  uncommitted work, and the only defence available mid-task was committing
+  sooner and re-verifying after any large gap between edits and test runs.

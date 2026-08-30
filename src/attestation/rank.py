@@ -59,6 +59,40 @@ def forget_profile_vector(conn: sqlite3.Connection, user_id: int) -> None:
     _PROFILE_VEC_CACHE.pop((_db_identity(conn), user_id), None)
 
 
+# Wire-row budget constants for RankedItem.to_row -- copied from the deleted
+# mcp/feed._item_row, whose comments record the measurements behind each
+# number (a ten-item response over ~3,000 characters was unrenderable by
+# gemma4:e2b, and several fields were sized from a fixture that undersold
+# real rows). `MAX_TAGS_SHOWN` and `_clip_title`'s title budget stay
+# duplicated rather than imported: mcp/feed.py uses its own title clip and
+# tag cap at other call sites unrelated to one item's wire row, and this
+# type's projection must not depend on the MCP layer to describe its own
+# shape.
+MAX_TAGS_SHOWN = 3
+SUMMARY_CHARS = 240
+MAX_TITLE_CHARS = 90
+MAX_URL_CHARS = 120
+MAX_SOURCE_CHARS = 40
+MAX_TAG_CHARS = 32
+
+
+def _clip_field(text: str | None, limit: int) -> str:
+    """Any row field, trimmed to fit, with the cut made visible."""
+    value = " ".join((text or "").split())
+    return value if len(value) <= limit else value[:limit].rstrip() + "…"
+
+
+def _clip_title(title: str | None) -> str:
+    """A title trimmed to fit, with the cut made visible.
+
+    Silent truncation would let an agent quote half a title as though it were
+    the whole one; `feed.read` returns the full record for anything that needs
+    it.
+    """
+    text = " ".join((title or "").split())
+    return text if len(text) <= MAX_TITLE_CHARS else text[:MAX_TITLE_CHARS].rstrip() + "…"
+
+
 class RankedItem(BaseModel):
     """One feed item as ranked for a reader -- `score` is a rank WITHIN the
     candidate set that produced it (see the comment on `profile_similarity`
@@ -79,6 +113,43 @@ class RankedItem(BaseModel):
     tags: list[str] = []
     content_type: str | None = None
     summary: str | None = None
+
+    def to_row(self, *, summary: bool = False) -> dict:
+        """The compact wire shape feed.list, feed.search and feed.digest all
+        return -- the one projection from `RankedItem` to the response an
+        agent actually reads, so a caller of this type can see the shape it
+        will eventually take without cross-referencing a shaper in the MCP
+        layer.
+
+        Deliberately small: a ten-item response used to run past 3,000
+        characters, and gemma4:e2b could not reproduce one -- it truncated,
+        apologised, re-rendered as raw JSON, truncated again, and never
+        recovered. `score` is never included: it is a blended RANK within a
+        candidate set, not a value comparable across calls, and order already
+        carries the ranking. Tags are capped at `MAX_TAGS_SHOWN` with
+        `n_tags` reporting the true count, because silent truncation is how
+        an agent is told an item has three topics when it has six.
+        """
+        row = {
+            "item_id": self.item_id,
+            "title": _clip_title(self.title),
+            "url": _clip_field(self.url, MAX_URL_CHARS),
+            "source": _clip_field(self.source, MAX_SOURCE_CHARS),
+            "tags": [_clip_field(t, MAX_TAG_CHARS) for t in (self.tags or [])[:MAX_TAGS_SHOWN]],
+        }
+        # Always present, even as null -- omitting it broke a stated key
+        # contract (tests/test_mcp_server.py asserts the key set), so a
+        # caller reading item["content_type"] would get a KeyError rather
+        # than None.
+        row["content_type"] = self.content_type
+        if self.tags:
+            row["n_tags"] = len(self.tags)
+        if summary and self.summary:
+            text = self.summary.strip()
+            row["summary"] = (
+                text if len(text) <= SUMMARY_CHARS else text[:SUMMARY_CHARS].rstrip() + "…"
+            )
+        return row
 
 
 def get_user(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:

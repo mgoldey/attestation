@@ -60,7 +60,10 @@ def emitted(payload) -> int:
 # sample is not a bound. Importing the caps makes the two impossible to
 # disagree: tightening a budget now requires tightening a cap.
 def _row_budget(extra: int = 0) -> int:
-    from attestation.mcp.feed import (
+    # These now live on rank.RankedItem.to_row, the wire-row projection
+    # mcp/feed._item_row used to own -- see docs/superpowers/specs/
+    # 2026-08-29-round-two-design.md's W2.
+    from attestation.rank import (
         MAX_SOURCE_CHARS,
         MAX_TAG_CHARS,
         MAX_TAGS_SHOWN,
@@ -314,7 +317,7 @@ def test_no_field_in_a_row_is_unbounded(stocked):
     property -- every variable-length field a row carries has a stated cap --
     so the row's worst case is a fact about the code.
     """
-    from attestation.mcp.feed import MAX_TAGS_SHOWN, MAX_TITLE_CHARS, _clip_title
+    from attestation.rank import MAX_TAGS_SHOWN, MAX_TITLE_CHARS, _clip_title
 
     # A title is clipped whatever the input.
     assert len(_clip_title("x" * 5000)) <= MAX_TITLE_CHARS + 1  # +1 for the ellipsis
@@ -417,10 +420,11 @@ def test_router_answers_are_bounded_by_title_length(stocked):
     assert len(out["answer"]) <= 600, f"answer is {len(out['answer'])} chars"
     assert emitted(out) <= MAX_DEFAULT_RESPONSE_CHARS
 
-    # _label directly, not only through the router: _item_row now clips the
-    # title first, so a long title never reaches _label via the feed path and
-    # removing _label's own clip left this test green. A router also labels
-    # graph nodes, run arms and feed names, which no other clip touches.
+    # _label directly, not only through the router: RankedItem.to_row now
+    # clips the title first, so a long title never reaches _label via the
+    # feed path and removing _label's own clip left this test green. A
+    # router also labels graph nodes, run arms and feed names, which no
+    # other clip touches.
     assert len(_label({"title": "T" * 900})) <= MAX_LABEL_CHARS + 1
     assert len(_label({"name": "N" * 900, "project": "p"})) <= MAX_LABEL_CHARS + 20
     assert len(_label("S" * 900)) <= MAX_LABEL_CHARS + 1
@@ -439,7 +443,7 @@ def test_the_item_budget_is_at_least_what_the_field_caps_permit(stocked):
     sizing them from a fixture: a sample is not a bound. Asserting the budget
     against the caps makes the two impossible to disagree.
     """
-    from attestation.mcp.feed import (
+    from attestation.rank import (
         MAX_SOURCE_CHARS,
         MAX_TAG_CHARS,
         MAX_TAGS_SHOWN,
@@ -463,7 +467,7 @@ def test_the_item_budget_is_at_least_what_the_field_caps_permit(stocked):
 
     # And the caps must be ENFORCED, not merely declared. Comparing constants
     # to each other is self-consistent and toothless: with `url` left uncapped
-    # in _item_row the arithmetic above still passed, because both sides came
+    # in to_row the arithmetic above still passed, because both sides came
     # from the same numbers. Drive a row whose every field exceeds its cap.
     conn = seeded_db(stocked)
     conn.execute(

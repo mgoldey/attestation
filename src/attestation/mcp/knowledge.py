@@ -150,9 +150,14 @@ def _path(conn, source: str, target: str) -> dict:
     # the graph does in fact contain -- `llm` is the most common tag in the
     # live corpus and maps to a 163-neighbour hub. The refusal is right about
     # unknown names and was wrong about known ones spelled differently.
+    # kg.resolve_or_raise is the same canonicalise-check-raise shape
+    # mcp/feed._resolved_tag uses over its own (larger) membership set --
+    # see that function's comment for why the two sets must stay different.
     for original in (source, target):
-        if kg.resolve_query(original, adjacency) not in adjacency:
-            raise ToolError(NOT_A_CONCEPT.format(name=original))
+        try:
+            kg.resolve_or_raise(original, set(adjacency), kind="concept")
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
     found = kg.shortest_path(conn, source, target)
     if found is None:
         raise ToolError(f"no path between {source!r} and {target!r}")

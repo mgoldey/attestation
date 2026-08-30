@@ -8,11 +8,30 @@ Reliability contract: lazy, cached, degrades to None. Ranking never waits on thi
 
 import logging
 import sqlite3
+from typing import Literal, NamedTuple
 
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
 log = logging.getLogger(__name__)
+
+
+class ExplainResult(NamedTuple):
+    """`explain()`'s answer: the text, or which of three unrelated causes
+    produced none.
+
+    A bare `None` return collapsed "this user does not exist" (the caller's
+    argument is wrong), "the model is unreachable" (retry later), and "the
+    model answered but produced nothing usable" (also worth a retry, but not
+    the same failure) into one value -- so `_explain_item` could only ever
+    raise one generic `ToolError` for all three, and its own docstring had to
+    spell out the ambiguity a return type should have carried. `reason="ok"`
+    is set only when `text` is not `None`, so a caller can also just check
+    truthiness of `.text` the way the old return worked.
+    """
+
+    text: str | None
+    reason: Literal["ok", "unknown_user", "model_unreachable", "no_answer"]
 
 
 class Explanation(BaseModel):
@@ -28,6 +47,10 @@ class ExplainState(BaseModel):
     item_id: int
     profile: str = ""
     explanation: str | None = None
+    # Set by generate_explanation to "model_unreachable" or "no_answer" when
+    # `explanation` stays None, so explain() can build the right ExplainResult
+    # without re-deriving the distinction from a bare None.
+    explanation_reason: str = "no_answer"
 
 
 def explanation_messages(profile: str, title: str, summary: str) -> list[dict]:
@@ -127,19 +150,40 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
     def generate_explanation(state: ExplainState) -> dict:
         """The `explain` node: one retry per spec, `None` rather than a
         traceback if both attempts fail to parse -- ranking never waits on
-        this, so a bad reply must degrade, not raise."""
+        this, so a bad reply must degrade, not raise.
+
+        Also records the LAST attempt's failure kind as `explanation_reason`,
+        so `explain()` can tell "the model was unreachable" (an
+        `OSError`/`ConnectionError` -- retry later) from "the model answered
+        but the reply did not parse" (a validation error -- also worth a
+        retry, but a different failure) without re-deriving the distinction
+        from a bare `None`.
+        """
         item = conn.execute(
             "SELECT title, summary FROM items WHERE id = ?", (state.item_id,)
         ).fetchone()
         messages = explanation_messages(state.profile, item["title"], item["summary"])
+        reason = "no_answer"
         for _ in range(2):  # one retry per spec
             try:
                 out = chat_fn(messages, Explanation.model_json_schema())
-                return {"explanation": Explanation.model_validate(out).text}
+                return {
+                    "explanation": Explanation.model_validate(out).text,
+                    "explanation_reason": "ok",
+                }
+            except (OSError, ConnectionError):
+                # The chat backend itself is unreachable -- a network/socket
+                # failure, not a reply the model returned. Retrying a dead
+                # connection twice is still the existing contract; only the
+                # reported reason changes.
+                log.debug("explain attempt failed", exc_info=True)
+                reason = "model_unreachable"
+                continue
             except Exception:
                 log.debug("explain attempt failed", exc_info=True)
+                reason = "no_answer"
                 continue
-        return {"explanation": None}
+        return {"explanation": None, "explanation_reason": reason}
 
     graph = StateGraph(ExplainState)
     graph.add_node("profile", synthesize_profile)
@@ -150,32 +194,36 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
     return graph.compile()
 
 
-def explain(conn, user_id: int, item_id: int, chat_fn) -> str | None:
+def explain(conn, user_id: int, item_id: int, chat_fn) -> ExplainResult:
     """Why this item was ranked here for this reader, cached after the first
     successful call.
 
-    Degrades to `None` on every failure mode -- unknown user, graph
-    exception, an explanation the model never returned -- per this module's
-    reliability contract: ranking never waits on an explanation, so this must
-    never raise into that path.
+    Never raises -- per this module's reliability contract, ranking never
+    waits on an explanation, so this must never raise into that path. But it
+    no longer collapses every failure into the same `None`: `reason` names
+    which of three unrelated causes produced no text -- an unknown user_id
+    (the caller's argument is wrong), the chat backend being unreachable
+    (retry later), or the model answering with nothing usable (also worth a
+    retry, but a different failure) -- so a caller does not have to
+    re-derive the distinction `_explain_item` used to reconstruct by hand.
     """
     cached = conn.execute(
         "SELECT text FROM explanations WHERE user_id = ? AND item_id = ?",
         (user_id, item_id),
     ).fetchone()
     if cached:
-        return cached["text"]
+        return ExplainResult(text=cached["text"], reason="ok")
     # Cheap guard before the graph: a deleted persona (or a stale browser
     # session still holding its id) would otherwise cost an LLM call and a
     # logged traceback per request.
     if conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone() is None:
         log.warning("explain called for unknown user_id=%s", user_id)
-        return None
+        return ExplainResult(text=None, reason="unknown_user")
     try:
         result = _build_graph(conn, chat_fn).invoke(ExplainState(user_id=user_id, item_id=item_id))
     except Exception:
         log.exception("explain graph failed")
-        return None
+        return ExplainResult(text=None, reason="model_unreachable")
     text = result.get("explanation")
     if text:
         conn.execute(
@@ -183,4 +231,6 @@ def explain(conn, user_id: int, item_id: int, chat_fn) -> str | None:
             (user_id, item_id, text),
         )
         conn.commit()
-    return text
+        return ExplainResult(text=text, reason="ok")
+    reason = result.get("explanation_reason", "no_answer")
+    return ExplainResult(text=None, reason=reason)

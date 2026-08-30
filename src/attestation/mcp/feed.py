@@ -301,12 +301,11 @@ def register(mcp) -> None:
 
 # How many tags to return per item. Four was the natural output of the tagging
 # pass and roughly doubled a row's length; the first few carry the topic and
-# the rest are refinements a reader does not need in a list.
+# the rest are refinements a reader does not need in a list. Mirrors
+# rank.MAX_TAGS_SHOWN, which RankedItem.to_row uses for the same cap on a
+# ranked item's wire row -- this one caps the digest topic listing below,
+# a different call site over the same tag list.
 MAX_TAGS_SHOWN = 3
-
-# How much abstract a search result carries. Enough to judge relevance, short
-# enough that ten of them stay readable.
-SUMMARY_CHARS = 240
 
 
 # A title's share of a row. Real titles reach 223 chars (p95 127) against a
@@ -345,26 +344,6 @@ MAX_DIGEST_ITEMS = 12
 
 MAX_TITLE_CHARS = 90
 
-# url and source were the fields round 6's property test forgot. `url` reaches
-# 226 chars in the live corpus and `source` 27, so the caps PERMITTED a 439-char
-# row against a 320-char budget -- and 350 of 5222 real search rows breached it,
-# with five of five ordinary queries producing one. Both budgets had been sized
-# from observed rows, which is the same error as sizing them from a fixture: a
-# sample is not a bound.
-#
-# A clipped url is not clickable, so it is a real cost -- but an unrenderable
-# payload costs the whole answer, and `feed.read` returns the full record.
-MAX_URL_CHARS = 120
-MAX_SOURCE_CHARS = 40
-# The tagging vocabulary is not controlled here, so cap what a row shows.
-MAX_TAG_CHARS = 32
-
-
-def _clip_field(text: str | None, limit: int) -> str:
-    """Any row field, trimmed to fit, with the cut made visible."""
-    value = " ".join((text or "").split())
-    return value if len(value) <= limit else value[:limit].rstrip() + "…"
-
 
 def _clip_title(title: str | None) -> str:
     """A title trimmed to fit, with the cut made visible.
@@ -377,48 +356,10 @@ def _clip_title(title: str | None) -> str:
     return text if len(text) <= MAX_TITLE_CHARS else text[:MAX_TITLE_CHARS].rstrip() + "…"
 
 
-def _item_row(it, *, summary: bool = False) -> dict:
-    """The compact item shape feed.list, feed.search and feed.digest all return.
-
-    Deliberately small. A ten-item response used to run past 3,000 characters,
-    and gemma4:e2b could not reproduce one: it truncated, apologised,
-    re-rendered as raw JSON, truncated again, and never recovered. The reader
-    saw half of one item. A payload an agent cannot hold is one the tool should
-    not send.
-
-    `score` is gone. It was a blended RANK within a candidate set, so the same
-    item scored 11.19 in a 14-day window and 14.30 unbounded -- seventeen
-    digits that no caller could compare across calls and that invited being
-    read as a relevance measure. Order already carries the ranking.
-
-    Tags are capped, with `n_tags` reporting the true count, because silent
-    truncation is how an agent tells a reader an item has three topics when it
-    has six.
-    """
-    row = {
-        "item_id": it.item_id,
-        "title": _clip_title(it.title),
-        "url": _clip_field(it.url, MAX_URL_CHARS),
-        "source": _clip_field(it.source, MAX_SOURCE_CHARS),
-        "tags": [_clip_field(t, MAX_TAG_CHARS) for t in (it.tags or [])[:MAX_TAGS_SHOWN]],
-    }
-    # Always present, even as null. Omitting it saved ~25 chars a row and broke
-    # a stated key contract (tests/test_mcp_server.py asserts the key set), so
-    # a caller reading item["content_type"] would get a KeyError rather than
-    # None. The budget was recovered by trimming one default search result
-    # instead -- a smaller loss than an envelope whose shape varies by row.
-    row["content_type"] = it.content_type
-    if it.tags:
-        row["n_tags"] = len(it.tags)
-    if summary and getattr(it, "summary", None):
-        text = it.summary.strip()
-        row["summary"] = text if len(text) <= SUMMARY_CHARS else text[:SUMMARY_CHARS].rstrip() + "…"
-    return row
-
-
-# How much abstract one item carries. The list tools cap at SUMMARY_CHARS
-# because ten of them must fit together; a single item can afford more, and an
-# abstract cut mid-sentence gets quoted as though it were the finding.
+# How much abstract one item carries. The list tools cap at rank.SUMMARY_CHARS
+# (used inside RankedItem.to_row) because ten of them must fit together; a
+# single item can afford more, and an abstract cut mid-sentence gets quoted
+# as though it were the finding.
 FULL_SUMMARY_CHARS = 2000
 
 
@@ -518,7 +459,7 @@ def _list_feed(conn, user_row, limit: int = 4, since_days: SinceDays = 14) -> di
             f"{len(items)} item(s), best first"
             + (f"; more available -- raise limit (max {MAX_LIST_LIMIT})" if more else "")
         ),
-        "items": [_item_row(it) for it in items],
+        "items": [it.to_row() for it in items],
         "ranking_quality": ranking_quality(conn, user_row["id"]),
     }
 
@@ -549,20 +490,27 @@ def _explain_item(conn, user_row, item_id: ItemId) -> dict:
         (user_row["id"], item_id),
     )
     conn.commit()
-    text = explain_item_fn(conn, user_row["id"], item_id, chat_fn=default_chat_fn)
-    if text is None:
-        # explain() catches everything and returns None, and wrapping that in
-        # ok=true collapsed three states into one: no explanation could be
-        # generated, the model is down, the item has no text. A caller reading
-        # `explanation: null` on a success envelope has no reason to retry and
-        # will tell the reader there is no explanation.
+    result = explain_item_fn(conn, user_row["id"], item_id, chat_fn=default_chat_fn)
+    if result.reason == "unknown_user":
+        # needs_user already resolves user_row above, so this path is not
+        # reachable through the tool call itself -- but explain() names the
+        # cause precisely now, and collapsing it back into the generic
+        # "model unreachable" wording would misdirect a caller that reaches
+        # this some other way (e.g. the persona was deleted between the user
+        # lookup above and this call).
+        raise ToolError(f"unknown user_id: {user_row['id']}")
+    if result.text is None:
+        # The other two reasons keep today's single wording -- a caller
+        # cannot act differently on "the model is down" vs "it answered with
+        # nothing", and splitting them was not asked for; only unknown_user
+        # got a distinct message above.
         raise ToolError(
             "could not generate an explanation -- the local model is"
             " unreachable or returned nothing. Check `attest install --check`;"
             " the ranking itself needs no model and feed.list still works."
         )
     return {
-        "explanation": text,
+        "explanation": result.text,
         # Says what this call just did. implicit.py is honest in its docstring
         # that "curiosity is not approval, and a reader may well have asked
         # precisely because the item looked wrong" -- and the surface that
@@ -752,24 +700,23 @@ def _resolved_tag(conn, tag: str | None) -> str | None:
     archive rather than a spelling problem.
 
     canonical() is identity for anything with spaces or capitals; resolve_query
-    handles exactly those, and is what every kg lookup uses.
+    handles exactly those, and is what every kg lookup uses. The membership
+    check itself is kg.resolve_or_raise, shared with knowledge._path's
+    resolve loop -- but over every STORED tag, not the graph's concepts:
+    build_graph drops tags used fewer than MIN_TAG_USES times, so filtering
+    on graph membership refused rare-but-real tags. A search for a concept
+    mentioned once is a legitimate search, and this is a filter, not a graph
+    query.
     """
     if not tag:
         return tag
-    from attestation.kg import canonical, resolve_query
+    from attestation.kg import canonical, resolve_or_raise
 
-    # Every STORED tag, not the graph's concepts. build_graph drops tags used
-    # fewer than MIN_TAG_USES times, so filtering on graph membership refused
-    # rare-but-real tags -- a search for a concept mentioned once is a
-    # legitimate search, and this is a filter, not a graph query.
     stored = {canonical(r["tag"]) for r in conn.execute("SELECT DISTINCT tag FROM item_tags")}
-    resolved = resolve_query(tag, {name: () for name in stored})
-    if resolved not in stored:
-        raise ToolError(
-            f"{tag!r} is not a tag in this corpus;"
-            " call kg.concepts(prefix=...) for the names it does use"
-        )
-    return resolved
+    try:
+        return resolve_or_raise(tag, stored, kind="tag")
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
 
 
 def _passes_filters(item, needle: str, similarity: dict, tag, content_type) -> bool:
@@ -883,7 +830,7 @@ def _search_feed(
     scored = _score_matches(kept, ranked, needle, similarity)
     matches = [
         {
-            **_item_row(item),
+            **item.to_row(),
             # Always present, even when false. Making it conditional saved ~24
             # chars a row and broke the contract: a caller reading
             # item["already_rated"] got a KeyError instead of False, which is a
@@ -1014,7 +961,7 @@ def _digest_body(conn, user_row, days: int = 7, per_topic: int = 3, limit: int =
     # the caller's connection is reused deliberately: digest must not open a
     # second one to rank the same feed
     items_ranked = ranked_items(conn, row, min(limit, MAX_LIST_LIMIT), days)
-    items = [_item_row(it) for it in items_ranked]
+    items = [it.to_row() for it in items_ranked]
     if not items:
         raise ToolError("no unread items to digest")
 

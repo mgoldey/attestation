@@ -1160,3 +1160,24 @@ def test_ranking_quality_flags_near_single_class_history():
     silent = _ranking_quality({}, {})
     assert silent["classifier_active"] is False
     assert silent["caveat"].startswith("classifier OFF: 0 clicks")
+
+
+def test_ranked_item_to_row_matches_item_row_fields():
+    """`RankedItem.to_row` owns the wire projection `mcp/feed._item_row` used
+    to build -- same key set, same 3-tag/`n_tags` clipping rule, now pinned
+    here with a literal object so no database is needed to guard the shape."""
+    it = RankedItem(
+        item_id=1,
+        title="t",
+        url="u",
+        source="s",
+        score=0.0,
+        profile_similarity=0.0,
+        tags=["a", "b", "c", "d"],
+        content_type="paper",
+        summary="x" * 500,
+    )
+    row = it.to_row()
+    assert set(row) == {"item_id", "title", "url", "source", "tags", "content_type", "n_tags"}
+    assert row["tags"] == ["a", "b", "c"] and row["n_tags"] == 4
+    assert "summary" in it.to_row(summary=True)
