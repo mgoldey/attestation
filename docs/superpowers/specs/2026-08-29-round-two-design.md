@@ -1,8 +1,14 @@
 # Round two: five lenses on structure, every finding dispositioned
 
 **Date:** 2026-08-29
-**Status:** approved by instruction ("address all issues from next review
-round"); implementation follows in the plan of the same name.
+**Status:** implemented 2026-08-29 — sixteen commits `0829857..5e8d2ca` (four
+parallel file-owner tasks, then three more, then one fix wave), 69 files,
++1848/−354; every "fixed" disposition landed with its named test, the refused
+list is untouched, and the whole-branch review (Feathers-style sensing on
+four mutants: three dead on arrival, one — `_config_ladder` precedence —
+killed in the fix wave) found one Critical (a raising callable `empty=`
+escaped `@tool`) and three Important, all fixed and re-verified. Deviations
+and findings are recorded below.
 **Depends on:** onion seams (`2026-08-29-onion-seams-design.md`), the
 structure note (`docs/architecture/structure-and-integration-points.md`),
 which proposed this round and its lenses.
