@@ -39,7 +39,7 @@ def sync_feeds(conn: sqlite3.Connection, feeds_path: str | Path) -> None:
 
     INSERT OR IGNORE, so this is a no-op for feeds already present: the
     database -- not the TOML file -- is the source of truth once seeded.
-    Use attestation.feeds.add_feed / remove_feed to change the feed set.
+    Use attestation.feeds.add_source / remove_source to change the feed set.
     """
     path = Path(feeds_path)
     if not path.exists():
@@ -115,6 +115,35 @@ def _new_entries(conn, feed_id: int, entries) -> tuple[list, int]:
     return new_entries, skipped
 
 
+def _ingest_outcome(outcomes: list[dict]) -> dict:
+    """The decision over one run's per-feed results, held apart from the I/O
+    that produced them.
+
+    Each outcome is `{"feed": str, "new": int, "skipped": int,
+    "error": str | None, "embedder_down": bool}` -- one entry per feed
+    `run_ingest` actually attempted (a feed skipped outright, e.g. because the
+    embedder was already known down, contributes no entry). `added` and
+    `skipped` sum across feeds; `failed_feeds` counts entries with a non-None
+    `error`; `embedder_down` LATCHES true if any outcome reports it, since one
+    dead backend outlasts whichever feed first discovered it -- and, matching
+    the shape `run_ingest` returned before this split, the key is present only
+    when true, so a normal run's dict is exactly `{added, skipped,
+    failed_feeds}`.
+
+    Pure: no I/O, no logging -- just the list and this dict. Logging which
+    feed failed and why stays in `run_ingest`, next to the exception it is
+    describing.
+    """
+    stats = {
+        "added": sum(o["new"] for o in outcomes),
+        "skipped": sum(o["skipped"] for o in outcomes),
+        "failed_feeds": sum(1 for o in outcomes if o["error"] is not None),
+    }
+    if any(o["embedder_down"] for o in outcomes):
+        stats["embedder_down"] = True
+    return stats
+
+
 def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -> dict:
     """Fetch every registered feed, dedup, embed, and store -- deterministic
     throughout, per the module docstring; no LLM runs here.
@@ -123,16 +152,16 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
     (see the comment below `_new_entries`): the embed call is the slow HTTP
     round trip to the model server, and holding a DB lock across it would
     block every other reader and writer for that long. One feed's failure is
-    counted and does not stop the others.
+    counted and does not stop the others -- `_ingest_outcome` makes that call
+    over the outcomes this loop collects.
     """
     sync_feeds(conn, feeds_path)
-    stats = {"added": 0, "skipped": 0, "failed_feeds": 0}
+    outcomes: list[dict] = []
     for feed in conn.execute("SELECT * FROM feeds").fetchall():
         try:
             parsed = parse(feed["url"])
 
             new_entries, skipped = _new_entries(conn, feed["id"], parsed.entries)
-            stats["skipped"] += skipped
 
             # Pass 2: embed everything outside of any transaction. These are
             # the slow HTTP calls to Ollama -- no db lock is held while they run.
@@ -142,9 +171,9 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
             ]
 
             # Pass 3: short write transaction -- just the inserts + last_fetched
-            # update. `added` is counted locally and folded into stats only
-            # after the commit: the rollback below undoes the rows, so counting
-            # as we go reported items that no longer exist.
+            # update. `added_here` is counted locally and folded into the
+            # outcome only after the commit: the rollback below undoes the
+            # rows, so counting as we go reported items that no longer exist.
             added_here = 0
             for entry, title, summary, guid, chash, vec in embedded:
                 cur = conn.execute(
@@ -169,21 +198,38 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
                 "UPDATE feeds SET last_fetched = datetime('now') WHERE id = ?", (feed["id"],)
             )
             conn.commit()
-            stats["added"] += added_here
+            outcomes.append(
+                {
+                    "feed": feed["url"],
+                    "new": added_here,
+                    "skipped": skipped,
+                    "error": None,
+                    "embedder_down": False,
+                }
+            )
         except Exception as exc:  # noqa: BLE001 -- one bad feed must not end
             # the run, and the handler below sorts the two cases that matter:
             # an unreachable embedding backend (fatal for every feed, so stop
             # and say so once) versus this feed being broken (report and go on).
             conn.rollback()
-            stats["failed_feeds"] += 1
             # An unreachable embedder is not a broken feed, and reporting it as
             # one sends a new user to debug their network or feeds.toml while
             # the actual cause is that Ollama is not running. Measured: with the
             # backend down this printed one full httpx traceback PER FEED --
             # 22 of them, ~880 lines -- every one headed "feed failed: <url>".
-            if backend_unreachable(exc):
-                if not stats.get("embedder_down"):
-                    stats["embedder_down"] = True
+            down = backend_unreachable(exc)
+            outcomes.append(
+                {
+                    "feed": feed["url"],
+                    "new": 0,
+                    "skipped": 0,
+                    "error": str(exc),
+                    "embedder_down": down,
+                }
+            )
+            if down:
+                already_down = any(o["embedder_down"] for o in outcomes[:-1])
+                if not already_down:
                     # No `attestation.llm` import here -- domain modules may not
                     # name the concrete client (test_domain_reaches_models_only_
                     # through_ports). So this cannot resolve the URL the way
@@ -202,4 +248,4 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
             # the exception text is the diagnosis, and a traceback for an
             # expected condition trains people to ignore the output.
             log.warning("feed failed: %s -- %s: %s", feed["url"], type(exc).__name__, exc)
-    return stats
+    return _ingest_outcome(outcomes)

@@ -61,7 +61,7 @@ def _add_feed(conn, url: str, title: str | None = None) -> dict:
     from attestation import feeds as feeds_mod
 
     try:
-        feed_id, message = feeds_mod.add_feed(conn, url, title)
+        feed_id, message = feeds_mod.add_source(conn, url, title)
     except feeds_mod.FeedError as exc:
         raise ToolError(str(exc)) from exc
     return {"message": message, "feed_id": feed_id}
@@ -71,7 +71,7 @@ def _add_feed(conn, url: str, title: str | None = None) -> dict:
 def _list_feeds(conn) -> dict:
     from attestation import feeds as feeds_mod
 
-    feeds = feeds_mod.list_feeds(conn)
+    feeds = feeds_mod.list_sources(conn)
     return {"message": f"{len(feeds)} feed(s)", "feeds": feeds}
 
 
@@ -86,7 +86,7 @@ def _remove_feed(conn, feed_id: ItemId, confirm: bool = False) -> dict:
             "them are kept."
         )
     try:
-        orphaned_items, message = feeds_mod.remove_feed(conn, feed_id)
+        orphaned_items, message = feeds_mod.remove_source(conn, feed_id)
     except feeds_mod.FeedError as exc:
         raise ToolError(str(exc)) from exc
     return {"message": message, "orphaned_items": orphaned_items}
@@ -97,7 +97,7 @@ def _preview_feed(url: str, limit: int = 5) -> dict:
     from attestation import feeds as feeds_mod
 
     try:
-        out = feeds_mod.preview_feed(url, limit=min(limit, MAX_LIST_LIMIT))
+        out = feeds_mod.preview_source(url, limit=min(limit, MAX_LIST_LIMIT))
     except feeds_mod.FeedError as exc:
         raise ToolError(str(exc)) from exc
     return {"message": out["message"], "title": out["title"], "entries": out["entries"]}
@@ -109,5 +109,5 @@ def _suggest_feeds(conn, user_row, limit: int = 5) -> dict:
 
     return {
         "message": "scored against tags you marked useful",
-        "suggestions": feeds_mod.suggest_feeds(conn, user_row["id"], limit=limit),
+        "suggestions": feeds_mod.suggest_sources(conn, user_row["id"], limit=limit),
     }

@@ -28,7 +28,7 @@ def conn(tmp_path):
 
 
 def test_add_feed_registers_without_ingesting(conn):
-    feed_id, message = feeds.add_feed(conn, "http://example.com/rss", parse=_parse_ok)
+    feed_id, message = feeds.add_source(conn, "http://example.com/rss", parse=_parse_ok)
 
     row = conn.execute("SELECT url, title FROM feeds WHERE id = ?", (feed_id,)).fetchone()
     assert row["url"] == "http://example.com/rss"
@@ -39,21 +39,21 @@ def test_add_feed_registers_without_ingesting(conn):
 
 def test_add_feed_rejects_unparseable_url_without_inserting(conn):
     with pytest.raises(feeds.FeedError):
-        feeds.add_feed(conn, "http://example.com/not-a-feed", parse=_parse_bad)
+        feeds.add_source(conn, "http://example.com/not-a-feed", parse=_parse_bad)
 
     assert conn.execute("SELECT COUNT(*) n FROM feeds").fetchone()["n"] == 0
 
 
 def test_add_feed_is_idempotent(conn):
-    first_id, _ = feeds.add_feed(conn, "http://example.com/rss", parse=_parse_ok)
-    second_id, _ = feeds.add_feed(conn, "http://example.com/rss", parse=_parse_ok)
+    first_id, _ = feeds.add_source(conn, "http://example.com/rss", parse=_parse_ok)
+    second_id, _ = feeds.add_source(conn, "http://example.com/rss", parse=_parse_ok)
 
     assert second_id == first_id
     assert conn.execute("SELECT COUNT(*) n FROM feeds").fetchone()["n"] == 1
 
 
 def test_list_feeds_reports_item_counts(conn):
-    fid, _ = feeds.add_feed(conn, "http://example.com/rss", parse=_parse_ok)
+    fid, _ = feeds.add_source(conn, "http://example.com/rss", parse=_parse_ok)
     conn.execute(
         "INSERT INTO items(feed_id, title, url, summary, content_hash)"
         " VALUES (?, 't', 'u', 's', 'h1')",
@@ -61,7 +61,7 @@ def test_list_feeds_reports_item_counts(conn):
     )
     conn.commit()
 
-    listed = feeds.list_feeds(conn)
+    listed = feeds.list_sources(conn)
 
     assert len(listed) == 1
     assert listed[0]["item_count"] == 1
@@ -69,7 +69,7 @@ def test_list_feeds_reports_item_counts(conn):
 
 
 def test_remove_feed_orphans_items_and_preserves_clicks(conn):
-    fid, _ = feeds.add_feed(conn, "http://example.com/rss", parse=_parse_ok)
+    fid, _ = feeds.add_source(conn, "http://example.com/rss", parse=_parse_ok)
     # get_db auto-seeds users 1-3 (matt, bench-chemist, ml-engineer); insert
     # without an explicit id to avoid colliding with the seeded rows.
     cur = conn.execute("INSERT INTO users(name, interests) VALUES ('u', 'x')")
@@ -86,7 +86,7 @@ def test_remove_feed_orphans_items_and_preserves_clicks(conn):
     )
     conn.commit()
 
-    orphaned, message = feeds.remove_feed(conn, fid)
+    orphaned, message = feeds.remove_source(conn, fid)
 
     assert conn.execute("SELECT COUNT(*) n FROM feeds").fetchone()["n"] == 0
     # items and the click that trained the ranker both survive
@@ -98,11 +98,11 @@ def test_remove_feed_orphans_items_and_preserves_clicks(conn):
 
 def test_remove_feed_unknown_id_raises(conn):
     with pytest.raises(feeds.FeedError):
-        feeds.remove_feed(conn, 999)
+        feeds.remove_source(conn, 999)
 
 
 def test_preview_feed_does_not_subscribe(conn):
-    out = feeds.preview_feed("http://example.com/rss", limit=1, parse=_parse_ok)
+    out = feeds.preview_source("http://example.com/rss", limit=1, parse=_parse_ok)
 
     assert "ok" not in out
     assert len(out["entries"]) == 1
@@ -112,7 +112,7 @@ def test_preview_feed_does_not_subscribe(conn):
 def test_two_subscriptions_to_one_url_do_not_both_error(tmp_path):
     """Check-then-insert with a NETWORK FETCH in the window.
 
-    add_feed reads `SELECT id FROM feeds WHERE url = ?`, then parses the feed
+    add_source reads `SELECT id FROM feeds WHERE url = ?`, then parses the feed
     over the network, then inserts -- so the gap between check and write is a
     whole HTTP round trip, the widest of the four sites sharing this shape.
     Measured: 8 concurrent calls gave 7 IntegrityErrors and 1 success, where
@@ -124,7 +124,7 @@ def test_two_subscriptions_to_one_url_do_not_both_error(tmp_path):
     import concurrent.futures
     from types import SimpleNamespace
 
-    from attestation.feeds import add_feed
+    from attestation.feeds import add_source
 
     db = tmp_path / "t.db"
     seeded_db(db).commit()
@@ -137,7 +137,7 @@ def test_two_subscriptions_to_one_url_do_not_both_error(tmp_path):
 
     def subscribe(_):
         try:
-            feed_id, message = add_feed(seeded_db(db), "http://example.invalid/feed", parse=parse)
+            feed_id, message = add_source(seeded_db(db), "http://example.invalid/feed", parse=parse)
             return {"ok": True, "message": message}
         except Exception as exc:  # noqa: BLE001 -- the point is what leaks out
             return {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
@@ -168,10 +168,10 @@ def test_suggest_feeds_ranks_by_tag_overlap_ties_by_title():
 
 
 def test_feeds_functions_raise_rather_than_return_ok(tmp_path):
-    """add_feed raises FeedError on an unparseable URL instead of returning
+    """add_source raises FeedError on an unparseable URL instead of returning
     {"ok": False, ...} -- the MCP layer maps FeedError to ToolError, so the
     envelope is built in exactly one place instead of twice."""
-    from attestation.feeds import FeedError, add_feed
+    from attestation.feeds import FeedError, add_source
 
     conn = seeded_db(tmp_path / "t.db")
 
@@ -181,4 +181,12 @@ def test_feeds_functions_raise_rather_than_return_ok(tmp_path):
         bozo = 1
 
     with pytest.raises(FeedError, match="did not parse"):
-        add_feed(conn, "http://nope", parse=lambda url: NotAFeed())
+        add_source(conn, "http://nope", parse=lambda url: NotAFeed())
+
+
+def test_feeds_module_names_match_the_source_tool_vocabulary():
+    """feeds.py's public functions back the feed.source_* / feed.sources tools
+    one-for-one; none should still be named *_feed/*_feeds -- "feed" is
+    ambiguous with the ranked-item product in mcp/feed.py, "source" is not."""
+    public = {n for n in dir(feeds) if not n.startswith("_") and callable(getattr(feeds, n))}
+    assert not [n for n in public if n.endswith(("feed", "feeds"))], public

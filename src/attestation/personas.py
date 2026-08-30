@@ -22,6 +22,11 @@ ranks by its interests string alone forever.
 
 Nothing here deletes anything. `survey` reports, `relabel_bootstrap` corrects
 provenance in place, and merging is left to a caller who can ask.
+
+Glossary: "persona" and "user" name the same `users` row throughout this
+codebase -- "persona" is the word this module's prose and the rest of the
+docs use, "user"/"user_id" is what the schema and SQL call it. No rename;
+just the one fact a newcomer otherwise has to grep for.
 """
 
 import sqlite3

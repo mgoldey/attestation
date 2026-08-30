@@ -330,3 +330,29 @@ task, this wave).
   substring as `compare()` caveats -- deliberately narrow, since `notes`
   also carries unrelated adapter text (a config file's prose header) that
   must not be reprinted as a trust warning.
+
+- **W7: `list_feeds` renamed too, though the brief's Produces list only
+  named four.** The brief's interface line lists `add_source`,
+  `remove_source`, `preview_source`, `suggest_sources` -- four functions,
+  matching Wickham's finding 7 one-for-one with the `source_*` tools. But
+  the brief's own RED test asserts over feeds.py's *whole* public surface
+  (`{n for n in dir(feeds) ... n.endswith(("feed", "feeds"))}`), and
+  `list_feeds` (backing `feed.sources`) ends in "feeds" -- left alone it
+  fails that literal test. Renamed to `list_sources` for consistency with
+  the other four and to make the stated test pass; the private `@tool`
+  wrapper name `_list_feeds` in `mcp/subscriptions.py` is untouched (it is
+  aliased by `mcp_server.py`'s `_list_feeds_impl`, a file outside this
+  task's ownership) -- only its body's call to `feeds_mod.list_feeds(conn)`
+  became `feeds_mod.list_sources(conn)`.
+
+- **C3: `_ingest_outcome`'s `embedder_down` key is conditional, not
+  always-present.** The brief's illustrative RED test only exercises the
+  true case (`out["embedder_down"] is True`) and leaves the false case
+  unspecified. The global constraint says `run_ingest`'s return keys stay
+  byte-identical to today's, and today's `stats` dict never carries
+  `embedder_down` unless it latched true (`tests/test_ingest.py::
+  test_ingest_adds_items_and_vectors` asserts exact dict equality with no
+  such key on a clean run). `_ingest_outcome` matches that: it sets
+  `stats["embedder_down"] = True` only when at least one outcome reports
+  it, otherwise the key is absent -- so a normal run's dict is exactly
+  `{added, skipped, failed_feeds}`, unchanged from before the split.

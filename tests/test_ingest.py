@@ -5,7 +5,13 @@ import feedparser
 import pytest
 
 from attestation.db import get_db
-from attestation.ingest import content_hash, run_ingest, strip_boilerplate, sync_feeds
+from attestation.ingest import (
+    _ingest_outcome,
+    content_hash,
+    run_ingest,
+    strip_boilerplate,
+    sync_feeds,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -386,3 +392,50 @@ def test_one_unencodable_entry_does_not_discard_the_whole_feed(tmp_path, fake_em
     assert stored == 9, f"one bad entry cost {9 - stored} good ones"
     assert stats["added"] == 9
     assert stats["failed_feeds"] == 0, "a per-entry problem was reported as a feed failure"
+
+
+# ---------------------------------------------------------------------------
+# _ingest_outcome: the pure decision over one run's per-feed results
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_outcome_latches_embedder_down_over_plain_outcomes():
+    out = _ingest_outcome(
+        [
+            {"feed": "a", "new": 2, "skipped": 0, "error": None, "embedder_down": False},
+            {"feed": "b", "new": 0, "skipped": 0, "error": "boom", "embedder_down": True},
+        ]
+    )
+    assert out["embedder_down"] is True and out["added"] == 2
+
+
+def test_ingest_outcome_sums_added_and_skipped_across_feeds():
+    """No embedder_down key at all when nothing latched it -- matches the
+    dict run_ingest returned before this split into a pure decision fn."""
+    out = _ingest_outcome(
+        [
+            {"feed": "a", "new": 2, "skipped": 1, "error": None, "embedder_down": False},
+            {"feed": "b", "new": 3, "skipped": 4, "error": None, "embedder_down": False},
+        ]
+    )
+    assert out == {"added": 5, "skipped": 5, "failed_feeds": 0}
+
+
+def test_ingest_outcome_counts_only_errored_feeds_as_failed():
+    out = _ingest_outcome(
+        [
+            {"feed": "a", "new": 1, "skipped": 0, "error": None, "embedder_down": False},
+            {
+                "feed": "b",
+                "new": 0,
+                "skipped": 0,
+                "error": "malformed feed document",
+                "embedder_down": False,
+            },
+        ]
+    )
+    assert out["failed_feeds"] == 1 and out["added"] == 1
+
+
+def test_ingest_outcome_of_no_feeds_is_all_zero():
+    assert _ingest_outcome([]) == {"added": 0, "skipped": 0, "failed_feeds": 0}

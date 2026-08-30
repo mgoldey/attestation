@@ -1,14 +1,20 @@
-"""Feed curation: register, list, remove, preview, and suggest feeds.
+"""Source curation: register, list, remove, preview, and suggest feeds.
 
 The database is the source of truth for the feed set. `feeds.toml` seeds a
 fresh database on first ingest (ingest.sync_feeds uses INSERT OR IGNORE, so
 it is a no-op afterwards); these functions are the supported way to change
 which feeds are tracked, and they work with no checkout present.
 
-add_feed is register-only by design: it validates the URL parses and inserts
-the row, leaving the fetch to the next `attest ingest`. Ingesting inline
-would mean network I/O plus one embedding per item -- minutes for a busy
-feed, inside a tool call an agent may time out on.
+Named after the `feed.source_*` tool vocabulary these functions back
+one-for-one (`add_source` <- `feed.source_add`, and so on) rather than after
+"feed" -- "feed" is ambiguous in this codebase between an RSS subscription
+(this module) and the personalized ranked-item product (`mcp/feed.py`,
+`feed.list`, `feed.digest`); "source" names only the former.
+
+add_source is register-only by design: it validates the URL parses and
+inserts the row, leaving the fetch to the next `attest ingest`. Ingesting
+inline would mean network I/O plus one embedding per item -- minutes for a
+busy feed, inside a tool call an agent may time out on.
 """
 
 import sqlite3
@@ -34,7 +40,7 @@ def _looks_like_feed(parsed) -> bool:
     return bool(feed_meta.get("title")) and not getattr(parsed, "bozo", 0)
 
 
-def add_feed(
+def add_source(
     conn: sqlite3.Connection,
     url: str,
     title: str | None = None,
@@ -79,7 +85,7 @@ def add_feed(
     )
 
 
-def list_feeds(conn: sqlite3.Connection) -> list[dict]:
+def list_sources(conn: sqlite3.Connection) -> list[dict]:
     """Every registered feed with its item count -- the DB is the source of
     truth (see the module docstring): feeds.toml only seeds the first ingest."""
     rows = conn.execute(
@@ -99,7 +105,7 @@ def list_feeds(conn: sqlite3.Connection) -> list[dict]:
     ]
 
 
-def remove_feed(conn: sqlite3.Connection, feed_id: int) -> tuple[int, str]:
+def remove_source(conn: sqlite3.Connection, feed_id: int) -> tuple[int, str]:
     """Unsubscribe. Items are ORPHANED, never deleted -- their clicks trained
     the ranker, and cascading would destroy that feedback.
 
@@ -125,7 +131,7 @@ def remove_feed(conn: sqlite3.Connection, feed_id: int) -> tuple[int, str]:
     )
 
 
-def preview_feed(url: str, limit: int = 5, parse=feedparser.parse) -> dict:
+def preview_source(url: str, limit: int = 5, parse=feedparser.parse) -> dict:
     """Fetch and show recent entries WITHOUT subscribing.
 
     Returns {title, entries, message} -- no `ok` key. Raises FeedError if the
@@ -178,7 +184,7 @@ def _score_candidates(
     return [entry for _, entry in scored[:limit]]
 
 
-def suggest_feeds(conn: sqlite3.Connection, user_id: int, limit: int = 5) -> list[dict]:
+def suggest_sources(conn: sqlite3.Connection, user_id: int, limit: int = 5) -> list[dict]:
     """Score the curated candidate list against tags this user marked useful."""
     liked = {
         r["tag"]
