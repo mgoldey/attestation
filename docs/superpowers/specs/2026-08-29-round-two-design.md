@@ -267,8 +267,21 @@ task, this wave).
   the same index via the inline `UNIQUE` plus an explicit named copy added
   to `SCHEMA` for consistency; real work only on a database migrated from
   before it existed), and `_replace_project` now upserts each record via
-  `INSERT ... ON CONFLICT(project, name) DO UPDATE`, deleting only the rows
-  for names that vanished from the artifacts. One implementation pitfall
+  `INSERT ... ON CONFLICT(project, name) DO UPDATE`, deleting only the
+  `runs` (and their `run_metrics`) rows for names that vanished from the
+  artifacts -- a bulk `DELETE ... WHERE project = ?` up front, same as
+  before, but now scoped to just the stale ids rather than every row in the
+  project. `run_metrics` for a *surviving* run is no longer bulk-deleted
+  per project either: each surviving run's own metric rows are deleted and
+  re-inserted per run, inside the same upsert loop, immediately after that
+  run's id is resolved -- functionally equivalent to the old per-project
+  bulk delete (every metric row for every touched run is still replaced on
+  every scan), just scoped per run instead of per project, which is what
+  lets a metric that disappeared from one run's artifact vanish without
+  touching a sibling run's rows. Regression test:
+  `test_a_run_that_disappears_from_disk_is_removed_on_rescan` (fix round 1
+  after review) -- confirmed RED by temporarily disabling the stale-id
+  deletion branch, GREEN with it restored. One implementation pitfall
   worth recording: `cursor.lastrowid` after an upsert that takes the UPDATE
   branch is NOT reliable in Python's sqlite3 (measured: it returned the
   *previous* INSERT's rowid -- a sibling run from earlier in the same loop

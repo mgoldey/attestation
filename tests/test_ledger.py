@@ -1635,6 +1635,36 @@ def test_run_ids_survive_a_rescan_of_an_unchanged_project(conn, workspace):
     assert ids == again
 
 
+def test_a_run_that_disappears_from_disk_is_removed_on_rescan(conn, workspace):
+    """`_replace_project`'s stale-id branch: a run whose artifact vanished
+    from disk must vanish from `runs` (and its `run_metrics`) on the next
+    scan, while a surviving run in the same project keeps its id -- the
+    upsert must not turn "replace wholesale" into "only ever add"."""
+    ledger.scan(conn, workspace)
+    before = {
+        r["name"]: r["id"]
+        for r in conn.execute("SELECT id, name FROM runs WHERE project = ?", ("physics-engine",))
+    }
+    removed_id = before["benchmark_atz"]
+    surviving_id = before["benchmark_adz"]
+
+    (workspace / "physics-engine" / "results" / "benchmark_atz.json").unlink()
+    ledger.scan(conn, workspace)
+
+    after = {
+        r["name"]: r["id"]
+        for r in conn.execute("SELECT id, name FROM runs WHERE project = ?", ("physics-engine",))
+    }
+    assert "benchmark_atz" not in after
+    assert after["benchmark_adz"] == surviving_id
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) c FROM run_metrics WHERE run_id = ?", (removed_id,)
+        ).fetchone()["c"]
+        == 0
+    )
+
+
 def test_caveats_do_not_confuse_nested_arm_keys_with_eval_splits():
     """`_arms_for_run` reuses the `split` key for two different meanings: a
     genuine eval split (`test`, `val`) and a synthetic nested-arm key
