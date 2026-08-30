@@ -277,7 +277,7 @@ def test_explain_renders_through_explanation_messages(monkeypatch, tmp_path):
         seen.append(messages)
         return {"text": "You follow cryo-EM closely."}
 
-    text = explain(conn, user_id=1, item_id=1, chat_fn=chat_fn)
+    text = explain(conn, user_id=1, item_id=1, chat_fn=chat_fn).text
     assert text == "You follow cryo-EM closely."
 
     row = conn.execute("SELECT interests FROM users WHERE id = 1").fetchone()

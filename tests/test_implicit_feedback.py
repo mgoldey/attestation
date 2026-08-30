@@ -299,8 +299,17 @@ def test_asking_why_records_engagement_even_when_the_model_is_down(tmp_path, mon
     conn.commit()
     user_id = conn.execute("SELECT id FROM users WHERE name='reader'").fetchone()["id"]
 
-    # A model that cannot answer.
-    monkeypatch.setattr("attestation.mcp.feed.explain_item_fn", lambda *a, **k: None)
+    # A model that cannot answer. Stubs the NEW contract -- explain() never
+    # returns a bare None (see explain.ExplainResult); the old stub
+    # (lambda *a, **k: None) simulated a contract this module no longer has
+    # and made _explain_item crash on `.reason` instead of exercising the
+    # "model unreachable" refusal this test is meant to cover.
+    from attestation.explain import ExplainResult
+
+    monkeypatch.setattr(
+        "attestation.mcp.feed.explain_item_fn",
+        lambda *a, **k: ExplainResult(text=None, reason="model_unreachable"),
+    )
     out = _explain_item("reader", item_id=1)
     assert out["ok"] is False, "a failed explanation was reported as success"
     assert "unreachable" in out["message"], out["message"]
