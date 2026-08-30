@@ -130,14 +130,7 @@ def tool(
         def wrapper(*args, **kwargs):
             """The actual per-call ritual: connection, user lookup, the try
             block whose except clauses are documented individually below."""
-            if empty is None:
-                resolved_empty: dict = {}
-            elif isinstance(empty, dict):
-                resolved_empty = empty
-            else:
-                bound = dict(zip(own_params, args, strict=False))
-                bound.update(kwargs)
-                resolved_empty = empty(bound)
+            resolved_empty: dict = {}
 
             def fail(message: str) -> dict:
                 """The failure envelope: `empty`'s fields plus why."""
@@ -151,6 +144,22 @@ def tool(
                 return {"ok": True, "message": message, **{**resolved_empty, **result}}
 
             try:
+                # Resolved INSIDE the try: a callable `empty` is caller-
+                # supplied code the decorator now invokes on the body's
+                # behalf, and it is the one piece of code in this wrapper
+                # that was not protected by the try/except below. A raising
+                # callable now takes the same generic-failure path as a
+                # raising body -- logged, `resolved_empty` left at `{}` so
+                # `fail()` still returns a well-formed envelope -- rather
+                # than escaping as a bare traceback.
+                if empty is None:
+                    resolved_empty = {}
+                elif isinstance(empty, dict):
+                    resolved_empty = empty
+                else:
+                    bound = dict(zip(own_params, args, strict=False))
+                    bound.update(kwargs)
+                    resolved_empty = empty(bound)
                 if not needs_db:
                     return succeed(fn(*args, **kwargs))
                 with open_db() as conn:

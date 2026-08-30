@@ -138,7 +138,7 @@ and it is read once when the server registers its tools:
 | `knowledge` | `kg.*`, `feed.search`, `cite.*` | Exploratory, read-only. |
 | `symbolic` | `sym.*` | Sandboxed subprocess, touches no database. |
 
-Unset serves all 46 tools (this count moves -- re-measure rather than
+Unset serves all 45 tools (this count moves -- re-measure rather than
 quoting it, per CLAUDE.md). An unknown value **raises** rather than falling
 back — a restriction that quietly stopped restricting is the failure worth
 preventing, so a typo takes the server down loudly.

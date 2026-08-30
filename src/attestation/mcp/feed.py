@@ -522,7 +522,8 @@ def _explain_item(conn, user_row, item_id: ItemId) -> dict:
 
 
 # Two genuinely different shapes, not one shape with optional fields: the
-# no-user branch is `feed.personas`'s old {message, users} payload verbatim,
+# no-user branch is the retired feed.personas tool's old {message, users}
+# payload verbatim,
 # and forcing the seven per-user training keys onto it (their old fixed
 # `empty=`) meant `persona_status(user=None)` returned ten keys instead of
 # three, four of them meaningless zeros/Nones for a call that never ran a
@@ -551,8 +552,8 @@ def _profile_status(conn, user: str | None = None) -> dict:
     The two questions this answered as separate tools -- "which personas
     exist" and "how well-trained is this one" -- share one row of the `users`
     table, so they are one tool distinguished by arity: omitting `user` is the
-    fast, no-training-computation discovery path (today's `feed.personas`
-    payload, unchanged), and passing it runs the `GROUP BY` and
+    fast, no-training-computation discovery path (the retired feed.personas
+    tool's payload, unchanged), and passing it runs the `GROUP BY` and
     `top_and_bottom_keys` a discovery call does not need. `needs_user` is not
     used here because that resolves-or-refuses before the body runs, and the
     no-user branch must stay reachable rather than always requiring one.

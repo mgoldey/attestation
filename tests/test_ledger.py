@@ -429,6 +429,49 @@ def test_compare_honors_a_toml_supplied_metric_direction(conn, tmp_path, monkeyp
     assert result["winner"] == "arm_b"
 
 
+def test_config_ladder_prefers_env_then_workspace_then_home(tmp_path, monkeypatch):
+    """`_config_ladder`'s one defining property, unguarded until now: env
+    beats workspace beats `~/.hermes`. P3's round-two review ran a mutant
+    that swapped the env-var branch below the workspace branch and it
+    survived -- 156 targeted tests plus a repo-wide keyword sweep, all
+    green -- because no test drove the function directly with all three
+    rungs present at once. DB-free: `_config_ladder` takes no connection.
+    """
+    env_var = "LEDGER_TEST_LADDER_FILE"
+    filename = "ladder-test.toml"
+    monkeypatch.delenv(env_var, raising=False)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    workspace_file = workspace / filename
+    workspace_file.write_text("# workspace copy\n")
+
+    env_file = tmp_path / "env-copy.toml"
+    env_file.write_text("# env copy\n")
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(ledger.Path, "home", classmethod(lambda cls: fake_home))
+
+    # Rung 1: env set, workspace file also present -- env must win.
+    monkeypatch.setenv(env_var, str(env_file))
+    assert ledger._config_ladder(env_var, filename, workspace) == env_file
+
+    # Rung 2: env unset, workspace file present -- workspace must win.
+    monkeypatch.delenv(env_var, raising=False)
+    assert ledger._config_ladder(env_var, filename, workspace) == workspace_file
+
+    # Rung 3: env unset, workspace file absent (or no workspace at all) --
+    # falls back to ~/.hermes/<filename>.
+    empty_workspace = tmp_path / "empty-workspace"
+    empty_workspace.mkdir()
+    assert (
+        ledger._config_ladder(env_var, filename, empty_workspace)
+        == fake_home / ".hermes" / filename
+    )
+    assert ledger._config_ladder(env_var, filename, None) == fake_home / ".hermes" / filename
+
+
 def test_caveats_flag_the_winner_specifically_when_it_is_the_small_arm(conn, tmp_path):
     """The maximum across arms gating this caveat let a winner measured on
     n=3 rank ahead of a runner-up measured on n=10000 without a word about the

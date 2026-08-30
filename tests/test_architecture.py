@@ -434,14 +434,25 @@ def test_no_message_or_docstring_names_a_tool_that_does_not_exist():
         "propose_interests",
         "profile_status",
         "search_feed",
+        # Namespaced spelling of the tool O1 folded into feed.persona_status:
+        # not derivable from the served set the way the flat spellings above
+        # are, since it was removed outright rather than renamed leaf-only.
+        "feed.personas",
     }
     stale -= leaves  # a leaf that is genuinely its own name is not stale
 
     # Only STRINGS: docstrings an agent reads and messages it is handed. The
     # Python identifiers (`def _sym_solve`, `_sym_solve(...)`) are internal and
     # deliberately keep the flat spelling.
+    #
+    # Not just mcp/: cli.py's `attest eval` failure message told a reader "the
+    # `feed.personas` MCP tool lists them" after that tool was folded into
+    # `feed.persona_status` -- a user-facing message naming a retired tool,
+    # caught nowhere because the walk stopped at mcp/. server.py is walked too
+    # since it is the other place a caller-visible message could name a tool.
+    scanned_paths = [*(SRC / "mcp").glob("*.py"), SRC / "cli.py", SRC / "server.py"]
     offenders = []
-    for path in (SRC / "mcp").glob("*.py"):
+    for path in scanned_paths:
         tree = ast.parse(path.read_text())
         strings = [
             n.value
@@ -1011,6 +1022,19 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
     cites 67/27/40 for Hermes' whole tool budget and `filament`'s share of it
     -- real numbers about another system, which a naive "every integer near
     the word tools" check would report as failures forever.
+
+    The file set and phrase set both grew after the round-two final review
+    found three sites this guard's original phrasing missed even though its
+    docs tree already covered two of them: CLAUDE.md's "unset serves all 46"
+    and "feed 22 …" (a per-surface count, not the total, so the total-only
+    `OURS` pattern below cannot see it even now that its wording matches),
+    SKILL.md's "Unset serves all 46 tools", and agents.md's "does not need
+    all 46" -- three different phrasings of the same total, none containing
+    the literal words the original `OURS` alternatives required ("MCP
+    surface", "live surface", "the full", or a bare "N tools" near
+    "attestation"/"attest-mcp"). SKILL.md lives under `src/attestation/
+    skills/`, outside the `docs/` tree the file list walked, so it is added
+    by path alongside the pre-existing README.md/CLAUDE.md additions.
     """
     import asyncio
     import re
@@ -1025,7 +1049,13 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
 
     root = SRC.parent.parent
     docs = [p for p in (root / "docs").rglob("*.md") if "superpowers" not in p.parts]
-    docs += [root / "README.md", root / "CLAUDE.md"]
+    docs += [
+        root / "README.md",
+        root / "CLAUDE.md",
+        root / "src/attestation/skills/research-provenance/SKILL.md",
+        root / "docs/guides/agents.md",
+    ]
+    docs = list(dict.fromkeys(docs))  # de-dupe: agents.md is already under docs/
 
     # A count is attestation's only when the sentence says so. The nearby
     # words are what disambiguate it from Hermes' 67 or filament's 40.
@@ -1038,11 +1068,26 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
         r"|(\d+)\s+tools?\b(?=\D{0,40}?(?:attestation|attest-mcp))",
         re.I,
     )
+    # "serves all N" / "does not need all N": both name the unscoped total
+    # without the word "tools" close enough for OURS to match, and without
+    # any of "attestation"/"attest-mcp"/"MCP surface"/"live surface" nearby
+    # either -- the two phrasings that survived the round-two review's
+    # I2 finding (CLAUDE.md's "unset serves all 46", agents.md's "does not
+    # need all 46"). Both sentences are already scoped to this project by
+    # the surrounding prose (ATTEST_TOOLS, the tool surface), so no nearby-
+    # word disambiguation is needed the way OURS needs one for a bare count.
+    SERVES_ALL = re.compile(r"(?:serves|need)\s+all\s+(\d+)\b", re.I)
     stale = []
     for path in docs:
         if not path.exists():
             continue
         for line in path.read_text().splitlines():
+            for match in SERVES_ALL.finditer(line):
+                claimed = int(match.group(1))
+                if claimed != live_total:
+                    stale.append(
+                        f"{path.relative_to(root)}: claims 'all {claimed}', live is {live_total}"
+                    )
             for match in OURS.finditer(line):
                 claimed = int(next(g for g in match.groups() if g))
                 if claimed != live_total:
@@ -1077,6 +1122,48 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
                 f"{path.relative_to(root)}: ATTEST_TOOLS={surface} claims {claimed} "
                 f"tools, live surface has {actual}"
             )
+
+    def _expanded_surface_count(surface: str) -> int:
+        previous = os.environ.get("ATTEST_TOOLS"), os.environ.get("ATTEST_EXPAND")
+        os.environ["ATTEST_TOOLS"], os.environ["ATTEST_EXPAND"] = surface, "1"
+        try:
+            scoped = FastMCP(f"surface-{surface}")
+            register_all(scoped)
+            return len(asyncio.run(scoped.list_tools()))
+        finally:
+            for key, value in zip(("ATTEST_TOOLS", "ATTEST_EXPAND"), previous):
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    # CLAUDE.md's "Agent surfaces" line states the per-surface counts as
+    # bare "<surface> <n>" pairs rather than the `ATTEST_TOOLS=<surface>
+    # (<n> tools)` shape the loop above matches -- "feed 22 / provenance 9 /
+    # knowledge 12 / symbolic 9 with ATTEST_EXPAND=1" is the exact sentence
+    # I2 found stale (feed claimed 22, live is 21). Scoped to the four real
+    # surface names so this cannot fire on an unrelated "feed 22" elsewhere.
+    SURFACE_NAMES = {"feed", "provenance", "knowledge", "symbolic"}
+    for path in docs:
+        if not path.exists():
+            continue
+        text = path.read_text()
+        for match in re.finditer(r"\b(feed|provenance|knowledge|symbolic)\s+(\d+)\b", text):
+            surface, claimed = match.group(1), int(match.group(2))
+            if surface not in SURFACE_NAMES:
+                continue
+            # Only within a sentence that is actually about the
+            # ATTEST_TOOLS/ATTEST_EXPAND surface split -- otherwise "feed 22"
+            # could be any unrelated mention of the word "feed" near a number.
+            window = text[max(0, match.start() - 200) : match.end() + 60]
+            if "ATTEST_TOOLS" not in window and "ATTEST_EXPAND" not in window:
+                continue
+            actual = _expanded_surface_count(surface)
+            if claimed != actual:
+                stale.append(
+                    f"{path.relative_to(root)}: claims {surface} {claimed}, live is {actual}"
+                )
+    assert not stale, "stale attestation tool counts:\n  " + "\n  ".join(stale)
 
 
 DOMAIN = {

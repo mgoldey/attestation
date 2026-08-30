@@ -769,11 +769,14 @@ def cmd_eval(args: argparse.Namespace) -> int:
         if user is None:
             # There is no `attest personas`: an earlier version of this line
             # advised one, and it exits 2 with "invalid choice". Personas are
-            # listed by the `feed.personas` MCP tool and by the web UI, so
-            # name something that exists rather than something that reads well.
+            # listed by calling `feed.persona_status` with no `user` argument
+            # (folded from the retired feed.personas tool, which this message
+            # used to name) and by the web UI, so name something that exists
+            # rather than something that reads well.
             message += (
-                f"\n  (no persona named {args.user!r} -- the `feed.personas`"
-                " MCP tool lists them, as does `attest serve`)"
+                f"\n  (no persona named {args.user!r} -- call"
+                " `feed.persona_status` with no user to list them, as does"
+                " `attest serve`)"
             )
         return fail(message)
 

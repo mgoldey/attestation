@@ -108,6 +108,29 @@ def test_callable_empty_gives_the_failing_branchs_own_envelope():
     assert "listing" not in detail_fail, "must not carry the OTHER branch's keys"
 
 
+def test_a_raising_callable_empty_is_contained_not_leaked():
+    """A callable `empty` is caller-supplied code the decorator now invokes,
+    and it is the one piece of code inside the wrapper that the wrapper did
+    not protect: `resolved_empty = empty(bound)` sat OUTSIDE the `try` block,
+    so a callable that raises escaped as a bare traceback -- the exact
+    failure `@tool` exists to prevent. Unreachable today (the only callable
+    `empty` in the tree cannot raise), but the branch is new, general, and
+    now documented as an invited pattern.
+    """
+
+    def explode(_kwargs: dict) -> dict:
+        raise RuntimeError("empty callable blew up")
+
+    @tool(empty=explode, needs_db=False)
+    def f():
+        return {"value": 1}
+
+    out = f()
+    assert out["ok"] is False
+    assert "empty callable blew up" not in out["message"]
+    assert "see server logs" in out["message"]
+
+
 def test_unknown_user_names_the_valid_ones(tmp_path, monkeypatch):
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
 

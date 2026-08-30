@@ -418,3 +418,68 @@ task, this wave).
   without per-task worktrees can silently discard a concurrent task's
   uncommitted work, and the only defence available mid-task was committing
   sooner and re-verifying after any large gap between edits and test runs.
+
+- **Task 1: the callable `empty=` form of `@tool` is a new general
+  capability, not a one-off.** `_profile_status(user=None)` needed two
+  distinct envelope shapes from one tool, and a fixed `empty=` dict cannot
+  express that -- so `tool()` grew a second `empty` form: a callable
+  `(kwargs) -> dict`, resolved once per call from the tool's own arguments.
+  This is the largest single deviation of the round: every tool on the
+  surface goes through `@tool`, so the decorator's contract changed for all
+  of them, not just `feed.persona_status`. Documented in `_tool.py`'s own
+  docstring (the shape, the `conn`/`user_row` exclusion, the positional/
+  keyword binding, and a "prefer a plain dict" steer for every other tool).
+  This fix wave's item 1 (C1) closes the one place that capability was left
+  unprotected: a raising callable escaped the `try` block that shields
+  every other kind of failure in the same wrapper.
+
+- **Task 1: touched three files outside its declared list.**
+  `symbolic_ops.py` (the `traced` flag O5 needed), `tests/test_response_
+  size.py` (a two-line trim once its budget imports moved to
+  `attestation.rank` under W2), and three docs' tool counts (`CLAUDE.md`,
+  `README.md`, `docs/guides/agents.md`) — all forced by the fold itself
+  (a tool disappearing changes the count everywhere it is stated) rather
+  than scope creep, and flagged to the task's reviewer as named risks at
+  the time, but never written up here.
+
+- **Task 1: `_profile_status` dropped `needs_user=True`.** The old
+  `feed.personas` tool never took a `user` argument and the old
+  per-persona detail tool always did; folding them into one function means
+  the no-user branch must stay reachable, which `@tool(needs_user=True)`
+  cannot do -- it resolves-or-refuses a user before the body ever runs. The
+  merged `_profile_status` instead calls `rank.get_user` and
+  `unknown_user_message` by hand only when `user` is not None, preserving
+  the old refusal wording without the decorator flag. A deliberate and
+  correct call, explained in the function's own docstring, but it is a
+  caller-visible change to which tools ask the decorator to resolve a user
+  and which resolve one themselves, and it was missing from this section.
+
+- **Task 5 (WB3/WB4/P3): `hashlib.md5(..., usedforsecurity=False)` was
+  required to clear the security gate, not a stylistic choice.** P3's
+  dvc.lock hash comparison uses MD5 because that is what `dvc.lock` itself
+  records per output -- comparing to anything else would compare against a
+  digest DVC never wrote. Bandit's B324 flags any unqualified `hashlib.md5`
+  call as a weak-hash finding regardless of use case, and the gate failed
+  on it until `usedforsecurity=False` was added. The code carries a comment
+  saying why MD5; it did not, until now, say that the gate is what forced
+  the keyword.
+
+- **Task 3 (W4/W8): the brief's own code snippet had two wrong constructor
+  facts.** The task brief's illustrative snippet for adapting `Verdict` and
+  `Reference` construction did not match the real constructors' field
+  order/defaults in two places; the implementer built to the real
+  constructors rather than the brief's snippet, per the brief's own
+  instruction to prefer the code over the illustration. Recorded in the
+  task's own ledger entry but not carried into this section.
+
+- **T7's `git stash` in the shared tree was the first of two incidents,
+  not the second.** §6 of the final review and this section's "Task 2:
+  shared-tree resets" paragraph above both describe T2's two `git reset`/
+  `git stash` incidents and the coordinator's resulting no-stash rule in
+  detail. That rule was adopted *after* T7 stashed first -- T7's own
+  incident is recorded in the wave's ledger but was never written up here,
+  so the record understated the pattern to one occurrence when there were
+  two. No content was lost from T7's stash either (its 13/13 pointer claim
+  is confirmed at HEAD), but the omission is the same shape as the others
+  above: a real deviation that happened during implementation and did not
+  make it into the one section meant to hold all of them.

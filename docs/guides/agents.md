@@ -304,7 +304,7 @@ written in one quick transaction per feed.
 ## Restricted surfaces and generated agent configs
 
 A model that can see a tool will eventually call it wrong, so a Claude Code
-session does not need all 46: `ATTEST_TOOLS=feed|provenance|knowledge|symbolic`
+session does not need all 45: `ATTEST_TOOLS=feed|provenance|knowledge|symbolic`
 restricts what an `attest-mcp` process registers to one namespace (`feed.*`,
 `runs.*` + `cite.check`, `kg.*` + `feed.search`, or `sym.*`), and
 `ATTEST_EXPAND=1` reveals the specific tools underneath a surface's `.ask`
