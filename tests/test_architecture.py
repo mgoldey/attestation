@@ -1078,12 +1078,23 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
         r"\D{0,40}?(\d+)\s+tools"
         r"|(\d+)\s+tools?\b(?=\D{0,40}?(?:attestation|attest-mcp))"
         # "of the N tools": still carries the word "tools" like the two
-        # alternatives above, but without a leading "attestation"/"the
-        # full"-style anchor of its own -- e.g. "does not need all of the
-        # 46 tools". Cheap because the sentences using it are already
-        # scoped to this project by their surrounding prose (ATTEST_TOOLS,
-        # the tool surface), the same reasoning SERVES_ALL below relies on.
-        r"|of\s+the\s+(\d+)\s+tools\b",
+        # alternatives above, but "of the" alone is not a project-specific
+        # anchor -- demonstrated false positive: "a handful of the 40 tools
+        # in its provider ecosystem" has nothing to do with attestation.
+        # Anchored the SAME way the first alternative above is: an anchor
+        # word (attestation/attest-mcp/MCP surface/live surface/the full)
+        # leading the match within the same 40-char window, not "already
+        # scoped by surrounding prose" the way SERVES_ALL's phrasings are
+        # (those are unambiguous possessives, "serves all N"/"need all N",
+        # on their own -- "of the N tools" is not).
+        # The gap uses `.` here, not the `\D` the first alternative uses --
+        # a real anchored sentence can carry its OWN digits before "of the"
+        # (e.g. "attestation serves 46 of the 46 tools"), and `\D` cannot
+        # skip over that "46" to reach the anchor's target count. `.` is
+        # still bounded to 40 chars and still requires the anchor word, so
+        # it does not reopen the unanchored gap the review flagged.
+        r"|(?:attestation|attest-mcp|MCP surface|live surface|the full)"
+        r".{0,40}?of\s+the\s+(\d+)\s+tools\b",
         re.I,
     )
     # "serves all N" / "does not need all N": both name the unscoped total
