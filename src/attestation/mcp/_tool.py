@@ -103,28 +103,44 @@ def tool(
     by 34 hand-written error branches.
 
     `empty` may also be a callable `(kwargs: dict) -> dict`, resolved once per
-    call from the tool's OWN arguments -- `conn`/`user_row` excluded, bound by
-    `fn`'s real parameter names so a positional or keyword call sees the same
-    dict -- for a tool whose shape genuinely branches on an argument, such as
-    `feed.persona_status(user=None)` returning `{"users": [...]}` when listing
-    versus the seven per-user training keys when given one. A plain dict is
-    still the right choice whenever one shape covers every call, which is
-    every other tool on this surface; reach for the callable form only when a
-    fixed `empty` would force one branch's keys onto the other's envelope.
+    call from the CALLER's own arguments -- `conn` excluded (never passed by
+    a caller), bound by the caller-facing parameter names so a positional or
+    keyword call sees the same dict -- for a tool whose shape genuinely
+    branches on an argument, such as `feed.persona_status(user=None)`
+    returning `{"users": [...]}` when listing versus the seven per-user
+    training keys when given one. A plain dict is still the right choice
+    whenever one shape covers every call, which is every other tool on this
+    surface; reach for the callable form only when a fixed `empty` would
+    force one branch's keys onto the other's envelope.
+
+    For a `needs_user=True` tool, the callable sees `user` (the caller's
+    persona name) even though the tool BODY never takes `user` as a
+    parameter -- the body receives the resolved `user_row` instead, and that
+    contract is unchanged. The dict the callable sees and the arguments the
+    body receives are deliberately different: the callable branches on what
+    the caller asked for, before the user lookup; the body works with what
+    lookup resolved it to.
     """
 
     def decorate(fn: Callable) -> Callable:
         """Bind `fn` inside the ritual described in `tool`'s own docstring."""
         name = label or getattr(fn, "__name__", "tool")
-        # The tool's OWN parameter names, minus the injected `conn`/`user_row`
-        # leaders -- these are exactly the names a caller's positional args
-        # bind to, so a callable `empty` sees the same kwargs regardless of
-        # whether the caller passed them positionally or by keyword.
-        own_params = list(inspect.signature(fn).parameters)
+        # The CALLER's own parameter names -- what a callable `empty` sees --
+        # are not simply `fn`'s signature minus its injected leaders: when
+        # `needs_user`, the caller passes `user` (a persona name) but `fn`
+        # never receives that name as a parameter, since the wrapper resolves
+        # it to `user_row` before calling the body. So `user` is spliced back
+        # in here as the caller-facing leader `needs_user` implies, and only
+        # `conn` (never passed by the caller at all) is stripped from `fn`'s
+        # own signature. This list is used ONLY to build the dict a callable
+        # `empty` is invoked with; the body still receives exactly what it
+        # always has (conn, user_row, then its own remaining arguments).
+        body_params = list(inspect.signature(fn).parameters)
         if needs_db:
-            own_params = own_params[1:]
+            body_params = body_params[1:]
         if needs_user:
-            own_params = own_params[1:]
+            body_params = body_params[1:]
+        own_params = (["user"] if needs_user else []) + body_params
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):

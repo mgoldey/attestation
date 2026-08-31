@@ -60,6 +60,16 @@ class EmbeddingPort(Protocol):
     Vectors must be stable for identical input: `rank.py` caches a profile
     vector keyed on a hash of the interests text and would otherwise serve a
     cache entry that no longer corresponds to what it was computed from.
+
+    A round-one review called this a one-implementation Protocol worth
+    deleting -- nothing types a parameter against it directly, `EmbedderPort`
+    below does that job for the ranking path. But `test_domain_reaches_
+    models_only_through_ports` forbids a domain module from importing
+    `attestation.llm`'s concrete client at all, and `embed.py`'s `Embedder`
+    wraps exactly that client (`EmbeddingClient`) -- this Protocol is the
+    structural contract `test_ports.py` checks `EmbeddingClient` against, the
+    thing that makes "any backend shaped like this works" a checked property
+    rather than a claim. Keep it.
     """
 
     def embed(self, text: str) -> list[float]:

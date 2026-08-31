@@ -591,8 +591,7 @@ def rank_items(
     ]
 
     click_rows = _click_training_data(conn, user_id)
-    # Tie-averaged ranks: tied (mostly neutral-0.5) items share one rank value, so the
-    # pref term adds no tie-break noise and an all-neutral array is a blend no-op.
+    # Tie-averaged on purpose -- see rank_rows, which owns the blend and the full rationale.
     pref = pref_scores_for_items(conn, user_id, ids) if _preference_ready(conn, user_id) else None
     n_clicks = conn.execute(
         "SELECT COUNT(*) c FROM clicks WHERE user_id = ?", (user_id,)

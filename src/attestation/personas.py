@@ -31,6 +31,8 @@ just the one fact a newcomer otherwise has to grep for.
 
 import sqlite3
 
+from attestation.rank import forget_profile_vector, get_user
+
 # bootstrap_persona's default k. A block of exactly this many clicks, all at
 # one timestamp and evenly split, is its fingerprint.
 _BOOTSTRAP_K = 30
@@ -177,8 +179,6 @@ def purge_feedback(conn: sqlite3.Connection, user_id: int, *, delete_user: bool 
     after, so commit timing stays with the caller. Explanations go with the
     clicks because implicit.harvest reads an explanation with no click as a
     weak positive, and users.id is a rowid SQLite reuses."""
-    from attestation.rank import forget_profile_vector
-
     conn.execute("DELETE FROM clicks WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM explanations WHERE user_id = ?", (user_id,))
     if delete_user:
@@ -232,8 +232,6 @@ def merge(conn: sqlite3.Connection, *, into: str, drop: list[str]) -> dict:
     discarded verdicts is returned rather than swallowed, because a merge that
     quietly changes a rating is worse than one that refuses.
     """
-    from attestation.rank import forget_profile_vector, get_user
-
     keeper = get_user(conn, into)
     if keeper is None:
         raise ValueError(f"unknown persona: {into!r}")

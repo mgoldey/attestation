@@ -258,10 +258,23 @@ _ELISION_LINES = {"...", "[...]", ""}
 @pytest.mark.parametrize("readme", [p for p in paths() if _offline(p)], ids=lambda p: p.parent.name)
 def test_every_output_block_of_an_offline_path_is_real(readme, tmp_path):
     stdout = run_the_path(readme, tmp_path)
+    checked = 0
     for line in _fenced(_section(readme.read_text(), "What it prints")):
         if line.strip() in _ELISION_LINES:
             continue
         assert line in stdout, f"{readme.parent.name}: {line!r} is not in real stdout"
+        checked += 1
+    # A block that is ALL elision (every line "..."/"[...]"/blank) makes the
+    # loop above assert nothing at all, so the test passes vacuously -- it
+    # never actually checked this README's output against anything real.
+    # `pinned_line` above already requires a non-elision FIRST line, but this
+    # loop walks every line, and nothing stopped a later line from eliding
+    # everything after it.
+    assert checked > 0, (
+        f"{readme.parent.name}: every line of 'What it prints' is an elision"
+        " (.../[...] /blank) -- nothing in this block was actually checked"
+        " against real output"
+    )
 
 
 @pytest.mark.parametrize("readme", paths(), ids=lambda p: p.parent.name)

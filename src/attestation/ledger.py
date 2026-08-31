@@ -1193,6 +1193,21 @@ def _all_caveats(
     )
 
 
+def _judged_splits(scored: list[dict]) -> set[str | None]:
+    """The split names of rows that represent a genuine level of eval trust.
+
+    Nested-arm rows (see nested_arms) are named f"{run_name}[{split}]" --
+    their `split` is a synthetic fan-out key, not a genuine level of eval
+    trust, even on the unlucky case where that key also happens to spell a
+    real split name (e.g. "run[test]" and "run[train]"). Excluded here by
+    that naming convention, deliberately, rather than by the coincidence
+    that _split_rank ranks most synthetic keys as "unlabelled" and equal
+    ranks collide -- that coincidence breaks the moment a nested key happens
+    to be rankable, which is exactly this case.
+    """
+    return {a.get("split") for a in scored if not a.get("name", "").endswith(f"[{a.get('split')}]")}
+
+
 def _caveats(scored: list[dict], metric: str) -> list[str]:
     """Reasons to distrust the ranking, stated with the ranking.
 
@@ -1203,19 +1218,20 @@ def _caveats(scored: list[dict], metric: str) -> list[str]:
     """
     out: list[str] = []
 
-    splits = {a.get("split") for a in scored}
-    ranks_seen = {_split_rank(sp) for sp in splits}
+    judged_splits = _judged_splits(scored)
+    ranks_seen = {_split_rank(sp) for sp in judged_splits}
     if len(ranks_seen) > 1:
         # Arms judged at different levels of trust. This fires for train
         # against test AND for train against unlabelled -- an earlier version
         # checked "all train" and "more than one named split" and fell through
         # the gap between them, letting a training-loss arm beat an unlabelled
         # one with no caveat at all.
-        named = ", ".join(sorted(sp if sp else "(unlabelled)" for sp in splits))
+        named = ", ".join(sorted(sp if sp else "(unlabelled)" for sp in judged_splits))
         out.append(
             f"arms are judged on different splits ({named}); the comparison is"
             " only as sound as those splits are comparable"
         )
+    splits = {a.get("split") for a in scored}
     if splits and all(_split_rank(sp) > len(_EVAL_SPLITS) for sp in splits):
         # Every arm is being judged on training data. That may be all that was
         # recorded, but a training loss ranks how well an arm memorised, not

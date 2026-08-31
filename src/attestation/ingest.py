@@ -157,6 +157,7 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
     """
     sync_feeds(conn, feeds_path)
     outcomes: list[dict] = []
+    already_down = False
     for feed in conn.execute("SELECT * FROM feeds").fetchall():
         try:
             parsed = parse(feed["url"])
@@ -228,7 +229,6 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
                 }
             )
             if down:
-                already_down = any(o["embedder_down"] for o in outcomes[:-1])
                 if not already_down:
                     # No `attestation.llm` import here -- domain modules may not
                     # name the concrete client (test_domain_reaches_models_only_
@@ -243,6 +243,7 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
                         " the remaining feeds; nothing can be embedded until it is back.",
                         where,
                     )
+                already_down = True
                 break
             # A genuine per-feed failure still names the feed. No stack trace:
             # the exception text is the diagnosis, and a traceback for an

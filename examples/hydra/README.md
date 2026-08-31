@@ -87,7 +87,7 @@ with no fallback needed.
 **`<job.name>/<date>/<time>/<n>` is unreadable, so the reader drops the
 date and time and names a run `<job.name>/<n>` instead.** Hydra sweeps
 runs under a timestamped directory precisely so two sweeps never collide
-on disk, but a ledger listing `train/2026-08-28/23-36-10/0` beside three
+on disk, but a ledger listing `train/2026-08-28/23-45-43/0` beside three
 siblings is the same unreadable-name problem `_wandb_runs` solved by
 dropping W&B's timestamp-and-hash run directory in favour of the program
 name plus a short id. `_hydra_runs` makes the same trade: `<job.name>/<n>`

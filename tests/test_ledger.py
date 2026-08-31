@@ -1554,7 +1554,6 @@ def test_compare_picks_the_majority_metric_with_no_db():
             "project": "p",
             "status": "recorded",
             "source_path": "/tmp/asr_a.json",
-            "corpus_id": None,
             "adapter": None,
         },
         {
@@ -1564,7 +1563,6 @@ def test_compare_picks_the_majority_metric_with_no_db():
             "project": "p",
             "status": "recorded",
             "source_path": "/tmp/asr_b.json",
-            "corpus_id": None,
             "adapter": None,
         },
         {
@@ -1574,7 +1572,6 @@ def test_compare_picks_the_majority_metric_with_no_db():
             "project": "p",
             "status": "recorded",
             "source_path": "/tmp/asr_c.json",
-            "corpus_id": None,
             "adapter": None,
         },
     ]
@@ -1713,7 +1710,16 @@ def test_caveats_do_not_confuse_nested_arm_keys_with_eval_splits():
     genuine eval split (`test`, `val`) and a synthetic nested-arm key
     (`arms.Treatment_Eigen`) when one file fans out into several arms. The
     "arms are judged on different splits" caveat must not fire on two arms
-    that are only nested-arm siblings, not different levels of eval trust."""
+    that are only nested-arm siblings, not different levels of eval trust.
+
+    The harder case: a nested key can ALSO happen to spell a real, rankable
+    split name (`run[test]`, `run[train]`) -- before the fix, the exclusion
+    relied on the coincidence that `_split_rank` treats an unrecognised
+    nested key as "unlabelled" so equal ranks collide; that coincidence
+    breaks the moment the nested key IS a recognised split, which is this
+    case. Two plain (non-nested) rows carrying the same split names must
+    still fire the caveat -- proving the nested exclusion is keyed on the
+    `name` convention, not on the split values themselves."""
     from attestation.ledger import _caveats
 
     scored = [
@@ -1737,3 +1743,47 @@ def test_caveats_do_not_confuse_nested_arm_keys_with_eval_splits():
         },
     ]
     assert not [c for c in _caveats(scored, "auc") if "different splits" in c]
+
+    nested_rankable = [
+        {
+            "name": "run[test]",
+            "value": 0.9,
+            "split": "test",
+            "step": None,
+            "n": None,
+            "status": "ok",
+            "source_path": "x",
+        },
+        {
+            "name": "run[train]",
+            "value": 0.8,
+            "split": "train",
+            "step": None,
+            "n": None,
+            "status": "ok",
+            "source_path": "x",
+        },
+    ]
+    assert not [c for c in _caveats(nested_rankable, "auc") if "different splits" in c]
+
+    plain_rankable = [
+        {
+            "name": "arm_a",
+            "value": 0.9,
+            "split": "test",
+            "step": None,
+            "n": None,
+            "status": "ok",
+            "source_path": "x",
+        },
+        {
+            "name": "arm_b",
+            "value": 0.8,
+            "split": "train",
+            "step": None,
+            "n": None,
+            "status": "ok",
+            "source_path": "x",
+        },
+    ]
+    assert [c for c in _caveats(plain_rankable, "auc") if "different splits" in c]

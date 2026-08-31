@@ -108,6 +108,35 @@ def test_callable_empty_gives_the_failing_branchs_own_envelope():
     assert "listing" not in detail_fail, "must not carry the OTHER branch's keys"
 
 
+def test_needs_user_callable_empty_sees_the_callers_user(tmp_path, monkeypatch):
+    """A `needs_user=True` tool's callable `empty` must see the CALLER's
+    `user` argument, not the tool body's parameter list.
+
+    `own_params` used to be `fn`'s own signature minus its injected `conn`/
+    `user_row` leaders -- correct for a plain tool, but `needs_user` tools
+    never take `user` as a body parameter at all (the wrapper resolves it to
+    `user_row` before calling the body), so stripping two leaders from `fn`'s
+    signature dropped `user` from the dict a callable `empty` is built from,
+    silently. A callable keyed on `kwargs.get("user")` always saw `None`.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO users(name, interests) VALUES ('ana', 'x')")
+    conn.commit()
+    conn.close()
+
+    def shape(kwargs: dict) -> dict:
+        return {"a": "known"} if kwargs.get("user") == "ana" else {"a": "unknown"}
+
+    @tool(empty=shape, needs_user=True)
+    def f(conn, user_row):
+        raise ToolError("boom")
+
+    assert f("ana") == {"ok": False, "message": "boom", "a": "known"}
+
+
 def test_a_raising_callable_empty_is_contained_not_leaked():
     """A callable `empty` is caller-supplied code the decorator now invokes,
     and it is the one piece of code inside the wrapper that the wrapper did

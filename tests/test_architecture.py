@@ -1035,6 +1035,17 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
     "attestation"/"attest-mcp"). SKILL.md lives under `src/attestation/
     skills/`, outside the `docs/` tree the file list walked, so it is added
     by path alongside the pre-existing README.md/CLAUDE.md additions.
+
+    Deliberately phrase-narrow, not a blanket digit-plus-"tools" scan. A blanket
+    match false-positives on legitimate numbers that share these files with
+    the real count: CLAUDE.md's "67 tool schemas" is Hermes' whole prompt
+    budget, not attestation's surface, and "flat-37" names a historically
+    measured routing score, not a live tool count -- both would read as
+    stale claims about attestation under a pattern that does not check what
+    the number is ABOUT. Each phrase added here is added because a real doc
+    used it and the guard missed it, not preemptively -- narrower coverage
+    that catches real drift beats broad coverage that also flags text this
+    guard was never meant to police.
     """
     import asyncio
     import re
@@ -1065,7 +1076,14 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
     OURS = re.compile(
         r"(?:attestation|attest-mcp|MCP surface|live surface|the full)"
         r"\D{0,40}?(\d+)\s+tools"
-        r"|(\d+)\s+tools?\b(?=\D{0,40}?(?:attestation|attest-mcp))",
+        r"|(\d+)\s+tools?\b(?=\D{0,40}?(?:attestation|attest-mcp))"
+        # "of the N tools": still carries the word "tools" like the two
+        # alternatives above, but without a leading "attestation"/"the
+        # full"-style anchor of its own -- e.g. "does not need all of the
+        # 46 tools". Cheap because the sentences using it are already
+        # scoped to this project by their surrounding prose (ATTEST_TOOLS,
+        # the tool surface), the same reasoning SERVES_ALL below relies on.
+        r"|of\s+the\s+(\d+)\s+tools\b",
         re.I,
     )
     # "serves all N" / "does not need all N": both name the unscoped total
@@ -1076,6 +1094,16 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
     # need all 46"). Both sentences are already scoped to this project by
     # the surrounding prose (ATTEST_TOOLS, the tool surface), so no nearby-
     # word disambiguation is needed the way OURS needs one for a bare count.
+    #
+    # "N-tool" (e.g. "46-tool surface") was considered and dropped: a plain
+    # `(\d+)-tool\b` also matches the tail of a dated filename like
+    # `2026-08-21-tool-surface-design.md` (its "21-tool" reads exactly like
+    # a live-count claim to the regex) and collides with a legitimate
+    # historical count this repo deliberately keeps around --
+    # agents.md's "a flat 37-tool list" names the swarm-refutation
+    # measurement's baseline, not attestation's live total, and CLAUDE.md
+    # says as much. Exactly the false-positive risk this test's docstring
+    # warns a blanket pattern invites; "N-tool" stays out.
     SERVES_ALL = re.compile(r"(?:serves|need)\s+all\s+(\d+)\b", re.I)
     stale = []
     for path in docs:

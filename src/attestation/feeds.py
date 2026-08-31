@@ -27,9 +27,11 @@ CANDIDATES_PATH = Path(__file__).resolve().parent / "feed_candidates.toml"
 
 
 class FeedError(ValueError):
-    """A caller-fixable refusal -- a URL that does not parse, an unknown feed
-    id -- raised instead of returned as `ok: False`, so the MCP layer maps it
-    to ToolError the way it does every other refusal."""
+    """A caller-fixable refusal.
+
+    Raised for a URL that does not parse, an unknown feed id, and similar --
+    instead of returned as `ok: False`, so the MCP layer maps it to ToolError
+    the way it does every other refusal."""
 
 
 def _looks_like_feed(parsed) -> bool:
