@@ -27,13 +27,20 @@ from attestation.llm import base_url, chat_model, embed_model
 # 39 KB `research-provenance` skill they replace covered all four surfaces at
 # once; the split is measured in docs/bundled-skills-research.md. `setup` is
 # first because it owns scripts/setup.sh, the file every older test and doc
-# reaches for.
+# reaches for. `attestation-record` and `attestation-annotate`, added
+# 2026-09-01, are write-side skills rather than surface skills -- they teach
+# an agent to *produce* the inputs the read-only tools consume (results files
+# for `runs.scan`, claim comments for `runs.claims_check`) and are listed
+# after the five so the ordering comment above stays true: setup first, the
+# four surface skills next in their original order, write-side skills last.
 SKILL_NAMES = (
     "attestation-setup",
     "attestation-feed",
     "attestation-provenance",
     "attestation-knowledge",
     "attestation-symbolic",
+    "attestation-record",
+    "attestation-annotate",
 )
 # The monolith the five replace. An installed copy is disabled by renaming
 # its SKILL.md -- never deleted -- so it leaves the skill index without

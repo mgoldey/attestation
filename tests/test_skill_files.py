@@ -21,11 +21,16 @@ import tomllib
 from pathlib import Path
 
 import attestation.install as install
+from attestation import claims
 from attestation.mcp import AGENT_SURFACES
 
 _REPO_ROOT = Path(install.__file__).resolve().parent.parent.parent
 
 SETUP_SKILL = "attestation-setup"
+# Write-side skills teach an agent to PRODUCE the inputs the read-only tools
+# consume; they are not surface skills (there is no "record" or "annotate"
+# entry in AGENT_SURFACES) and the surface-scoped tests below must skip them.
+WRITE_SIDE_SKILLS = ("attestation-record", "attestation-annotate")
 _TOOL_TOKEN = re.compile(r"\b(feed|runs|kg|sym|cite)\.([a-z_]+)\b")
 
 
@@ -46,11 +51,16 @@ def _skill_md(name: str) -> str:
 
 
 def _surface_skills() -> dict[str, str]:
-    """skill name -> the AGENT_SURFACES key it documents."""
+    """skill name -> the AGENT_SURFACES key it documents.
+
+    Derived from AGENT_SURFACES rather than "every skill but setup", so a
+    write-side skill (no entry in AGENT_SURFACES) is excluded by construction
+    instead of by an ever-growing exclusion list.
+    """
     return {
         name: name.removeprefix("attestation-")
         for name in install.SKILL_NAMES
-        if name != SETUP_SKILL
+        if name.removeprefix("attestation-") in AGENT_SURFACES
     }
 
 
@@ -258,12 +268,76 @@ def test_a_surface_skill_names_only_tools_on_its_surface():
         assert not foreign, f"{name} names tools its surface cannot see: {foreign}"
 
 
+def test_a_write_side_skill_names_only_tools_that_exist():
+    """Unlike a surface skill, a write-side skill may legitimately name tools
+    from more than one surface (record names `runs.*`; annotate names
+    `runs.*` and `cite.*`, both hand-offs rather than its own remit) -- there
+    is no single AGENT_SURFACES entry to check it against. What still has to
+    hold, the no-phantom-tools rule applied to these two: every tool token it
+    names must exist on the live, unrestricted MCP surface. A skill that
+    teaches a call to a tool that was renamed or removed is teaching a
+    guaranteed failure."""
+    live = _live_tool_names()
+    for name in WRITE_SIDE_SKILLS:
+        text = _skill_md(name)
+        named = {f"{ns}.{tool}" for ns, tool in _TOOL_TOKEN.findall(text)}
+        phantom = sorted(t for t in named if t not in live)
+        assert not phantom, f"{name} names tools that do not exist on the live surface: {phantom}"
+
+
+def test_annotate_description_does_not_lead_with_citation():
+    """The research doc's explicit collision rule: `research-paper-writing`
+    and `grounded-citations` both own citation-shaped territory already, and
+    a description leading with "citation" would land attestation-annotate in
+    the same collision those two would have with each other. The skill's own
+    content is about citations too (`cite=` keys), which is exactly why the
+    verb it leads with has to be the thing that makes it distinct: annotating
+    claims, not citations in general."""
+    description = _frontmatter(_skill_md("attestation-annotate"))["description"]
+    first_word = description.split()[0].lower().strip(",.:")
+    assert first_word != "citation"
+    assert not description.lower().startswith("citation")
+
+
+def test_record_claim_grammar_matches_the_parser(tmp_path):
+    """attestation-annotate teaches a claim grammar by example; if the
+    example does not actually parse, the skill is teaching an unparseable
+    annotation, and nothing would notice short of a human running it -- the
+    exact docs-drift bug this repo exists to catch. Every CONCRETE example
+    (a real project/run, not the `<project>/<run>` placeholder line) is
+    fed straight through the real `claims.parse_file` and must come back
+    with zero malformed complaints and the fields the prose says it has."""
+    text = _skill_md("attestation-annotate")
+    claim_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip().startswith("<!-- claim:") and "<project>/<run>" not in line
+    ]
+    assert claim_lines, "no concrete claim example found in attestation-annotate/SKILL.md"
+
+    doc = tmp_path / "example.md"
+    doc.write_text("\n\n".join(f"Some prose.\n{line}" for line in claim_lines) + "\n")
+
+    found, problems = claims.parse_file(doc)
+
+    assert not problems, f"skill's own claim examples do not parse: {problems}"
+    assert len(found) == len(claim_lines)
+    for claim in found:
+        assert claim.project and claim.run
+        assert claim.metric
+        assert isinstance(claim.value, float)
+
+
 def test_setup_skill_names_every_surface_and_sibling():
     """The setup skill is the one an agent reads first; it has to say which
     sibling carries the judgment for each surface, or the split leaves the
-    agent with setup instructions and no map."""
+    agent with setup instructions and no map. Scoped to the surface skills
+    (plus itself) via `_surface_skills()`: the write-side skills are not part
+    of the setup map this test polices -- they teach existing surfaces'
+    tools rather than adding one, and are not owned by any ATTEST_TOOLS
+    value setup.sh wires up."""
     text = _skill_md(SETUP_SKILL)
-    for name in install.SKILL_NAMES:
+    for name in (SETUP_SKILL, *_surface_skills()):
         assert name in text, f"setup skill never mentions {name}"
     for surface in AGENT_SURFACES:
         assert f"`{surface}`" in text, f"setup skill never names the {surface} surface"

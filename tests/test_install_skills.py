@@ -1,4 +1,4 @@
-"""step_skill_copy after the split: five bundled skills, profile skill trees,
+"""step_skill_copy after the split: seven bundled skills, profile skill trees,
 and the legacy monolith.
 
 test_install.py covers the step's original contract (creates files, second
@@ -7,7 +7,12 @@ source). This file covers what changed on 2026-08-30: one skill became five,
 `~/.hermes/profiles/*/skills/` is synced alongside `~/.hermes/skills/`, a
 profile's own disable marker is respected, and the superseded
 `research-provenance` skill is disabled rather than left in the index beside
-the skills that replace it. Spec: docs/bundled-skills-research.md.
+the skills that replace it. Two more joined 2026-09-01:
+`attestation-record` and `attestation-annotate`, the write-side skills --
+same sync mechanism, no new behaviour, so this file's contract is "still
+seven skills, unchanged semantics" rather than new tests.
+Spec: docs/bundled-skills-research.md,
+docs/superpowers/specs/2026-09-01-write-side-skills-design.md.
 """
 
 from pathlib import Path
@@ -32,7 +37,8 @@ def _profile_skills(fake_home: Path, profile: str = "research") -> Path:
 
 
 def test_skill_copy_installs_every_bundled_skill(monkeypatch, tmp_path):
-    """One skill became five; the installer syncs all of them, not the first."""
+    """One skill became five, then seven; the installer syncs all of them,
+    not the first."""
     fake_home = _fresh_home(monkeypatch, tmp_path)
 
     result = install.step_skill_copy(check=False)
@@ -45,6 +51,8 @@ def test_skill_copy_installs_every_bundled_skill(monkeypatch, tmp_path):
         "attestation-provenance",
         "attestation-knowledge",
         "attestation-symbolic",
+        "attestation-record",
+        "attestation-annotate",
     }
     for name in install.SKILL_NAMES:
         assert (dest / name / "SKILL.md").is_file(), name
@@ -92,7 +100,7 @@ def test_skill_copy_respects_a_profile_disable_marker(monkeypatch, tmp_path):
 
     assert not (disabled / "SKILL.md").exists()
     assert (disabled / "SKILL.md.disabled-by-me").read_text() == "old\n"
-    # the other four still land in the profile
+    # the other six still land in the profile
     assert (profile_skills / "attestation-setup" / "SKILL.md").is_file()
     assert result.status == "FIXED"
     # and a second run is quiet: the marker is not "missing" forever
@@ -113,8 +121,10 @@ def test_skill_copy_check_mode_reports_a_stale_profile_copy(monkeypatch, tmp_pat
 
 def test_skill_copy_supersedes_the_legacy_monolith(monkeypatch, tmp_path):
     """The old `research-provenance` skill covered all four surfaces in one
-    39 KB body with a description that collides with every one of the five
-    that replace it. Left in place it stays in the index beside them. It is
+    39 KB body with a description that collides with every one of the four
+    surface skills that replace it (the two write-side skills added later
+    are a separate, non-colliding addition). Left in place it stays in the
+    index beside them. It is
     disabled the way this machine disables skills -- SKILL.md renamed, nothing
     deleted -- and its directory (which may hold a planted data/) is otherwise
     untouched."""

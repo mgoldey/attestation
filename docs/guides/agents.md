@@ -13,17 +13,23 @@ v0.20.0) through two lanes that complement each other:
   interpretation, no curl hallucination risk. The MCP process is stateless
   and opens the database directly, so the web server does **not** need to be
   running for the agent to use it.
-- **Skills (optional)** — five under `src/attestation/skills/`, one per
-  agent surface plus setup: `attestation-feed`, `attestation-provenance`,
+- **Skills (optional)** — seven under `src/attestation/skills/`. Five are
+  one per agent surface plus setup: `attestation-feed`, `attestation-provenance`,
   `attestation-knowledge` and `attestation-symbolic` each carry the workflow
   judgment for their surface ("when NOT to use this", what to record, what
   to relay verbatim) and name only the tools that surface can see;
   `attestation-setup` runs the idempotent setup/repair script, maps the
   surfaces to their skills, and provides the HTTP fallback path if MCP is
-  disconnected. They live inside the package so they ship in the wheel —
-  `uvx` installs get them without a checkout. Each description opens with
-  its own verb because skill descriptions naming the same topic collide in
-  Hermes' index (`docs/bundled-skills-research.md`).
+  disconnected. Two more are write-side, teaching an agent to *produce* the
+  inputs the read-only tools consume rather than covering a surface of their
+  own: `attestation-record` (results/config files so `runs.scan` reads them,
+  a `[metric_direction]` declaration before the first `runs.compare`) and
+  `attestation-annotate` (the `<!-- claim: ... -->` grammar and `cite=`
+  discipline so `runs.claims_check`/`runs.claims_coverage` read them). They
+  live inside the package so they ship in the wheel — `uvx` installs get
+  them without a checkout. Each description opens with its own verb because
+  skill descriptions naming the same topic collide in Hermes' index
+  (`docs/bundled-skills-research.md`).
 
 See `docs/hermes-agent-plugin-research.md` for why MCP was chosen over
 hermes-agent's plugin system.
