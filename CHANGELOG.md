@@ -11,6 +11,12 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- The bundled skill split five ways (`2026-09-01`, landed from an Aug-30
+  worktree): `attestation-setup` plus one skill per agent surface replace
+  the single 39.5 KB `research-provenance` monolith; `attest install` now
+  syncs all five into `~/.hermes/skills/` and every profile's skills tree,
+  respects a `SKILL.md.<anything>` disable rename, and retires an installed
+  monolith by renaming its `SKILL.md`, never deleting.
 - Twelve golden-path worked examples under `examples/`, each runnable from
   a clean clone with a fixed-shape README and a `run.sh`
   (`a3387d5`..`e5e511b`, framework in `eae9e49`): the four retrofitted
@@ -72,6 +78,10 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Fixed
 
+- `attest claims` and `coverage` scanned to zero files in any checkout
+  under a dotted directory (a git worktree in `.claude/worktrees/`):
+  hidden-directory filtering now judges paths relative to the scanned
+  root, not the absolute path.
 - `attest claims` (the CLI) never ran the citation lint that the MCP tools
   (`cite.check`, `runs.claims_check`) already ran — found by
   `examples/citations/` exercising both paths against the same draft, and
