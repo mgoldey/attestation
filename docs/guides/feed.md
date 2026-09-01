@@ -21,7 +21,8 @@ It runs two ways, and they share one database:
 2. **Alongside [hermes-agent](https://github.com/NousResearch/hermes-agent)** —
    as an MCP stdio server exposing `feed.*` tools as native tool calls (see
    the [agents guide](agents.md) for the full table), plus an optional
-   `research-provenance` skill for setup automation and fallback.
+   `attestation-setup` skill for setup automation and fallback, and the
+   `attestation-feed` skill for how an agent should behave with the feed.
 
 ## How ranking works
 

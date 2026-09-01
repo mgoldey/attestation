@@ -78,7 +78,7 @@ push.
 | `src/attestation/` | the library: ledger, claims, citations, feed ranking, knowledge graph, symbolic math, entry points | `tests/test_architecture.py` (layering rules), `tests/test_docstring_ratchet.py` |
 | `src/attestation/mcp/` | the MCP tools, namespaced `feed.*`/`sym.*`/`kg.*`/`runs.*`/`cite.*`, and the four surfaces | `tests/test_mcp_server.py`, `tests/test_agent_surfaces.py`, `tests/test_tool_envelope.py` |
 | `src/attestation/ledger_adapters/` | readers for tracker directory conventions (W&B, MLflow, Sacred, DVC, Hydra) and nested result files | `tests/test_ledger_adapters.py` |
-| `src/attestation/skills/` | the `research-provenance` skill an agent installs to use the tools well | `tests/test_skill_files.py` |
+| `src/attestation/skills/` | five skills an agent installs to use the tools well: one per agent surface (`attestation-feed`, `-provenance`, `-knowledge`, `-symbolic`) plus `attestation-setup` | `tests/test_skill_files.py`, `tests/test_install_skills.py` |
 | `evals/` | labelled corpora and scorers for every model-driven prompt (tagging, reaction, explanation) | `tests/test_tagging_eval.py`, `tests/test_reaction_eval.py`, `tests/test_explanation_eval.py` |
 | `examples/` | golden paths: runnable, README-documented worked examples | `tests/test_golden_paths.py` |
 | `docs/guides/` | the seven how-to guides a collaborator's question maps to | `tests/test_docs_site.py` |

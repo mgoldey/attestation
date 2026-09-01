@@ -221,7 +221,7 @@ class _Sandbox:
 
     @property
     def skill_dest(self) -> Path:
-        return self.fake_home / ".hermes" / "skills" / "research-provenance"
+        return self.fake_home / ".hermes" / "skills" / "attestation-setup"
 
     @property
     def refresh_script(self) -> Path:

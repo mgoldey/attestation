@@ -1063,8 +1063,8 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
     docs += [
         root / "README.md",
         root / "CLAUDE.md",
-        root / "src/attestation/skills/research-provenance/SKILL.md",
         root / "docs/guides/agents.md",
+        *sorted((root / "src/attestation/skills").glob("*/SKILL.md")),
     ]
     docs = list(dict.fromkeys(docs))  # de-dupe: agents.md is already under docs/
 

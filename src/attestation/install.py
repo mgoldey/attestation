@@ -22,7 +22,24 @@ from urllib.parse import urlparse
 
 from attestation.llm import base_url, chat_model, embed_model
 
-SKILL_NAME = "research-provenance"
+# One skill per agent surface plus one for setup, mirroring AGENT_SURFACES and
+# the emitted .claude/agents/attestation-<surface>.md files. The single
+# 39 KB `research-provenance` skill they replace covered all four surfaces at
+# once; the split is measured in docs/bundled-skills-research.md. `setup` is
+# first because it owns scripts/setup.sh, the file every older test and doc
+# reaches for.
+SKILL_NAMES = (
+    "attestation-setup",
+    "attestation-feed",
+    "attestation-provenance",
+    "attestation-knowledge",
+    "attestation-symbolic",
+)
+# The monolith the five replace. An installed copy is disabled by renaming
+# its SKILL.md -- never deleted -- so it leaves the skill index without
+# taking anything the user may have planted in that directory with it.
+LEGACY_SKILL_NAME = "research-provenance"
+LEGACY_SKILL_MARKER = "SKILL.md.superseded-by-attestation-split"
 CRON_JOB_NAME = "attestation-refresh"
 REFRESH_SCRIPT_NAME = "attestation-refresh.sh"
 CLI_NAME = "attest"
@@ -358,18 +375,53 @@ def step_warmup(check: bool = False) -> StepResult:
 # ---------------------------------------------------------------------------
 
 
-def _skill_source_dir() -> Path:
+def _skills_source_root() -> Path:
     """Skill files ship inside the package, so this resolves in every install mode.
 
     Package-relative (not _REPO_ROOT-relative): the wheel bundles
-    attestation/skills/, so uvx installs get the skill too, and an editable
+    attestation/skills/, so uvx installs get the skills too, and an editable
     checkout resolves to the same files under src/attestation/skills/.
     """
-    return Path(__file__).resolve().parent / "skills" / SKILL_NAME
+    return Path(__file__).resolve().parent / "skills"
 
 
-def _skill_dest_dir() -> Path:
-    return Path.home() / ".hermes" / "skills" / SKILL_NAME
+def _skill_source_dir(name: str = SKILL_NAMES[0]) -> Path:
+    return _skills_source_root() / name
+
+
+def _skill_dest_roots() -> list[Path]:
+    """Every skills tree Hermes reads: `~/.hermes/skills/` plus each profile's
+    own `~/.hermes/profiles/<name>/skills/`, when that directory exists.
+
+    Profiles were invisible to this step. The `research` profile -- the one
+    that exists for attestation work -- was found running a 24.9 KB copy of
+    the old skill from before `cite.*` existed, because `hermes profile
+    create` mirrors the skills tree once and nothing ever refreshed it. A
+    profile with no skills directory is left without one: Hermes loads a
+    profile's skills from that directory only when it exists, so creating it
+    would change which tree the profile reads.
+    """
+    home = Path.home() / ".hermes"
+    roots = [home / "skills"]
+    profiles = home / "profiles"
+    if profiles.is_dir():
+        for profile in sorted(p for p in profiles.iterdir() if p.is_dir()):
+            if (profile / "skills").is_dir():
+                roots.append(profile / "skills")
+    return roots
+
+
+def _skill_disabled(dest_dir: Path) -> bool:
+    """Whether the user disabled this skill by renaming its SKILL.md.
+
+    Hermes has no disable flag; the convention on the machine this was
+    measured on is a rename -- `SKILL.md.disabled-collides-with-attestation`,
+    `SKILL.md.retired`. Writing a fresh SKILL.md beside such a marker would
+    silently re-enable the skill on every install.
+    """
+    return dest_dir.is_dir() and any(
+        p.name.startswith("SKILL.md.") for p in dest_dir.iterdir() if p.is_file()
+    )
 
 
 def _register_surfaces(agent: str, root: Path) -> list[str]:
@@ -532,42 +584,91 @@ def _sync_one_skill_file(src: Path, dest_dir: Path, src_dir: Path) -> bool:
     return True
 
 
-def step_skill_copy(check: bool = False) -> StepResult:
-    """Sync the packaged research-provenance skill files into the agent's
-    skill directory, byte-for-byte, skipping unchanged files.
+def _stale_skill_files(files: list[Path], dest_dir: Path, src_dir: Path) -> list[Path]:
+    return [
+        f
+        for f in files
+        if not (dest_dir / f.relative_to(src_dir)).exists()
+        or (dest_dir / f.relative_to(src_dir)).read_bytes() != f.read_bytes()
+    ]
 
-    Skipped -- not broken -- when the skill is not bundled with this
+
+def _legacy_skill_dirs() -> list[Path]:
+    """Installed copies of the superseded monolith that are still enabled."""
+    return [
+        root / LEGACY_SKILL_NAME
+        for root in _skill_dest_roots()
+        if (root / LEGACY_SKILL_NAME / "SKILL.md").is_file()
+    ]
+
+
+def step_skill_copy(check: bool = False) -> StepResult:
+    """Sync every bundled skill into every skills tree Hermes reads,
+    byte-for-byte, skipping unchanged files -- and disable the superseded
+    `research-provenance` monolith wherever it is still enabled.
+
+    Skipped -- not broken -- when the skills are not bundled with this
     install (see the comment below): this is a fallback lane, and an odd
     packaging mode losing it should not fail the rest of the run.
     """
-    src_dir = _skill_source_dir()
-    dest_dir = _skill_dest_dir()
-    # The skill ships inside the package, so this normally exists in every
+    # The skills ship inside the package, so this normally exists in every
     # install mode. Kept as a guard for odd packaging (e.g. a zipimport or a
     # stripped install): the skill is the optional fallback lane, so skip
     # cleanly rather than crashing the whole run.
-    if not src_dir.is_dir():
+    sources = [(name, _skill_source_dir(name)) for name in SKILL_NAMES]
+    if not all(src.is_dir() for _, src in sources):
         return StepResult(
             "skill_copy", Status.SKIPPED, "skill source not bundled with this install"
         )
-    files = _skill_files_to_sync(src_dir)
 
+    stale, changed = _walk_bundled_skills(sources, check)
+    legacy = _legacy_skill_dirs()
     if check:
-        changed = [
-            f
-            for f in files
-            if not (dest_dir / f.relative_to(src_dir)).exists()
-            or (dest_dir / f.relative_to(src_dir)).read_bytes() != f.read_bytes()
-        ]
-        if changed:
-            return StepResult(
-                "skill_copy", Status.BROKEN, f"{len(changed)} file(s) stale or missing"
-            )
-        return StepResult("skill_copy", Status.OK)
+        return _skill_check_result(stale, legacy)
 
-    changed = [f for f in files if _sync_one_skill_file(f, dest_dir, src_dir)]
-    if changed:
-        return StepResult("skill_copy", Status.FIXED, f"synced {len(changed)} file(s)")
+    for legacy_dir in legacy:
+        (legacy_dir / "SKILL.md").rename(legacy_dir / LEGACY_SKILL_MARKER)
+    if not changed and not legacy:
+        return StepResult("skill_copy", Status.OK)
+    detail = f"synced {len(changed)} file(s)"
+    if legacy:
+        detail += f"; disabled superseded {LEGACY_SKILL_NAME} at {len(legacy)} location(s)"
+    return StepResult("skill_copy", Status.FIXED, detail)
+
+
+def _walk_bundled_skills(
+    sources: list[tuple[str, Path]], check: bool
+) -> tuple[list[Path], list[Path]]:
+    """Every (skills tree x bundled skill) pair: the files stale or missing
+    when checking, the files written when syncing. A skill the user disabled
+    by renaming its SKILL.md is skipped in both modes (see _skill_disabled)."""
+    stale: list[Path] = []
+    changed: list[Path] = []
+    for root in _skill_dest_roots():
+        for name, src_dir in sources:
+            dest_dir = root / name
+            if _skill_disabled(dest_dir):
+                continue
+            files = _skill_files_to_sync(src_dir)
+            if check:
+                stale.extend(_stale_skill_files(files, dest_dir, src_dir))
+            else:
+                changed.extend(f for f in files if _sync_one_skill_file(f, dest_dir, src_dir))
+    return stale, changed
+
+
+def _skill_check_result(stale: list[Path], legacy: list[Path]) -> StepResult:
+    """The --check verdict: BROKEN names every problem, OK is silent."""
+    problems = []
+    if stale:
+        problems.append(f"{len(stale)} file(s) stale or missing")
+    if legacy:
+        problems.append(
+            f"superseded {LEGACY_SKILL_NAME} skill still enabled at"
+            f" {', '.join(str(d) for d in legacy)}"
+        )
+    if problems:
+        return StepResult("skill_copy", Status.BROKEN, "; ".join(problems))
     return StepResult("skill_copy", Status.OK)
 
 

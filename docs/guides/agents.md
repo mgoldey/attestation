@@ -13,13 +13,17 @@ v0.20.0) through two lanes that complement each other:
   interpretation, no curl hallucination risk. The MCP process is stateless
   and opens the database directly, so the web server does **not** need to be
   running for the agent to use it.
-- **Skill (optional)** — `src/attestation/skills/research-provenance/`
-  documents workflow judgment ("when NOT to use this"), runs an idempotent
-  setup/repair script, and provides an HTTP fallback path if MCP is
-  disconnected. It lives inside the package so it ships in the wheel too —
-  `uvx` installs get the skill without a checkout. See
-  `src/attestation/skills/research-provenance/SKILL.md` itself for what it
-  tells the agent to do.
+- **Skills (optional)** — five under `src/attestation/skills/`, one per
+  agent surface plus setup: `attestation-feed`, `attestation-provenance`,
+  `attestation-knowledge` and `attestation-symbolic` each carry the workflow
+  judgment for their surface ("when NOT to use this", what to record, what
+  to relay verbatim) and name only the tools that surface can see;
+  `attestation-setup` runs the idempotent setup/repair script, maps the
+  surfaces to their skills, and provides the HTTP fallback path if MCP is
+  disconnected. They live inside the package so they ship in the wheel —
+  `uvx` installs get them without a checkout. Each description opens with
+  its own verb because skill descriptions naming the same topic collide in
+  Hermes' index (`docs/bundled-skills-research.md`).
 
 See `docs/hermes-agent-plugin-research.md` for why MCP was chosen over
 hermes-agent's plugin system.
@@ -237,12 +241,15 @@ agent:
 ## 4. Install the skill (optional but recommended)
 
 ```bash
-cp -r src/attestation/skills/research-provenance ~/.hermes/skills/
+cp -r src/attestation/skills/attestation-* ~/.hermes/skills/
 ```
 
-Re-run that copy whenever the skill changes in this repo — the installed copy
-does not track the checkout (`attest install` does this sync for you, see
-the [install guide](install.md)). The skill's `scripts/setup.sh` is a thin
+Re-run that copy whenever a skill changes in this repo — the installed copy
+does not track the checkout (`attest install` does this sync for you, into
+`~/.hermes/skills/` and every `~/.hermes/profiles/*/skills/` that exists,
+see the [install guide](install.md); a copy of the superseded
+`research-provenance` skill is disabled by renaming its `SKILL.md`, never
+deleted). The setup skill's `scripts/setup.sh` is a thin
 delegator to `attest install --yes`: it resolves the checkout (or falls back
 to `uvx --from git+https://github.com/mgoldey/attestation attest install --yes` when no local checkout is
 found) and lets the installer handle models, `.env`, first ingest, MCP/skill/
@@ -262,7 +269,8 @@ science_recommendations:
 When running alongside hermes-agent, the live database is co-located with
 other skill state at `~/.hermes/skills/science-recommendations/data/hermes.db`
 — **not** inside the checkout. Note the directory name: the *skill* was
-renamed to `research-provenance`, but the *database* path deliberately kept
+renamed to `research-provenance` and then split into five `attestation-*`
+skills, but the *database* path deliberately kept
 the old `science-recommendations` name, so as not to orphan every database
 created before the rename. Every entry point (CLI, web server, MCP server)
 resolves the DB the same way (`resolve_db_path()` in `src/attestation/db.py`):

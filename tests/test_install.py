@@ -50,25 +50,6 @@ def _ollama_list_ok(models: str = "hermes3:8b\nembeddinggemma\n"):
     return _cp(["ollama", "list"], 0, stdout=f"NAME\tID\tSIZE\n{models}")
 
 
-def _write_skill_source(tmp_path: Path) -> Path:
-    skill_dir = tmp_path / "skills" / "research-provenance"
-    scripts_dir = skill_dir / "scripts"
-    scripts_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("# research-provenance skill\n")
-    (scripts_dir / "setup.sh").write_text("#!/usr/bin/env bash\necho setup\n")
-    return skill_dir
-
-
-def _sync_skill_dest(fake_home: Path, skill_dir: Path) -> Path:
-    """Mirror the skill source into the fake ~/.hermes skill dir so the
-    default fixture represents an already-synced (all-OK) state."""
-    dest_dir = fake_home / ".hermes" / "skills" / "research-provenance"
-    (dest_dir / "scripts").mkdir(parents=True)
-    (dest_dir / "SKILL.md").write_text((skill_dir / "SKILL.md").read_text())
-    (dest_dir / "scripts" / "setup.sh").write_text((skill_dir / "scripts" / "setup.sh").read_text())
-    return dest_dir
-
-
 @pytest.fixture(autouse=True)
 def _default_env(monkeypatch, tmp_path):
     """Everything present + reachable so a bare run_install() is all-OK."""
@@ -77,11 +58,14 @@ def _default_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CHAT_MODEL", "hermes3:8b")
     monkeypatch.setenv("EMBED_MODEL", "embeddinggemma")
     monkeypatch.setattr(install.shutil, "which", lambda name: "/usr/bin/uv")
-    skill_dir = _write_skill_source(tmp_path)
     fake_home = tmp_path / "fakehome"
     fake_home.mkdir()
-    _sync_skill_dest(fake_home, skill_dir)
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
+    # The shipped skills, already synced into the fake home, so the default
+    # fixture represents an all-OK state. The real package files rather than
+    # a one-line stand-in: a stand-in never matched the source and the
+    # "already synced" fixture was quietly one step from OK.
+    install.step_skill_copy(check=False)
     # No agent binary on PATH by default (real _find_agent_binary still runs);
     # agent-wiring tests put a stub executable on this empty PATH themselves.
     monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
@@ -603,7 +587,7 @@ def test_skill_copy_creates_files(monkeypatch, tmp_path):
 
     result = install.step_skill_copy(check=False)
 
-    dest = fake_home / ".hermes" / "skills" / "research-provenance"
+    dest = fake_home / ".hermes" / "skills" / "attestation-setup"
     assert (dest / "SKILL.md").exists()
     assert (dest / "scripts" / "setup.sh").exists()
     assert result.status == "FIXED"
@@ -625,7 +609,7 @@ def test_skill_copy_never_touches_planted_data_dir(monkeypatch, tmp_path):
     fake_home.mkdir()
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
 
-    dest = fake_home / ".hermes" / "skills" / "research-provenance"
+    dest = fake_home / ".hermes" / "skills" / "attestation-setup"
     data_dir = dest / "data"
     data_dir.mkdir(parents=True)
     blob = b"\x00\x01binary-db-blob\xff"
@@ -644,7 +628,7 @@ def test_skill_copy_check_mode_missing_is_broken(monkeypatch, tmp_path):
 
     result = install.step_skill_copy(check=True)
 
-    dest = fake_home / ".hermes" / "skills" / "research-provenance"
+    dest = fake_home / ".hermes" / "skills" / "attestation-setup"
     assert result.status == "BROKEN"
     assert not (dest / "SKILL.md").exists()
 
@@ -671,7 +655,7 @@ def test_skill_copy_skips_when_source_missing(monkeypatch, tmp_path, check):
     fake_home = tmp_path / "fresh-home"
     fake_home.mkdir()
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
-    monkeypatch.setattr(install, "_skill_source_dir", lambda: tmp_path / "absent")
+    monkeypatch.setattr(install, "_skill_source_dir", lambda name: tmp_path / "absent")
 
     result = install.step_skill_copy(check=check)
 
@@ -1259,7 +1243,7 @@ def test_check_mode_never_invokes_mcp_add_config_set_cron_create_or_copies(
     rc = install.run_install(check=True)
 
     assert rc == 1  # gaps exist (nothing wired up in the fresh fake home)
-    dest = fake_home / ".hermes" / "skills" / "research-provenance"
+    dest = fake_home / ".hermes" / "skills" / "attestation-setup"
     assert not dest.exists()
     for call in fake.calls:
         assert "add" not in call

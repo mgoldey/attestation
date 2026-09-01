@@ -1,15 +1,19 @@
-"""Content checks on the shipped research-provenance skill files.
+"""Content checks on the shipped skill files.
 
 No existing test reads setup.sh or SKILL.md content -- test_install.py and
-test_install_e2e.py only assert the files *exist* (and exercise their own
-fixture SKILL.md, never the shipped one). This file closes that gap for the
-one failure mode that matters most: a skill file invoking a console script
-pyproject.toml never declared, which execs silently on machines that happen
-to have an unrelated same-named binary on PATH.
+test_install_e2e.py only assert the files *exist*. This file closes that gap
+for the failure modes that matter: a skill file invoking a console script
+pyproject.toml never declared (which execs silently on machines that happen
+to have an unrelated same-named binary on PATH); a namespace or router the
+skills forgot to mention (the agent reading them then never learns it
+exists); and, since the 2026-08-30 split into one skill per agent surface, a
+surface skill naming a tool its session cannot see, or two skills whose
+descriptions open with the same word and so compete for the same questions
+in Hermes' skill index.
 
-Checked against pyproject.toml's actual [project.scripts] via tomllib rather
-than a hardcoded "hermes"/"attest" string, so this keeps working through the
-next rename instead of quietly going stale itself.
+Checked against pyproject.toml's actual [project.scripts] via tomllib and
+the live MCP surface via register_all, rather than hardcoded lists, so this
+keeps working through the next rename instead of quietly going stale itself.
 """
 
 import re
@@ -17,8 +21,12 @@ import tomllib
 from pathlib import Path
 
 import attestation.install as install
+from attestation.mcp import AGENT_SURFACES
 
 _REPO_ROOT = Path(install.__file__).resolve().parent.parent.parent
+
+SETUP_SKILL = "attestation-setup"
+_TOOL_TOKEN = re.compile(r"\b(feed|runs|kg|sym|cite)\.([a-z_]+)\b")
 
 
 def _declared_console_scripts() -> set[str]:
@@ -26,10 +34,35 @@ def _declared_console_scripts() -> set[str]:
     return set(pyproject["project"]["scripts"])
 
 
-def _skill_dir() -> Path:
-    src = install._skill_source_dir()
-    assert src.is_dir(), "shipped skill source dir must exist"
-    return src
+def _skill_dirs() -> dict[str, Path]:
+    dirs = {name: install._skill_source_dir(name) for name in install.SKILL_NAMES}
+    for name, path in dirs.items():
+        assert path.is_dir(), f"shipped skill source dir must exist: {name}"
+    return dirs
+
+
+def _skill_md(name: str) -> str:
+    return (_skill_dirs()[name] / "SKILL.md").read_text()
+
+
+def _surface_skills() -> dict[str, str]:
+    """skill name -> the AGENT_SURFACES key it documents."""
+    return {
+        name: name.removeprefix("attestation-")
+        for name in install.SKILL_NAMES
+        if name != SETUP_SKILL
+    }
+
+
+def _frontmatter(text: str) -> dict[str, str]:
+    """The top-level `key: value` lines between the first two `---` fences."""
+    head = text.split("---", 2)[1]
+    out = {}
+    for line in head.splitlines():
+        if line and not line[0].isspace() and ":" in line:
+            key, _, value = line.partition(":")
+            out[key.strip()] = value.strip().strip('"')
+    return out
 
 
 def _undeclared_exec_targets(text: str, declared: set[str]) -> set[str]:
@@ -55,50 +88,13 @@ def _undeclared_exec_targets(text: str, declared: set[str]) -> set[str]:
     return found
 
 
-def test_setup_sh_invokes_only_declared_console_scripts():
-    declared = _declared_console_scripts()
-    setup_sh = (_skill_dir() / "scripts" / "setup.sh").read_text()
-
-    bad = _undeclared_exec_targets(setup_sh, declared)
-
-    assert not bad, (
-        f"setup.sh execs {bad}, not among pyproject's declared [project.scripts] {declared}"
-    )
-
-
-def test_setup_sh_has_no_hermes_install_invocation():
-    """Regression guard for the specific incident: both exec paths called
-    `hermes install --yes`, a binary pyproject never shipped."""
-    setup_sh = (_skill_dir() / "scripts" / "setup.sh").read_text()
-
-    assert "hermes install" not in setup_sh
-
-
-def test_skill_md_invokes_only_declared_console_scripts():
-    declared = _declared_console_scripts()
-    skill_md = (_skill_dir() / "SKILL.md").read_text()
-
-    bad = _undeclared_exec_targets(skill_md, declared)
-
-    assert not bad, (
-        f"SKILL.md documents running {bad}, not among pyproject's declared "
-        f"[project.scripts] {declared}"
-    )
-
-
-def test_skill_md_has_no_hermes_install_invocation():
-    skill_md = (_skill_dir() / "SKILL.md").read_text()
-
-    assert "hermes install" not in skill_md
-
-
 def _live_tool_names() -> set[str]:
     """Every tool name the MCP server actually registers.
 
     Derived from the live surface rather than a literal list. A literal list
-    is exactly what let SKILL.md drift: it documented the tools someone
-    remembered, and `cite.*` -- four tools, a whole namespace -- was never
-    written down at all.
+    is exactly what let the old SKILL.md drift: it documented the tools
+    someone remembered, and `cite.*` -- four tools, a whole namespace -- was
+    never written down at all.
     """
     import asyncio
 
@@ -111,42 +107,171 @@ def _live_tool_names() -> set[str]:
     return {t.name for t in asyncio.run(server.list_tools())}
 
 
-def test_skill_md_documents_every_live_namespace():
-    """SKILL.md is what the agent reads; a namespace missing from it is invisible.
+# --------------------------------------------------------------------------
+# shape: one directory per skill, frontmatter naming it, surfaces covered
+# --------------------------------------------------------------------------
 
-    Four reviewers found this file describing a world that no longer existed:
-    `cite.*` was undocumented entirely, and the `.ask` routers -- the measured
-    entry point, 13/15 against 8/15 for the flat surface -- appeared nowhere.
-    Both were live when the file was last edited.
+
+def test_every_surface_has_a_skill_and_setup_has_the_script():
+    """The split mirrors AGENT_SURFACES one-for-one, plus the setup skill
+    that owns scripts/setup.sh; a surface without a skill is an agent with
+    tools and no judgment about them."""
+    assert set(_surface_skills().values()) == set(AGENT_SURFACES)
+    assert (_skill_dirs()[SETUP_SKILL] / "scripts" / "setup.sh").is_file()
+
+
+def test_frontmatter_name_matches_the_directory():
+    """Hermes indexes a skill by its frontmatter `name`; a directory that
+    says one thing and a header that says another is two skills to the
+    index and one on disk."""
+    for name in install.SKILL_NAMES:
+        assert _frontmatter(_skill_md(name))["name"] == name
+
+
+def test_skill_descriptions_open_with_distinct_verbs():
+    """Measured: skill descriptions that name the same TOPIC collide --
+    `blogwatcher` ("Monitor blogs and RSS/Atom feeds") took "check my rss
+    feeds" from the feed tools, and routing fell 6/6 -> 3/6. Five siblings
+    that all opened "Research provenance tools..." would collide with each
+    other the same way. Each description leads with its own verb, and never
+    with a topic word the collision measurement named."""
+    openers = {}
+    for name in install.SKILL_NAMES:
+        first = _frontmatter(_skill_md(name))["description"].split()[0].lower().strip(",.:")
+        openers[name] = first
+    assert len(set(openers.values())) == len(openers), openers
+    topic_words = {"research", "science", "arxiv", "rss", "feed", "feeds", "attestation"}
+    assert not topic_words & set(openers.values()), openers
+
+
+# --------------------------------------------------------------------------
+# what the skills invoke
+# --------------------------------------------------------------------------
+
+
+def test_setup_sh_invokes_only_declared_console_scripts():
+    declared = _declared_console_scripts()
+    setup_sh = (_skill_dirs()[SETUP_SKILL] / "scripts" / "setup.sh").read_text()
+
+    bad = _undeclared_exec_targets(setup_sh, declared)
+
+    assert not bad, (
+        f"setup.sh execs {bad}, not among pyproject's declared [project.scripts] {declared}"
+    )
+
+
+def test_setup_sh_has_no_hermes_install_invocation():
+    """Regression guard for the specific incident: both exec paths called
+    `hermes install --yes`, a binary pyproject never shipped."""
+    setup_sh = (_skill_dirs()[SETUP_SKILL] / "scripts" / "setup.sh").read_text()
+
+    assert "hermes install" not in setup_sh
+
+
+def test_no_skill_md_invokes_undeclared_console_scripts():
+    declared = _declared_console_scripts()
+    for name in install.SKILL_NAMES:
+        bad = _undeclared_exec_targets(_skill_md(name), declared)
+        assert not bad, (
+            f"{name}/SKILL.md documents running {bad}, not among pyproject's declared "
+            f"[project.scripts] {declared}"
+        )
+
+
+def test_no_skill_md_has_hermes_install_invocation():
+    for name in install.SKILL_NAMES:
+        assert "hermes install" not in _skill_md(name), name
+
+
+# --------------------------------------------------------------------------
+# what the skills teach: every namespace and router somewhere, and each
+# surface skill only its own
+# --------------------------------------------------------------------------
+
+
+def test_bundled_skills_together_document_every_live_namespace():
+    """A namespace no skill names is invisible to the agent reading them.
+
+    Four reviewers once found the old single file describing a world that no
+    longer existed: `cite.*` undocumented entirely, the `.ask` routers -- the
+    measured entry point, 13/15 against 8/15 -- nowhere. The check is over
+    the UNION of the bundled skills, since each documents only its surface.
 
     Asserting on `<ns>.` catches the namespace being named as a tool prefix
     rather than merely as a word: "citations" in prose must not satisfy a
     check for `cite.*`.
     """
-    skill_md = (_skill_dir() / "SKILL.md").read_text()
+    everything = "\n".join(_skill_md(name) for name in _surface_skills())
     namespaces = {name.split(".", 1)[0] for name in _live_tool_names()}
 
-    missing = sorted(ns for ns in namespaces if f"{ns}." not in skill_md)
+    missing = sorted(ns for ns in namespaces if f"{ns}." not in everything)
 
     assert not missing, (
-        f"SKILL.md documents no {missing} tools, but the live MCP surface "
-        f"registers that namespace. Add a section, or the agent reading this "
-        f"skill will never know those tools exist."
+        f"no bundled skill documents {missing} tools, but the live MCP surface "
+        f"registers that namespace. Add it to the skill for its surface."
     )
 
 
-def test_skill_md_teaches_every_ask_router():
-    """Each router, by name.
+def test_bundled_skills_together_teach_every_ask_router():
+    """Each router, by name, somewhere in the bundle. Separate from the
+    namespace check because a namespace can be documented thoroughly while
+    its router is not: the flat tools are what an agent reaches for by
+    default, and they measured worse."""
+    everything = "\n".join(_skill_md(name) for name in _surface_skills())
 
-    Separate from the namespace check because a namespace can be documented
-    thoroughly while its router is not: the flat tools are what an agent
-    reaches for by default, and they measured worse.
-    """
-    skill_md = (_skill_dir() / "SKILL.md").read_text()
+    missing = sorted(n for n in _live_tool_names() if n.endswith(".ask") and n not in everything)
 
-    missing = sorted(n for n in _live_tool_names() if n.endswith(".ask") and n not in skill_md)
+    assert not missing, f"no bundled skill mentions {missing}; agents will pick flat tools instead"
 
-    assert not missing, f"SKILL.md never mentions {missing}; agents will pick flat tools instead"
+
+def test_each_surface_skill_teaches_its_own_router():
+    for name, surface in _surface_skills().items():
+        routers = {
+            n
+            for n in _live_tool_names()
+            if n.endswith(".ask") and _allowed(n, AGENT_SURFACES[surface].prefixes)
+        }
+        for router in routers:
+            assert router in _skill_md(name), f"{name} never names {router}"
+
+
+def _allowed(tool: str, prefixes: frozenset[str]) -> bool:
+    return tool in prefixes or tool.split(".", 1)[0] in prefixes
+
+
+def test_a_surface_skill_names_only_tools_on_its_surface():
+    """A session under ATTEST_TOOLS=<surface> cannot see tools outside it --
+    they are absent from list_tools, not merely undocumented. A skill that
+    names `runs.compare` to a feed session teaches a call that will fail, and
+    a model told a tool exists will keep trying it. Tools outside the surface
+    are referred to by the AGENT that has them, never by name."""
+    live = _live_tool_names()
+    for name, surface in _surface_skills().items():
+        text = _skill_md(name)
+        named = {f"{ns}.{tool}" for ns, tool in _TOOL_TOKEN.findall(text)}
+        # `.tools` is the surface's own disclosure tool, allowed everywhere
+        # on its surface; anything unknown to the live server is prose
+        # (`feed.list`-style hypotheticals do not exist) and is not a tool.
+        foreign = sorted(
+            t for t in named if t in live and not _allowed(t, AGENT_SURFACES[surface].prefixes)
+        )
+        assert not foreign, f"{name} names tools its surface cannot see: {foreign}"
+
+
+def test_setup_skill_names_every_surface_and_sibling():
+    """The setup skill is the one an agent reads first; it has to say which
+    sibling carries the judgment for each surface, or the split leaves the
+    agent with setup instructions and no map."""
+    text = _skill_md(SETUP_SKILL)
+    for name in install.SKILL_NAMES:
+        assert name in text, f"setup skill never mentions {name}"
+    for surface in AGENT_SURFACES:
+        assert f"`{surface}`" in text, f"setup skill never names the {surface} surface"
+
+
+# --------------------------------------------------------------------------
+# presentation
+# --------------------------------------------------------------------------
 
 
 def test_the_presentation_example_stays_markdown_not_a_foreign_surface():
@@ -169,7 +294,7 @@ def test_the_presentation_example_stays_markdown_not_a_foreign_surface():
     So: the example must stay Markdown, and must NOT acquire another surface's
     syntax. Both directions are guarded, because both have now been wrong once.
     """
-    skill_md = (_skill_dir() / "SKILL.md").read_text()
+    skill_md = _skill_md("attestation-feed")
     start = skill_md.index("**Present each item as one line")
     block = skill_md[start : skill_md.index("```", skill_md.index("```", start) + 3)]
 
