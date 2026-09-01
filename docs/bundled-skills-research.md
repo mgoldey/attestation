@@ -9,8 +9,9 @@ leftover `research-provenance` copy by renaming its `SKILL.md`; the monolith
 is split into `attestation-{setup,feed,provenance,knowledge,symbolic}` with
 `tests/test_skill_files.py` enforcing the verb-first descriptions and the
 surface-only tool rule, and `tests/test_install_skills.py` the installer
-behaviour. The routing measurement (step 2's acceptance) has NOT been run;
-B1/B2 are unbuilt. Every remaining recommendation names the measurement
+behaviour. The routing measurement (step 2's acceptance) was run 2026-09-01
+and ACCEPTS the split — see "The routing measurement" below; B1/B2 are
+unbuilt. Every remaining recommendation names the measurement
 that would accept or reject it.
 **Method:** local only. The repo's skill, installer, tests, emitted agents
 and docs were read directly; the 73 `SKILL.md` files under
@@ -51,6 +52,70 @@ Contracts a bundled skill must already satisfy (`tests/test_skill_files.py`):
 it invokes only declared console scripts, never `hermes install`, documents
 every live namespace, teaches every `.ask` router by name, and its
 presentation example stays Markdown.
+
+## The routing measurement (2026-09-01): the split accepted
+
+Run as specified above: the real skill index — the 70 enabled `SKILL.md`
+files under `~/.hermes/skills/` (nested dirs included; the two
+`.disabled-collides-with-attestation` renames and `.retired`
+science-recommendations excluded, as Hermes excludes them) — with the
+monolith's installed description (before) versus the same index with the
+five split entries in its place (after, 74 entries). 56 attestation
+questions (12 per surface + 8 setup), each carrying the arguments a real
+user would supply, plus 10 control questions owned by other live skills.
+`gemma4:e2b-it-q4_K_M`, temperature 0, one run (deterministic for a fixed
+prompt). The model sees the alphabetised `name: description` index in a
+system prompt and answers with one skill name or `none`.
+
+**What the number is and is not.** This is skill-INDEX selection on a
+fixed harness — a before/after delta, not Hermes end to end, and not tool
+routing: the live feed path selects among MCP tools directly (measured
+88%, `measurement-lessons.md` §3) and never consults the index. The index
+governs which *judgment body* loads, which is exactly what the split
+changed. One harness note that did not exist in August: Ollama now runs
+this model with thinking ON by default, and a thinking reply spends its
+whole token budget in `reasoning` with empty content — the harness sets
+`think: false` on the native `/api/chat` endpoint. Any future comparison
+against the Aug-24 numbers must account for that.
+
+| surface | before: attestation-hit | after: attestation-hit | after: exact sibling |
+|---|---|---|---|
+| feed | 6/12 | 12/12 | 9/12 |
+| provenance | 12/12 | 12/12 | 11/12 |
+| knowledge | 9/12 | 11/12 | 10/12 |
+| symbolic | 7/12 | 12/12 | 12/12 |
+| setup | 3/8 | 8/8 | 6/8 |
+| **total** | **37/56 (66%)** | **55/56 (98%)** | **48/56 (86%)** |
+
+Controls: attestation stole **zero** of the ten control questions in
+either condition — five sibling entries do not grab other skills'
+traffic. (Control own-skill was 8/10 before, 7/10 after; every miss was a
+defensible neighbour with no attestation involvement — `ocr-and-documents`
+for PDF table extraction, `claude-design` for a slide deck,
+`ascii-video` for an animation — index noise, not a split effect.)
+
+**Where the monolith was losing.** The before-misses are the collision
+problem in the flesh, and they cluster exactly where the monolith's
+description says least: symbolic questions went to `python-debugpy`,
+`claude-code`, `codex` and a hallucinated `simplify_code`; setup questions
+to `computer-use`, `touchdesigner-mcp`, `hermes-agent`; five questions
+across surfaces to `grounded-citations`. The one after-miss is
+"search my bibliography for papers by Hinton" → `arxiv`, a defensible
+neighbour for a bibliography-search phrasing.
+
+**The split's own cost is sibling confusion, all of it inside
+attestation:** eight wrong-sibling picks (feed↔knowledge on
+persona/interests/suggest-sources phrasings; a staleness question to
+feed; citation-key resolution to provenance; two setup questions with
+feed words in them to feed). A wrong sibling still lands the agent in
+attestation with a body that names the right surface's tools one
+cross-reference away — the failure the fallback ("two skills") was held
+for did not appear, so the fallback is not taken.
+
+**Verdict:** the split is accepted — +18 questions routed to attestation
+with zero control theft. The 66% baseline also revises this doc's framing
+upward: the monolith was not merely oversized, it was losing a third of
+attestation's own questions to better-worded neighbours.
 
 ### Two findings from the survey, before any recommendation
 
