@@ -107,9 +107,43 @@ record eval keeps its `--live` mode for the fallback path and gains
   (a declared console script's subcommand) and its size did not grow.
 - `docs/reference/cli.md` is regenerated (the render test asserts it).
 
+## The MCP tool (amendment, same day: "add the runs.record MCP tool too")
+
+`runs.record` on the provenance surface, a thin wrapper over the same
+`record.plan`/`undeclared`/`write`:
+
+```
+runs.record(family, arms, corpus=None, directions=None, config=None,
+            root=None, project=None, confirm=False)
+```
+
+- `arms` is a list of `{"name": str, "metrics": {metric: number}}`;
+  `directions` a `{metric: "lower_is_better"|"higher_is_better"}` map;
+  `config` a flat `{key: value}` of provenance pairs; `root`/`project`
+  resolve the way `runs.scan` resolves them (`ledger.workspace_root(root)`,
+  the project directory beneath it).
+- **Without `confirm=true` it writes nothing and returns the manifest** —
+  the tool's own preview, the same shape as `--dry-run`; with `confirm`
+  it writes (new files only; an existing target is a `ToolError` naming
+  every collision, before any write) and then scans the project and
+  returns `compare` for the family, so one call takes a run from numbers
+  to a ranked ledger entry. `force` is deliberately NOT a tool argument:
+  an agent overwriting a result file is the failure the ledger exists to
+  catch; a human does that at the CLI.
+- An undeclared metric is a `ToolError` carrying the same sentence
+  `runs.compare` prints; the tool never guesses a direction.
+- Envelope: `empty={"written": [], "manifest": {}, "compare": None}`; the
+  response carries paths, not file contents, except in the preview.
+- Surface counts move: 46 tools, provenance 10 (expanded); every doc that
+  states a count follows, and the existing count guards enforce it. The
+  runs router gains a rule ("record"/"write the results"/"leave files for
+  the ledger" → `runs.record`) with routing-test cases; the record skill
+  names `runs.record` as the agent path and `attest runs record` as the
+  shell path. `tests/test_tool_envelope.py` and `test_response_size.py`
+  cover it like every other tool.
+
 ## Not in scope
 
-- An MCP `runs.record` tool (follow-up, once the CLI has been used).
 - Multi-step metric curves; the ledger records final values.
 - Writing tracker layouts (W&B/MLflow/…): the command writes the bare
   convention only.
