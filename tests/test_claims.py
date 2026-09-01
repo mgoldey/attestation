@@ -547,3 +547,38 @@ def test_check_counts_a_cited_claim_once_per_concern(ledgered):
     assert sorted(v.verdict for v in out["verdicts"]) == sorted(
         [claims.VerdictKind.CONTRADICTED, claims.VerdictKind.UNCITED]
     )
+
+
+def test_coverage_skips_hidden_dirs_below_the_root_not_above_it(tmp_path):
+    """The hidden-directory skip must look at the path BELOW `root`.
+
+    It looked at every part of the absolute path, so a workspace that
+    happened to live under a dotted directory -- this repo's own git
+    worktrees sit in `.claude/worktrees/` -- scanned to zero files and
+    `numbers: 0`, and the example suite's coverage test failed there while
+    passing in the main checkout. A `.git/` or `.venv/` INSIDE the root is
+    still skipped: that is what the check exists for.
+    """
+    root = tmp_path / ".hidden-parent" / "ws"
+    write(root / "doc.md", "WER fell to 0.053 on the dev set.\n")
+    write(root / ".venv" / "README.md", "version 1.2345 of a dependency\n")
+
+    out = claims.coverage(root)
+
+    assert out["files"] == 1
+    assert out["numbers"] == 1
+    assert out["uncovered"][0]["value"] == 0.053
+
+
+def test_find_claims_skips_hidden_dirs_below_the_root_not_above_it(tmp_path):
+    """Same rule for the claim walk `check` uses; it had the same absolute-
+    path skip, so under a dotted parent a document's claims were never
+    found and `check` reported an empty, healthy-looking result."""
+    root = tmp_path / ".hidden-parent" / "ws"
+    write(root / "doc.md", "<!-- claim: proj/run metric=wer value=0.053 -->\n")
+    write(root / ".venv" / "README.md", "<!-- claim: dep/run metric=x value=1.0 -->\n")
+
+    found, problems = claims.find_claims(root)
+
+    assert [(c.project, c.run) for c in found] == [("proj", "run")]
+    assert problems == []

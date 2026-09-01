@@ -178,9 +178,7 @@ def find_claims(root: Path) -> tuple[list[Claim], list[str]]:
 
     claims: list[Claim] = []
     problems: list[str] = []
-    for md in sorted(root.rglob("*.md")):
-        if any(part.startswith(".") or part == "node_modules" for part in md.parts):
-            continue
+    for md in sorted(_prose_files(root)):
         found, bad = parse_file(md)
         claims.extend(found)
         problems.extend(bad)
@@ -388,6 +386,23 @@ def _masked_prose(text: str) -> str:
     return text
 
 
+def _prose_files(root: Path):
+    """Every `*.md` under `root`, skipping hidden and vendored directories
+    BELOW the root -- `.git/`, `.venv/`, `node_modules/`.
+
+    Relative to the root, not the absolute path: judged on the absolute
+    path, a workspace living under any dotted directory (this repo's own git
+    worktrees sit in `.claude/worktrees/`) scanned to zero files, and the
+    example suite's coverage test failed there while passing in the main
+    checkout.
+    """
+    for md in root.rglob("*.md"):
+        parts = md.relative_to(root).parts
+        if any(p.startswith(".") or p == "node_modules" for p in parts):
+            continue
+        yield md
+
+
 def coverage(root: Path) -> dict:
     """Numbers in prose that no claim annotation covers.
 
@@ -403,13 +418,11 @@ def coverage(root: Path) -> dict:
     documents.
     """
     root = Path(root).expanduser()
-    files = [root] if root.is_file() else sorted(root.rglob("*.md"))
+    files = [root] if root.is_file() else sorted(_prose_files(root))
     out: list[dict] = []
     total_numbers = 0
 
     for md in files:
-        if any(p.startswith(".") or p == "node_modules" for p in md.parts):
-            continue
         text = md.read_text(errors="replace")
         claims, _ = parse_file(md)
         covered = [(c.value, c.tol) for c in claims]
