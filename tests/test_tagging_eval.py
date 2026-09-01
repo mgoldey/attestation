@@ -288,8 +288,14 @@ def test_the_optimizer_sends_the_production_prompt_and_scores_with_the_eval_metr
 
 
 # transfer-<date>.json is a matrix's raw scores, not a prompt; everything else is.
+# `transfer-*.json` are transfer-gate records and `*.answers.json` are the
+# raw-answer sidecars the write-side acceptance evals keep beside their dated
+# record: evidence about a run, not prompts, so `load_tag_prompt` has no
+# business with either.
 ARTIFACTS = sorted(
-    p for p in (ROOT / "evals" / "prompts").glob("*.json") if not p.name.startswith("transfer-")
+    p
+    for p in (ROOT / "evals" / "prompts").glob("*.json")
+    if not p.name.startswith("transfer-") and not p.name.endswith(".answers.json")
 )
 
 

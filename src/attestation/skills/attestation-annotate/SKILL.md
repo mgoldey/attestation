@@ -1,6 +1,6 @@
 ---
 name: attestation-annotate
-description: "Annotate prose that states a numeric result with a claim comment beside each decimal so attestation's ledger can check it against a recorded run, add a citation key only after it resolves, and run the coverage linter before handing a draft back. Never asserts a number is true on its own judgement."
+description: "Annotate the prose YOU are writing or editing: put a claim comment beside every decimal you type so the ledger can verify it, add a citation key only after it resolves, and run the coverage linter before handing the draft back. For a sentence you produce with a number in it; checking a draft someone hands you is attestation-provenance."
 version: 1.0.0
 author: attestation project
 license: MIT

@@ -1,6 +1,6 @@
 ---
 name: attestation-provenance
-description: "Verify what a manuscript says against the experiment runs on disk: rank the arms of a sweep with their caveats, check every numeric claim in a Markdown draft against the recorded run, list the numbers no claim covers, and lint citation keys that resolve to nothing. Reads artifacts; never re-runs or edits anything."
+description: "Verify a manuscript you are handed against the experiment runs on disk: rank the arms of a sweep with their caveats, check every numeric claim in an existing Markdown draft against the recorded run, list the numbers no claim covers, and lint citation keys that resolve to nothing. Reads artifacts and existing prose; never re-runs, edits, or writes a document."
 version: 2.0.0
 author: attestation project
 license: MIT

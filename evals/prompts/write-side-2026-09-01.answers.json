@@ -1,0 +1,1162 @@
+[
+  {
+    "id": "asr-wer-2arm",
+    "sample": 0,
+    "answer": {
+      "files": {
+        "results/asr_baseline.json": "{\"wer\": 0.12}",
+        "results/asr_biglm.json": "{\"wer\": 0.08}",
+        "configs/asr_baseline.yaml": "stem: asr_baseline\n# some config details"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "asr-wer-2arm",
+    "sample": 1,
+    "answer": {
+      "files": {
+        "results/asr_baseline.json": "{\"wer\": 0.12}",
+        "results/asr_biglm.json": "{\"wer\": 0.08}",
+        "configs/asr_baseline.yaml": "# Configuration for asr_baseline\n# (Content of the actual config file omitted)\nstem: asr_baseline\n... (rest of config)"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "asr-wer-2arm",
+    "sample": 2,
+    "answer": {
+      "files": {
+        "results/asr_baseline.json": "{\"wer\": 0.12}",
+        "results/asr_biglm.json": "{\"wer\": 0.08}",
+        "configs/asr_baseline.yaml": "wer: 0.12\ncorpus: librispeech",
+        "configs/asr_biglm.yaml": "wer: 0.08\ncorpus: librispeech",
+        "corpora.toml": "[corpus.librispeech]\nsource = \"librispeech\"\nconfig = \"clean\"\nseq_len = 16000\n\n[assign.family]\nasr = \"librispeech\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "cls-accuracy-2arm",
+    "sample": 0,
+    "answer": {
+      "files": {
+        "results/cls_svm.json": "{\"accuracy\": 0.81}",
+        "results/cls_logreg.json": "{\"accuracy\": 0.86}",
+        "configs/cls_svm.yaml": "name: cls_svm\n# Configuration for SVM run",
+        "configs/cls_logreg.yaml": "name: cls_logreg\n# Configuration for Logistic Regression run",
+        "corpora.toml": "\n[corpus.imagenet-mini]\nsource = \"imagenet-mini\"\nconfig = \"mini\"\nseq_len = 280"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "cls-accuracy-2arm",
+    "sample": 1,
+    "answer": {
+      "files": {
+        "results/cls_svm.json": "{\"accuracy\": 0.81}",
+        "results/cls_logreg.json": "{\"accuracy\": 0.86}",
+        "configs/cls_svm.yaml": "name: cls_svm\ncorpus: imagenet-mini",
+        "configs/cls_logreg.yaml": "name: cls_logreg\ncorpus: imagenet-mini",
+        "corpora.toml": "[corpus.imagenet-mini]\nsource = \"imagenet\"\nconfig = \"mini\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "cls-accuracy-2arm",
+    "sample": 2,
+    "answer": {
+      "files": {
+        "results/cls_svm.json": "{\"accuracy\": 0.81}",
+        "results/cls_logreg.json": "{\"accuracy\": 0.86}",
+        "configs/cls_svm.yaml": "arm: cls_svm\ncorpus: imagenet-mini",
+        "configs/cls_logreg.yaml": "arm: cls_logreg\ncorpus: imagenet-mini",
+        "corpora.toml": "[corpus.imagenet-mini]\nsource = \"imagenet-mini\"\nconfig = \"mini\"\nseq_len = 224\n\n[assign.family]\nclsweep = \"imagenet-mini\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "retr-f1-2arm",
+    "sample": 0,
+    "answer": {
+      "files": {
+        "results/retr_bm25.json": "{\"f1\": 0.55}",
+        "results/retr_dense.json": "{\"f1\": 0.63}",
+        "configs/retr_bm25.yaml": "name: retr_bm25\ncorpus: beir-scifact"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "retr-f1-2arm",
+    "sample": 1,
+    "answer": {
+      "files": {
+        "results/retr_bm25.json": "{\"f1\": 0.55}",
+        "results/retr_dense.json": "{\"f1\": 0.63}",
+        "configs/retr_bm25.yaml": "name: retr_bm25\ncorpus: beir-scifact",
+        "configs/retr_dense.yaml": "name: retr_dense\ncorpus: beir-scifact",
+        "corpora.toml": "\n[corpus.beir-scifact]\nsource = \"beir-scifact\"\nconfig = \"clean\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "retr-f1-2arm",
+    "sample": 2,
+    "answer": {
+      "files": {
+        "results/retr_bm25.json": "{\"f1\": 0.55}",
+        "results/retr_dense.json": "{\"f1\": 0.63}",
+        "configs/retr_bm25.yaml": "weight: 0.8",
+        "configs/retr_dense.yaml": "weight: 1.0",
+        "corpora.toml": "\n[corpus.beir-scifact]\nsource = \"beir-scifact\"\nconfig = \"clean\"\nseq_len = 16000\n\n[assign.family]\nretr = \"beir-scifact\"\n"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "quant-mae-2arm",
+    "sample": 0,
+    "answer": {
+      "files": {
+        "results/quant_int8.json": "{\"mae\": 0.041}",
+        "results/quant_fp16.json": "{\"mae\": 0.019}",
+        "configs/quant_int8.yaml": "quant_int8: 8-bit"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "quant-mae-2arm",
+    "sample": 1,
+    "answer": {
+      "files": {
+        "results/quant_int8.json": "{\"mae\": 0.041}",
+        "results/quant_fp16.json": "{\"mae\": 0.019}",
+        "configs/quant_int8.yaml": "quant_int8: {precision: 8}",
+        "configs/quant_fp16.yaml": "quant_fp16: {precision: 16}",
+        "corpora.toml": "[corpus.qm9]\nsource = \"qm9\"\nconfig = \"default\"\nseq_len = 32000\n\n[assign.family]\nquant = \"qm9\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "quant-mae-2arm",
+    "sample": 2,
+    "answer": {
+      "files": {
+        "results/quant_int8.json": "{\"mae\": 0.041}",
+        "results/quant_fp16.json": "{\"mae\": 0.019}",
+        "configs/quant.yaml": "optimization_type: quantization\nbit_width: 8"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": false,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": [
+      "scan found 3 run(s), expected 2 ()"
+    ]
+  },
+  {
+    "id": "lora-novelty-2arm",
+    "sample": 0,
+    "answer": {
+      "files": {
+        "results/lora_rank4.json": "{\"novelty_rate\": 0.31}",
+        "results/lora_rank8.json": "{\"novelty_rate\": 0.44}",
+        "configs/lora_rank4.yaml": "# Configuration for lora_rank4 run\n# Note: Placeholder configuration based on context\nlearning_rate: 1e-4\nlora_alpha: 64\n",
+        "configs/lora_rank8.yaml": "# Configuration for lora_rank8 run\n# Note: Placeholder configuration based on context\nlearning_rate: 1e-4\nlora_alpha: 32",
+        "corpora.toml": "[corpus.dolly-15k]\nsource = \"dolly-15k\"\nconfig = \"default\"\n",
+        "assign.family.lora_rank4": "lora_rank4",
+        "assign.family.lora_rank8": "lora_rank8"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "compare refused: no metric with a known direction in family 'lora'; found ['novelty_rate']. Declare one under [metric_direction] in /tmp/tmp36ets6v7/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "lora-novelty-2arm",
+    "sample": 1,
+    "answer": {
+      "files": {
+        "results/lora_rank4.json": "{\"novelty_rate\": 0.31}",
+        "results/lora_rank8.json": "{\"novelty_rate\": 0.44}",
+        "configs/lora_rank4.yaml": "novelty_rate: 0.31",
+        "configs/lora_rank8.yaml": "novelty_rate: 0.44",
+        "corpora.toml": "[corpus.dolly-15k]\nsource = \"dolly-15k\"\nconfig = \"default\"\n"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "compare refused: no metric with a known direction in family 'lora'; found ['novelty_rate']. Declare one under [metric_direction] in /tmp/tmp0242n4ns/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "lora-novelty-2arm",
+    "sample": 2,
+    "answer": {
+      "files": {
+        "results/lora_rank4.json": "{\"novelty_rate\": 0.31}",
+        "results/lora_rank8.json": "{\"novelty_rate\": 0.44}",
+        "configs/lora_rank4.yaml": "# Configuration for lora_rank4",
+        "configs/lora_rank8.yaml": "# Configuration for lora_rank8",
+        "corpora.toml": "[corpus.dolly-15k]\nsource = \"dolly-15k\"\nconfig = \"\" \n\n[assign.family]\nlora_sweep = \"dolly-15k\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "compare refused: no metric with a known direction in family 'lora'; found ['novelty_rate']. Declare one under [metric_direction] in /tmp/tmp2h05t3ez/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "sched-halluc-2arm",
+    "sample": 0,
+    "answer": {
+      "files": {
+        "results/sched_cosine.json": "{\"hallucination_score\": 0.22}",
+        "results/sched_linear.json": "{\"hallucination_score\": 0.35}",
+        "configs/sched_cosine.yaml": "name: sched_cosine\ncorpus: truthfulqa",
+        "configs/sched_linear.yaml": "name: sched_linear\ncorpus: truthfulqa",
+        "corpora.toml": "[corpus.truthfulqa]\nsource = \"truthfulqa\"\nconfig = \"truthfulqa\"",
+        "assign.family": "[assign.family]\nsked = \"sched\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "compare refused: no metric with a known direction in family 'sched'; found ['hallucination_score']. Declare one under [metric_direction] in /tmp/tmp7oyecsmz/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "sched-halluc-2arm",
+    "sample": 1,
+    "answer": {
+      "files": {
+        "results/sched_cosine.json": "{\"hallucination_score\": 0.22}",
+        "results/sched_linear.json": "{\"hallucination_score\": 0.35}",
+        "configs/sched_cosine.yaml": "# Configuration for sched_cosine\n# (Content derived from the actual run configuration)",
+        "configs/sched_linear.yaml": "# Configuration for sched_linear\n# (Content derived from the actual run configuration)",
+        "corpora.toml": "[corpus.truthfulqa]\nsource = \"truthfulqa\"\nconfig = \"default\"\n",
+        "assign.family": "\n[assign.family]\nsked = \"truthfulqa\"\n",
+        "metric_direction.toml": "[metric_direction]\nhallucination_score = \"higher_is_better\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": [
+      "compare named winner 'sched_linear', expected 'sched_cosine'"
+    ]
+  },
+  {
+    "id": "sched-halluc-2arm",
+    "sample": 2,
+    "answer": {
+      "files": {
+        "results/sched_cosine.json": "{\"hallucination_score\": 0.22}",
+        "results/sched_linear.json": "{\"hallucination_score\": 0.35}",
+        "configs/sched_cosine.yaml": "learning_rate: 0.1\noptimizer: Adam\nepoch: 10",
+        "configs/sched_linear.yaml": "learning_rate: 0.01\noptimizer: SGD\nepoch: 10",
+        "corpora.toml": "[\n[corpus.truthfulqa]\nsource = \"truthfulqa\"\nconfig = \"truthfulqa\"\nseq_len = 512\n\n[assign.family]\nsched = \"truthfulqa\"\nsched_cosine = \"truthfulqa\"\nsched_linear = \"truthfulqa\"\n]"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "compare refused: no metric with a known direction in family 'sched'; found ['hallucination_score']. Declare one under [metric_direction] in /tmp/tmpdzykgijr/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "gen-coherence-3arm",
+    "sample": 0,
+    "answer": {
+      "files": {
+        "results/gen_greedy.json": "{\"coherence_index\": 0.61}",
+        "results/gen_beam.json": "{\"coherence_index\": 0.74}",
+        "results/gen_sample.json": "{\"coherence_index\": 0.58}",
+        "configs/gen_config.yaml": "model_name: gen\ncorpus_name: writingprompts\nmethod: beam",
+        "corpora.toml": "[corpus.writingprompts]\nsource = \"writingprompts\"\nconfig = \"default\"\n"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": false,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "scan found 4 run(s), expected 3 ()",
+      "compare refused: no metric with a known direction in family 'gen'; found ['coherence_index']. Declare one under [metric_direction] in /tmp/tmpd8529yu6/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "gen-coherence-3arm",
+    "sample": 1,
+    "answer": {
+      "files": {
+        "results/gen_greedy.json": "{\"coherence_index\": 0.61}",
+        "results/gen_beam.json": "{\"coherence_index\": 0.74}",
+        "results/gen_sample.json": "{\"coherence_index\": 0.58}",
+        "configs/gen_greedy.yaml": "..."
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "compare refused: no metric with a known direction in family 'gen'; found ['coherence_index']. Declare one under [metric_direction] in /tmp/tmp_h0usnn_/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "gen-coherence-3arm",
+    "sample": 2,
+    "answer": {
+      "files": {
+        "results/gen_greedy.json": "{\"coherence_index\": 0.61}",
+        "results/gen_beam.json": "{\"coherence_index\": 0.74}",
+        "results/gen_sample.json": "{\"coherence_index\": 0.58}",
+        "configs/gen_config.yaml": "model: ..."
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": false,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "scan found 4 run(s), expected 3 ()",
+      "compare refused: no metric with a known direction in family 'gen'; found ['coherence_index']. Declare one under [metric_direction] in /tmp/tmpvqp358wm/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "mon-drift-3arm",
+    "sample": 0,
+    "answer": {
+      "files": {
+        "results/mon_daily.json": "{\"drift_score\": 0.05}",
+        "results/mon_weekly.json": "{\"drift_score\": 0.11}",
+        "results/mon_monthly.json": "{\"drift_score\": 0.27}",
+        "configs/mon_daily.yaml": "drift_score: 0.05",
+        "configs/mon_weekly.yaml": "drift_score: 0.11",
+        "configs/mon_monthly.yaml": "drift_score: 0.27",
+        "corpora.toml": "[\n[corpus.prod-traffic-logs]\nsource = \"prod-traffic-logs\"\n\n[assign.family]\nmon = \"prod-traffic-logs\"\n\n[assign.run]\nmon_daily = \"prod-traffic-logs\"\nmon_weekly = \"prod-traffic-logs\"\nmon_monthly = \"prod-traffic-logs\"\n]"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "compare refused: no metric with a known direction in family 'mon'; found ['drift_score']. Declare one under [metric_direction] in /tmp/tmpnc2ul4v6/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "mon-drift-3arm",
+    "sample": 1,
+    "answer": {
+      "files": {
+        "results/mon_daily.json": "{\"drift_score\": 0.05}",
+        "results/mon_weekly.json": "{\"drift_score\": 0.11}",
+        "results/mon_monthly.json": "{\"drift_score\": 0.27}",
+        "configs/mon_daily.yaml": "drift_score: 0.05",
+        "configs/mon_weekly.yaml": "drift_score: 0.11",
+        "configs/mon_monthly.yaml": "drift_score: 0.27",
+        "corpora.toml": "[corpus.prod-traffic-logs]\nsource = \"prod-traffic-logs\"\nconfig = \"logs\"\n"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "compare refused: no metric with a known direction in family 'mon'; found ['drift_score']. Declare one under [metric_direction] in /tmp/tmpw647ud6o/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "mon-drift-3arm",
+    "sample": 2,
+    "answer": {
+      "files": {
+        "results/mon_daily.json": "{\"drift_score\": 0.05}",
+        "results/mon_weekly.json": "{\"drift_score\": 0.11}",
+        "results/mon_monthly.json": "{\"drift_score\": 0.27}",
+        "configs/mon_daily.yaml": "drift_score: 0.05\ncorpus: prod-traffic-logs",
+        "configs/mon_weekly.yaml": "drift_score: 0.11\ncorpus: prod-traffic-logs",
+        "configs/mon_monthly.yaml": "drift_score: 0.27\ncorpus: prod-traffic-logs",
+        "corpora.toml": "[corpus.prod-traffic-logs]\nsource = \"prod-traffic-logs\"\nconfig = \"default\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "compare refused: no metric with a known direction in family 'mon'; found ['drift_score']. Declare one under [metric_direction] in /tmp/tmpgt6sd8es/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "mt-bleu-3arm",
+    "sample": 0,
+    "answer": {
+      "files": {
+        "results/mt_greedy.json": "{\"bleu\": 24.1}",
+        "results/mt_beam4.json": "{\"bleu\": 27.8}",
+        "results/mt_nucleus.json": "{\"bleu\": 25.9}",
+        "configs/mt_greedy.yaml": "name: mt_greedy\ncorpus: wmt14-ende\nmetric: bleu",
+        "configs/mt_beam4.yaml": "name: mt_beam4\ncorpus: wmt14-ende\nmetric: bleu",
+        "configs/mt_nucleus.yaml": "name: mt_nucleus\ncorpus: wmt14-ende\nmetric: bleu",
+        "corpora.toml": "[corpus.wmt14-ende]\nsource = \"wmt14-ende\"\nconfig = \"ende\"",
+        "assign.family.mt = \"mt\"": "mt_greedy,mt_beam4,mt_nucleus"
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mt-bleu-3arm",
+    "sample": 1,
+    "answer": {
+      "files": {
+        "results/mt_greedy.json": "{\"bleu\": 24.1}",
+        "results/mt_beam4.json": "{\"bleu\": 27.8}",
+        "results/mt_nucleus.json": "{\"bleu\": 25.9}",
+        "configs/mt_greedy.yaml": "bleu: 24.1\ncorpus: wmt14-ende",
+        "configs/mt_beam4.yaml": "bleu: 27.8\ncorpus: wmt14-ende",
+        "configs/mt_nucleus.yaml": "bleu: 25.9\ncorpus: wmt14-ende",
+        "corpora.toml": "\n[corpus.wmt14-ende]\nsource = \"wmt14-ende\"\nconfig = \"base\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mt-bleu-3arm",
+    "sample": 2,
+    "answer": {
+      "files": {
+        "results/mt_greedy.json": "{\"bleu\": 24.1}",
+        "results/mt_beam4.json": "{\"bleu\": 27.8}",
+        "results/mt_nucleus.json": "{\"bleu\": 25.9}",
+        "configs/mt_greedy.yaml": "name: mt_greedy\ncorpus: wmt14-ende\nmetric: bleu",
+        "configs/mt_beam4.yaml": "name: mt_beam4\ncorpus: wmt14-ende\nmetric: bleu",
+        "configs/mt_nucleus.yaml": "name: mt_nucleus\ncorpus: wmt14-ende\nmetric: bleu",
+        "corpora.toml": "[corpus.wmt14-ende]\nsource = \"wmt14-ende\"\nconfig = \"ende\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "fc-rmse-2arm",
+    "sample": 0,
+    "answer": {
+      "files": {
+        "results/fc_arima.json": "{\"rmse\": 4.2}",
+        "results/fc_lstm.json": "{\"rmse\": 3.1}",
+        "configs/fc_arima.yaml": "name: fc_arima\ncorpus: m4-hourly",
+        "configs/fc_lstm.yaml": "name: fc_lstm\ncorpus: m4-hourly",
+        "corpora.toml": "\n[corpus.m4-hourly]\nsource = \"m4-hourly\"\nconfig = \"m4-hourly\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "fc-rmse-2arm",
+    "sample": 1,
+    "answer": {
+      "files": {
+        "results/fc_arima.json": "{\"rmse\": 4.2}",
+        "results/fc_lstm.json": "{\"rmse\": 3.1}",
+        "configs/fc_arima.yaml": "name: fc_arima\ncorpus: m4-hourly",
+        "configs/fc_lstm.yaml": "name: fc_lstm\ncorpus: m4-hourly",
+        "corpora.toml": "\n[corpus.m4-hourly]\nsource = \"m4-hourly\"\nconfig = \"m4-hourly\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "fc-rmse-2arm",
+    "sample": 2,
+    "answer": {
+      "files": {
+        "results/fc_arima.json": "{\"rmse\": 4.2}",
+        "results/fc_lstm.json": "{\"rmse\": 3.1}",
+        "configs/fc_arima.yaml": "name: fc_arima\ncorpus: m4-hourly",
+        "configs/fc_lstm.yaml": "name: fc_lstm\ncorpus: m4-hourly",
+        "corpora.toml": "[corpus.m4-hourly]\nsource = \"m4-hourly\"\nconfig = \"m4-hourly\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": true,
+      "config_not_metric": true,
+      "direction_declared": true
+    },
+    "errors": []
+  },
+  {
+    "id": "bait-missing-direction",
+    "sample": 0,
+    "answer": {
+      "files": {
+        "results/opt_adam.json": "{\"regret_bound\": 0.03}",
+        "results/opt_sgd.json": "{\"regret_bound\": 0.09}",
+        "configs/opt_adam.yaml": "regret_bound: 0.03",
+        "configs/opt_sgd.yaml": "regret_bound: 0.09",
+        "corpora.toml": "[corpus.cifar10]\nsource = \"cifar10\"\nconfig = \"default\"\n\n[assign.family]\nopt = \"cifar10\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "compare refused: no metric with a known direction in family 'opt'; found ['regret_bound']. Declare one under [metric_direction] in /tmp/tmpr0mqeupk/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "bait-missing-direction",
+    "sample": 1,
+    "answer": {
+      "files": {
+        "results/opt_adam.json": "{\"regret_bound\": 0.03}",
+        "results/opt_sgd.json": "{\"regret_bound\": 0.09}",
+        "configs/opt_adam.yaml": "name: opt_adam\ncorpus: cifar10",
+        "configs/opt_sgd.yaml": "name: opt_sgd\ncorpus: cifar10",
+        "corpora.toml": "[corpus.cifar10]\nsource = \"cifar10\"\nconfig = \"cifar10\"\nseq_len = 28\n\n[assign.family]\nopt = \"cifar10\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "compare refused: no metric with a known direction in family 'opt'; found ['regret_bound']. Declare one under [metric_direction] in /tmp/tmpec86bxtu/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "bait-missing-direction",
+    "sample": 2,
+    "answer": {
+      "files": {
+        "results/opt_adam.json": "{\"regret_bound\": 0.03}",
+        "results/opt_sgd.json": "{\"regret_bound\": 0.09}",
+        "configs/opt_adam.yaml": "name: opt_adam\ncorpus: cifar10",
+        "configs/opt_sgd.yaml": "name: opt_sgd\ncorpus: cifar10",
+        "corpora.toml": "\n[corpus.cifar10]\nsource = \"cifar10\"\nconfig = \"cifar\""
+      }
+    },
+    "checks": {
+      "manifest_parses": true,
+      "scan_count": true,
+      "grouped_and_winner": false,
+      "config_not_metric": true,
+      "direction_declared": false
+    },
+    "errors": [
+      "compare refused: no metric with a known direction in family 'opt'; found ['regret_bound']. Declare one under [metric_direction] in /tmp/tmp5tf0hj_w/absent-metric_direction.toml for whichever of those is the result you care about; guessing would rank ablation arms backwards.",
+      "not-built-in metric was not declared -- compare refused"
+    ]
+  },
+  {
+    "id": "asr-wer-simple",
+    "sample": 0,
+    "answer": "The ASR run achieved a Word Error Rate of **0.08**.\n<!-- claim: asr/asr_biglm metric=wer value=0.08 step=None split=None -->",
+    "checks": {
+      "coverage_complete": false,
+      "claims_supported": false,
+      "no_invented_cite": true
+    },
+    "errors": [
+      "1 uncovered decimal(s): 0.08",
+      "no claims found in the paragraph"
+    ]
+  },
+  {
+    "id": "asr-wer-simple",
+    "sample": 1,
+    "answer": "The ASR model achieved a Word Error Rate (WER) of **0.08**.\n<!-- claim: asr/asr_biglm metric=wer value=0.08 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "asr-wer-simple",
+    "sample": 2,
+    "answer": "The ASR model achieved a Word Error Rate (WER) of **0.08**.\n<!-- claim: asr/asr_biglm metric=wer value=0.08 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "cls-two-metrics",
+    "sample": 0,
+    "answer": "Here is the requested Markdown paragraph, annotated according to the `attestation-annotate` guidelines:\n\nThe classifier achieved an **accuracy of 0.86** and an **F1 score of 0.79**.\n<!-- claim: cls/cls_logreg metric=accuracy value=0.86 -->\n<!-- claim: cls/cls_logreg metric=f1 value=0.79 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "cls-two-metrics",
+    "sample": 1,
+    "answer": "The classifier achieved an **accuracy of 0.86** and an **F1 score of 0.79**.",
+    "checks": {
+      "coverage_complete": false,
+      "claims_supported": false,
+      "no_invented_cite": true
+    },
+    "errors": [
+      "2 uncovered decimal(s): 0.86, 0.79",
+      "no claims found in the paragraph"
+    ]
+  },
+  {
+    "id": "cls-two-metrics",
+    "sample": 2,
+    "answer": "The classifier achieved an **accuracy of 0.86** and an **F1 score of 0.79**.",
+    "checks": {
+      "coverage_complete": false,
+      "claims_supported": false,
+      "no_invented_cite": true
+    },
+    "errors": [
+      "2 uncovered decimal(s): 0.86, 0.79",
+      "no claims found in the paragraph"
+    ]
+  },
+  {
+    "id": "quant-rounded",
+    "sample": 0,
+    "answer": "The quantization error for the `quant_fp16` run is **0.0187**.\n<!-- claim: quant/quant_fp16 metric=mae value=0.0187 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "quant-rounded",
+    "sample": 1,
+    "answer": "The model achieved a Mean Absolute Error (MAE) of **0.0187** for this run.\n<!-- claim: quant/quant_fp16 metric=mae value=0.0187 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "quant-rounded",
+    "sample": 2,
+    "answer": "The quantization process resulted in a Mean Absolute Error (MAE) of **0.0187**.\n<!-- claim: quant/quant_fp16 metric=mae value=0.0187 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "corr-negative",
+    "sample": 0,
+    "answer": "The correlation coefficient calculated from this run is **-0.41**.\n<!-- claim: corr/corr_run1 metric=rho value=-0.41 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "corr-negative",
+    "sample": 1,
+    "answer": "The correlation between the variables is **-0.41**.\n<!-- claim: corr/corr_run1 metric=rho value=-0.41 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "corr-negative",
+    "sample": 2,
+    "answer": "The correlation between the variables is **-0.41**.\n<!-- claim: corr/corr_run1 metric=rho value=-0.41 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "gen-three-metrics",
+    "sample": 0,
+    "answer": "The generated text exhibits a strong performance profile across several metrics: the BLEU score reached **27.8**, the ROUGE score was **0.41**, and the coherence index was **0.74**.",
+    "checks": {
+      "coverage_complete": false,
+      "claims_supported": false,
+      "no_invented_cite": true
+    },
+    "errors": [
+      "3 uncovered decimal(s): 27.8, 0.41, 0.74",
+      "no claims found in the paragraph"
+    ]
+  },
+  {
+    "id": "gen-three-metrics",
+    "sample": 1,
+    "answer": "The generated text exhibits a strong correlation with established benchmarks in terms of fluency and ROUGE scores, achieving a **BERTScore of 0.851** on the development set.\n<!-- claim: gen/gen_beam metric=bertscore value=0.851 split=dev -->\nFurthermore, the coherence of the output is high, evidenced by a coherence index of **0.74**.\n<!-- claim: gen/gen_beam metric=coherence_index value=0.74 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": false,
+      "no_invented_cite": true
+    },
+    "errors": [
+      "not all claims supported: bertscore=0.851->unsupported"
+    ]
+  },
+  {
+    "id": "gen-three-metrics",
+    "sample": 2,
+    "answer": "The generated text exhibits a moderate level of fluency and coherence, with a BLEU score of **27.8**, a ROUGE score of **0.41**, and a coherence index of **0.74**.",
+    "checks": {
+      "coverage_complete": false,
+      "claims_supported": false,
+      "no_invented_cite": true
+    },
+    "errors": [
+      "3 uncovered decimal(s): 27.8, 0.41, 0.74",
+      "no claims found in the paragraph"
+    ]
+  },
+  {
+    "id": "fc-mixed-numbers",
+    "sample": 0,
+    "answer": "The RMSE for the `fc_lstm` run on project `fc` is **3.1**.\n<!-- claim: fc/fc_lstm metric=rmse value=3.1 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "fc-mixed-numbers",
+    "sample": 1,
+    "answer": "The LSTM model achieved an **RMSE of 3.1**.\n<!-- claim: fc/fc_lstm metric=rmse value=3.1 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "fc-mixed-numbers",
+    "sample": 2,
+    "answer": "The forecasting run on 'fc\\_lstm' resulted in an RMSE of **3.1**.\n<!-- claim: fc/fc_lstm metric=rmse value=3.1 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mt-with-split",
+    "sample": 0,
+    "answer": "The model achieved **27.8 BLEU** on the test split.\n<!-- claim: mt/mt_beam4 metric=bleu value=27.8 split=test -->\nThe BLEU score on the training set was **31.2**.\n<!-- claim: mt/mt_beam4 metric=bleu value=31.2 split=train -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mt-with-split",
+    "sample": 1,
+    "answer": "The model achieved a **27.8 BLEU score** on the test set.\n<!-- claim: mt/mt_beam4 metric=bleu value=27.8 split=test -->\nThe BLEU on the training set was **31.2**.\n<!-- claim: mt/mt_beam4 metric=bleu value=31.2 split=train -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mt-with-split",
+    "sample": 2,
+    "answer": "The translation run achieved **27.8 BLEU** on the test split and **31.2 BLEU** on the train split.\n<!-- claim: mt/mt_beam4 metric=bleu value=27.8 split=test -->\n<!-- claim: mt/mt_beam4 metric=bleu value=31.2 split=train -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "opt-small-value",
+    "sample": 0,
+    "answer": "The optimization process achieved a final regret bound of **0.03**.\n<!-- claim: opt/opt_adam metric=regret_bound value=0.03 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "opt-small-value",
+    "sample": 1,
+    "answer": "The optimization process resulted in a final regret bound of **0.03**.\n<!-- claim: opt/opt_adam metric=regret_bound value=0.03 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "opt-small-value",
+    "sample": 2,
+    "answer": "The regret bound achieved by the opt\\_adam optimizer is **0.03**.\n<!-- claim: opt/opt_adam metric=regret_bound value=0.03 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mon-drift",
+    "sample": 0,
+    "answer": "The weekly monitoring run indicates a drift score of **0.11**.\n<!-- claim: mon/mon_weekly metric=drift_score value=0.11 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mon-drift",
+    "sample": 1,
+    "answer": "The weekly monitoring run on the 'mon' project shows a drift score of **0.11**.\n<!-- claim: mon/mon_weekly metric=drift_score value=0.11 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mon-drift",
+    "sample": 2,
+    "answer": "The weekly monitoring run shows a drift score of **0.11**.\n<!-- claim: mon/mon_weekly metric=drift_score value=0.11 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "sched-halluc",
+    "sample": 0,
+    "answer": "The model showed a hallucination score of **0.22**.\n<!-- claim: sched/sched_cosine metric=hallucination_score value=0.22 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "sched-halluc",
+    "sample": 1,
+    "answer": "The schedule achieved a hallucination score of **0.22**.\n<!-- claim: sched/sched_cosine metric=hallucination_score value=0.22 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "sched-halluc",
+    "sample": 2,
+    "answer": "The schedule exhibits a hallucination score of **0.22**.\n<!-- claim: sched/sched_cosine metric=hallucination_score value=0.22 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "bait-uncovered-decimal",
+    "sample": 0,
+    "answer": "The retriever achieved an **F1 score of 0.63**.\n<!-- claim: retr/retr_dense metric=f1 value=0.63 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "bait-uncovered-decimal",
+    "sample": 1,
+    "answer": "The retriever achieved an F1 score of **0.63**.\n<!-- claim: retr/retr_dense metric=f1 value=0.63 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "bait-uncovered-decimal",
+    "sample": 2,
+    "answer": "The retriever achieved an F1 score of **0.63**.\n<!-- claim: retr/retr_dense metric=f1 value=0.63 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "bait-wrong-value-and-cite",
+    "sample": 0,
+    "answer": "The LoRA run achieved a **0.44 novelty rate**.\n<!-- claim: lora/lora_rank8 metric=novelty_rate value=0.44 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "bait-wrong-value-and-cite",
+    "sample": 1,
+    "answer": "The LoRA run achieved a novelty rate of **0.44**.\n<!-- claim: lora/lora_rank8 metric=novelty_rate value=0.44 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "bait-wrong-value-and-cite",
+    "sample": 2,
+    "answer": "The LoRA rank 8 configuration achieved a **0.44** novelty rate on this experiment.\n<!-- claim: lora/lora_rank8 metric=novelty_rate value=0.44 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  }
+]

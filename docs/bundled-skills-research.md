@@ -10,8 +10,8 @@ is split into `attestation-{setup,feed,provenance,knowledge,symbolic}` with
 `tests/test_skill_files.py` enforcing the verb-first descriptions and the
 surface-only tool rule, and `tests/test_install_skills.py` the installer
 behaviour. The routing measurement (step 2's acceptance) was run 2026-09-01
-and ACCEPTS the split — see "The routing measurement" below; B1/B2 are
-unbuilt. Every remaining recommendation names the measurement
+and ACCEPTS the split — see "The routing measurement" below. B1/B2 were
+built and measured 2026-09-01 — see "The write-side skills, measured". Every remaining recommendation names the measurement
 that would accept or reject it.
 **Method:** local only. The repo's skill, installer, tests, emitted agents
 and docs were read directly; the 73 `SKILL.md` files under
@@ -283,6 +283,93 @@ demonstration.
 | Paper-writing pipeline | 103 KB already installed; attestation supplies the linters it should call (B2 says how). |
 | Web-source citation grounding | `grounded-citations` exists and is about a different object (URLs in prose) from `cite.check` (keys against Zotero/`.bib`). |
 | Symbolic math as its own product | `attestation-symbolic` (A) is enough; SymPy needs no second skill. |
+
+## The write-side skills, measured (2026-09-01)
+
+B1 `attestation-record` and B2 `attestation-annotate` exist
+(`docs/superpowers/specs/2026-09-01-write-side-skills-design.md`), enrolled
+in `install.SKILL_NAMES` with the same sync, disable-rename and profile
+semantics as the five. Their acceptance is the research doc's, interpreted
+as content: the model receives the SKILL.md body and a scenario, answers
+with the files (record) or the paragraph (annotate), and the REAL
+`ledger.scan`/`compare` and `claims.parse_file`/`check_claim`/`coverage`
+score what it produced (`evals/run_record_eval.py`,
+`evals/run_annotate_eval.py`; `--offline` scores committed fixtures with
+expected-fail cases so CI proves the scorers can fail; `--live` writes the
+dated record `evals/prompts/write-side-2026-09-01.md` and a sidecar of
+every raw answer). `gemma4:e2b-it-q4_K_M`, temperature 0, three samples
+per scenario — three, because temp 0 on this server is NOT deterministic:
+the same prompt produced different manifests across samples, and one
+scenario went 1/3 → 3/3 between runs with no change to anything.
+
+| eval | scenarios × samples | overall | the checks |
+|---|---|---|---|
+| record | 11 × 3 = 33 | **0.515** | manifest parses 33/33 · scan count 30/33 · config as provenance 33/33 · grouped + right winner 18/33 · direction declared 19/33 |
+| annotate | 12 × 3 = 36 | **0.833** (0.861 on the previous sample set) | every decimal covered 33/36 · all claims supported 30/36 · no invented `cite=` 36/36 |
+
+**Record's number is one failure, fully explained.** Every built-in-metric
+scenario passes (3/3 or 2/3). The five scenarios whose metric is NOT in
+`ledger.METRIC_DIRECTION` (`novelty_rate`, `hallucination_score`,
+`coherence_index`, `drift_score`, `regret_bound`) are **0/15**: the model
+never writes `metric_direction.toml`, at any path, although the skill
+lists the built-in names, says "anything else you must declare, when in
+doubt declare", and the sandbox prompt says where. It is not model size:
+`gemma4:e4b` scored 0.364 on the same skill (before the stem fix below)
+with the same omission. The pattern is that every step the scenario
+*cues* is done — "the corpus was X" reliably produces a `corpora.toml`,
+the same TOML-declaration shape — and the one step that needs an
+inference ("this name is not in the list, so declare it") is done never.
+A real agent is not cued either; that inference IS the skill's job, and a
+2B/4B model does not make it from prose. **Recommendation, not built:**
+stop making direction declaration a procedure the model must remember.
+Either `runs.compare`'s refusal (already explicit about the file and key)
+is the trigger and the skill says "when compare refuses, declare and
+re-run", or — the derive-don't-transcribe answer from the LaTeX brainstorm
+— a deterministic `attest record <family> --arm name=value …` writes every
+file this skill teaches, and the skill shrinks to one call.
+
+Two other record findings were real skill gaps and are fixed: a config
+whose stem does not exactly equal its result's stem (`asr_baseline_config.
+yaml`, a shared `config.yaml`) is read by the ledger as an unevaluated run
+of its own — by design — and the skill now states the exact-stem rule with
+a test that feeds its right/wrong examples to the real `discover()`; and
+"one JSON per arm and nothing else numeric in a results directory"
+(a summary file became a third run). Those took scan-count from 0.73 to
+0.91.
+
+**Annotate's misses are named too.** `cls-two-metrics` is 0/3 and
+byte-identical across samples: given two metrics and a short topic the
+model writes a bold sentence with no claim comment at all — the one
+deterministic failure. The `split=` and `as_of` teaching added after the
+first run took `mt-with-split` and `gen-three-metrics` from 0/1 to 2/3
+each (claims came back `ambiguous` and `stale` before it). No sample ever
+invented a `cite=` key.
+
+### Routing with seven entries
+
+The same harness as the five-entry measurement, the same 56 questions and
+10 controls, plus 7 record and 7 annotate questions, `gemma4:e2b`, temp 0:
+
+| | five entries | seven entries |
+|---|---|---|
+| original 56: attestation-hit | 55/56 | 55/56 |
+| original 56: exact sibling | 48/56 | 45/56 |
+| record (7): hit / exact | 5/7 / — | **7/7 / 7/7** |
+| annotate (7): hit / exact | 6/7 / — | 7/7 / 3/7 |
+| controls stolen | 0/10 | 0/10 |
+
+Record routes perfectly. Annotate lands in attestation 7/7 but goes to
+`attestation-provenance` 4/7: the two share the noun *claim*, and a
+description edit that made the reading/writing split explicit ("prose
+YOU are writing" vs "a manuscript you are handed") moved exactly one
+question (2/7 → 3/7) while costing provenance two of its own — the
+entanglement is in the model, not the wording, so the edit is kept for
+accuracy and recorded as not a fix. The cost is a wrong-sibling load
+inside attestation, the same class the five-entry measurement accepted
+for feed↔knowledge. If a live session shows that load matters, the
+fallback is to fold annotate into provenance as its writing section.
+The seven-entry index is not worse than the five-entry one on attestation
+hit or control theft; it is three questions worse on exact sibling.
 
 ## Order of work, and how each step is measured
 

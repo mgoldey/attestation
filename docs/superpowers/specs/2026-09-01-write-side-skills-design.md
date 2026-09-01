@@ -1,9 +1,15 @@
 # Write-side skills: attestation-record and attestation-annotate
 
 **Date:** 2026-09-01
-**Status:** approved by instruction ("build the two write-side skills next");
-the design is `docs/bundled-skills-research.md` §B, written 2026-08-30 —
-this spec pins the implementation and the acceptance interpretation.
+**Status:** implemented 2026-09-01 (commits `aea5dd3..` this date); the
+acceptance ran and its numbers are in `evals/prompts/write-side-2026-09-01.md`
+and `docs/bundled-skills-research.md` "The write-side skills, measured" —
+record 0.515 (one named failure: the direction-declaration step does not
+transfer to a 2B/4B model, 0/15), annotate 0.833; seven-entry routing
+accepted with the annotate/provenance entanglement recorded. Deviations
+below. The design is `docs/bundled-skills-research.md` §B, written
+2026-08-30 — this spec pins the implementation and the acceptance
+interpretation.
 **Depends on:** the bundled-skills split (accepted 2026-09-01 by the routing
 measurement recorded in the research doc), the ledger conventions
 (`2026-08-22-tracker-adapters-design.md`), the claim checker
@@ -119,3 +125,35 @@ the right skill better than to any neighbour.
   they came out.
 - The seven-entry routing re-measurement is recorded in the research doc
   with the same honesty rules as the five-entry one.
+
+## Deviations and findings
+
+- **Three samples per scenario, not one.** Temperature 0 on the local
+  Ollama server is not deterministic (the same prompt produced different
+  manifests across samples), so the drivers gained `--repeat N` and the
+  record reports k/N per scenario; "≥10 trials" is scenarios × samples.
+- **Raw answers are kept.** The first live run could not be root-caused
+  because no answer was saved; the drivers now write a sidecar
+  (`write-side-<date>.answers.json`) beside the dated record. Reading it
+  is what separated "the model never writes the direction file" from
+  "the sandbox dropped it".
+- **A sandbox sentence in the record prompt.** The skill correctly says
+  `~/.hermes/metric_direction.toml`; the sandbox cannot accept an absolute
+  path, so the prompt says to write `metric_direction.toml` at the project
+  root and the scorer points `LEDGER_METRIC_DIRECTION_FILE` at it. Harness
+  alignment, stated in the driver.
+- **Two skill gaps found by the eval and fixed:** the exact-stem rule for
+  config files (a mismatched stem is an unevaluated run, by ledger design)
+  and "nothing else numeric in a results directory". The direction-step
+  finding is recorded as a recommendation (a deterministic `attest record`
+  command), not built here.
+- **The annotate and provenance descriptions were sharpened** (writing vs
+  a manuscript you are handed) after the seven-entry routing run showed
+  4/7 annotate questions going to provenance; the edit moved one question
+  and is kept for accuracy, not as a fix.
+- **The acceptance bar.** The research doc asked for artifacts scan reads
+  and claims that come back supported, over ≥10 trials; it set no pass
+  fraction. The numbers are committed as they came out. Record's file-shape
+  steps pass at ≥0.91; its declaration step at 0/15 on small models is the
+  finding that matters, and it is a design finding about procedures versus
+  tools, not a wording gap.
