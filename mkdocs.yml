@@ -102,8 +102,10 @@ nav:
   - Notes:
       - Architecture: architecture/README.md
       - Research profile: architecture/research-profile.md
+      - Recommendation literature review: recommendation-literature-review.md
       - Recommendation refinements: recommendation-refinements.md
       - hermes-agent research: hermes-agent-plugin-research.md
+      - Bundled skills research: bundled-skills-research.md
       - Structure and integration points: architecture/structure-and-integration-points.md
   - Contributing: CONTRIBUTING.md
   - Changelog: CHANGELOG.md
