@@ -299,6 +299,31 @@ def test_annotate_description_does_not_lead_with_citation():
     assert not description.lower().startswith("citation")
 
 
+def test_record_lists_every_built_in_metric_direction():
+    """attestation-record's "already known" list is exactly
+    `ledger.METRIC_DIRECTION`'s keys, or the skill teaches a stale idea of
+    what needs declaring.
+
+    Round-1 live eval: on a NOT-built-in metric (`novelty_rate`,
+    `hallucination_score`, ...) the model wrote no `[metric_direction]`
+    entry at all, because the skill never said which metrics were already
+    covered -- there was nothing to contrast "unfamiliar" against. Fixed by
+    naming the built-in table; this guards that the named list doesn't rot
+    the way the tool-count docs did, by checking every key from the live
+    table appears in the skill body (as a backticked name, so a namespaced
+    mention doesn't accidentally satisfy a bare-word check) rather than
+    duplicating the list a second time in a test.
+    """
+    from attestation.ledger import METRIC_DIRECTION
+
+    text = _skill_md("attestation-record")
+    missing = sorted(name for name in METRIC_DIRECTION if f"`{name}`" not in text)
+    assert not missing, (
+        f"attestation-record/SKILL.md's built-in metric list is missing {missing};"
+        " ledger.METRIC_DIRECTION grew a key the skill never learned about"
+    )
+
+
 def test_record_claim_grammar_matches_the_parser(tmp_path):
     """attestation-annotate teaches a claim grammar by example; if the
     example does not actually parse, the skill is teaching an unparseable
@@ -326,6 +351,20 @@ def test_record_claim_grammar_matches_the_parser(tmp_path):
         assert claim.project and claim.run
         assert claim.metric
         assert isinstance(claim.value, float)
+
+    # The two follow-up examples added after the round-1 live eval: a
+    # metric disambiguated by split=, and two claims backing two decimals
+    # in one paragraph. If either stopped parsing with the field the skill
+    # says it has, this would still pass on `found`/`problems` alone --
+    # so check the specific fields the prose promises.
+    with_split = [c for c in found if c.split is not None]
+    assert with_split, "no example teaches split= disambiguation"
+    assert {c.value for c in with_split} == {34.1, 31.7}
+
+    two_metric_pairs = [c for c in found if c.project == "cls-two-metrics"]
+    assert {c.metric for c in two_metric_pairs} == {"accuracy", "f1"}, (
+        "the two-decimals-in-one-paragraph example should carry one claim per metric"
+    )
 
 
 def test_setup_skill_names_every_surface_and_sibling():

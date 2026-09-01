@@ -53,6 +53,18 @@ as `split`. A mapping with dozens of numeric-looking keys is refused as a
 metrics record on purpose (a vocabulary or lookup table, not a result) --
 keep a results file to a handful of named quantities.
 
+**One JSON per arm, and nothing else numeric in that directory.** `runs.scan`
+reads *every* recognised file in a results directory as a run -- it cannot
+tell your summary or aggregate apart from an arm. Two arms means exactly two
+files: no `best.json`, no `summary.json`, no `all_results.json` alongside
+them, even if it only restates numbers the per-arm files already have. A
+real scan on a directory with two arms plus one summary file read three
+runs, not two, and `runs.compare` then had a phantom third arm to rank. If
+you want a summary, write it *outside* the recognised directories
+(`results`, `logs`, `outputs`, `metrics`, `eval`, `evals`, `benchmarks`,
+`reports`) -- the project root or a `notes/` directory, anywhere `runs.scan`
+does not look.
+
 **Name arms so they share a prefix.** `family_of` groups sibling runs by
 stripping a trailing step/variant token, so `runs.compare` can rank them as
 one sweep:
@@ -79,9 +91,18 @@ verbatim by `runs.detail` and is often the only place a hypothesis survives
 
 `runs.compare` **refuses** to rank a metric it does not have a direction
 for, rather than guessing -- ranking WER as if higher were better names the
-worst arm the winner. If the metric you just wrote is not one of the
-built-in ones (loss, accuracy, wer, and similar familiar names), add it
-**before** the first `runs.compare` call, in
+worst arm the winner. **Only these are already known** (the live built-in
+table, `ledger.METRIC_DIRECTION`):
+
+- lower is better: `wer`, `cer`, `loss`, `val_loss`, `ppl`, `perplexity`,
+  `nll`, `mae`, `rmse`, `error`, `mse`, `mape`, `fid`, `eer`
+- higher is better: `accuracy`, `r_squared`, `f1`, `auc`, `roc_auc`,
+  `precision`, `recall`, `ndcg`, `map`, `mrr`, `bleu`, `rouge`, `iou`,
+  `dice`, `psnr`, `ssim`
+
+**Anything else you write -- `novelty_rate`, `hallucination_score`,
+`coherence_index`, a metric your harness invented -- you must declare
+yourself**, before the first `runs.compare` call, in
 `~/.hermes/metric_direction.toml`:
 
 ```toml
@@ -89,9 +110,13 @@ built-in ones (loss, accuracy, wer, and similar familiar names), add it
 my_custom_score = "higher_is_better"
 ```
 
-Do this now, not when the refusal appears: you are the one who knows which
-way the metric points, and the refusal exists so nobody downstream guesses
-wrong on your behalf. `lower_is_better` is the other valid value.
+**When in doubt, declare it.** A redundant declaration for an
+already-built-in metric is harmless -- it just repeats the answer
+`runs.compare` already had. A missing one makes `runs.compare` refuse
+outright. There is no case where declaring costs you anything, so if the
+name is not in the two lists above, write the TOML entry rather than
+guessing it "sounds standard enough" to be known. `lower_is_better` and
+`higher_is_better` are the only two valid values.
 
 ## Declare the corpus when it can't be detected
 
