@@ -299,6 +299,52 @@ def test_annotate_description_does_not_lead_with_citation():
     assert not description.lower().startswith("citation")
 
 
+def test_record_config_naming_rule_matches_the_real_pairing(tmp_path):
+    """attestation-record's right/wrong config-naming example, fed to the
+    REAL pairing logic (`ledger_adapters.generic.discover`), must pair and
+    fail to pair exactly the way the skill says.
+
+    Round-2 live eval: the model wrote `configs/asr_baseline_config.yaml`
+    (a `_config` suffix) or one shared `configs/config.yaml` beside
+    `results/asr_baseline.json`; `discover()` pairs a config to a result by
+    EXACT stem equality (see `_result_name`'s `seen` set and the plain
+    `cfg.stem` lookup in `discover`'s config-walk) with nothing fuzzier, so
+    a stem that doesn't match exactly becomes an unevaluated run of its
+    own -- scan found 4 runs for 2 arms, not 2. This is the scorer-
+    independent check: it says nothing about what a model writes, only
+    that the skill's own taught example is true of the code it describes.
+    """
+    from attestation.ledger_adapters.generic import discover
+
+    project = tmp_path / "asrproj"
+    (project / "results").mkdir(parents=True)
+    (project / "configs").mkdir()
+    (project / "results" / "asr_baseline.json").write_text('{"wer": 0.061}')
+
+    # Right, per the skill: exact stem match, folds into the one run.
+    (project / "configs" / "asr_baseline.yaml").write_text("lr: 0.01\n")
+    right = discover(project)
+    assert len(right) == 1, f"exact-stem config should fold into the result, got {right}"
+
+    # Wrong, per the skill: a `_config` suffix breaks the stem match.
+    (project / "configs" / "asr_baseline.yaml").unlink()
+    (project / "configs" / "asr_baseline_config.yaml").write_text("lr: 0.01\n")
+    wrong_suffix = discover(project)
+    assert len(wrong_suffix) == 2, (
+        f"a _config-suffixed stem should NOT fold in -- expected the result plus"
+        f" an unevaluated spec run, got {wrong_suffix}"
+    )
+
+    # Wrong, per the skill: one shared config.yaml matches no result's stem.
+    (project / "configs" / "asr_baseline_config.yaml").unlink()
+    (project / "configs" / "config.yaml").write_text("lr: 0.01\n")
+    wrong_shared = discover(project)
+    assert len(wrong_shared) == 2, (
+        f"a shared config.yaml should NOT fold in -- expected the result plus"
+        f" an unevaluated spec run, got {wrong_shared}"
+    )
+
+
 def test_record_lists_every_built_in_metric_direction():
     """attestation-record's "already known" list is exactly
     `ledger.METRIC_DIRECTION`'s keys, or the skill teaches a stale idea of

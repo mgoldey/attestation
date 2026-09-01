@@ -13,13 +13,12 @@ metadata:
 
 # attestation: recording a run so it can be read back
 
-Use this right after you finish running an experiment, evaluation, or sweep
--- through `claude-code`, `codex`, a harness like `evaluating-llms-harness`,
-or a script you wrote yourself. `runs.scan` only sees artifacts that already
-follow a convention; nothing here is registered in advance, and nothing here
-launches or instruments anything. If you did not run the thing yourself, or
-the reader wants to check a manuscript rather than record a run, hand off to
-`attestation-provenance` or `attestation-annotate` instead.
+Use this right after finishing an experiment, evaluation, or sweep -- via
+`claude-code`, `codex`, a harness like `evaluating-llms-harness`, or your
+own script. `runs.scan` only sees artifacts that already follow a
+convention; nothing here launches or instruments anything. If you did not
+run the thing yourself, or want to check a manuscript rather than record a
+run, hand off to `attestation-provenance` or `attestation-annotate`.
 
 ## When NOT to use this
 
@@ -34,11 +33,11 @@ the reader wants to check a manuscript rather than record a run, hand off to
 ## The shape a scan will read
 
 `runs.scan(root, project, confirm)` walks a workspace, treats each
-subdirectory as a project, and reads what it finds in a fixed list of
-directory names: `results`, `logs`, `outputs`, `metrics`, `eval`, `evals`,
-`benchmarks`, `reports` (the real list, `ledger_adapters/generic.py`'s
-`RESULT_DIRS` -- not `data/`, not the project root). Inside one of those,
-write **one JSON file per arm** holding final scalar values:
+subdirectory as a project, and reads a fixed list of directory names:
+`results`, `logs`, `outputs`, `metrics`, `eval`, `evals`, `benchmarks`,
+`reports` (`ledger_adapters/generic.py`'s `RESULT_DIRS` -- not `data/`,
+not the project root). Inside one of those, write **one JSON file per
+arm** holding final scalar values:
 
 ```
 results/kdsweep_t4.json      {"wer": 0.061, "epochs": 40}
@@ -53,17 +52,14 @@ as `split`. A mapping with dozens of numeric-looking keys is refused as a
 metrics record on purpose (a vocabulary or lookup table, not a result) --
 keep a results file to a handful of named quantities.
 
-**One JSON per arm, and nothing else numeric in that directory.** `runs.scan`
-reads *every* recognised file in a results directory as a run -- it cannot
-tell your summary or aggregate apart from an arm. Two arms means exactly two
-files: no `best.json`, no `summary.json`, no `all_results.json` alongside
-them, even if it only restates numbers the per-arm files already have. A
-real scan on a directory with two arms plus one summary file read three
-runs, not two, and `runs.compare` then had a phantom third arm to rank. If
-you want a summary, write it *outside* the recognised directories
-(`results`, `logs`, `outputs`, `metrics`, `eval`, `evals`, `benchmarks`,
-`reports`) -- the project root or a `notes/` directory, anywhere `runs.scan`
-does not look.
+**One JSON per arm, nothing else numeric in that directory.** `runs.scan`
+reads *every* recognised file as a run, so it cannot tell a summary or
+aggregate apart from an arm -- two arms means exactly two files, no
+`best.json`/`summary.json`/`all_results.json` alongside them, even if one
+only restates numbers the per-arm files already have (a real scan on two
+arms plus one summary file read three runs, not two). Want a summary?
+Write it *outside* the recognised directories -- project root or `notes/`,
+anywhere `runs.scan` does not look.
 
 **Name arms so they share a prefix.** `family_of` groups sibling runs by
 stripping a trailing step/variant token, so `runs.compare` can rank them as
@@ -83,9 +79,22 @@ was *measured*; a config states what was *asked for*. Put the run's config
 in `configs/` (or `config/`, `conf/`, `experiments/`), not merged into the
 results JSON -- a hyperparameter recorded as a metric shows up as a
 rankable number (`compare` will try to rank `seq_len` next to `wer` if you
-let it). A one-line comment header at the top of a YAML/TOML config is kept
-verbatim by `runs.detail` and is often the only place a hypothesis survives
--- write the one sentence explaining what this arm changed.
+let it). A one-line comment header at the top of a YAML/TOML config kept
+verbatim by `runs.detail` is often the only place a hypothesis survives.
+
+**MUST: the config's stem must exactly match its result's stem** --
+`discover()` pairs them by exact stem equality, nothing fuzzier. For
+`results/asr_baseline.json`:
+
+- Right: `configs/asr_baseline.yaml` (stem `asr_baseline`, exact match).
+- Wrong: `configs/asr_baseline_config.yaml` (no `_config`/`_cfg` suffix,
+  ever) or one shared `configs/config.yaml` for every arm (stem `config`
+  matches nothing).
+
+A stem that matches nothing is not folded into that run -- it becomes an
+unevaluated run of its own (same rule as "an arm never evaluated is a
+finding"), so a two-arm sweep with mismatched config names scans as four
+runs, not two.
 
 ## Declare unfamiliar metrics before comparing
 
@@ -112,7 +121,7 @@ my_custom_score = "higher_is_better"
 
 **When in doubt, declare it.** A redundant declaration for an
 already-built-in metric is harmless -- it just repeats the answer
-`runs.compare` already had. A missing one makes `runs.compare` refuse
+`runs.compare` already had; a missing one makes `runs.compare` refuse
 outright. There is no case where declaring costs you anything, so if the
 name is not in the two lists above, write the TOML entry rather than
 guessing it "sounds standard enough" to be known. `lower_is_better` and
@@ -122,10 +131,10 @@ guessing it "sounds standard enough" to be known. `lower_is_better` and
 
 `corpus.detect_in_source()` reads which corpus a run used from the driver
 script's own syntax (an AST read, not a model), so most runs need nothing
-extra. When the driver script does not make the corpus detectable -- a
-notebook, a shell one-liner, a harness that hides the dataset behind a flag
--- declare it in `corpora.toml` next to the config, using the same table
-shape `corpus.load_manifest` reads:
+extra. When the script does not make the corpus detectable -- a notebook,
+a shell one-liner, a harness that hides the dataset behind a flag --
+declare it in `corpora.toml` next to the config, in the shape
+`corpus.load_manifest` reads:
 
 ```toml
 [corpus.speech-clean-16k]
@@ -143,11 +152,10 @@ that trained on different data as if they were comparable.
 
 ## Hydra sweeps need one override
 
-Hydra 1.2+ does **not** change directory per job by default (it did through
-1.1). Run a `--multirun` sweep without `hydra.job.chdir=true` and every arm
-overwrites the same top-level results file -- a real four-arm learning-rate
-sweep produced one `metrics.json`, not four, this way. Always pass it
-explicitly on a sweep:
+Hydra 1.2+ does **not** chdir per job by default (1.1 did). A `--multirun`
+sweep without `hydra.job.chdir=true` has every arm overwrite the same
+top-level results file -- a real four-arm sweep produced one `metrics.json`,
+not four. Always pass it explicitly:
 
 ```bash
 python train.py --multirun lr=0.01,0.1,1,10 hydra.job.chdir=true
@@ -173,7 +181,6 @@ refuses on the metric's direction, that's the signal to go back to the
 
 If the run already produces W&B (offline mode), MLflow, Sacred, DVC or Hydra
 sweep-dir output, leave those files where the tracker writes them --
-`runs.scan` reads all five layouts already. This skill is about the case
-where nothing is instrumenting the run: **it leaves files, it never adds
-instrumentation**. Don't wire up a tracker just to satisfy this skill; write
-the plain results/config files above instead.
+`runs.scan` reads all five layouts already. **It leaves files, it never
+adds instrumentation**: don't wire up a tracker just to satisfy this
+skill; write the plain results/config files above instead.
