@@ -1205,6 +1205,86 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
     assert not stale, "stale attestation tool counts:\n  " + "\n  ".join(stale)
 
 
+def test_no_doc_quotes_a_stale_attestation_skill_count():
+    """The tool-count guard above has a skill-count sibling now.
+
+    WS-T1 fixed two live docs (README.md, docs/guides/agents.md) still
+    saying "five skills" after attestation-record and attestation-annotate
+    brought the bundled total to seven. Same failure shape as the tool
+    count: a number that is true the day it's written and never re-checked.
+
+    Anchored the same way OURS/SERVES_ALL are above -- narrow phrasing that
+    matched a REAL sentence, not a blanket "number near the word skill(s)"
+    scan. A blanket scan false-positives constantly in this repo's own
+    prose: CLAUDE.md alone has "68 skills cost ~7 KB" (Hermes' whole index,
+    not attestation's bundle) and "6/6 -> 3/6" (a routing score) sitting a
+    few words from "skill". Two phrasings are anchored because two real
+    sentences use them: "N under `src/attestation/skills`" (agents.md,
+    CLAUDE.md) and "(N skills:" (README.md).
+
+    Deliberately excluded: agents.md's "split into five `attestation-*`
+    skills on 2026-08-30" is retrospective, not a live-total claim -- it
+    names the count AT THE TIME OF THAT SPLIT and says so with the date
+    immediately after, the same reason the tool-count guard above excludes
+    "N-tool" (a dated split, like a dated filename, is history this repo
+    deliberately keeps rather than a live count to police). Requiring the
+    match to skip a trailing date within a few words would work but is
+    unnecessary complexity for one sentence that already says which day it
+    is about; simpler to leave "split into" out of the anchor set the way
+    the tool-count guard left "N-tool" out of its own.
+
+    The skill counts here are spelled out in words ("seven", "five"), not
+    digits, unlike the tool counts -- so the anchors match a small word list
+    rather than a bare digit pattern.
+    """
+    import attestation.install as install
+
+    root = SRC.parent.parent
+    docs = [p for p in (root / "docs").rglob("*.md") if "superpowers" not in p.parts]
+    docs += [
+        root / "README.md",
+        root / "CLAUDE.md",
+        root / "docs/guides/agents.md",
+        *sorted((root / "src/attestation/skills").glob("*/SKILL.md")),
+    ]
+    docs = list(dict.fromkeys(docs))
+
+    live_total = len(install.SKILL_NAMES)
+    number_words = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+    }
+    words_pattern = "|".join(number_words)
+    SKILL_COUNT = re.compile(
+        rf"(?:({words_pattern})\s+under\s+`?src/attestation/skills"
+        rf"|\(({words_pattern})\s+skills?:)",
+        re.I,
+    )
+
+    stale = []
+    for path in docs:
+        if not path.exists():
+            continue
+        text = path.read_text()
+        for match in SKILL_COUNT.finditer(text):
+            word = (match.group(1) or match.group(2)).lower()
+            claimed = number_words[word]
+            if claimed != live_total:
+                stale.append(
+                    f"{path.relative_to(root)}: claims {word} ({claimed}) skills,"
+                    f" install.SKILL_NAMES has {live_total}"
+                )
+    assert not stale, "stale attestation skill counts:\n  " + "\n  ".join(stale)
+
+
 DOMAIN = {
     "explain",
     "features",

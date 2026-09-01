@@ -276,7 +276,9 @@ When running alongside hermes-agent, the live database is co-located with
 other skill state at `~/.hermes/skills/science-recommendations/data/hermes.db`
 — **not** inside the checkout. Note the directory name: the *skill* was
 renamed to `research-provenance` and then split into five `attestation-*`
-skills, but the *database* path deliberately kept
+skills on 2026-08-30 (two more, the write-side `attestation-record` and
+`attestation-annotate`, joined 2026-09-01 -- seven total today), but the
+*database* path deliberately kept
 the old `science-recommendations` name, so as not to orphan every database
 created before the rename. Every entry point (CLI, web server, MCP server)
 resolves the DB the same way (`resolve_db_path()` in `src/attestation/db.py`):

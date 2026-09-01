@@ -88,7 +88,7 @@ one way to use all of them:
 - All of the above are exposed as 45 MCP tools, restricted per session into
   `feed`/`provenance`/`knowledge`/`symbolic` surfaces. See
   [docs/guides/agents.md](docs/guides/agents.md) and the repo's own
-  `src/attestation/skills/` (five skills: one per agent surface, plus setup).
+  `src/attestation/skills/` (seven skills: one per agent surface plus setup, plus two write-side skills, `attestation-record` and `attestation-annotate`).
 
 ## Install
 
