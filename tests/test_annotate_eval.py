@@ -7,6 +7,7 @@ file (the shape tests/test_claims.py's `ledgered` fixture uses), which is
 I/O by nature.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -157,3 +158,90 @@ def test_every_committed_case_scores_as_its_expect_fail_says(tmp_path):
 # `check_citations`'s verdicts (via `claims.check`'s resolver argument)
 # rather than passing by construction.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Sidecar round-trip: the coordinator's fix-round-1 requirement that every
+# --live sample's raw paragraph and per-check result is examinable after the
+# fact, since a live model varies between calls and a failing trial cannot
+# be re-asked to reproduce what it originally wrote.
+# ---------------------------------------------------------------------------
+
+import run_annotate_eval as rae  # noqa: E402
+
+
+def test_offline_does_not_write_a_sidecar_or_record(tmp_path, monkeypatch):
+    monkeypatch.setattr(rae, "PROMPTS_DIR", tmp_path / "prompts")
+    cases = rae.load_cases()
+
+    # Exercise the actual --offline code path rather than reimplementing it:
+    # run_offline() + no write_record/write_answers_sidecar call, matching
+    # main()'s own `if args.live:` guard.
+    result, samples = rae.run_offline(cases)
+    assert result.overall == 1.0
+    assert samples  # per-sample data was collected in-memory
+    assert not (tmp_path / "prompts").exists()  # but never written to disk
+
+
+def test_answers_sidecar_round_trips(tmp_path, monkeypatch):
+    monkeypatch.setattr(rae, "PROMPTS_DIR", tmp_path / "prompts")
+    samples = [
+        {
+            "id": "case-a",
+            "sample": 0,
+            "answer": "The run reached 0.08 WER.\n",
+            "checks": {"coverage_complete": False},
+            "errors": ["1 uncovered decimal(s): 0.08"],
+        },
+        {
+            "id": "case-a",
+            "sample": 1,
+            "answer": "The run reached 0.08 WER.\n<!-- claim: p/r metric=wer value=0.08 -->\n",
+            "checks": {"coverage_complete": True},
+            "errors": [],
+        },
+    ]
+
+    path = rae.write_answers_sidecar(samples)
+    round_tripped = json.loads(path.read_text())
+
+    assert path.parent == tmp_path / "prompts"
+    assert round_tripped == samples
+    assert "0.08" in round_tripped[0]["answer"]
+    assert round_tripped[1]["checks"]["coverage_complete"] is True
+
+
+def test_answers_sidecar_appends_across_calls_on_the_same_day(tmp_path, monkeypatch):
+    """A second --live invocation the same day (e.g. record then annotate
+    sharing the coordinator's dated .md) must not clobber the first run's
+    samples."""
+    monkeypatch.setattr(rae, "PROMPTS_DIR", tmp_path / "prompts")
+    first = [{"id": "a", "sample": 0, "answer": "x", "checks": {}, "errors": []}]
+    second = [{"id": "b", "sample": 0, "answer": "y", "checks": {}, "errors": []}]
+
+    rae.write_answers_sidecar(first)
+    path = rae.write_answers_sidecar(second)
+
+    round_tripped = json.loads(path.read_text())
+    assert [s["id"] for s in round_tripped] == ["a", "b"]
+
+
+def test_write_record_reports_per_scenario_k_of_n_and_links_the_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setattr(rae, "PROMPTS_DIR", tmp_path / "prompts")
+    result = rae.EvalResult(
+        per_case={"case-a": 0.5},
+        runs={
+            "case-a": [
+                {"checks": {"coverage_complete": True}},
+                {"checks": {"coverage_complete": False}},
+            ]
+        },
+        latencies=[],
+    )
+
+    path = rae.write_record(result, "gemma4:e2b-it-q4_K_M", n_scenarios=1, repeat=2)
+    text = path.read_text()
+
+    assert "case-a" in text
+    assert "1/2" in text  # k/N pass count for the scenario
+    assert "write-side-" in text and ".answers.json" in text  # links the sidecar

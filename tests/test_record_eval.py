@@ -255,3 +255,90 @@ def test_every_committed_case_scores_as_its_expect_fail_says(case_idx, tmp_path)
         assert not result["pass"], f"{case['id']} was supposed to fail but passed"
     else:
         assert result["pass"], f"{case['id']}: {result['errors']}"
+
+
+# ---------------------------------------------------------------------------
+# Sidecar round-trip: the coordinator's fix-round-1 requirement that every
+# --live sample's raw answer and per-check result is examinable after the
+# fact, since a live model varies between calls and a failing trial cannot
+# be re-asked to reproduce what it originally wrote.
+# ---------------------------------------------------------------------------
+
+import run_record_eval as rre  # noqa: E402
+
+
+def test_offline_does_not_write_a_sidecar_or_record(tmp_path, monkeypatch):
+    monkeypatch.setattr(rre, "PROMPTS_DIR", tmp_path / "prompts")
+    cases = rre.load_cases()
+
+    # Exercise the actual --offline code path rather than reimplementing it:
+    # run_offline() + no write_record/write_answers_sidecar call, matching
+    # main()'s own `if args.live:` guard.
+    result, samples = rre.run_offline(cases)
+    assert result.overall == 1.0
+    assert samples  # per-sample data was collected in-memory
+    assert not (tmp_path / "prompts").exists()  # but never written to disk
+
+
+def test_answers_sidecar_round_trips(tmp_path, monkeypatch):
+    monkeypatch.setattr(rre, "PROMPTS_DIR", tmp_path / "prompts")
+    samples = [
+        {
+            "id": "case-a",
+            "sample": 0,
+            "answer": {"files": {"results/x.json": "{}"}},
+            "checks": {"manifest_parses": True, "scan_count": False},
+            "errors": ["scan found 1 run(s), expected 2"],
+        },
+        {
+            "id": "case-a",
+            "sample": 1,
+            "answer": {"files": {"results/x.json": "{}", "results/y.json": "{}"}},
+            "checks": {"manifest_parses": True, "scan_count": True},
+            "errors": [],
+        },
+    ]
+
+    path = rre.write_answers_sidecar(samples)
+    round_tripped = json.loads(path.read_text())
+
+    assert path.parent == tmp_path / "prompts"
+    assert round_tripped == samples
+    assert round_tripped[0]["answer"]["files"]["results/x.json"] == "{}"
+    assert round_tripped[1]["checks"]["scan_count"] is True
+
+
+def test_answers_sidecar_appends_across_calls_on_the_same_day(tmp_path, monkeypatch):
+    """A second --live invocation the same day (e.g. record then annotate
+    sharing the coordinator's dated .md) must not clobber the first run's
+    samples."""
+    monkeypatch.setattr(rre, "PROMPTS_DIR", tmp_path / "prompts")
+    first = [{"id": "a", "sample": 0, "answer": "x", "checks": {}, "errors": []}]
+    second = [{"id": "b", "sample": 0, "answer": "y", "checks": {}, "errors": []}]
+
+    rre.write_answers_sidecar(first)
+    path = rre.write_answers_sidecar(second)
+
+    round_tripped = json.loads(path.read_text())
+    assert [s["id"] for s in round_tripped] == ["a", "b"]
+
+
+def test_write_record_reports_per_scenario_k_of_n_and_links_the_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setattr(rre, "PROMPTS_DIR", tmp_path / "prompts")
+    result = rre.EvalResult(
+        per_case={"case-a": 0.5},
+        runs={
+            "case-a": [
+                {"checks": {"manifest_parses": True}},
+                {"checks": {"manifest_parses": False}},
+            ]
+        },
+        latencies=[],
+    )
+
+    path = rre.write_record(result, "gemma4:e2b-it-q4_K_M", n_scenarios=1, repeat=2)
+    text = path.read_text()
+
+    assert "case-a" in text
+    assert "1/2" in text  # k/N pass count for the scenario
+    assert "write-side-" in text and ".answers.json" in text  # links the sidecar
