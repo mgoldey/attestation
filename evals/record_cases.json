@@ -1,0 +1,312 @@
+[
+  {
+    "id": "asr-wer-2arm",
+    "family": "asr",
+    "arms": [
+      "asr_baseline",
+      "asr_biglm"
+    ],
+    "metric": "wer",
+    "metrics": [
+      "wer"
+    ],
+    "values": {
+      "asr_baseline": 0.12,
+      "asr_biglm": 0.08
+    },
+    "direction": "lower_is_better",
+    "built_in": true,
+    "corpus": "librispeech",
+    "expect_fail": false,
+    "answer": {
+      "files": {
+        "results/asr_baseline.json": "{\"wer\": 0.12}",
+        "results/asr_biglm.json": "{\"wer\": 0.08}",
+        "configs/asr_baseline.yaml": "model: base\nlr: 0.001\n"
+      }
+    }
+  },
+  {
+    "id": "cls-accuracy-2arm",
+    "family": "cls",
+    "arms": [
+      "cls_svm",
+      "cls_logreg"
+    ],
+    "metric": "accuracy",
+    "metrics": [
+      "accuracy"
+    ],
+    "values": {
+      "cls_svm": 0.81,
+      "cls_logreg": 0.86
+    },
+    "direction": "higher_is_better",
+    "built_in": true,
+    "corpus": "imagenet-mini",
+    "expect_fail": false,
+    "answer": {
+      "files": {
+        "results/cls_svm.json": "{\"accuracy\": 0.81}",
+        "results/cls_logreg.json": "{\"accuracy\": 0.86}",
+        "configs/cls_svm.yaml": "model: base\nlr: 0.001\n"
+      }
+    }
+  },
+  {
+    "id": "retr-f1-2arm",
+    "family": "retr",
+    "arms": [
+      "retr_bm25",
+      "retr_dense"
+    ],
+    "metric": "f1",
+    "metrics": [
+      "f1"
+    ],
+    "values": {
+      "retr_bm25": 0.55,
+      "retr_dense": 0.63
+    },
+    "direction": "higher_is_better",
+    "built_in": true,
+    "corpus": "beir-scifact",
+    "expect_fail": false,
+    "answer": {
+      "files": {
+        "results/retr_bm25.json": "{\"f1\": 0.55}",
+        "results/retr_dense.json": "{\"f1\": 0.63}",
+        "configs/retr_bm25.yaml": "model: base\nlr: 0.001\n"
+      }
+    }
+  },
+  {
+    "id": "quant-mae-2arm",
+    "family": "quant",
+    "arms": [
+      "quant_int8",
+      "quant_fp16"
+    ],
+    "metric": "mae",
+    "metrics": [
+      "mae"
+    ],
+    "values": {
+      "quant_int8": 0.041,
+      "quant_fp16": 0.019
+    },
+    "direction": "lower_is_better",
+    "built_in": true,
+    "corpus": "qm9",
+    "expect_fail": false,
+    "answer": {
+      "files": {
+        "results/quant_int8.json": "{\"mae\": 0.041}",
+        "results/quant_fp16.json": "{\"mae\": 0.019}",
+        "configs/quant_int8.yaml": "model: base\nlr: 0.001\n"
+      }
+    }
+  },
+  {
+    "id": "lora-novelty-2arm",
+    "family": "lora",
+    "arms": [
+      "lora_rank4",
+      "lora_rank8"
+    ],
+    "metric": "novelty_rate",
+    "metrics": [
+      "novelty_rate"
+    ],
+    "values": {
+      "lora_rank4": 0.31,
+      "lora_rank8": 0.44
+    },
+    "direction": "higher_is_better",
+    "built_in": false,
+    "corpus": "dolly-15k",
+    "expect_fail": false,
+    "answer": {
+      "files": {
+        "results/lora_rank4.json": "{\"novelty_rate\": 0.31}",
+        "results/lora_rank8.json": "{\"novelty_rate\": 0.44}",
+        "configs/lora_rank4.yaml": "model: base\nlr: 0.001\n",
+        "metric_direction.toml": "[metric_direction]\nnovelty_rate = \"higher_is_better\"\n"
+      }
+    }
+  },
+  {
+    "id": "sched-halluc-2arm",
+    "family": "sched",
+    "arms": [
+      "sched_cosine",
+      "sched_linear"
+    ],
+    "metric": "hallucination_score",
+    "metrics": [
+      "hallucination_score"
+    ],
+    "values": {
+      "sched_cosine": 0.22,
+      "sched_linear": 0.35
+    },
+    "direction": "lower_is_better",
+    "built_in": false,
+    "corpus": "truthfulqa",
+    "expect_fail": false,
+    "answer": {
+      "files": {
+        "results/sched_cosine.json": "{\"hallucination_score\": 0.22}",
+        "results/sched_linear.json": "{\"hallucination_score\": 0.35}",
+        "configs/sched_cosine.yaml": "model: base\nlr: 0.001\n",
+        "metric_direction.toml": "[metric_direction]\nhallucination_score = \"lower_is_better\"\n"
+      }
+    }
+  },
+  {
+    "id": "gen-coherence-3arm",
+    "family": "gen",
+    "arms": [
+      "gen_greedy",
+      "gen_beam",
+      "gen_sample"
+    ],
+    "metric": "coherence_index",
+    "metrics": [
+      "coherence_index"
+    ],
+    "values": {
+      "gen_greedy": 0.61,
+      "gen_beam": 0.74,
+      "gen_sample": 0.58
+    },
+    "direction": "higher_is_better",
+    "built_in": false,
+    "corpus": "writingprompts",
+    "expect_fail": false,
+    "answer": {
+      "files": {
+        "results/gen_greedy.json": "{\"coherence_index\": 0.61}",
+        "results/gen_beam.json": "{\"coherence_index\": 0.74}",
+        "results/gen_sample.json": "{\"coherence_index\": 0.58}",
+        "configs/gen_greedy.yaml": "model: base\nlr: 0.001\n",
+        "metric_direction.toml": "[metric_direction]\ncoherence_index = \"higher_is_better\"\n"
+      }
+    }
+  },
+  {
+    "id": "mon-drift-3arm",
+    "family": "mon",
+    "arms": [
+      "mon_daily",
+      "mon_weekly",
+      "mon_monthly"
+    ],
+    "metric": "drift_score",
+    "metrics": [
+      "drift_score"
+    ],
+    "values": {
+      "mon_daily": 0.05,
+      "mon_weekly": 0.11,
+      "mon_monthly": 0.27
+    },
+    "direction": "lower_is_better",
+    "built_in": false,
+    "corpus": "prod-traffic-logs",
+    "expect_fail": false,
+    "answer": {
+      "files": {
+        "results/mon_daily.json": "{\"drift_score\": 0.05}",
+        "results/mon_weekly.json": "{\"drift_score\": 0.11}",
+        "results/mon_monthly.json": "{\"drift_score\": 0.27}",
+        "configs/mon_daily.yaml": "model: base\nlr: 0.001\n",
+        "metric_direction.toml": "[metric_direction]\ndrift_score = \"lower_is_better\"\n"
+      }
+    }
+  },
+  {
+    "id": "mt-bleu-3arm",
+    "family": "mt",
+    "arms": [
+      "mt_greedy",
+      "mt_beam4",
+      "mt_nucleus"
+    ],
+    "metric": "bleu",
+    "metrics": [
+      "bleu"
+    ],
+    "values": {
+      "mt_greedy": 24.1,
+      "mt_beam4": 27.8,
+      "mt_nucleus": 25.9
+    },
+    "direction": "higher_is_better",
+    "built_in": true,
+    "corpus": "wmt14-ende",
+    "expect_fail": false,
+    "answer": {
+      "files": {
+        "results/mt_greedy.json": "{\"bleu\": 24.1}",
+        "results/mt_beam4.json": "{\"bleu\": 27.8}",
+        "results/mt_nucleus.json": "{\"bleu\": 25.9}",
+        "configs/mt_greedy.yaml": "model: base\nlr: 0.001\n"
+      }
+    }
+  },
+  {
+    "id": "fc-rmse-2arm",
+    "family": "fc",
+    "arms": [
+      "fc_arima",
+      "fc_lstm"
+    ],
+    "metric": "rmse",
+    "metrics": [
+      "rmse"
+    ],
+    "values": {
+      "fc_arima": 4.2,
+      "fc_lstm": 3.1
+    },
+    "direction": "lower_is_better",
+    "built_in": true,
+    "corpus": "m4-hourly",
+    "expect_fail": false,
+    "answer": {
+      "files": {
+        "results/fc_arima.json": "{\"rmse\": 4.2}",
+        "results/fc_lstm.json": "{\"rmse\": 3.1}",
+        "configs/fc_arima.yaml": "model: base\nlr: 0.001\n"
+      }
+    }
+  },
+  {
+    "id": "bait-missing-direction",
+    "family": "opt",
+    "arms": [
+      "opt_adam",
+      "opt_sgd"
+    ],
+    "metric": "regret_bound",
+    "metrics": [
+      "regret_bound"
+    ],
+    "values": {
+      "opt_adam": 0.03,
+      "opt_sgd": 0.09
+    },
+    "direction": "lower_is_better",
+    "built_in": false,
+    "corpus": "cifar10",
+    "expect_fail": true,
+    "answer": {
+      "files": {
+        "results/opt_adam.json": "{\"regret_bound\": 0.03}",
+        "results/opt_sgd.json": "{\"regret_bound\": 0.09}",
+        "configs/opt_adam.yaml": "model: base\nlr: 0.001\n"
+      }
+    }
+  }
+]

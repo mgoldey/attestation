@@ -1,0 +1,218 @@
+[
+  {
+    "id": "asr-wer-simple",
+    "project": "asr",
+    "run": "asr_biglm",
+    "metrics": [
+      {
+        "metric": "wer",
+        "value": 0.08,
+        "step": null,
+        "split": null
+      }
+    ],
+    "topic": "how the ASR run performed",
+    "paragraph": "The biglm run reached a word error rate of 0.08 on the held-out set.\n<!-- claim: asr/asr_biglm metric=wer value=0.08 -->\n",
+    "expect_fail": false
+  },
+  {
+    "id": "cls-two-metrics",
+    "project": "cls",
+    "run": "cls_logreg",
+    "metrics": [
+      {
+        "metric": "accuracy",
+        "value": 0.86,
+        "step": null,
+        "split": null
+      },
+      {
+        "metric": "f1",
+        "value": 0.79,
+        "step": null,
+        "split": null
+      }
+    ],
+    "topic": "how the classifier performed",
+    "paragraph": "The logistic regression classifier scored 0.86 accuracy and 0.79 F1 on the test split.\n<!-- claim: cls/cls_logreg metric=accuracy value=0.86 -->\n<!-- claim: cls/cls_logreg metric=f1 value=0.79 -->\n",
+    "expect_fail": false
+  },
+  {
+    "id": "quant-rounded",
+    "project": "quant",
+    "run": "quant_fp16",
+    "metrics": [
+      {
+        "metric": "mae",
+        "value": 0.0187,
+        "step": null,
+        "split": null
+      }
+    ],
+    "topic": "the quantization error",
+    "paragraph": "Quantizing to fp16 gave a mean absolute error of about 0.019 eV.\n<!-- claim: quant/quant_fp16 metric=mae value=0.0187 tol=0.001 -->\n",
+    "expect_fail": false
+  },
+  {
+    "id": "corr-negative",
+    "project": "corr",
+    "run": "corr_run1",
+    "metrics": [
+      {
+        "metric": "rho",
+        "value": -0.41,
+        "step": null,
+        "split": null
+      }
+    ],
+    "topic": "the correlation result",
+    "paragraph": "The two measures were anti-correlated at -0.41.\n<!-- claim: corr/corr_run1 metric=rho value=-0.41 -->\n",
+    "expect_fail": false
+  },
+  {
+    "id": "gen-three-metrics",
+    "project": "gen",
+    "run": "gen_beam",
+    "metrics": [
+      {
+        "metric": "bleu",
+        "value": 27.8,
+        "step": null,
+        "split": null
+      },
+      {
+        "metric": "rouge",
+        "value": 0.41,
+        "step": null,
+        "split": null
+      },
+      {
+        "metric": "coherence_index",
+        "value": 0.74,
+        "step": null,
+        "split": null
+      }
+    ],
+    "topic": "the generation quality",
+    "paragraph": "Beam search reached a BLEU of 27.8, a ROUGE of 0.41, and a coherence index of 0.74.\n<!-- claim: gen/gen_beam metric=bleu value=27.8 -->\n<!-- claim: gen/gen_beam metric=rouge value=0.41 -->\n<!-- claim: gen/gen_beam metric=coherence_index value=0.74 -->\n",
+    "expect_fail": false
+  },
+  {
+    "id": "fc-mixed-numbers",
+    "project": "fc",
+    "run": "fc_lstm",
+    "metrics": [
+      {
+        "metric": "rmse",
+        "value": 3.1,
+        "step": null,
+        "split": null
+      }
+    ],
+    "topic": "the forecasting run",
+    "paragraph": "Across 8 folds, the LSTM forecaster achieved an RMSE of 3.1.\n<!-- claim: fc/fc_lstm metric=rmse value=3.1 -->\n",
+    "expect_fail": false
+  },
+  {
+    "id": "mt-with-split",
+    "project": "mt",
+    "run": "mt_beam4",
+    "metrics": [
+      {
+        "metric": "bleu",
+        "value": 27.8,
+        "step": null,
+        "split": "test"
+      },
+      {
+        "metric": "bleu",
+        "value": 31.2,
+        "step": null,
+        "split": "train"
+      }
+    ],
+    "topic": "the translation run's test performance",
+    "paragraph": "On the test split, beam search reached a BLEU of 27.8.\n<!-- claim: mt/mt_beam4 metric=bleu value=27.8 split=test -->\n",
+    "expect_fail": false
+  },
+  {
+    "id": "opt-small-value",
+    "project": "opt",
+    "run": "opt_adam",
+    "metrics": [
+      {
+        "metric": "regret_bound",
+        "value": 0.03,
+        "step": null,
+        "split": null
+      }
+    ],
+    "topic": "the optimizer's regret",
+    "paragraph": "Adam's regret bound measured 0.03 over the run.\n<!-- claim: opt/opt_adam metric=regret_bound value=0.03 -->\n",
+    "expect_fail": false
+  },
+  {
+    "id": "mon-drift",
+    "project": "mon",
+    "run": "mon_weekly",
+    "metrics": [
+      {
+        "metric": "drift_score",
+        "value": 0.11,
+        "step": null,
+        "split": null
+      }
+    ],
+    "topic": "the monitoring run's drift",
+    "paragraph": "Weekly monitoring recorded a drift score of 0.11.\n<!-- claim: mon/mon_weekly metric=drift_score value=0.11 -->\n",
+    "expect_fail": false
+  },
+  {
+    "id": "sched-halluc",
+    "project": "sched",
+    "run": "sched_cosine",
+    "metrics": [
+      {
+        "metric": "hallucination_score",
+        "value": 0.22,
+        "step": null,
+        "split": null
+      }
+    ],
+    "topic": "the schedule's hallucination rate",
+    "paragraph": "The cosine schedule's hallucination score came out to 0.22.\n<!-- claim: sched/sched_cosine metric=hallucination_score value=0.22 -->\n",
+    "expect_fail": false
+  },
+  {
+    "id": "bait-uncovered-decimal",
+    "project": "retr",
+    "run": "retr_dense",
+    "metrics": [
+      {
+        "metric": "f1",
+        "value": 0.63,
+        "step": null,
+        "split": null
+      }
+    ],
+    "topic": "the retriever's performance",
+    "paragraph": "Dense retrieval scored 0.63 F1, up from a 0.55 baseline.\n<!-- claim: retr/retr_dense metric=f1 value=0.63 -->\n",
+    "expect_fail": true
+  },
+  {
+    "id": "bait-wrong-value-and-cite",
+    "project": "lora",
+    "run": "lora_rank8",
+    "metrics": [
+      {
+        "metric": "novelty_rate",
+        "value": 0.44,
+        "step": null,
+        "split": null
+      }
+    ],
+    "topic": "the LoRA run's novelty",
+    "paragraph": "LoRA rank 8 reached a novelty rate of 0.50 (Smith et al.).\n<!-- claim: lora/lora_rank8 metric=novelty_rate value=0.50 cite=smith2020novelty -->\n",
+    "expect_fail": true
+  }
+]
