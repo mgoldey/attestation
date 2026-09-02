@@ -345,6 +345,27 @@ first run took `mt-with-split` and `gen-three-metrics` from 0/1 to 2/3
 each (claims came back `ambiguous` and `stale` before it). No sample ever
 invented a `cite=` key.
 
+**Re-measured with the command-first skill (same day, after `attest runs
+record` shipped, `docs/superpowers/specs/2026-09-01-attest-record-design.md`).**
+The skill now leads with the one command and keeps the manual layout as a
+fallback; its body fell 8543 → 6425 bytes. Two acceptance modes now exist
+and they answer different questions:
+
+| mode | what is measured | result |
+|---|---|---|
+| `--command` | the manifests `attest runs record --dry-run` derives for the 11 scenarios | **11/11**, every check |
+| `--live` (3 samples) | the fallback: `gemma4:e2b` writes the files itself from the skill body | **0.545** — scan count 33/33, config 32/33, direction declared 19/33 |
+
+The live number moved 0.515 → 0.545: the file-shape steps are now
+absorbed completely (scan count 1.00, up from 0.73 on the first run), and
+the deficit is the declaration step alone, unchanged at ~1/15 on
+unknown-metric scenarios. That is the finding the command was built on,
+now measured twice: a small model will not infer "this metric is not in
+the list, so declare it", and no wording moved it — while the command
+refuses to proceed without the declaration, which is why the agent path
+(`runs.record` / `attest runs record`) is the one the skill leads with and
+the manifest path is the fallback for a harness that cannot run `attest`.
+
 ### Routing with seven entries
 
 The same harness as the five-entry measurement, the same 56 questions and
