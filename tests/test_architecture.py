@@ -180,8 +180,11 @@ def test_mcp_domain_modules_stay_small():
         # the regression guard for the measured 13/15), ask.py holds the four
         # tools that call them and touch the rest of the system.
         "ask.py": 325,
-        "routing.py": 265,
-        "provenance.py": 305,
+        # Raised for runs.record (2026-09-01): a new tool plus its Arm
+        # pydantic model in provenance.py, one new routing rule (with its
+        # own ordering comment) in routing.py.
+        "routing.py": 285,
+        "provenance.py": 350,
     }
     # Anything not named above still gets a cap. `if name not in limits:
     # continue` meant a module was exempt until someone remembered to enrol it

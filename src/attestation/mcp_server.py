@@ -82,6 +82,7 @@ _kg_communities_impl = _kg._communities
 _kg_concepts_impl = _kg._concepts
 
 _runs_scan_impl = _prov._scan
+_runs_record_impl = _prov._record
 _runs_list_impl = _prov._list
 _runs_compare_impl = _prov._compare
 _runs_detail_impl = _prov._detail

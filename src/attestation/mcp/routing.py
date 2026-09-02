@@ -206,6 +206,20 @@ def route_runs(question: str) -> Decision:
             question="What would you like to know about your runs?",
             options=("runs.list", "runs.compare", "runs.claims_check"),
         )
+    # Checked first: "save these metrics for my sweep" contains "sweep" (the
+    # compare rule's phrase) and "what runs do I have recorded?" contains
+    # "record" as a substring of "recorded" (the list rule's phrase) -- both
+    # false-positive against a later rule if this one is not checked first.
+    # "record " (trailing space) rather than bare "record" for the same
+    # reason: it must not also match "recorded".
+    if _has(
+        q,
+        "record ",
+        "write the results",
+        "leave files for the ledger",
+        "save these metrics",
+    ):
+        return Decision("runs.record", {})
     if _has(
         q,
         "forget to cite",

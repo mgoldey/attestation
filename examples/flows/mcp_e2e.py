@@ -76,6 +76,19 @@ CALLS: list[tuple[str, dict, str]] = [
     ("feed.source_remove", {"feed_id": "$FEED_ID", "confirm": True}, "ok"),
     # --- provenance
     ("runs.scan", {"root": "$WORKSPACE", "confirm": True}, "ok"),
+    # Preview only (no confirm): writing into the committed workspace fixture
+    # here would mutate examples/workspace/ on every flow run and refuse on
+    # the second, since record.write() only ever creates new files.
+    (
+        "runs.record",
+        {
+            "family": "flow-preview",
+            "arms": [{"name": "a", "metrics": {"wer": 0.1}}],
+            "root": "$WORKSPACE",
+            "project": "speech-distill",
+        },
+        "ok",
+    ),
     ("runs.list", {"limit": 10}, "ok"),
     ("runs.list", {"project": "speech-distill", "family": "kdsweep"}, "ok"),
     ("runs.compare", {"family": "kdsweep", "metric": "wer"}, "ok"),

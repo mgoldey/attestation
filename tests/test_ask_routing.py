@@ -38,6 +38,10 @@ RUNS_CASES = [
     ("are the numbers in my draft right?", "runs.claims_check"),
     ("what numbers did I forget to cite?", "runs.claims_coverage"),
     ("what runs do I have recorded?", "runs.list"),
+    ("record these results for the ledger", "runs.record"),
+    ("write the results to the ledger", "runs.record"),
+    ("save these metrics for my sweep", "runs.record"),
+    ("re-read the runs, I just added new results", "runs.scan"),
 ]
 KG_CASES = [
     ("how does retrieval connect to transformers?", "kg.path"),

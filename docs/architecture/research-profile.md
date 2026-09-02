@@ -14,7 +14,7 @@ hermes chat              # default, unchanged
 |---|---|---|
 | Tool schemas | 85.4 KB / 67 tools | **44.8 KB / 27 tools** |
 | `filament` plugin | enabled | **disabled** |
-| attestation MCP | one combined server, 45 tools | four restricted servers, `feed` enabled |
+| attestation MCP | one combined server, 46 tools | four restricted servers, `feed` enabled |
 | Skills | 72 | 70 |
 
 ## Why each

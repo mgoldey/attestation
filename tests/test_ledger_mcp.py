@@ -1,6 +1,7 @@
 """MCP wiring for the run ledger."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -126,6 +127,157 @@ def test_all_four_tools_are_served():
     names = {t.name for t in mcp_server.mcp._tool_manager.list_tools()}
 
     assert {"runs.scan", "runs.list", "runs.compare", "runs.detail"} <= names
+
+
+# --- runs.record ------------------------------------------------------------
+
+
+@pytest.fixture
+def record_workspace(tmp_path, monkeypatch):
+    """An empty workspace with one project dir, RESEARCH_ROOT-configured --
+    distinct from `workspace` above, which pre-populates results/configs.
+    `runs.record` is the thing writing those files in these tests, so
+    starting empty is the point."""
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    get_db(tmp_path / "t.db").close()
+    root = tmp_path / "ws"
+    (root / "proj").mkdir(parents=True)
+    monkeypatch.setenv("RESEARCH_ROOT", str(root))
+    return root
+
+
+def _two_arms():
+    return [
+        {"name": "baseline", "metrics": {"wer": 0.12}},
+        {"name": "biglm", "metrics": {"wer": 0.08}},
+    ]
+
+
+def test_record_preview_writes_nothing(record_workspace):
+    out = mcp_server._runs_record_impl("asr", _two_arms(), project="proj", corpus="librispeech")
+
+    assert out["ok"] is True
+    assert out["written"] == []
+    assert out["compare"] is None
+    assert set(out["manifest"]) == {
+        "results/asr_baseline.json",
+        "results/asr_biglm.json",
+        "configs/asr_baseline.yaml",
+        "configs/asr_biglm.yaml",
+        "corpora.toml",
+    }
+    # Nothing touched the workspace: the only file that exists is the project
+    # directory itself, still empty.
+    assert list((record_workspace / "proj").rglob("*")) == []
+    # Census entry (test_response_size.py's "Bounded in tests/test_ledger_
+    # mcp.py, not here"): a two-arm manifest is small, but it is the one
+    # branch that returns file CONTENTS rather than paths, so it is the
+    # shape most likely to grow past the ceiling.
+    assert len(json.dumps(out, indent=2)) < 7000
+
+
+def test_record_confirm_writes_and_compares(record_workspace):
+    out = mcp_server._runs_record_impl("asr", _two_arms(), project="proj", confirm=True)
+
+    assert out["ok"] is True
+    assert out["manifest"] == {}
+    written = {str(Path(p).relative_to(record_workspace / "proj")) for p in out["written"]}
+    assert written == {
+        "results/asr_baseline.json",
+        "results/asr_biglm.json",
+        "configs/asr_baseline.yaml",
+        "configs/asr_biglm.yaml",
+    }
+    for path in out["written"]:
+        assert Path(path).exists()
+
+    compare = out["compare"]
+    assert compare is not None
+    assert compare["winner"] == "asr_biglm"  # 0.08 beats 0.12, wer is lower_is_better
+    # Census entry: the confirm branch returns `compare`'s own payload, whose
+    # size is already bounded by runs.compare's own MAX_ARMS_SHOWN.
+    assert len(json.dumps(out, indent=2)) < 7000
+
+
+def test_record_collision_refuses_before_any_write(record_workspace):
+    """One arm's result file already exists -- the whole call must refuse
+    before writing anything, including the OTHER arm's file."""
+    existing = record_workspace / "proj" / "results" / "asr_baseline.json"
+    existing.parent.mkdir(parents=True)
+    existing.write_text('{"wer": 0.5}')
+
+    out = mcp_server._runs_record_impl("asr", _two_arms(), project="proj", confirm=True)
+
+    assert out["ok"] is False
+    assert "asr_baseline" in out["message"]
+    assert out["written"] == []
+    # The other arm's file must NOT have been created.
+    assert not (record_workspace / "proj" / "results" / "asr_biglm.json").exists()
+    assert not (record_workspace / "proj" / "configs" / "asr_biglm.yaml").exists()
+
+
+def test_record_undeclared_metric_refuses_with_the_compare_sentence(record_workspace):
+    from attestation import ledger
+
+    arms = [
+        {"name": "run1", "metrics": {"novelty_rate": 0.31}},
+        {"name": "run2", "metrics": {"novelty_rate": 0.44}},
+    ]
+
+    out = mcp_server._runs_record_impl("lora", arms, project="proj")
+
+    assert out["ok"] is False
+    assert out["message"] == ledger.unknown_direction_message("novelty_rate")
+    assert out["written"] == []
+    assert out["manifest"] == {}
+
+
+def test_record_undeclared_metric_refuses_even_with_confirm(record_workspace):
+    """Confirm does not bypass the direction refusal -- it is not `force`."""
+    arms = [{"name": "run1", "metrics": {"novelty_rate": 0.31}}]
+
+    out = mcp_server._runs_record_impl("lora", arms, project="proj", confirm=True)
+
+    assert out["ok"] is False
+    assert "novelty_rate" in out["message"]
+    assert out["written"] == []
+
+
+def test_record_has_no_force_argument():
+    """Per spec: an agent overwriting a result file is the failure the
+    ledger exists to catch; `force` stays CLI-only."""
+    tool = next(t for t in mcp_server.mcp._tool_manager.list_tools() if t.name == "runs.record")
+    assert "force" not in (tool.parameters.get("properties") or {})
+
+
+def test_record_confirm_then_detail_shows_config_as_provenance_not_metrics(
+    record_workspace,
+):
+    """End-to-end: recording a run and then reading it back with runs.detail
+    shows `scanned_at`, and the declared `--config` pair never leaks into the
+    metrics list -- `record.plan` writes it to a SEPARATE provenance-only
+    `configs/*.yaml` (never a metric value, per that module's own docstring),
+    so `runs.detail`'s metrics stay exactly the recorded metrics."""
+    out = mcp_server._runs_record_impl(
+        "asr",
+        _two_arms(),
+        project="proj",
+        config={"lr": "0.001"},
+        confirm=True,
+    )
+    assert out["ok"] is True
+    config_path = record_workspace / "proj" / "configs" / "asr_baseline.yaml"
+    assert config_path.exists()
+    assert "lr: 0.001" in config_path.read_text()
+
+    detail = mcp_server._runs_detail_impl("proj", "asr_baseline")
+
+    assert detail["ok"] is True
+    run = detail["run"]
+    assert run["scanned_at"]
+    metric_names = {m["metric"] for m in run["metrics"]}
+    assert metric_names == {"wer"}
+    assert "lr" not in metric_names
 
 
 def test_claims_check_reports_each_verdict(workspace, tmp_path):

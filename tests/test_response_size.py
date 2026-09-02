@@ -623,6 +623,7 @@ def test_every_tool_is_either_budgeted_or_declared_a_composition_tool():
         # Bounded in tests/test_ledger_mcp.py, not here.
         "runs.detail",
         "runs.list",
+        "runs.record",
         "kg.communities",
     }
     # Routers bound their own answers via _summarise's label cap.

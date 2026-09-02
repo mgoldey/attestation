@@ -21,8 +21,11 @@ or `attestation-annotate`.
 
 ## Run one command
 
-If a shell is available, `attest runs record` writes the files below for
-you and refuses rather than guesses a direction it doesn't know:
+MCP first: `runs.record(family, arms, corpus=..., confirm=true)` writes the
+files below for you, in one call, and refuses rather than guesses a
+direction it doesn't know. No `confirm` previews the manifest and writes
+nothing. No MCP client? `attest runs record` is the same command at the
+shell:
 
 ```bash
 attest runs record asr --arm baseline wer=0.12 --arm biglm wer=0.08 \
@@ -31,22 +34,24 @@ attest runs record asr --arm baseline wer=0.12 --arm biglm wer=0.08 \
 
 writes `results/asr_baseline.json` / `results/asr_biglm.json`, a matching
 `configs/*.yaml` per arm (provenance only), and a `corpora.toml` entry for
-`librispeech` -- then `--scan` reads them straight back and prints
-`runs.compare`. A metric not already built in (see the list below) needs a
-declaration, e.g. for a family scored on `novelty_rate`:
+`librispeech` -- then `--scan` (`confirm=true` for the tool) reads them
+straight back and prints `runs.compare`. A metric not already built in (see
+the list below) needs a declaration, e.g. for a family scored on
+`novelty_rate`:
 
 ```bash
 attest runs record lora --arm rank4 novelty_rate=0.31 --arm rank8 novelty_rate=0.44 \
   --direction novelty_rate=higher_is_better --scan
 ```
 
-Leaving out `--direction` for an unfamiliar metric is a **refusal**, not a
-guess, with the same sentence `runs.compare` itself would print. `--dry-run`
-prints the manifest (`{"files": {relpath: content}}`) without writing
-anything; every target must be a NEW file or the whole call refuses, unless
-`--force`. No shell? Follow "The shape a scan will read" below and write
-the files yourself -- everything the command does for you is stated there
-as a rule.
+Leaving out a direction for an unfamiliar metric is a **refusal**, not a
+guess, with the same sentence `runs.compare` itself would print. Without
+`confirm`/`--dry-run`, both print the manifest (`{relpath: content}`)
+without writing anything; every target must be a NEW file or the whole call
+refuses -- `runs.record` has no override, `--force` is CLI-only. No shell
+and no MCP client? Follow "The shape a scan will read" below and write the
+files yourself -- everything either one does for you is stated there as a
+rule.
 
 ## When NOT to use this
 
@@ -136,6 +141,9 @@ python train.py --multirun lr=0.01,0.1,1,10 hydra.job.chdir=true
 ```
 
 ## Finish in the same session
+
+`runs.record(..., confirm=true)` already scans and compares for you. Writing
+by hand instead:
 
 ```
 runs.scan(confirm=true)

@@ -12,9 +12,9 @@ ToolError with the reason spelled out, because it is caller-fixable.
 
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
-from attestation import ledger
+from attestation import ledger, record
 from attestation.mcp._shared import MAX_LIST_LIMIT, Limit, Verdict
 from attestation.mcp._tool import ToolError, open_db, tool
 
@@ -53,6 +53,17 @@ NO_ROOT = (
 )
 
 
+class Arm(BaseModel):
+    """One arm of `runs.record`'s `arms` argument: a name and its final
+    metric values. A real pydantic model rather than a bare `dict` so the
+    schema an agent sees states the shape (`name`, `metrics`) instead of an
+    unconstrained object -- the same reasoning `mcp/ask.py`'s `Ref`/`Answer`
+    already apply to a return shape, extended here to an argument."""
+
+    name: str
+    metrics: dict[str, float]
+
+
 def register(mcp) -> None:
     """Attach every runs.* tool to the server."""
 
@@ -74,6 +85,46 @@ def register(mcp) -> None:
 
         """
         return _scan(root, project, confirm)
+
+    @mcp.tool(name="runs.record")
+    def runs_record(
+        family: str,
+        arms: list[Arm],
+        corpus: str | None = None,
+        directions: dict[str, str] | None = None,
+        config: dict[str, str] | None = None,
+        root: str | None = None,
+        project: str | None = None,
+        confirm: bool = False,
+    ) -> dict:
+        """Write an experiment run's results/config files so `runs.scan` reads them back.
+
+        Derives the ledger's on-disk shape rather than asking you to transcribe it by hand.
+
+        `arms` is `[{"name": ..., "metrics": {metric: value}}, ...]` -- the
+        arms of one family (a sweep's variants, or a single run as a
+        one-arm family). Without `confirm=true` this writes NOTHING and
+        returns the `manifest` it would write (`{relpath: content}`), the
+        same preview `attest runs record --dry-run` prints -- call it first
+        to see the files before committing to them.
+
+        With `confirm=true` it writes (new files only; a target that already
+        exists is a refusal naming every collision, before anything is
+        written -- there is no `force` here, unlike the CLI: overwriting a
+        result file is the failure this ledger exists to catch), then scans
+        the project and returns `compare` for `family`, so one call takes a
+        run from numbers to a ranked ledger entry.
+
+        A metric this ledger has no direction for -- built-in or from a
+        prior `--direction`/`directions` declaration -- is refused with the
+        same sentence `runs.compare` prints, whether or not `confirm` is
+        set: this tool never guesses which way a metric should rank.
+
+        `root`/`project` resolve the way `runs.scan`'s do: `root` defaults to
+        RESEARCH_ROOT, and `project` names the subdirectory the files are
+        written under (the project itself, when omitted).
+        """
+        return _record(family, arms, corpus, directions, config, root, project, confirm)
 
     @mcp.tool(name="runs.list")
     def runs_list(
@@ -235,6 +286,95 @@ def _scan(root: str | None = None, project: str | None = None, confirm: bool = F
         # why each empty project was empty: the caller is a model, and a bare
         # "0 run(s)" gives it nothing to tell the user or act on
         "diagnostics": out.get("diagnostics", {}),
+    }
+
+
+def _record_target(target, project: str | None):
+    """Where `record.plan`'s manifest is rooted -- the project directory
+    itself, matching `record.py`'s `{relpath: content}` paths (`results/...`,
+    `configs/...`, root-relative to ONE project), not the workspace `runs.scan`
+    walks. `project` omitted writes directly under `target`, the same
+    fallback `ledger.scan` uses for a workspace that IS a single project."""
+    return target / project if project else target
+
+
+def _arm_metrics(arms: list) -> dict[str, dict[str, float]]:
+    """`{name: metrics}` from `arms`, accepting both shapes: `Arm` instances
+    (how they arrive through the real MCP schema, pydantic-coerced) and plain
+    dicts (how `_runs_record_impl` -- like every other tool's alias -- is
+    called directly by tests and by any caller that skips the MCP transport).
+    """
+    out: dict[str, dict[str, float]] = {}
+    for a in arms:
+        if isinstance(a, Arm):
+            out[a.name] = a.metrics
+        else:
+            out[a["name"]] = a["metrics"]
+    return out
+
+
+@tool(empty={"written": [], "manifest": {}, "compare": None}, needs_db=False, label="runs_record")
+def _record(
+    family: str,
+    arms: list[Arm],
+    corpus: str | None = None,
+    directions: dict[str, str] | None = None,
+    config: dict[str, str] | None = None,
+    root: str | None = None,
+    project: str | None = None,
+    confirm: bool = False,
+) -> dict:
+    target = ledger.workspace_root(root)
+    if target is None:
+        raise ToolError(NO_ROOT)
+
+    arm_metrics = _arm_metrics(arms)
+    declared = directions or {}
+    known = ledger.metric_directions()
+    missing = record.undeclared(arm_metrics, {**known, **declared})
+    if missing:
+        # Same sentence runs.compare itself raises for one named metric, so
+        # an agent that hits this and one that hits a bare runs.compare(...)
+        # learn the identical remedy rather than two phrasings of one rule.
+        raise ToolError("\n".join(ledger.unknown_direction_message(m) for m in missing))
+
+    manifest = record.plan(
+        family,
+        arm_metrics,
+        corpus=corpus,
+        directions=declared,
+        config=config,
+        known_directions=known,
+    )
+
+    if not confirm:
+        return {"manifest": manifest, "written": [], "compare": None}
+    return _record_confirm(target, project, family, manifest)
+
+
+def _record_confirm(target, project: str | None, family: str, manifest: dict[str, str]) -> dict:
+    """The `confirm=true` half of `_record`: write the manifest (new files
+    only -- no `force`, unlike the CLI, see the tool's own docstring), then
+    scan the project back in and compare the family, so one call takes a run
+    from numbers to a ranked ledger entry."""
+    write_root = _record_target(target, project)
+    try:
+        written = record.write(write_root, manifest, force=False)
+    except FileExistsError as exc:
+        raise ToolError(str(exc)) from exc
+
+    with open_db() as conn:
+        ledger.scan(conn, target, project=project)
+        try:
+            compare = ledger.compare(conn, family, project=project)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+
+    return {
+        "message": f"wrote {len(written)} file(s)",
+        "written": [str(p) for p in written],
+        "manifest": {},
+        "compare": compare,
     }
 
 

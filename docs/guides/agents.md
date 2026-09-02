@@ -61,7 +61,7 @@ mcp_servers:
 
 Verify with `hermes mcp list` — you should see `attestation ... ✓ enabled`.
 
-The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 45 tools.
+The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 46 tools.
 These counts move: re-measure rather than quoting this paragraph.
 
 ```bash
@@ -104,6 +104,7 @@ m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
 | `kg.communities(min_size)` | Topic clusters, each labelled by its hub concept | instant |
 | `kg.concepts(prefix, limit)` | List the concept names the other `kg.*` tools accept | instant |
 | `runs.scan(root, project, confirm)` | Read experiment runs from artifacts on disk into the ledger | fast |
+| `runs.record(family, arms, corpus, directions, config, root, project, confirm)` | Write a run's results/config files so `runs.scan` reads them back; preview without `confirm` | fast |
 | `runs.list(project, family, limit)` | Recorded runs, and the families they group into | instant |
 | `runs.compare(family, metric)` | Rank the arms of a sweep, with provenance and caveats | instant |
 | `runs.detail(project, name)` | One run: config, every metric, source path, hypothesis header | instant |
@@ -320,7 +321,7 @@ written in one quick transaction per feed.
 ## Restricted surfaces and generated agent configs
 
 A model that can see a tool will eventually call it wrong, so a Claude Code
-session does not need all 45: `ATTEST_TOOLS=feed|provenance|knowledge|symbolic`
+session does not need all 46: `ATTEST_TOOLS=feed|provenance|knowledge|symbolic`
 restricts what an `attest-mcp` process registers to one namespace (`feed.*`,
 `runs.*` + `cite.check`, `kg.*` + `feed.search`, or `sym.*`), and
 `ATTEST_EXPAND=1` reveals the specific tools underneath a surface's `.ask`
