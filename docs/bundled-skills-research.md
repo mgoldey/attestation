@@ -348,8 +348,10 @@ invented a `cite=` key.
 **Re-measured with the command-first skill (same day, after `attest runs
 record` shipped, `docs/superpowers/specs/2026-09-01-attest-record-design.md`).**
 The skill now leads with the one command and keeps the manual layout as a
-fallback; its body fell 8543 → 6425 bytes. Two acceptance modes now exist
-and they answer different questions:
+fallback; its body fell 8543 → 6773 bytes (a later same-day addition, the
+MCP `runs.record` tool, named the tool beside the command and grew it from
+the original 6425 -- still a fall from 8543, just a smaller one). Two
+acceptance modes now exist and they answer different questions:
 
 | mode | what is measured | result |
 |---|---|---|

@@ -57,6 +57,59 @@ def validate_metric_name(name: str) -> None:
         raise ValueError(f"invalid metric name {name!r} -- must match {METRIC_NAME_RE.pattern!r}")
 
 
+# `family` and an arm's `name` both become PATH SEGMENTS (`plan()` builds
+# `results/<family>_<arm>.json`) -- unlike a metric name, which only ever
+# becomes a JSON key. `\w+` alone would still allow a lone `.` or `..`
+# component if dots were permitted at all; this grammar additionally
+# forbids `/` (no traversal via a literal separator) and a leading `.`
+# (blocks `.`/`..` outright, and a dotfile stem), while still allowing the
+# `.`/`-` a real family or arm name commonly carries (`gpt-4.1`, `v1.2`).
+NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
+def validate_name(name: str, *, label: str) -> None:
+    """Raise `ValueError` if `name` is unsafe as a path segment.
+
+    `family` and an arm's `name` are both interpolated directly into a
+    relpath by `plan()` (`results/<family>_<arm>.json`) and then joined
+    under `root` by `write()` -- so `family="../../victim/asr"` or an arm
+    named `"../../victim/pwned"` walks `write()`'s `root / relpath` clean
+    out of `root`. Checked here rather than only in `write()` because a
+    caller (an agent, in the MCP tool's case) should be refused before
+    `plan()` even builds a manifest naming a path outside the workspace --
+    the refusal message should point at the bad NAME, not a confusing
+    "already exists" one root-escape could produce by colliding with an
+    unrelated file. `write()` still asserts containment as a second line of
+    defence (see its own docstring) in case a caller reaches it some other
+    way.
+    """
+    if not NAME_RE.fullmatch(name):
+        raise ValueError(f"invalid {label} {name!r} -- must match {NAME_RE.pattern!r}")
+
+
+VALID_DIRECTIONS = ("lower_is_better", "higher_is_better")
+
+
+def validate_direction(metric: str, direction: str) -> None:
+    """Raise `ValueError` if `direction` is not one of the two the ledger
+    ranks by.
+
+    `ledger._compare`'s `rank_key` treats anything other than the literal
+    string `"lower_is_better"` as higher-is-better -- so an unvalidated
+    typo (`"lower_is_bettr"`, or a wholly made-up value) does not refuse,
+    it silently ranks backwards, which is exactly the failure the
+    `unknown_direction_message` refusal exists to prevent. The CLI already
+    validates this (`cli._parse_record_args`); this is the same check
+    available to `mcp.provenance`, which does not otherwise share that
+    parsing path.
+    """
+    if direction not in VALID_DIRECTIONS:
+        raise ValueError(
+            f"invalid direction {direction!r} for metric {metric!r} -- must be one of"
+            f" {VALID_DIRECTIONS}"
+        )
+
+
 def parse_metric_value(raw: str) -> float:
     """`raw` (a `METRIC=VALUE` argument's value half) as a float, or raise.
 
@@ -180,8 +233,20 @@ def write(root: Path, manifest: dict[str, str], *, force: bool = False) -> list[
     across calls, so the CLI merges into them itself rather than routing
     them through this refuse-or-overwrite path -- `write()` only ever sees
     the per-arm results/configs files that must each be new.
+
+    Second line of defence against a `relpath` that escapes `root`: even
+    though `validate_name` is meant to catch a `..`/`/`-carrying `family`
+    or arm name before `plan()` ever builds a manifest, `write()` asserts
+    every resolved target is still inside `root` (`Path.relative_to`) --
+    belt and braces, since a manifest could in principle reach here some
+    other way, and root-escape is a write-outside-the-workspace bug, not
+    an ordinary refusal to paper over.
     """
+    root = Path(root).resolve()
     targets = {root / relpath: content for relpath, content in manifest.items()}
+    escaped = sorted(str(p) for p in targets if not p.resolve().is_relative_to(root))
+    if escaped:
+        raise ValueError(f"refusing to write outside root {root}: {', '.join(escaped)}")
     if not force:
         existing = sorted(str(p) for p in targets if p.exists())
         if existing:
@@ -219,48 +284,89 @@ def _table_conflicts(current: dict, entries: dict[str, str]) -> dict[str, tuple[
     }
 
 
-def _replace_existing_keys(text: str, replacing: dict[str, str]) -> str:
-    """`text` with each of `replacing`'s keys' existing `key = ...` line
-    swapped for its new value, in place -- never appended a second time.
-    `tomllib`'s own parser treats a key repeated under one table as
-    malformed TOML ("Cannot overwrite a value"), so a naive append-only
-    insertion for a key that's already there would corrupt the very file
-    `--force` is meant to fix; this is only reachable with `force=True`,
-    since `merge_toml_table`'s conflict check already refused any differing
-    value without it."""
-    out = text
-    for key, value in replacing.items():
-        pattern = re.compile(rf"(?m)^{re.escape(key)}\s*=\s*.*$")
-        out = pattern.sub(f'{key} = "{value}"', out, count=1)
-    return out
-
-
-def _append_new_keys(text: str, table: str, appending: dict[str, str]) -> str:
-    """`text` with `appending`'s keys added under `[table]` -- inserted
-    right after an existing header if `[table]` is already present,
-    otherwise the header and its entries are appended at the end."""
-    if not appending:
-        return text
-    lines = "\n".join(f'{k} = "{v}"' for k, v in appending.items())
-    header = f"[{table}]"
-    if header in text:
-        # Insert right after the table header, before its first existing
-        # entry (or before the next table/EOF if the table is now empty --
-        # unreachable in this module's own callers, but correct regardless).
-        idx = text.index(header) + len(header)
-        return text[:idx] + "\n" + lines + text[idx:]
-    out = text
-    if out and not out.endswith("\n\n"):
-        out += "\n" if out.endswith("\n") else "\n\n"
-    return out + header + "\n" + lines + "\n"
-
-
 def _ensure_trailing_newline(text: str) -> str:
     """`text` with exactly one trailing newline, unless it is empty (an
     absent file stays `""`, not `"\\n"`)."""
     if not text or text.endswith("\n"):
         return text
     return text + "\n"
+
+
+def _leading_comment_block(text: str) -> str:
+    """Consecutive `#`-prefixed (or blank) lines at the very TOP of `text`,
+    before the first table header -- the one piece of hand-written text
+    this module's dict-level merge cannot recover from `tomllib.loads`
+    (comments are not part of the parsed structure at all). Preserved
+    verbatim at the head of a re-emitted file; anything else -- an inline
+    comment beside a `key = value` line, or one directly above a `[table]`
+    header partway through the file -- is a hand-editing convenience this
+    module does not promise to keep, the same limit a "no TOML-write
+    dependency" implementation already had for OTHER hand formatting
+    (blank-line spacing between tables, alignment)."""
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == "" or stripped.startswith("#"):
+            lines.append(line)
+            continue
+        break
+    return ("\n".join(lines) + "\n") if lines else ""
+
+
+def _set_at(doc: dict, table: str, entries: dict[str, str]) -> None:
+    """`doc[table] = {**doc.get(table, {}), **entries}`, walking a dotted
+    `table` path (`"assign.family"`) and creating intermediate dicts as
+    needed -- the merge half of `_table_at`'s read."""
+    current = doc
+    segments = table.split(".")
+    for segment in segments[:-1]:
+        current = current.setdefault(segment, {})
+    current.setdefault(segments[-1], {}).update(entries)
+
+
+def _emit_table(path: tuple[str, ...], values: dict[str, str]) -> str:
+    """One `[dotted.path]` header plus its flat `key = "value"` lines --
+    the only table shape `toml_tables()` ever hands `merge_toml_table` (a
+    dotted path to a table whose own values are all strings), so this is
+    the whole emitter this codebase's two TOML files need."""
+    header = f"[{'.'.join(path)}]"
+    lines = "\n".join(f'{k} = "{v}"' for k, v in values.items())
+    return f"{header}\n{lines}\n"
+
+
+def _leaf_tables(doc: dict, prefix: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], dict]]:
+    """Every leaf table in `doc` (a dict whose own values are all strings,
+    the shape `toml_tables()`'s walk produces) as `(dotted_path, values)`,
+    in dict insertion order -- which is FIRST-SEEN order for a table
+    already in `existing_text` (Python dicts preserve insertion order, and
+    `tomllib.loads` inserts in the order tables appear in the source text),
+    so an unrelated table's position in the re-emitted file matches where
+    it already was. A table `_set_at` just created for a brand-new `table`
+    argument is inserted (dict `setdefault`) after every table that was
+    already present, so it is appended at the end -- matching the old
+    text-appending behaviour for a table not yet in the file.
+    """
+    out: list[tuple[tuple[str, ...], dict]] = []
+    for key, value in doc.items():
+        path = (*prefix, key)
+        if isinstance(value, dict):
+            if value and all(isinstance(v, str) for v in value.values()):
+                out.append((path, value))
+            else:
+                out.extend(_leaf_tables(value, path))
+    return out
+
+
+def _emit_toml(doc: dict, header_comment: str) -> str:
+    """`doc` (as merged by `_set_at`) re-emitted deterministically: the
+    preserved leading comment block, then every leaf table in first-seen
+    order. Replaces the old text-substitution path entirely -- merging
+    happens on the PARSED structure, so a foreign table's entry sharing a
+    key name with the target table is never touched, only the table
+    actually named by `_set_at`'s dotted path is."""
+    return header_comment + "\n".join(
+        _emit_table(path, values) for path, values in _leaf_tables(doc)
+    )
 
 
 def _refuse_conflicts(table: str, current: dict, entries: dict[str, str]) -> None:
@@ -302,10 +408,16 @@ def merge_toml_table(
     `_yaml_scalars`'s docstrings on why an undeclared parser dependency is
     avoided here), and both files this writes (`corpora.toml`,
     `metric_direction.toml`) hold only flat `key = "value"` tables, however
-    deeply nested the table itself is. Round-trips through `tomllib.loads` to
-    detect the conflict, then re-emits textually rather than re-serialising
-    the whole document, so an unrelated table's comments and formatting
-    survive untouched.
+    deeply nested the table itself is. Merges on the PARSED document (not
+    text) and re-emits deterministically -- `_emit_toml` -- rather than a
+    text-level substitution: a text-level replace matched the first
+    `key = ...` line ANYWHERE in the file, so a foreign table declaring the
+    same key name earlier than the target table got silently rewritten
+    while the intended entry stayed stale (found in review, reproduced
+    through the real CLI). Every leaf table keeps its first-seen position
+    (`_leaf_tables`); a leading `#` comment block is preserved verbatim
+    (`_leading_comment_block`) since it is the one thing `tomllib.loads`
+    cannot hand back -- an inline comment elsewhere in the file is not.
     """
     import tomllib
 
@@ -319,6 +431,39 @@ def merge_toml_table(
     if not to_add:
         return _ensure_trailing_newline(existing_text)
 
-    out = _ensure_trailing_newline(existing_text)
-    out = _replace_existing_keys(out, {k: v for k, v in to_add.items() if k in current})
-    return _append_new_keys(out, table, {k: v for k, v in to_add.items() if k not in current})
+    _set_at(doc, table, to_add)
+    return _emit_toml(doc, _leading_comment_block(existing_text))
+
+
+def toml_tables(fresh_content: str) -> list[tuple[str, dict[str, str]]]:
+    """`plan()`'s fresh-file TOML content (already-valid TOML, one or more
+    `[table]\\nkey = "value"` blocks) parsed back into `(table, entries)`
+    pairs `merge_toml_table` can fold into whatever already exists on disk.
+
+    `plan()` builds these strings directly rather than through
+    `merge_toml_table` (there is nothing to merge into yet -- the manifest
+    is what a fresh write would contain), so this is the one place that
+    content is read back as data instead of re-derived, keeping `plan()`
+    itself free of any notion of "what's already on disk". Public (not
+    `_toml_tables`) because both `cli.py`'s `runs record` and `mcp/
+    provenance.py`'s `runs.record` need it, and the mcp/ layer may not
+    import a private name from a non-mcp module (see `tests/
+    test_architecture.py::test_no_mcp_module_imports_a_private_domain_name`).
+    """
+    import tomllib
+
+    doc = tomllib.loads(fresh_content)
+    tables: list[tuple[str, dict[str, str]]] = []
+
+    def _walk(prefix: str, node: dict) -> None:
+        if all(isinstance(v, str) for v in node.values()) and node:
+            tables.append((prefix, dict(node)))
+            return
+        for key, value in node.items():
+            if isinstance(value, dict):
+                _walk(f"{prefix}.{key}" if prefix else key, value)
+
+    for top_key, top_value in doc.items():
+        if isinstance(top_value, dict):
+            _walk(top_key, top_value)
+    return tables

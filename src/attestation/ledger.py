@@ -179,6 +179,16 @@ def _metric_direction_path() -> Path:
     return _config_ladder(METRIC_DIRECTION_PATH_ENV, "metric_direction.toml")
 
 
+def metric_direction_path() -> Path:
+    """Public wrapper for `_metric_direction_path`, so a non-domain caller
+    can find the same file `unknown_direction_message` names -- `mcp/
+    provenance.py`'s `runs.record` merges declared directions into it and
+    may not import the private name directly (see `tests/
+    test_architecture.py::test_no_mcp_module_imports_a_private_domain_name`).
+    """
+    return _metric_direction_path()
+
+
 def metric_directions() -> dict[str, str]:
     """Built-in METRIC_DIRECTION, overlaid with a user's TOML file if present.
 

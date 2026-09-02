@@ -292,6 +292,69 @@ def test_runs_record_writes_and_refuses_to_overwrite_without_force(tmp_path, cap
     assert rc == 0
 
 
+def test_runs_record_refuses_a_family_that_escapes_root(tmp_path, capsys):
+    """CRITICAL 2 (final review, round 2): `family`/arm names become PATH
+    SEGMENTS. `../../victim/asr` must refuse BEFORE any write, not walk out
+    of --root."""
+    victim = tmp_path.parent / "victim"
+    rc = main(
+        [
+            "runs",
+            "record",
+            "../../victim/asr",
+            "--root",
+            str(tmp_path),
+            "--arm",
+            "base",
+            "wer=0.12",
+        ]
+    )
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "family" in err
+    assert not victim.exists(), "must not have written outside --root"
+    assert not (tmp_path / "results").exists()
+
+
+def test_runs_record_refuses_an_arm_name_with_a_slash(tmp_path, capsys):
+    rc = main(
+        [
+            "runs",
+            "record",
+            "asr",
+            "--root",
+            str(tmp_path),
+            "--arm",
+            "../../victim/pwned",
+            "wer=0.12",
+        ]
+    )
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "arm name" in err
+    assert not (tmp_path.parent / "victim").exists()
+
+
+def test_runs_record_accepts_a_plain_family_and_arm_name(tmp_path, capsys):
+    rc = main(
+        [
+            "runs",
+            "record",
+            "asr-v2",
+            "--root",
+            str(tmp_path),
+            "--arm",
+            "run.1",
+            "wer=0.12",
+        ]
+    )
+
+    assert rc == 0
+    assert (tmp_path / "results" / "asr-v2_run.1.json").exists()
+
+
 def test_parser_claims_subcommand():
     args = build_parser().parse_args(["claims", "docs/", "--verdict", "unsupported"])
     assert args.command == "claims"

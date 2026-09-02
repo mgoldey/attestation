@@ -182,9 +182,14 @@ def test_mcp_domain_modules_stay_small():
         "ask.py": 325,
         # Raised for runs.record (2026-09-01): a new tool plus its Arm
         # pydantic model in provenance.py, one new routing rule (with its
-        # own ordering comment) in routing.py.
+        # own ordering comment) in routing.py. Raised again the same day
+        # (fix round 1) for the corpora.toml/metric_direction.toml merge
+        # path (_toml_target/_merge_toml_files) that keeps the tool's "new
+        # files only" rule for results/configs while merging the two TOML
+        # files the CLI already merges, refusing only on a DIFFERING value
+        # with no --force escape hatch.
         "routing.py": 285,
-        "provenance.py": 350,
+        "provenance.py": 400,
     }
     # Anything not named above still gets a cap. `if name not in limits:
     # continue` meant a module was exempt until someone remembered to enrol it

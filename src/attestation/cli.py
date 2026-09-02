@@ -740,6 +740,7 @@ def _parse_arms(raw_arms: list[list[str]]) -> dict[str, dict[str, float]]:
         if not group:
             raise ValueError("--arm needs a name and at least one METRIC=VALUE")
         name, *pairs = group
+        record.validate_name(name, label="--arm name")
         if name in arms:
             raise ValueError(f"--arm {name!r} given more than once")
         if not pairs:
@@ -763,14 +764,12 @@ def _parse_record_args(args: argparse.Namespace) -> tuple[dict, dict, dict]:
     argv shape."""
     from attestation import record
 
+    record.validate_name(args.family, label="family")
     arms = _parse_arms(args.arms)
     declared = _parse_kv_pairs(args.directions, label="--direction")
     for metric, direction in declared.items():
         record.validate_metric_name(metric)
-        if direction not in ("lower_is_better", "higher_is_better"):
-            raise ValueError(
-                f"--direction {metric}={direction!r} must be lower_is_better or higher_is_better"
-            )
+        record.validate_direction(metric, direction)
     config = _parse_kv_pairs(args.config, label="--config")
     return arms, declared, config
 
@@ -804,7 +803,7 @@ def _write_toml_files(toml_files: dict[str, str], root: Path, *, force: bool) ->
     for relpath, content in toml_files.items():
         path = _toml_target(relpath, root)
         existing_text = path.read_text() if path.exists() else ""
-        for table, entries in _toml_tables(content):
+        for table, entries in record.toml_tables(content):
             existing_text = record.merge_toml_table(existing_text, table, entries, force=force)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(existing_text)
@@ -889,36 +888,6 @@ def cmd_runs_record(args: argparse.Namespace) -> int:
         print(f"wrote {path}")
 
     return _run_record_scan(args, root) if args.scan else 0
-
-
-def _toml_tables(fresh_content: str) -> list[tuple[str, dict[str, str]]]:
-    """`plan()`'s fresh-file TOML content (already-valid TOML, one or more
-    `[table]\\nkey = "value"` blocks) parsed back into `(table, entries)`
-    pairs `merge_toml_table` can fold into whatever already exists on disk.
-
-    `plan()` builds these strings directly rather than through
-    `merge_toml_table` (there is nothing to merge into yet -- the manifest
-    is what a fresh write would contain), so this is the one place that
-    content is read back as data instead of re-derived, keeping `plan()`
-    itself free of any notion of "what's already on disk".
-    """
-    import tomllib
-
-    doc = tomllib.loads(fresh_content)
-    tables: list[tuple[str, dict[str, str]]] = []
-
-    def _walk(prefix: str, node: dict) -> None:
-        if all(isinstance(v, str) for v in node.values()) and node:
-            tables.append((prefix, dict(node)))
-            return
-        for key, value in node.items():
-            if isinstance(value, dict):
-                _walk(f"{prefix}.{key}" if prefix else key, value)
-
-    for top_key, top_value in doc.items():
-        if isinstance(top_value, dict):
-            _walk(top_key, top_value)
-    return tables
 
 
 @_documented("kg-report")

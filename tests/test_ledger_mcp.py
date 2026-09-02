@@ -216,6 +216,83 @@ def test_record_collision_refuses_before_any_write(record_workspace):
     assert not (record_workspace / "proj" / "configs" / "asr_biglm.yaml").exists()
 
 
+def test_record_confirm_merges_corpora_toml_keeping_foreign_entries(record_workspace):
+    """A pre-existing corpora.toml with an unrelated [corpus.other] entry
+    must survive a confirmed runs.record with corpus= -- gaining the new
+    [corpus.<name>]/[assign.family] entries alongside it, not being
+    refused-on-collision or clobbered the way a per-arm result file is."""
+    corpora = record_workspace / "proj" / "corpora.toml"
+    corpora.write_text('[corpus.other]\nsource = "other-corpus"\n')
+
+    out = mcp_server._runs_record_impl(
+        "asr", _two_arms(), project="proj", corpus="librispeech", confirm=True
+    )
+
+    assert out["ok"] is True
+    text = corpora.read_text()
+    import tomllib
+
+    doc = tomllib.loads(text)
+    assert doc["corpus"]["other"]["source"] == "other-corpus", "foreign entry must survive"
+    assert doc["corpus"]["librispeech"]["source"] == "librispeech"
+    assert doc["assign"]["family"]["asr"] == "librispeech"
+
+
+def test_record_confirm_refuses_a_differing_direction_before_any_write(
+    record_workspace, monkeypatch, tmp_path
+):
+    """A pre-existing metric_direction.toml entry for the SAME metric with a
+    DIFFERENT value must refuse (ToolError naming the key), before any
+    result file is written -- a declaration is a promise, and the tool has
+    no --force to override it."""
+    direction_path = tmp_path / "metric_direction.toml"
+    direction_path.write_text('[metric_direction]\nnovelty_rate = "lower_is_better"\n')
+    monkeypatch.setenv("LEDGER_METRIC_DIRECTION_FILE", str(direction_path))
+
+    arms = [
+        {"name": "run1", "metrics": {"novelty_rate": 0.31}},
+        {"name": "run2", "metrics": {"novelty_rate": 0.44}},
+    ]
+    out = mcp_server._runs_record_impl(
+        "lora",
+        arms,
+        project="proj",
+        directions={"novelty_rate": "higher_is_better"},
+        confirm=True,
+    )
+
+    assert out["ok"] is False
+    assert "novelty_rate" in out["message"]
+    assert out["written"] == []
+    assert not (record_workspace / "proj" / "results" / "lora_run1.json").exists()
+    assert not (record_workspace / "proj" / "results" / "lora_run2.json").exists()
+
+
+def test_record_confirm_is_not_a_refusal_when_the_direction_already_agrees(
+    record_workspace, monkeypatch, tmp_path
+):
+    """The SAME metric declared with the SAME value already on disk is not a
+    conflict -- only a DIFFERING value refuses."""
+    direction_path = tmp_path / "metric_direction.toml"
+    direction_path.write_text('[metric_direction]\nnovelty_rate = "higher_is_better"\n')
+    monkeypatch.setenv("LEDGER_METRIC_DIRECTION_FILE", str(direction_path))
+
+    arms = [
+        {"name": "run1", "metrics": {"novelty_rate": 0.31}},
+        {"name": "run2", "metrics": {"novelty_rate": 0.44}},
+    ]
+    out = mcp_server._runs_record_impl(
+        "lora",
+        arms,
+        project="proj",
+        directions={"novelty_rate": "higher_is_better"},
+        confirm=True,
+    )
+
+    assert out["ok"] is True
+    assert len(out["written"]) == 4  # two results + two configs, no direction-file collision
+
+
 def test_record_undeclared_metric_refuses_with_the_compare_sentence(record_workspace):
     from attestation import ledger
 
@@ -241,6 +318,69 @@ def test_record_undeclared_metric_refuses_even_with_confirm(record_workspace):
     assert out["ok"] is False
     assert "novelty_rate" in out["message"]
     assert out["written"] == []
+
+
+def test_record_refuses_a_family_that_escapes_root(record_workspace):
+    """CRITICAL 2 (final review, round 2): the tool inherits the same
+    path-traversal risk as the CLI -- family/arm names become path
+    segments. Must refuse before any write, never touch outside root."""
+    victim = record_workspace.parent / "victim"
+
+    out = mcp_server._runs_record_impl(
+        "../../victim/asr", _two_arms(), project="proj", confirm=True
+    )
+
+    assert out["ok"] is False
+    assert "family" in out["message"]
+    assert out["written"] == []
+    assert not victim.exists()
+
+
+def test_record_refuses_an_arm_name_with_a_slash(record_workspace):
+    arms = [{"name": "../../victim/pwned", "metrics": {"wer": 0.1}}]
+
+    out = mcp_server._runs_record_impl("asr", arms, project="proj", confirm=True)
+
+    assert out["ok"] is False
+    assert "arm name" in out["message"]
+    assert not (record_workspace.parent / "victim").exists()
+
+
+def test_record_refuses_a_project_that_escapes_root(record_workspace):
+    out = mcp_server._runs_record_impl("asr", _two_arms(), project="../../victim", confirm=True)
+
+    assert out["ok"] is False
+    assert "project" in out["message"]
+    assert not (record_workspace.parent / "victim").exists()
+
+
+def test_record_accepts_a_plain_family_arm_and_project(record_workspace):
+    out = mcp_server._runs_record_impl(
+        "asr-v2", [{"name": "run.1", "metrics": {"wer": 0.1}}], project="proj", confirm=True
+    )
+
+    assert out["ok"] is True
+    assert (record_workspace / "proj" / "results" / "asr-v2_run.1.json").exists()
+
+
+def test_record_refuses_an_unvalidated_direction_string(record_workspace):
+    """IMPORTANT 1 (final review, round 2): ledger._compare's rank_key treats
+    anything other than the literal "lower_is_better" as higher-is-better --
+    an unvalidated direction string ranks backwards, silently, and persists.
+    """
+    arms = [
+        {"name": "run1", "metrics": {"novelty_rate": 0.31}},
+        {"name": "run2", "metrics": {"novelty_rate": 0.44}},
+    ]
+
+    out = mcp_server._runs_record_impl(
+        "lora", arms, project="proj", directions={"novelty_rate": "BOGUS"}, confirm=True
+    )
+
+    assert out["ok"] is False
+    assert "BOGUS" in out["message"]
+    assert out["written"] == []
+    assert not (record_workspace / "proj" / "results" / "lora_run1.json").exists()
 
 
 def test_record_has_no_force_argument():

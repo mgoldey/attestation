@@ -313,6 +313,70 @@ def _arm_metrics(arms: list) -> dict[str, dict[str, float]]:
     return out
 
 
+def _refuse_differing_declared_directions(declared: dict[str, str], known: dict[str, str]) -> None:
+    """Raise `ToolError` if `declared` disagrees with `known` for any metric.
+
+    A DIFFERING already-declared direction is a conflict `plan()` itself
+    cannot see: `plan()` omits `metric_direction.toml` from the manifest
+    entirely once a metric is already in `known_directions` -- correctly,
+    since there is nothing NEW to write -- but that means a caller who
+    declares `higher_is_better` for a metric the file already has as
+    `lower_is_better` would otherwise sail through with no manifest entry to
+    conflict-check, silently ranking on the FILE's stale direction instead
+    of refusing. Checked directly against `known`, before `plan()` ever
+    runs -- the same "differing value refuses" rule `merge_toml_table`
+    enforces for `corpora.toml`, applied to the one declaration `plan()`'s
+    own redundancy elision can hide. `known` already includes both the
+    built-in table and the file on disk (`ledger.metric_directions()`), and
+    an IDENTICAL existing value is not a conflict -- only a differing one.
+    """
+    conflicting = {
+        metric: (known[metric], value)
+        for metric, value in declared.items()
+        if metric in known and known[metric] != value
+    }
+    if not conflicting:
+        return
+    detail = ", ".join(f"{m}: {old!r} -> {new!r}" for m, (old, new) in conflicting.items())
+    raise ToolError(
+        "refusing to overwrite an existing [metric_direction] entry without"
+        f" --force (CLI-only; this tool has no override): {detail}"
+    )
+
+
+def _validate_record_names(
+    family: str,
+    arm_metrics: dict[str, dict[str, float]],
+    project: str | None,
+    declared: dict[str, str],
+) -> None:
+    """Raise `ToolError` for any unsafe `family`/arm name/`project`, or any
+    `declared` direction that is not one of the two the ledger ranks by.
+
+    `family` and an arm's name both become PATH SEGMENTS
+    (`record.plan` -> `results/<family>_<arm>.json`), and `project` names the
+    subdirectory `_record_target` writes under -- an unvalidated `../../x`
+    in any of the three walks a write clean out of the workspace `--root`
+    (equivalently `root`) is supposed to confine it to. Checked here, before
+    `record.plan` ever builds a manifest, using the SAME `record.validate_
+    name`/`record.validate_direction` the CLI's `_parse_record_args` uses,
+    so both callers refuse identically rather than the tool trusting an
+    agent caller more than the CLI trusts a human one -- the opposite of
+    what the spec's write-safety rules intend, since the tool has no
+    `--force` a mistake could even be undone with.
+    """
+    try:
+        record.validate_name(family, label="family")
+        if project is not None:
+            record.validate_name(project, label="project")
+        for name in arm_metrics:
+            record.validate_name(name, label="arm name")
+        for metric, direction in declared.items():
+            record.validate_direction(metric, direction)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+
 @tool(empty={"written": [], "manifest": {}, "compare": None}, needs_db=False, label="runs_record")
 def _record(
     family: str,
@@ -330,6 +394,7 @@ def _record(
 
     arm_metrics = _arm_metrics(arms)
     declared = directions or {}
+    _validate_record_names(family, arm_metrics, project, declared)
     known = ledger.metric_directions()
     missing = record.undeclared(arm_metrics, {**known, **declared})
     if missing:
@@ -337,6 +402,7 @@ def _record(
         # an agent that hits this and one that hits a bare runs.compare(...)
         # learn the identical remedy rather than two phrasings of one rule.
         raise ToolError("\n".join(ledger.unknown_direction_message(m) for m in missing))
+    _refuse_differing_declared_directions(declared, known)
 
     manifest = record.plan(
         family,
@@ -352,16 +418,73 @@ def _record(
     return _record_confirm(target, project, family, manifest)
 
 
+def _toml_target(relpath: str, write_root):
+    """Where one manifest TOML entry actually gets written -- mirrors
+    `cli.py`'s private `_toml_target`, duplicated rather than imported since
+    mcp/ may not import a private name from a non-mcp module (see `tests/
+    test_architecture.py::test_no_mcp_module_imports_a_private_domain_name`).
+    `metric_direction.toml` is NOT root-relative: the ledger always reads it
+    from `ledger.metric_direction_path()`, same as `runs.compare`'s own
+    refusal names -- writing it under the project instead would declare a
+    direction `compare` never looks at. `corpora.toml` is the one genuinely
+    root-relative merge target (root here is the PROJECT directory, matching
+    `record.plan`'s root-relative paths)."""
+    if relpath == "metric_direction.toml":
+        return ledger.metric_direction_path()
+    return write_root / relpath
+
+
+def _merge_toml_files(toml_files: dict[str, str], write_root) -> dict:
+    """Every manifest TOML entry, merged (never overwritten -- no `force`
+    here) into whatever text already exists at its real target, computed
+    entirely in memory: `record.merge_toml_table` raises `ValueError` on a
+    differing value before this returns anything, so a caller can refuse
+    before ANY disk write, the same "refuse before writing" guarantee
+    `record.write` gives the per-arm files. Returns `{path: merged_text}`,
+    not yet written."""
+    merged: dict = {}
+    for relpath, content in toml_files.items():
+        target_path = _toml_target(relpath, write_root)
+        existing_text = target_path.read_text() if target_path.exists() else ""
+        for table, entries in record.toml_tables(content):
+            existing_text = record.merge_toml_table(existing_text, table, entries, force=False)
+        merged[target_path] = existing_text
+    return merged
+
+
 def _record_confirm(target, project: str | None, family: str, manifest: dict[str, str]) -> dict:
-    """The `confirm=true` half of `_record`: write the manifest (new files
-    only -- no `force`, unlike the CLI, see the tool's own docstring), then
-    scan the project back in and compare the family, so one call takes a run
-    from numbers to a ranked ledger entry."""
+    """The `confirm=true` half of `_record`: write the manifest, then scan
+    the project back in and compare the family, so one call takes a run from
+    numbers to a ranked ledger entry.
+
+    Per-arm results/configs are new-file-only (no `force`, unlike the CLI --
+    see the tool's own docstring). `corpora.toml`/`metric_direction.toml`
+    merge instead, keeping every foreign entry, and refuse (ToolError) only
+    on a DIFFERING value for a key already declared -- the same rule the CLI
+    enforces via `record.merge_toml_table`, just with no `--force` escape
+    hatch here. Both refusals are computed and raised BEFORE any write: the
+    TOML merge is pure text (see `_merge_toml_files`), so a differing
+    direction is caught with nothing yet on disk, exactly like a collision on
+    a per-arm result file.
+    """
     write_root = _record_target(target, project)
+    per_arm = {k: v for k, v in manifest.items() if not k.endswith(".toml")}
+    toml_files = {k: v for k, v in manifest.items() if k.endswith(".toml")}
+
     try:
-        written = record.write(write_root, manifest, force=False)
+        merged_toml = _merge_toml_files(toml_files, write_root)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+
+    try:
+        written = record.write(write_root, per_arm, force=False)
     except FileExistsError as exc:
         raise ToolError(str(exc)) from exc
+
+    for toml_path, text in merged_toml.items():
+        toml_path.parent.mkdir(parents=True, exist_ok=True)
+        toml_path.write_text(text)
+        written.append(toml_path)
 
     with open_db() as conn:
         ledger.scan(conn, target, project=project)

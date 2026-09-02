@@ -15,12 +15,14 @@ model touched, `record_eval.score_one` exercised against known inputs. It
 never writes under `evals/prompts/` -- that is the live acceptance's job.
 
 `--command` is the CLI's own acceptance test: it builds each scenario's
-`attest runs record --dry-run` argument list (`scenario_argv`), runs the
-real installed console script as a subprocess, parses the manifest it
-prints, and scores it with the same `record_eval.score_one` -- no model, no
-hand-written answer, fully deterministic. This proves the command a user
-actually types produces a ledger-readable manifest, not just that
-`record.plan()` can.
+`attest runs record --dry-run` argument list (`scenario_argv`), runs
+`attestation.cli.main()` as a subprocess of THIS interpreter (`sys.
+executable -c ...`, not a bare `attest` PATH lookup -- pinned so a stray
+same-named binary elsewhere on a caller's PATH cannot be scored by
+accident), parses the manifest it prints, and scores it with the same
+`record_eval.score_one` -- no model, no hand-written answer, fully
+deterministic. This proves the command a user actually types produces a
+ledger-readable manifest, not just that `record.plan()` can.
 
 `--live` sends the `attestation-record` SKILL.md body (read by path, not
 imported -- the other half of this spec's work may not exist yet) plus each
@@ -238,13 +240,31 @@ def run_command(cases: list[dict]) -> tuple[EvalResult, list[dict]]:
     manifest, and score it with the identical `record_eval.score_one` the
     other two modes use. No model is involved and the result is
     deterministic, so this is what CI (and the coordinator's own gate) runs.
+
+    Invoked as `sys.executable -c "import attestation.cli; ...main()"`
+    rather than a bare `["attest", *argv]` PATH lookup (the final review's
+    Important 4): a bare `attest` scores whatever `attest` happens to
+    resolve to first on the CALLER's PATH, silently, which is not
+    necessarily this checkout's own code -- the same pattern
+    `tests/test_architecture.py`'s import-cost timing already uses to pin
+    the CLI to THIS interpreter's installed `attestation` package.
     """
     per_case: dict[str, float] = {}
     runs: dict[str, list[dict]] = {}
     samples: list[dict] = []
     for case in cases:
         argv = scenario_argv(case)
-        proc = subprocess.run(["attest", *argv], capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; import attestation.cli; sys.exit(attestation.cli.main())",
+                *argv,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         expect_fail = case.get("expect_fail", False)
         if proc.returncode != 0:
             ok = expect_fail

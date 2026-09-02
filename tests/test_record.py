@@ -269,8 +269,8 @@ def test_merge_toml_table_handles_a_dotted_nested_table():
 
 def test_merge_toml_table_merges_two_dotted_tables_in_the_same_file():
     """`corpora.toml` needs `[corpus.<name>]` and `[assign.family]` merged
-    in sequence into the same growing text -- the shape `cli.py`'s
-    `_toml_tables` walk actually does."""
+    in sequence into the same growing text -- the shape `toml_tables`'s
+    walk actually does."""
     out = record.merge_toml_table("", "corpus.librispeech", {"source": "librispeech"}, force=False)
     out = record.merge_toml_table(out, "assign.family", {"asr": "librispeech"}, force=False)
 
@@ -279,6 +279,65 @@ def test_merge_toml_table_merges_two_dotted_tables_in_the_same_file():
     doc = tomllib.loads(out)
     assert doc["corpus"]["librispeech"]["source"] == "librispeech"
     assert doc["assign"]["family"]["asr"] == "librispeech"
+
+
+def test_merge_toml_table_force_does_not_rewrite_a_foreign_tables_same_named_key():
+    """CRITICAL 1 (final review, round 2): a foreign table declaring the
+    same KEY NAME earlier in the file must be left byte-identical when
+    --force is used to update a DIFFERENT table's entry for that key.
+
+    The reviewer's exact reproduction: `[assign.run]` has its own `source =`
+    line before `[corpus.librispeech]`'s. A table-blind text substitution
+    (the old `_replace_existing_keys`, matching the first `^source = ...$`
+    anywhere in the file) rewrites the FOREIGN `[assign.run]` entry and
+    leaves the intended `[corpus.librispeech]` entry stale -- silently,
+    exit 0. Merging on parsed TOML (not text) must update only the table
+    actually named.
+    """
+    existing = (
+        '[assign.run]\nsource = "run-level-keepme"\n\n[corpus.librispeech]\nsource = "old-source"\n'
+    )
+
+    out = record.merge_toml_table(
+        existing, "corpus.librispeech", {"source": "new-source"}, force=True
+    )
+
+    import tomllib
+
+    doc = tomllib.loads(out)
+    assert doc["assign"]["run"]["source"] == "run-level-keepme", "foreign entry must survive"
+    assert doc["corpus"]["librispeech"]["source"] == "new-source", "the intended entry must update"
+
+
+def test_merge_toml_table_preserves_a_comment_line():
+    existing = (
+        '# a hand-written note about this file\n[metric_direction]\nwer = "lower_is_better"\n'
+    )
+
+    out = record.merge_toml_table(
+        existing, "metric_direction", {"accuracy": "higher_is_better"}, force=False
+    )
+
+    assert "# a hand-written note about this file" in out
+    import tomllib
+
+    doc = tomllib.loads(out)
+    assert doc["metric_direction"]["wer"] == "lower_is_better"
+    assert doc["metric_direction"]["accuracy"] == "higher_is_better"
+
+
+def test_merge_toml_table_preserves_untouched_table_ordering():
+    existing = '[corpus.a]\nsource = "a"\n\n[corpus.b]\nsource = "b"\n\n[corpus.c]\nsource = "c"\n'
+
+    out = record.merge_toml_table(existing, "corpus.b", {"config": "clean"}, force=False)
+
+    import tomllib
+
+    doc = tomllib.loads(out)
+    assert list(doc["corpus"]) == ["a", "b", "c"], "table order must survive an unrelated merge"
+    assert doc["corpus"]["b"]["config"] == "clean"
+    assert doc["corpus"]["a"]["source"] == "a"
+    assert doc["corpus"]["c"]["source"] == "c"
 
 
 # ---------------------------------------------------------------------------
