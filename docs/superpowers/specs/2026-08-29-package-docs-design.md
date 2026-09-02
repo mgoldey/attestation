@@ -236,3 +236,12 @@ in `7bc20cf` by moving `conn = connection()` below the docstring in both
 functions — the same commit that added the ratchet, so the ratchet never
 saw the bug. Recorded here because a docstring rewrite that reorders
 statements is exactly the kind of change a diff reviewer skims past.
+
+**Deployment, 2026-09-01.** Turned on by instruction ("make docs via github"):
+`.github/workflows/docs.yml` runs the same `mkdocs build --strict` as the
+`docs site` CI job and deploys the result to GitHub Pages from `main`;
+Pages was switched to the Actions build type with
+`gh api -X POST repos/mgoldey/attestation/pages -f build_type=workflow`. The
+account's user-pages custom domain means the project site is served at
+`http://matthew.thegoldeys.com/attestation/` (HTTPS is not enforced on that
+domain today), which `site_url` now states.

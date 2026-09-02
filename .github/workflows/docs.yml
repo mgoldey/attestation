@@ -1,0 +1,50 @@
+# Deploys the docs site to GitHub Pages from main. The build is the same
+# command the `docs site` job in ci.yml runs (`mkdocs build --strict`), so
+# a page that would fail CI never deploys; this workflow only adds the
+# Pages upload and deploy steps behind it. Pages must be set to deploy from
+# GitHub Actions in the repository settings (done once with
+# `gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow`).
+name: docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Sync dependencies (with the docs group)
+        run: uv sync --all-extras --dev --group docs
+      - name: mkdocs build --strict
+        run: uv run --group docs mkdocs build --strict
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

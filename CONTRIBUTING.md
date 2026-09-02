@@ -193,7 +193,9 @@ test named is the one that will tell you.
   `docs/site/specs.md` are rendered by `scripts/`; a test asserts each
   equals a fresh render. `mkdocs.yml`'s comment block says which page comes
   from where; `uv run --group docs mkdocs build --strict` checks every
-  cross-reference before you push.
+  cross-reference before you push. The site deploys to GitHub Pages from
+  `main` (`.github/workflows/docs.yml`, the same strict build) at
+  <http://matthew.thegoldeys.com/attestation/>.
 
 ## Local setup, in full
 

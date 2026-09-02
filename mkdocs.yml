@@ -4,6 +4,7 @@ site_description: >-
   claims, a reading knowledge graph, symbolic derivations, and a personalized
   science feed.
 repo_url: https://github.com/mgoldey/attestation
+site_url: http://matthew.thegoldeys.com/attestation/
 docs_dir: docs
 strict: true
 

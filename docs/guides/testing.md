@@ -34,6 +34,11 @@ Four jobs run on every push and pull request (`.github/workflows/ci.yml`):
   installed (the `gates` job does not install it), and uploads the built
   site as an artifact.
 
+A fifth workflow, `docs` (`.github/workflows/docs.yml`), runs only on a
+push to `main`: the same strict build, then a deploy to GitHub Pages at
+<http://matthew.thegoldeys.com/attestation/>. A page that would fail the
+`docs` CI job never deploys, because both run the same command.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for what each local gate exists
 to catch and the "Where things live" map of which test guards which
 directory.
