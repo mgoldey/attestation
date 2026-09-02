@@ -316,25 +316,20 @@ def _arm_metrics(arms: list) -> dict[str, dict[str, float]]:
 def _refuse_differing_declared_directions(declared: dict[str, str], known: dict[str, str]) -> None:
     """Raise `ToolError` if `declared` disagrees with `known` for any metric.
 
-    A DIFFERING already-declared direction is a conflict `plan()` itself
-    cannot see: `plan()` omits `metric_direction.toml` from the manifest
-    entirely once a metric is already in `known_directions` -- correctly,
-    since there is nothing NEW to write -- but that means a caller who
-    declares `higher_is_better` for a metric the file already has as
-    `lower_is_better` would otherwise sail through with no manifest entry to
-    conflict-check, silently ranking on the FILE's stale direction instead
-    of refusing. Checked directly against `known`, before `plan()` ever
-    runs -- the same "differing value refuses" rule `merge_toml_table`
-    enforces for `corpora.toml`, applied to the one declaration `plan()`'s
-    own redundancy elision can hide. `known` already includes both the
-    built-in table and the file on disk (`ledger.metric_directions()`), and
-    an IDENTICAL existing value is not a conflict -- only a differing one.
+    A DIFFERING already-declared direction (round 3 review: including a
+    contradiction with the BUILT-IN table, not only a prior file entry --
+    `--direction wer=higher_is_better` used to succeed silently, rc=0,
+    against `wer`'s built-in `lower_is_better`) is a conflict `plan()`
+    itself cannot see: `plan()` omits `metric_direction.toml` from the
+    manifest entirely once a metric is already in `known_directions` --
+    correctly, since there is nothing NEW to write -- but that means a
+    caller who declares a contradicting direction would otherwise sail
+    through with no manifest entry to conflict-check, silently ranking on
+    the STALE direction instead of refusing. `record.differing_directions`
+    is the one shared check (this module and `cli.cmd_runs_record` both
+    call it): checked directly against `known`, before `plan()` ever runs.
     """
-    conflicting = {
-        metric: (known[metric], value)
-        for metric, value in declared.items()
-        if metric in known and known[metric] != value
-    }
+    conflicting = record.differing_directions(declared, known)
     if not conflicting:
         return
     detail = ", ".join(f"{m}: {old!r} -> {new!r}" for m, (old, new) in conflicting.items())

@@ -117,6 +117,48 @@ def test_undeclared_deduplicates_and_sorts():
     assert record.undeclared(arms, {}) == ["a_metric", "z_metric"]
 
 
+def test_differing_directions_names_a_builtin_contradiction():
+    """Round 3 review: --direction wer=higher_is_better succeeded silently
+    (rc=0) because plan() elides an already-known metric from the manifest
+    entirely, so nothing ever checked the declared value against the
+    BUILT-IN table -- not just a prior file declaration. `differing_
+    directions` is the one shared check, called by both the CLI and the
+    tool, checked directly against `known` (built-in + file), before
+    `plan()` runs at all."""
+    known = {"wer": "lower_is_better"}
+    declared = {"wer": "higher_is_better"}
+
+    conflicts = record.differing_directions(declared, known)
+
+    assert conflicts == {"wer": ("lower_is_better", "higher_is_better")}
+
+
+def test_differing_directions_is_empty_for_a_redundant_matching_declaration():
+    known = {"wer": "lower_is_better"}
+    declared = {"wer": "lower_is_better"}
+
+    assert record.differing_directions(declared, known) == {}
+
+
+def test_differing_directions_ignores_a_genuinely_new_metric():
+    known = {"wer": "lower_is_better"}
+    declared = {"novelty_rate": "higher_is_better"}
+
+    assert record.differing_directions(declared, known) == {}
+
+
+def test_differing_directions_names_every_conflict_not_just_the_first():
+    known = {"wer": "lower_is_better", "accuracy": "higher_is_better"}
+    declared = {"wer": "higher_is_better", "accuracy": "lower_is_better"}
+
+    conflicts = record.differing_directions(declared, known)
+
+    assert conflicts == {
+        "wer": ("lower_is_better", "higher_is_better"),
+        "accuracy": ("higher_is_better", "lower_is_better"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # validation: non-numeric value, bad metric name
 # ---------------------------------------------------------------------------

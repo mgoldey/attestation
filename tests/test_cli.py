@@ -292,6 +292,91 @@ def test_runs_record_writes_and_refuses_to_overwrite_without_force(tmp_path, cap
     assert rc == 0
 
 
+def test_runs_record_refuses_a_builtin_direction_contradiction(tmp_path, capsys):
+    """Round 3 review: `--direction wer=higher_is_better` contradicts the
+    BUILT-IN `lower_is_better` and used to succeed silently (rc=0, no files
+    checked) because `plan()` elides an already-known metric from the
+    manifest entirely. Must refuse with a one-line message and rc=1, with
+    NO files written at all."""
+    rc = main(
+        [
+            "runs",
+            "record",
+            "asr",
+            "--root",
+            str(tmp_path),
+            "--arm",
+            "base",
+            "wer=0.12",
+            "--direction",
+            "wer=higher_is_better",
+        ]
+    )
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "wer" in err
+    assert "lower_is_better" in err and "higher_is_better" in err
+    assert not (tmp_path / "results").exists()
+    assert not (tmp_path / "configs").exists()
+
+
+def test_runs_record_force_overrides_a_builtin_direction_and_says_so(tmp_path, capsys, monkeypatch):
+    """`--force` proceeds and the record shows the override -- both the
+    printed message and the written `metric_direction.toml`."""
+    monkeypatch.setenv("LEDGER_METRIC_DIRECTION_FILE", str(tmp_path / "metric_direction.toml"))
+    rc = main(
+        [
+            "runs",
+            "record",
+            "asr",
+            "--root",
+            str(tmp_path),
+            "--arm",
+            "base",
+            "wer=0.12",
+            "--direction",
+            "wer=higher_is_better",
+            "--force",
+        ]
+    )
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "overrode" in out
+    assert "lower_is_better" in out and "higher_is_better" in out
+    assert (tmp_path / "results" / "asr_base.json").exists()
+
+    import tomllib
+
+    from attestation import ledger
+
+    doc = tomllib.loads(ledger.metric_direction_path().read_text())
+    assert doc["metric_direction"]["wer"] == "higher_is_better"
+
+
+def test_runs_record_redundant_matching_direction_is_not_a_refusal(tmp_path, capsys):
+    """A `--direction` that matches the built-in/known value exactly is
+    redundant, never a conflict -- on either the CLI or the tool path."""
+    rc = main(
+        [
+            "runs",
+            "record",
+            "asr",
+            "--root",
+            str(tmp_path),
+            "--arm",
+            "base",
+            "wer=0.12",
+            "--direction",
+            "wer=lower_is_better",
+        ]
+    )
+
+    assert rc == 0
+    assert (tmp_path / "results" / "asr_base.json").exists()
+
+
 def test_runs_record_refuses_a_conflicting_corpus_assignment_without_a_traceback(tmp_path, capsys):
     """IMPORTANT D (round 2 review): `record.merge_toml_table`'s `ValueError`
     on a differing existing value escaped `cmd_runs_record` as an UNCAUGHT

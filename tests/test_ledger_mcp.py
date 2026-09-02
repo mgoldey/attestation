@@ -268,6 +268,26 @@ def test_record_confirm_refuses_a_differing_direction_before_any_write(
     assert not (record_workspace / "proj" / "results" / "lora_run2.json").exists()
 
 
+def test_record_confirm_refuses_a_builtin_direction_contradiction(record_workspace):
+    """Round 3 review: the tool must still refuse a declared direction that
+    contradicts the BUILT-IN table (`wer` is `lower_is_better`), the same
+    class of conflict `test_record_confirm_refuses_a_differing_direction_
+    before_any_write` covers for a FILE-based declaration -- both are
+    checked by the same `record.differing_directions` now."""
+    out = mcp_server._runs_record_impl(
+        "asr",
+        _two_arms(),
+        project="proj",
+        directions={"wer": "higher_is_better"},
+        confirm=True,
+    )
+
+    assert out["ok"] is False
+    assert "wer" in out["message"]
+    assert out["written"] == []
+    assert not (record_workspace / "proj" / "results" / "asr_baseline.json").exists()
+
+
 def test_record_confirm_is_not_a_refusal_when_the_direction_already_agrees(
     record_workspace, monkeypatch, tmp_path
 ):

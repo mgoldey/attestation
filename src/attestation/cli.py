@@ -776,6 +776,47 @@ def _parse_record_args(args: argparse.Namespace) -> tuple[dict, dict, dict]:
     return arms, declared, config
 
 
+def _direction_conflict_detail(overridden: dict[str, tuple[str, str]]) -> str:
+    """`[metric_direction] entr{y,ies}: m: 'old' -> 'new', ...` -- the one
+    phrase both the refusal message and the --force override message build
+    from, so the two read as the same finding stated two ways rather than
+    two hand-written phrasings that could drift."""
+    detail = ", ".join(f"{m}: {old!r} -> {new!r}" for m, (old, new) in overridden.items())
+    plural = "y" if len(overridden) == 1 else "ies"
+    return f"[metric_direction] entr{plural}: {detail}"
+
+
+def _direction_conflict_message(overridden: dict[str, tuple[str, str]]) -> str:
+    """The refusal `cmd_runs_record` prints when `--force` is not given."""
+    detail = _direction_conflict_detail(overridden)
+    return f"refusing to overwrite an existing {detail} without --force"
+
+
+def _apply_direction_override(manifest: dict[str, str], declared: dict[str, str]) -> dict[str, str]:
+    """`manifest` with its `metric_direction.toml` entry replaced by one
+    covering ALL of `declared` (redundant, non-conflicting declarations
+    included) -- `plan()`'s own redundancy elision only sees "already
+    known", not "already known and a --force override was requested", so
+    `plan()` alone would leave `--force` with nothing new to write."""
+    return {**manifest, "metric_direction.toml": _metric_direction_toml_fragment(declared)}
+
+
+def _metric_direction_toml_fragment(overridden: dict[str, str]) -> str:
+    """`[metric_direction]\nkey = "value"\n...` for exactly the metrics
+    `--force` is overriding -- the same fresh-file shape `plan()` builds,
+    parseable by `record.toml_tables()` and mergeable by `record.
+    merge_toml_table(force=True)`, which is what actually overwrites the
+    file's differing value; this only supplies the entry `plan()` itself
+    omits (its own redundancy elision only sees "already known", not
+    "already known and a --force override was requested"), so `--force`
+    has something to write at all.
+    """
+    lines = ["[metric_direction]"]
+    for metric, direction in overridden.items():
+        lines.append(f'{metric} = "{direction}"')
+    return "\n".join(lines) + "\n"
+
+
 def _toml_target(relpath: str, root: Path):
     """Where one manifest TOML entry actually gets written.
     `metric_direction.toml` is NOT root-relative: the ledger always reads it
@@ -854,6 +895,75 @@ def _run_record_scan(args: argparse.Namespace, root: Path) -> int:
     return 0
 
 
+def _plan_with_direction_check(
+    family: str,
+    arms: dict[str, dict[str, float]],
+    corpus: str | None,
+    declared: dict[str, str],
+    config: dict[str, str],
+    known: dict[str, str],
+    *,
+    force: bool,
+) -> tuple[dict[str, str], dict[str, tuple[str, str]], str | None]:
+    """`(manifest, overridden, error)` -- `cmd_runs_record`'s own direction-
+    conflict branch, split out to keep that function's complexity down to
+    ORCHESTRATION (parse, refuse, build, write, scan). `error` is set
+    (manifest empty) exactly when a differing declared direction was found
+    and `force` is false; otherwise `manifest` is `record.plan`'s result,
+    with `_apply_direction_override` layered on top when `force` did
+    override something.
+    """
+    from attestation import record
+
+    overridden = record.differing_directions(declared, known)
+    if overridden and not force:
+        return {}, overridden, _direction_conflict_message(overridden)
+
+    manifest = record.plan(
+        family,
+        arms,
+        corpus=corpus,
+        directions=declared,
+        config=config,
+        known_directions=known,
+    )
+    if overridden:
+        manifest = _apply_direction_override(manifest, declared)
+    return manifest, overridden, None
+
+
+def _write_record_manifest(
+    manifest: dict[str, str], root: Path, *, force: bool
+) -> tuple[list[Path], str | None]:
+    """`(written, error)` -- writes `manifest` under `root` and returns the
+    paths written, or an empty list and an error message on refusal.
+
+    TOML merges are computed BEFORE any write -- `record.write`'s own
+    per-arm collision check already refuses before writing anything; a
+    differing TOML entry (no `--force`) must refuse just as cleanly, not
+    crash with a raw traceback after the per-arm files already landed on
+    disk (found in review: assigning family `asr` to a second corpus
+    without `--force` wrote the second call's results/config files, THEN
+    raised an uncaught `ValueError`).
+    """
+    from attestation import record
+
+    per_arm = {k: v for k, v in manifest.items() if not k.endswith(".toml")}
+    toml_files = {k: v for k, v in manifest.items() if k.endswith(".toml")}
+
+    try:
+        merged_toml = _merge_toml_files(toml_files, root, force=force)
+    except ValueError as exc:
+        return [], str(exc)
+
+    try:
+        written = record.write(root, per_arm, force=force)
+    except FileExistsError as exc:
+        return [], str(exc)
+    written += _write_merged_toml(merged_toml)
+    return written, None
+
+
 @_documented("runs.record")
 def cmd_runs_record(args: argparse.Namespace) -> int:
     """
@@ -884,42 +994,27 @@ def cmd_runs_record(args: argparse.Namespace) -> int:
         # the identical remedy rather than two phrasings of the same rule.
         return fail("\n".join(ledger.unknown_direction_message(m) for m in missing))
 
-    manifest = record.plan(
-        args.family,
-        arms,
-        corpus=args.corpus,
-        directions=declared,
-        config=config,
-        known_directions=known,
+    manifest, overridden, error = _plan_with_direction_check(
+        args.family, arms, args.corpus, declared, config, known, force=args.force
     )
+    if error:
+        return fail(error)
 
     if args.dry_run:
         print(json.dumps({"files": manifest}, indent=2, sort_keys=True))
         return 0
 
-    per_arm = {k: v for k, v in manifest.items() if not k.endswith(".toml")}
-    toml_files = {k: v for k, v in manifest.items() if k.endswith(".toml")}
-
-    # TOML merges are computed BEFORE any write -- record.write's own
-    # per-arm collision check already refuses before writing anything; a
-    # differing TOML entry (no --force) must refuse just as cleanly, not
-    # crash with a raw traceback after the per-arm files already landed on
-    # disk (found in review: assigning family `asr` to a second corpus
-    # without --force wrote the second call's results/config files, THEN
-    # raised an uncaught ValueError).
-    try:
-        merged_toml = _merge_toml_files(toml_files, root, force=args.force)
-    except ValueError as exc:
-        return fail(str(exc))
-
-    try:
-        written = record.write(root, per_arm, force=args.force)
-    except FileExistsError as exc:
-        return fail(str(exc))
-    written += _write_merged_toml(merged_toml)
+    written, error = _write_record_manifest(manifest, root, force=args.force)
+    if error:
+        return fail(error)
 
     for path in written:
         print(f"wrote {path}")
+    if overridden:
+        # --force was used to change an already-declared direction: say so
+        # explicitly, not just "wrote metric_direction.toml" -- a silent
+        # override is the exact failure this whole check exists to prevent.
+        print(f"overrode existing {_direction_conflict_detail(overridden)} (--force)")
 
     return _run_record_scan(args, root) if args.scan else 0
 

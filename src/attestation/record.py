@@ -138,6 +138,33 @@ def undeclared(arms: dict[str, dict[str, float]], known_directions: dict[str, st
     return sorted(name for name in names if name not in known_directions)
 
 
+def differing_directions(
+    declared: dict[str, str], known: dict[str, str]
+) -> dict[str, tuple[str, str]]:
+    """`{metric: (known_value, declared_value)}` for every metric in
+    `declared` whose value disagrees with `known`'s -- an identical value
+    is not a conflict, only a differing one is, and a metric `known` has
+    no entry for at all is not a conflict either (it is simply new).
+
+    The one shared check both `attest runs record` and `runs.record` must
+    make BEFORE `plan()` runs: `plan()` itself omits `metric_direction.toml`
+    from the manifest entirely once a metric is already in
+    `known_directions` -- correctly, since there is nothing NEW to write --
+    but that means a caller declaring `higher_is_better` for a metric
+    `known` already has as `lower_is_better` (built-in OR a prior file
+    entry) gets no manifest entry to conflict-check at all, and silently
+    ranks on the STALE direction it already had. `known` is normally
+    `ledger.metric_directions()` -- built-in table merged with the TOML
+    file -- so this catches a contradiction with EITHER source, not only a
+    prior explicit declaration.
+    """
+    return {
+        metric: (known[metric], value)
+        for metric, value in declared.items()
+        if metric in known and known[metric] != value
+    }
+
+
 def _config_yaml(
     *, family: str, arm: str, corpus: str | None, recorded_at: str, config: dict[str, str] | None
 ) -> str:
