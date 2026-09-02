@@ -934,6 +934,20 @@ def _pick_metric(counts: dict[str, int], directions: dict[str, str], family: str
     return sorted(known.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
 
 
+def unknown_direction_message(metric: str) -> str:
+    """The refusal `compare()` raises for one named metric with no declared
+    direction -- factored out so `attest runs record` can print the exact
+    same sentence rather than a paraphrase when a `--direction` was owed and
+    not given. `_no_direction_message` is the sibling refusal for "nothing in
+    this family has a known direction"; this one is for a single named metric.
+    """
+    return (
+        f"unknown direction for metric {metric!r} -- refusing to rank."
+        f" Declare it under [metric_direction] in {_metric_direction_path()};"
+        " guessing would rank ablation arms backwards."
+    )
+
+
 def _compare(
     runs: list[dict],
     values_by_run: dict[int, list[dict]],
@@ -948,11 +962,7 @@ def _compare(
     """
     direction = _metric_direction(metric, directions)
     if direction is None:
-        raise ValueError(
-            f"unknown direction for metric {metric!r} -- refusing to rank."
-            f" Declare it under [metric_direction] in {_metric_direction_path()};"
-            " guessing would rank ablation arms backwards."
-        )
+        raise ValueError(unknown_direction_message(metric))
 
     arms = []
     for r in runs:

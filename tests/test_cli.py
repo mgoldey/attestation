@@ -1,3 +1,4 @@
+import json
 from argparse import Namespace
 
 import pytest
@@ -172,6 +173,7 @@ def test_parser_runs_subcommands():
         (["runs", "list", "--project", "p"], "list"),
         (["runs", "compare", "fam", "--metric", "wer"], "compare"),
         (["runs", "show", "p", "n"], "show"),
+        (["runs", "record", "fam", "--arm", "a", "m=1"], "record"),
     ):
         args = parser.parse_args(argv)
         assert args.command == "runs"
@@ -201,6 +203,93 @@ def test_runs_list_before_scan_directs_the_user(tmp_path, capsys):
     # stderr, not stdout: this is a failure, and the test below pins that
     # convention. The message itself is what this test is about.
     assert "scan" in capsys.readouterr().err
+
+
+def test_runs_record_dry_run_prints_the_manifest_and_creates_nothing(tmp_path, capsys):
+    rc = main(
+        [
+            "runs",
+            "record",
+            "asr",
+            "--root",
+            str(tmp_path),
+            "--arm",
+            "baseline",
+            "wer=0.12",
+            "--arm",
+            "biglm",
+            "wer=0.08",
+            "--dry-run",
+        ]
+    )
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    manifest = json.loads(out)
+    assert set(manifest["files"]) == {
+        "results/asr_baseline.json",
+        "configs/asr_baseline.yaml",
+        "results/asr_biglm.json",
+        "configs/asr_biglm.yaml",
+    }
+    # --dry-run must write NOTHING: not the results/configs files it just
+    # printed, and no directory created to hold them either. (tmp_path
+    # itself carries the hermetic-env fixture's own pyproject.toml marker,
+    # so this checks the record command's targets specifically rather than
+    # an empty directory.)
+    assert not (tmp_path / "results").exists()
+    assert not (tmp_path / "configs").exists()
+    assert not (tmp_path / "corpora.toml").exists()
+
+
+def test_runs_record_refuses_an_undeclared_metric_and_writes_nothing(tmp_path, capsys):
+    rc = main(
+        [
+            "runs",
+            "record",
+            "opt",
+            "--root",
+            str(tmp_path),
+            "--arm",
+            "adam",
+            "regret_bound=0.03",
+        ]
+    )
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "regret_bound" in err
+    assert "refusing to rank" in err
+    assert not (tmp_path / "results").exists()
+    assert not (tmp_path / "configs").exists()
+
+
+def test_runs_record_writes_and_refuses_to_overwrite_without_force(tmp_path, capsys):
+    argv = [
+        "runs",
+        "record",
+        "asr",
+        "--root",
+        str(tmp_path),
+        "--arm",
+        "baseline",
+        "wer=0.12",
+    ]
+
+    rc = main(argv)
+    assert rc == 0
+    capsys.readouterr()
+    assert (tmp_path / "results" / "asr_baseline.json").read_text() == '{\n  "wer": 0.12\n}\n'
+
+    rc = main(argv)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "asr_baseline" in err
+    # unchanged: the refused second call must not have clobbered the first
+    assert (tmp_path / "results" / "asr_baseline.json").read_text() == '{\n  "wer": 0.12\n}\n'
+
+    rc = main([*argv, "--force"])
+    assert rc == 0
 
 
 def test_parser_claims_subcommand():

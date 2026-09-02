@@ -299,6 +299,42 @@ def test_annotate_description_does_not_lead_with_citation():
     assert not description.lower().startswith("citation")
 
 
+# Measured 2026-09-01 (docs/superpowers/specs/2026-09-01-attest-record-
+# design.md): the skill's own five-step manual procedure was followed at
+# >=0.91 on every file-shape step and 0/15 on the direction-declaration step
+# -- the one step needing an inference rather than a cue. `attest runs
+# record` writes the files deterministically instead, so the skill's body
+# should lead with that command and shrink now that the manual steps are a
+# fallback rather than the only path.
+RECORD_SKILL_SIZE_CEILING = 8543  # the size before this rewrite; must strictly fall
+
+
+def test_record_skill_leads_with_the_command():
+    """`attest runs record` must appear in the skill's FIRST `##` section
+    (immediately after the H1 intro) -- proving the skill leads with the one
+    command rather than burying it under the fallback manual-steps section
+    further down. Bounded by the SECOND `##` heading, not the first: the
+    first `##` is the boundary between the intro and this leading section,
+    not the end of the content being checked.
+    """
+    text = _skill_md("attestation-record")
+    first = text.index("\n## ")
+    second = text.index("\n## ", first + 1)
+    leading_section = text[first:second]
+    assert "attest runs record" in leading_section, (
+        "attestation-record/SKILL.md does not mention `attest runs record` in its"
+        " first ## section -- the command must lead, not follow"
+    )
+
+
+def test_record_skill_shrank_below_its_pre_command_size():
+    size = len(_skill_md("attestation-record").encode("utf-8"))
+    assert size < RECORD_SKILL_SIZE_CEILING, (
+        f"attestation-record/SKILL.md is {size} bytes, not below the"
+        f" {RECORD_SKILL_SIZE_CEILING}-byte pre-command size"
+    )
+
+
 def test_record_config_naming_rule_matches_the_real_pairing(tmp_path):
     """attestation-record's right/wrong config-naming example, fed to the
     REAL pairing logic (`ledger_adapters.generic.discover`), must pair and

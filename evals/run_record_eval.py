@@ -3,6 +3,7 @@
 running an experiment, checked by the REAL ledger reader.
 
     uv run python evals/run_record_eval.py --offline          # scorer only, no model
+    uv run python evals/run_record_eval.py --command          # real `attest runs record` CLI
     uv run python evals/run_record_eval.py --live             # acceptance run
     uv run python evals/run_record_eval.py --live --repeat 5  # 5 samples/scenario
 
@@ -12,6 +13,14 @@ manifest, plus one deliberately-bad case marked `expect_fail: true` (proves
 the scorer can fail things, not just pass them). This is what CI runs: no
 model touched, `record_eval.score_one` exercised against known inputs. It
 never writes under `evals/prompts/` -- that is the live acceptance's job.
+
+`--command` is the CLI's own acceptance test: it builds each scenario's
+`attest runs record --dry-run` argument list (`scenario_argv`), runs the
+real installed console script as a subprocess, parses the manifest it
+prints, and scores it with the same `record_eval.score_one` -- no model, no
+hand-written answer, fully deterministic. This proves the command a user
+actually types produces a ledger-readable manifest, not just that
+`record.plan()` can.
 
 `--live` sends the `attestation-record` SKILL.md body (read by path, not
 imported -- the other half of this spec's work may not exist yet) plus each
@@ -41,6 +50,7 @@ import argparse
 import datetime
 import json
 import pathlib
+import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
@@ -184,6 +194,98 @@ def run_live(cases: list[dict], model: str | None, repeat: int) -> tuple[EvalRes
     return EvalResult(per_case=per_case, runs=runs, latencies=[]), samples
 
 
+def _bare_arm_name(family: str, arm: str) -> str:
+    """`scenario["arms"]` entries are already full stems (`asr_baseline`,
+    matching `record_cases.json`'s own hand-written `results/asr_baseline.
+    json` answers), but `attest runs record FAMILY --arm NAME ...` writes
+    `results/<FAMILY>_<NAME>.json` -- it prefixes NAME with FAMILY itself.
+    Passing the full stem as NAME would double the prefix
+    (`results/asr_asr_baseline.json`), which `family_of` groups under
+    `asr-asr`, not the scenario's own `asr`. Stripping the family's leading
+    `family_` here is what makes `--command` type the same NAME a human
+    reading the skill's `kdsweep_t4`-style example would type.
+    """
+    prefix = f"{family}_"
+    return arm[len(prefix) :] if arm.startswith(prefix) else arm
+
+
+def scenario_argv(scenario: dict) -> list[str]:
+    """The `attest runs record --dry-run` argument list for `scenario`,
+    mirroring exactly what a human following the skill's now-first example
+    would type: one `--arm NAME METRIC=VALUE` per arm, `--corpus`, and a
+    `--direction METRIC=...` whenever the scenario's metric is not already
+    in `ledger.METRIC_DIRECTION` (`built_in: false`) -- using the direction
+    the scenario itself carries as ground truth. The one committed
+    `expect_fail` scenario (`bait-missing-direction`) is `built_in: false`
+    but deliberately gets NO `--direction`: it exists to prove the command
+    itself refuses when a declaration is owed and withheld, so building its
+    argv as if the caller had remembered would test nothing.
+    """
+    argv = ["runs", "record", scenario["family"], "--dry-run", "--corpus", scenario["corpus"]]
+    for arm in scenario["arms"]:
+        name = _bare_arm_name(scenario["family"], arm)
+        pair = f"{scenario['metric']}={scenario['values'][arm]}"
+        argv += ["--arm", name, pair]
+    if not scenario.get("built_in", True) and not scenario.get("expect_fail"):
+        argv += ["--direction", f"{scenario['metric']}={scenario['direction']}"]
+    return argv
+
+
+def run_command(cases: list[dict]) -> tuple[EvalResult, list[dict]]:
+    """Score the REAL `attest runs record --dry-run` command, not the Python
+    function underneath it -- the acceptance the spec names: build each
+    scenario's argv, run the installed console script, parse the printed
+    manifest, and score it with the identical `record_eval.score_one` the
+    other two modes use. No model is involved and the result is
+    deterministic, so this is what CI (and the coordinator's own gate) runs.
+    """
+    per_case: dict[str, float] = {}
+    runs: dict[str, list[dict]] = {}
+    samples: list[dict] = []
+    for case in cases:
+        argv = scenario_argv(case)
+        proc = subprocess.run(["attest", *argv], capture_output=True, text=True, check=False)
+        expect_fail = case.get("expect_fail", False)
+        if proc.returncode != 0:
+            ok = expect_fail
+            result = {
+                "errors": [proc.stderr.strip() or proc.stdout.strip()],
+                "pass": False,
+                "checks": {},
+            }
+            answer = None
+        else:
+            try:
+                answer = json.loads(proc.stdout)["files"]
+            except (json.JSONDecodeError, KeyError) as exc:
+                ok = False
+                result = {
+                    "errors": [f"could not parse --dry-run output: {exc}"],
+                    "pass": False,
+                    "checks": {},
+                }
+                answer = None
+            else:
+                result = score_one(case, {"files": answer})
+                ok = (not result["pass"]) if expect_fail else result["pass"]
+        per_case[case["id"]] = 1.0 if ok else 0.0
+        runs[case["id"]] = [result]
+        flag = "ok " if ok else "FAIL"
+        print(f"  {flag} {case['id']:28s} ok={ok} expect_fail={expect_fail}")
+        for err in result.get("errors", []):
+            print(f"         - {err}")
+        samples.append(
+            {
+                "id": case["id"],
+                "sample": 0,
+                "answer": answer,
+                "checks": result.get("checks", {}),
+                "errors": result.get("errors", []),
+            }
+        )
+    return EvalResult(per_case=per_case, runs=runs, latencies=[]), samples
+
+
 def write_record(result: EvalResult, model: str, n_scenarios: int, repeat: int) -> pathlib.Path:
     today = datetime.date.today().isoformat()
     path = PROMPTS_DIR / f"write-side-{today}.md"
@@ -234,19 +336,25 @@ def main() -> int:
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--offline", action="store_true", help="score committed fixtures, no model")
     mode.add_argument("--live", action="store_true", help="score a live model (acceptance run)")
+    mode.add_argument(
+        "--command", action="store_true", help="score the real `attest runs record` CLI"
+    )
     ap.add_argument("--model", default=None)
     ap.add_argument("--repeat", type=int, default=1, help="samples per scenario, --live only")
     args = ap.parse_args()
 
     cases = load_cases()
-    print(f"record eval: {len(cases)} case(s), mode={'live' if args.live else 'offline'}\n")
+    mode_name = "live" if args.live else "command" if args.command else "offline"
+    print(f"record eval: {len(cases)} case(s), mode={mode_name}\n")
 
     if args.offline:
         result, _samples = run_offline(cases)
+    elif args.command:
+        result, _samples = run_command(cases)
     else:
         result, samples = run_live(cases, args.model, args.repeat)
 
-    n_trials = len(cases) if args.offline else len(cases) * args.repeat
+    n_trials = len(cases) if not args.live else len(cases) * args.repeat
     print(f"\n  overall  {result.overall:.3f}  ({n_trials} trial(s))")
 
     if args.live:

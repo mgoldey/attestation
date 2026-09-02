@@ -3,6 +3,7 @@
 import argparse
 import contextlib
 import inspect
+import json
 import os
 import sys
 from importlib.metadata import version
@@ -92,6 +93,7 @@ HELP: dict[str, str] = {
     "runs.list": "runs in the ledger",
     "runs.compare": "rank the arms of an experiment family",
     "runs.show": "one run in full",
+    "runs.record": "write per-arm result/config files the ledger can scan",
     "bootstrap-persona": "write pseudo-clicks for a persona",
     "install": "idempotent setup + --check doctor mode",
 }
@@ -222,6 +224,42 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("project")
     rp.add_argument("name")
     rp.set_defaults(func=cmd_runs_show)
+
+    rp = runs_sub.add_parser("record", help=HELP["runs.record"])
+    rp.add_argument("family")
+    rp.add_argument(
+        "--arm",
+        dest="arms",
+        action="append",
+        nargs="+",
+        metavar=("NAME", "METRIC=VALUE"),
+        required=True,
+        help="one arm: its name, then one or more METRIC=VALUE pairs",
+    )
+    rp.add_argument("--corpus", help="corpus name; declares it in corpora.toml")
+    rp.add_argument(
+        "--direction",
+        dest="directions",
+        action="append",
+        default=[],
+        metavar="METRIC=lower_is_better|higher_is_better",
+        help="declare a metric not already in ledger.METRIC_DIRECTION",
+    )
+    rp.add_argument(
+        "--config",
+        dest="config",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="extra provenance pair written into each arm's config file",
+    )
+    rp.add_argument("--root", default=".", help="where to write files (default: cwd)")
+    rp.add_argument("--dry-run", action="store_true", help="print the manifest, write nothing")
+    rp.add_argument("--force", action="store_true", help="overwrite existing files/entries")
+    rp.add_argument(
+        "--scan", action="store_true", help="also run `runs scan` and print `runs compare`"
+    )
+    rp.set_defaults(func=cmd_runs_record)
 
     sp = sub.add_parser("bootstrap-persona", help=HELP["bootstrap-persona"])
     add_db(sp)
@@ -603,6 +641,40 @@ def cmd_runs_list(args: argparse.Namespace) -> int:
         return 0
 
 
+def _print_compare(result: dict) -> None:
+    """Render one `ledger.compare()` result the way `runs compare` always
+    has -- factored out so `runs record --scan` can print the identical
+    table for the family it just wrote, rather than a second rendering that
+    could drift from this one."""
+    header = f"{result['family']} — ranked by {result['metric']} ({result['direction']})"
+    # Naming the shared corpus says the comparison was *checked*, not
+    # assumed -- the reader cannot tell those apart otherwise.
+    if result.get("corpus"):
+        header += f", all arms on {result['corpus']}"
+    print(header + "\n")
+    print(f"  {'arm':44s} {result['metric']:>10s} {'n':>6s}  {'step':>8s}  source")
+    print(f"  {'-' * 44} {'-' * 10} {'-' * 6}  {'-' * 8}  {'-' * 6}")
+    for arm in result["arms"]:
+        # every row carries where the number came from: an auditor's
+        # first question is "from which file?"
+        src = arm.get("source_path") or ""
+        if arm["value"] is None:
+            print(f"  {arm['name']:44s} {'(none)':>10s} {'':>6s}  {'':>8s}  {src}")
+            continue
+        n = str(arm["n"]) if arm.get("n") is not None else "?"
+        step = str(arm["step"]) if arm["step"] is not None else ""
+        print(f"  {arm['name']:44s} {arm['value']:>10.4f} {n:>6s}  {step:>8s}  {src}")
+
+    print(f"\nwinner: {result['winner']}")
+    for caveat in result.get("caveats", []):
+        print(f"  caveat: {caveat}")
+    if result["without_metric"]:
+        print(
+            f"  {len(result['without_metric'])} arm(s) have no {result['metric']}:"
+            f" {', '.join(result['without_metric'])}"
+        )
+
+
 @_documented("runs.compare")
 def cmd_runs_compare(args: argparse.Namespace) -> int:
     from attestation import ledger
@@ -616,33 +688,7 @@ def cmd_runs_compare(args: argparse.Namespace) -> int:
             # say which families exist rather than dead-ending: `compare
             # <project>` is the intuitive first guess and is not a family
             return fail(result.get("message") or f"no runs in family {args.family!r}")
-        header = f"{result['family']} — ranked by {result['metric']} ({result['direction']})"
-        # Naming the shared corpus says the comparison was *checked*, not
-        # assumed -- the reader cannot tell those apart otherwise.
-        if result.get("corpus"):
-            header += f", all arms on {result['corpus']}"
-        print(header + "\n")
-        print(f"  {'arm':44s} {result['metric']:>10s} {'n':>6s}  {'step':>8s}  source")
-        print(f"  {'-' * 44} {'-' * 10} {'-' * 6}  {'-' * 8}  {'-' * 6}")
-        for arm in result["arms"]:
-            # every row carries where the number came from: an auditor's
-            # first question is "from which file?"
-            src = arm.get("source_path") or ""
-            if arm["value"] is None:
-                print(f"  {arm['name']:44s} {'(none)':>10s} {'':>6s}  {'':>8s}  {src}")
-                continue
-            n = str(arm["n"]) if arm.get("n") is not None else "?"
-            step = str(arm["step"]) if arm["step"] is not None else ""
-            print(f"  {arm['name']:44s} {arm['value']:>10.4f} {n:>6s}  {step:>8s}  {src}")
-
-        print(f"\nwinner: {result['winner']}")
-        for caveat in result.get("caveats", []):
-            print(f"  caveat: {caveat}")
-        if result["without_metric"]:
-            print(
-                f"  {len(result['without_metric'])} arm(s) have no {result['metric']}:"
-                f" {', '.join(result['without_metric'])}"
-            )
+        _print_compare(result)
         return 0
 
 
@@ -664,6 +710,215 @@ def cmd_runs_show(args: argparse.Namespace) -> int:
             split = f" split={m['split']}" if m["split"] else ""
             print(f"  {m['metric']:24s} {m['value']:>14.6f}{step}{split}")
         return 0
+
+
+def _parse_kv_pairs(pairs: list[str], *, label: str) -> dict[str, str]:
+    """`["k=v", ...]` to `{k: v}`, raising `ValueError` naming `label` on a
+    pair missing `=` -- shared by `--direction` and `--config`, both of
+    which take the same `KEY=VALUE` shape on the command line."""
+    out: dict[str, str] = {}
+    for pair in pairs:
+        key, sep, value = pair.partition("=")
+        if not sep:
+            raise ValueError(f"{label} {pair!r} must be KEY=VALUE")
+        out[key] = value
+    return out
+
+
+def _parse_arms(raw_arms: list[list[str]]) -> dict[str, dict[str, float]]:
+    """argparse's `--arm` groups (`[[name, "m1=v1", "m2=v2"], ...]`) to
+    `{name: {metric: value}}`, validating each metric name and parsing each
+    value to `float` -- the one place `runs record` turns argv into the
+    plain data `record.plan`/`record.undeclared` take. Raises `ValueError`
+    (metric name, value, or duplicate arm) rather than returning a partial
+    result, so the caller can refuse before writing anything.
+    """
+    from attestation import record
+
+    arms: dict[str, dict[str, float]] = {}
+    for group in raw_arms:
+        if not group:
+            raise ValueError("--arm needs a name and at least one METRIC=VALUE")
+        name, *pairs = group
+        if name in arms:
+            raise ValueError(f"--arm {name!r} given more than once")
+        if not pairs:
+            raise ValueError(f"--arm {name!r} has no METRIC=VALUE pairs")
+        metrics: dict[str, float] = {}
+        for pair in pairs:
+            metric, sep, value = pair.partition("=")
+            if not sep:
+                raise ValueError(f"--arm {name!r}: {pair!r} must be METRIC=VALUE")
+            record.validate_metric_name(metric)
+            metrics[metric] = record.parse_metric_value(value)
+        arms[name] = metrics
+    return arms
+
+
+def _parse_record_args(args: argparse.Namespace) -> tuple[dict, dict, dict]:
+    """`(arms, declared_directions, config)` from `args`, or raise
+    `ValueError` naming the first bad `--arm`/`--direction`/`--config`.
+    Split out of `cmd_runs_record` so that function's own branching stays
+    about ORCHESTRATION (parse, refuse, plan, write, scan) rather than
+    argv shape."""
+    from attestation import record
+
+    arms = _parse_arms(args.arms)
+    declared = _parse_kv_pairs(args.directions, label="--direction")
+    for metric, direction in declared.items():
+        record.validate_metric_name(metric)
+        if direction not in ("lower_is_better", "higher_is_better"):
+            raise ValueError(
+                f"--direction {metric}={direction!r} must be lower_is_better or higher_is_better"
+            )
+    config = _parse_kv_pairs(args.config, label="--config")
+    return arms, declared, config
+
+
+def _toml_target(relpath: str, root: Path):
+    """Where one manifest TOML entry actually gets written.
+    `metric_direction.toml` is NOT root-relative: the ledger always reads it
+    from `ledger._metric_direction_path()` (the LEDGER_METRIC_DIRECTION_FILE
+    env var, else ~/.hermes/), same as `runs.compare`'s own refusal names --
+    writing it under `root` instead would declare a direction `compare`
+    never looks at. `corpora.toml` is the one genuinely root-relative merge
+    target the spec names ("corpora.toml at the root")."""
+    from attestation import ledger
+
+    return ledger._metric_direction_path() if relpath == "metric_direction.toml" else root / relpath
+
+
+def _write_toml_files(toml_files: dict[str, str], root: Path, *, force: bool) -> list[Path]:
+    """Merge each manifest TOML entry into whatever already exists at its
+    real target (see `_toml_target`), and return the paths written.
+
+    Each entry holds exactly one declared table's worth of new entries
+    (parsed back out of the fresh-file content `plan()` built):
+    `metric_direction.toml` has one flat `[metric_direction]` table;
+    `corpora.toml` has two, `[corpus.<name>]` and `[assign.family]`, merged
+    in turn so neither clobbers the other.
+    """
+    from attestation import record
+
+    written = []
+    for relpath, content in toml_files.items():
+        path = _toml_target(relpath, root)
+        existing_text = path.read_text() if path.exists() else ""
+        for table, entries in _toml_tables(content):
+            existing_text = record.merge_toml_table(existing_text, table, entries, force=force)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(existing_text)
+        written.append(path)
+    return written
+
+
+def _run_record_scan(args: argparse.Namespace, root: Path) -> int:
+    """The `--scan` half of `runs record`: fold `runs scan` + `runs compare`
+    for the just-written family into the same invocation."""
+    from attestation import ledger
+
+    with open_db(args.db) as conn:
+        scan_out = ledger.scan(conn, root, project=None)
+        if scan_out.get("message"):
+            print(scan_out["message"])
+            return 1
+        for name, count in sorted(scan_out["scanned"].items()):
+            print(f"  {name:28s} {count} run(s)")
+        try:
+            result = ledger.compare(conn, args.family)
+        except ValueError as exc:
+            return fail(str(exc))
+        if result["arms"]:
+            _print_compare(result)
+    return 0
+
+
+@_documented("runs.record")
+def cmd_runs_record(args: argparse.Namespace) -> int:
+    """
+    New files only (results/configs refuse on an existing target unless
+    `--force`); the direction and corpus files always merge, keeping every
+    foreign entry, refusing to clobber a differing value without `--force`.
+    `--dry-run` prints the manifest -- `{"files": {relpath: content}}` -- and
+    writes nothing; `evals/run_record_eval.py --command` drives this same
+    path to score the planner deterministically, no model involved.
+    """
+    from attestation import ledger, record
+
+    # Resolved to an absolute path: `--scan` derives the project name from
+    # `root.name`, and an unresolved "." has none -- every recorded run
+    # would land under project "" instead of the directory's real name.
+    root = Path(args.root).expanduser().resolve()
+
+    try:
+        arms, declared, config = _parse_record_args(args)
+    except ValueError as exc:
+        return fail(str(exc))
+
+    known = ledger.metric_directions()
+    missing = record.undeclared(arms, {**known, **declared})
+    if missing:
+        # Same sentence `runs.compare` prints for one named metric, so an
+        # agent following this refusal and one following `compare`'s learn
+        # the identical remedy rather than two phrasings of the same rule.
+        return fail("\n".join(ledger.unknown_direction_message(m) for m in missing))
+
+    manifest = record.plan(
+        args.family,
+        arms,
+        corpus=args.corpus,
+        directions=declared,
+        config=config,
+        known_directions=known,
+    )
+
+    if args.dry_run:
+        print(json.dumps({"files": manifest}, indent=2, sort_keys=True))
+        return 0
+
+    per_arm = {k: v for k, v in manifest.items() if not k.endswith(".toml")}
+    toml_files = {k: v for k, v in manifest.items() if k.endswith(".toml")}
+
+    try:
+        written = record.write(root, per_arm, force=args.force)
+    except FileExistsError as exc:
+        return fail(str(exc))
+    written += _write_toml_files(toml_files, root, force=args.force)
+
+    for path in written:
+        print(f"wrote {path}")
+
+    return _run_record_scan(args, root) if args.scan else 0
+
+
+def _toml_tables(fresh_content: str) -> list[tuple[str, dict[str, str]]]:
+    """`plan()`'s fresh-file TOML content (already-valid TOML, one or more
+    `[table]\\nkey = "value"` blocks) parsed back into `(table, entries)`
+    pairs `merge_toml_table` can fold into whatever already exists on disk.
+
+    `plan()` builds these strings directly rather than through
+    `merge_toml_table` (there is nothing to merge into yet -- the manifest
+    is what a fresh write would contain), so this is the one place that
+    content is read back as data instead of re-derived, keeping `plan()`
+    itself free of any notion of "what's already on disk".
+    """
+    import tomllib
+
+    doc = tomllib.loads(fresh_content)
+    tables: list[tuple[str, dict[str, str]]] = []
+
+    def _walk(prefix: str, node: dict) -> None:
+        if all(isinstance(v, str) for v in node.values()) and node:
+            tables.append((prefix, dict(node)))
+            return
+        for key, value in node.items():
+            if isinstance(value, dict):
+                _walk(f"{prefix}.{key}" if prefix else key, value)
+
+    for top_key, top_value in doc.items():
+        if isinstance(top_value, dict):
+            _walk(top_key, top_value)
+    return tables
 
 
 @_documented("kg-report")

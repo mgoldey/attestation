@@ -194,6 +194,34 @@ options:
   -h, --help  show this help message and exit
 ```
 
+## attest runs record
+
+```
+usage: attest runs record [-h] --arm NAME [METRIC=VALUE ...] [--corpus CORPUS]
+                          [--direction METRIC=lower_is_better|higher_is_better]
+                          [--config KEY=VALUE] [--root ROOT] [--dry-run]
+                          [--force] [--scan]
+                          family
+
+positional arguments:
+  family
+
+options:
+  -h, --help            show this help message and exit
+  --arm NAME [METRIC=VALUE ...]
+                        one arm: its name, then one or more METRIC=VALUE pairs
+  --corpus CORPUS       corpus name; declares it in corpora.toml
+  --direction METRIC=lower_is_better|higher_is_better
+                        declare a metric not already in
+                        ledger.METRIC_DIRECTION
+  --config KEY=VALUE    extra provenance pair written into each arm's config
+                        file
+  --root ROOT           where to write files (default: cwd)
+  --dry-run             print the manifest, write nothing
+  --force               overwrite existing files/entries
+  --scan                also run `runs scan` and print `runs compare`
+```
+
 ## attest bootstrap-persona
 
 ```

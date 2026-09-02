@@ -11,6 +11,20 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- `attest runs record FAMILY --arm NAME METRIC=VALUE...` (`2026-09-01`)
+  writes the results/config JSON+YAML pair, `corpora.toml`, and
+  `metric_direction.toml` entries a run needs deterministically, refusing
+  before writing anything if a target already exists (`--force` to
+  overwrite) or if a metric's ranking direction is undeclared (the same
+  refusal sentence `runs.compare` prints) — replacing a five-step manual
+  procedure whose declaration step small local models followed 0/15 of the
+  time, against ≥0.91 on every file-shape step. `--dry-run` prints the
+  `{"files": {relpath: content}}` manifest the command's own acceptance eval
+  (`evals/run_record_eval.py --command`, 11/11) scores against the real
+  ledger reader; `--scan` folds `runs scan` + `runs compare` into the same
+  invocation. `src/attestation/record.py` is pure `plan()`/`undeclared()`
+  plus one `write()` I/O function and a `merge_toml_table()` helper, with no
+  `sqlite3` or `attestation.llm` import.
 - The bundled skill split five ways (`2026-09-01`, landed from an Aug-30
   worktree): `attestation-setup` plus one skill per agent surface replace
   the single 39.5 KB `research-provenance` monolith; `attest install` now

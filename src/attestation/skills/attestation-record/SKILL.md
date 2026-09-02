@@ -15,10 +15,38 @@ metadata:
 
 Use this right after finishing an experiment, evaluation, or sweep -- via
 `claude-code`, `codex`, a harness like `evaluating-llms-harness`, or your
-own script. `runs.scan` only sees artifacts that already follow a
-convention; nothing here launches or instruments anything. If you did not
-run the thing yourself, or want to check a manuscript rather than record a
-run, hand off to `attestation-provenance` or `attestation-annotate`.
+own script. If you did not run the thing yourself, or want to check a
+manuscript rather than record a run, hand off to `attestation-provenance`
+or `attestation-annotate`.
+
+## Run one command
+
+If a shell is available, `attest runs record` writes the files below for
+you and refuses rather than guesses a direction it doesn't know:
+
+```bash
+attest runs record asr --arm baseline wer=0.12 --arm biglm wer=0.08 \
+  --corpus librispeech --scan
+```
+
+writes `results/asr_baseline.json` / `results/asr_biglm.json`, a matching
+`configs/*.yaml` per arm (provenance only), and a `corpora.toml` entry for
+`librispeech` -- then `--scan` reads them straight back and prints
+`runs.compare`. A metric not already built in (see the list below) needs a
+declaration, e.g. for a family scored on `novelty_rate`:
+
+```bash
+attest runs record lora --arm rank4 novelty_rate=0.31 --arm rank8 novelty_rate=0.44 \
+  --direction novelty_rate=higher_is_better --scan
+```
+
+Leaving out `--direction` for an unfamiliar metric is a **refusal**, not a
+guess, with the same sentence `runs.compare` itself would print. `--dry-run`
+prints the manifest (`{"files": {relpath: content}}`) without writing
+anything; every target must be a NEW file or the whole call refuses, unless
+`--force`. No shell? Follow "The shape a scan will read" below and write
+the files yourself -- everything the command does for you is stated there
+as a rule.
 
 ## When NOT to use this
 
@@ -27,81 +55,42 @@ run, hand off to `attestation-provenance` or `attestation-annotate`.
   `attestation-annotate` (writing the claim comments).
 - Instrumenting a run with W&B, MLflow, Sacred, DVC or Hydra tracking as it
   runs: the ledger reads five tracker layouts after the fact (see below);
-  it does not add discipline to the run itself. Recording alongside one of
-  those trackers means leaving the files it already writes where they are.
+  it does not add discipline to the run itself.
 
 ## The shape a scan will read
 
-`runs.scan(root, project, confirm)` walks a workspace, treats each
-subdirectory as a project, and reads a fixed list of directory names:
-`results`, `logs`, `outputs`, `metrics`, `eval`, `evals`, `benchmarks`,
-`reports` (`ledger_adapters/generic.py`'s `RESULT_DIRS` -- not `data/`,
-not the project root). Inside one of those, write **one JSON file per
-arm** holding final scalar values:
-
-```
-results/kdsweep_t4.json      {"wer": 0.061, "epochs": 40}
-results/kdsweep_t8.json      {"wer": 0.057, "epochs": 40}
-```
-
-Final values only, never a training curve: a diverged run whose last value
-is `nan` should record nothing for that metric rather than a mid-run number.
-JSONL, CSV, YAML and TOML are also read, and a JSON object of objects (e.g.
-one file holding several named splits) is flattened with the outer key kept
-as `split`. A mapping with dozens of numeric-looking keys is refused as a
-metrics record on purpose (a vocabulary or lookup table, not a result) --
-keep a results file to a handful of named quantities.
-
-**One JSON per arm, nothing else numeric in that directory.** `runs.scan`
-reads *every* recognised file as a run, so it cannot tell a summary or
-aggregate apart from an arm -- two arms means exactly two files, no
-`best.json`/`summary.json`/`all_results.json` alongside them, even if one
-only restates numbers the per-arm files already have (a real scan on two
-arms plus one summary file read three runs, not two). Want a summary?
-Write it *outside* the recognised directories -- project root or `notes/`,
-anywhere `runs.scan` does not look.
+`runs.scan(root, project, confirm)` walks a workspace and reads a fixed
+list of directory names: `results`, `logs`, `outputs`, `metrics`, `eval`,
+`evals`, `benchmarks`, `reports` (`ledger_adapters/generic.py`'s
+`RESULT_DIRS`). Inside one, **one JSON file per arm** holding final scalar
+values -- never a training curve, never a `best.json`/`summary.json`
+alongside the per-arm files (a real scan on two arms plus one summary read
+three runs, not two). JSONL, CSV, YAML and TOML are also read.
 
 **Name arms so they share a prefix.** `family_of` groups sibling runs by
-stripping a trailing step/variant token, so `runs.compare` can rank them as
-one sweep:
+stripping a trailing step/variant token:
 
 - Good: `kdsweep_t4.json` / `kdsweep_t8.json` -> family `kdsweep`.
-- Good: `eval_step_18000.json` / `eval_step_22000_cfg2.0.json` -> family
-  `eval` (the step and variant tokens are stripped before grouping).
-- Bad: `run1.json` / `results_final.json` -- no shared, recognisable prefix,
-  so each lands in the ledger ungrouped and `runs.compare` has nothing to
-  rank. If a bare split token (`lr_0.001.json`, `lr_0.01.json`) *is* the
-  whole stem, that token itself becomes the family (`lr`) -- do not add
-  another prefix on top of it.
+- Bad: `run1.json` / `results_final.json` -- no shared prefix, nothing to
+  rank as one sweep. A bare split token (`lr_0.001.json`) becomes its own
+  family (`lr`).
 
-**File the config beside it, never inside it.** A results file states what
-was *measured*; a config states what was *asked for*. Put the run's config
-in `configs/` (or `config/`, `conf/`, `experiments/`), not merged into the
-results JSON -- a hyperparameter recorded as a metric shows up as a
-rankable number (`compare` will try to rank `seq_len` next to `wer` if you
-let it). A one-line comment header at the top of a YAML/TOML config kept
-verbatim by `runs.detail` is often the only place a hypothesis survives.
+**File the config beside it, never inside it**, in `configs/` (or
+`config/`, `conf/`, `experiments/`). **MUST: the config's stem must
+exactly match its result's stem** -- `discover()` pairs them by exact
+stem equality, nothing fuzzier. For `results/asr_baseline.json`:
 
-**MUST: the config's stem must exactly match its result's stem** --
-`discover()` pairs them by exact stem equality, nothing fuzzier. For
-`results/asr_baseline.json`:
+- Right: `configs/asr_baseline.yaml`.
+- Wrong: `configs/asr_baseline_config.yaml` (no `_config` suffix, ever) or
+  one shared `configs/config.yaml` for every arm.
 
-- Right: `configs/asr_baseline.yaml` (stem `asr_baseline`, exact match).
-- Wrong: `configs/asr_baseline_config.yaml` (no `_config`/`_cfg` suffix,
-  ever) or one shared `configs/config.yaml` for every arm (stem `config`
-  matches nothing).
-
-A stem that matches nothing is not folded into that run -- it becomes an
-unevaluated run of its own (same rule as "an arm never evaluated is a
-finding"), so a two-arm sweep with mismatched config names scans as four
-runs, not two.
+A stem that matches nothing becomes an unevaluated run of its own, so a
+two-arm sweep with mismatched config names scans as four runs, not two.
 
 ## Declare unfamiliar metrics before comparing
 
 `runs.compare` **refuses** to rank a metric it does not have a direction
-for, rather than guessing -- ranking WER as if higher were better names the
-worst arm the winner. **Only these are already known** (the live built-in
-table, `ledger.METRIC_DIRECTION`):
+for. **Only these are already known** (`ledger.METRIC_DIRECTION`):
 
 - lower is better: `wer`, `cer`, `loss`, `val_loss`, `ppl`, `perplexity`,
   `nll`, `mae`, `rmse`, `error`, `mse`, `mape`, `fid`, `eer`
@@ -109,53 +98,38 @@ table, `ledger.METRIC_DIRECTION`):
   `precision`, `recall`, `ndcg`, `map`, `mrr`, `bleu`, `rouge`, `iou`,
   `dice`, `psnr`, `ssim`
 
-**Anything else you write -- `novelty_rate`, `hallucination_score`,
-`coherence_index`, a metric your harness invented -- you must declare
-yourself**, before the first `runs.compare` call, in
-`~/.hermes/metric_direction.toml`:
+Anything else -- `novelty_rate`, `hallucination_score`, a metric your
+harness invented -- needs `--direction METRIC=...` (the command) or, by
+hand, an entry in `~/.hermes/metric_direction.toml`:
 
 ```toml
 [metric_direction]
 my_custom_score = "higher_is_better"
 ```
 
-**When in doubt, declare it.** A redundant declaration for an
-already-built-in metric is harmless -- it just repeats the answer
-`runs.compare` already had; a missing one makes `runs.compare` refuse
-outright. There is no case where declaring costs you anything, so if the
-name is not in the two lists above, write the TOML entry rather than
-guessing it "sounds standard enough" to be known. `lower_is_better` and
-`higher_is_better` are the only two valid values.
+When in doubt, declare it: a redundant declaration for an already-built-in
+metric is harmless; a missing one makes `runs.compare` refuse outright.
 
 ## Declare the corpus when it can't be detected
 
 `corpus.detect_in_source()` reads which corpus a run used from the driver
-script's own syntax (an AST read, not a model), so most runs need nothing
-extra. When the script does not make the corpus detectable -- a notebook,
-a shell one-liner, a harness that hides the dataset behind a flag --
-declare it in `corpora.toml` next to the config, in the shape
-`corpus.load_manifest` reads:
+script's own syntax (an AST read, not a model). When the script hides it
+-- a notebook, a shell one-liner, a flag -- declare it in `corpora.toml`:
 
 ```toml
 [corpus.speech-clean-16k]
 source = "librispeech"
 config = "clean"
-seq_len = 16000
 
 [assign.family]
 kdsweep = "speech-clean-16k"
 ```
 
-`[assign.family]` (or `[assign.run]` for a single run) links the corpus to
-the runs it belongs to, so `runs.compare` can guard against ranking arms
-that trained on different data as if they were comparable.
-
 ## Hydra sweeps need one override
 
-Hydra 1.2+ does **not** chdir per job by default (1.1 did). A `--multirun`
-sweep without `hydra.job.chdir=true` has every arm overwrite the same
-top-level results file -- a real four-arm sweep produced one `metrics.json`,
-not four. Always pass it explicitly:
+Hydra 1.2+ does **not** chdir per job by default. A `--multirun` sweep
+without `hydra.job.chdir=true` has every arm overwrite the same top-level
+results file:
 
 ```bash
 python train.py --multirun lr=0.01,0.1,1,10 hydra.job.chdir=true
@@ -163,24 +137,20 @@ python train.py --multirun lr=0.01,0.1,1,10 hydra.job.chdir=true
 
 ## Finish in the same session
 
-Once the files are on disk:
-
 ```
 runs.scan(confirm=true)
 runs.compare(family="kdsweep", metric="wer")
 ```
 
-`confirm=true` is required because a scan replaces each scanned project's
-rows -- run it once you're done writing, not mid-run. `runs.compare` will
-name a caveat (small sample, a top-two within a few percent, arms on
-different corpora) if one applies; relay it, don't drop it. If `compare`
-refuses on the metric's direction, that's the signal to go back to the
-`[metric_direction]` step above -- it is not a bug to work around.
+`runs.compare` names a caveat (small sample, a top-two within a few
+percent, arms on different corpora) if one applies; relay it, don't drop
+it. If `compare` refuses on direction, that's the signal to go back to the
+declare-a-direction step -- not a bug to work around.
 
 ## Instrumented trackers: hand-off, not competition
 
-If the run already produces W&B (offline mode), MLflow, Sacred, DVC or Hydra
-sweep-dir output, leave those files where the tracker writes them --
+If the run already produces W&B (offline mode), MLflow, Sacred, DVC or
+Hydra sweep-dir output, leave those files where the tracker writes them --
 `runs.scan` reads all five layouts already. **It leaves files, it never
-adds instrumentation**: don't wire up a tracker just to satisfy this
-skill; write the plain results/config files above instead.
+adds instrumentation**: write the plain results/config files above
+instead of wiring up a tracker just to satisfy this skill.

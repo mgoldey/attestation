@@ -104,6 +104,33 @@ already on disk. A declaration is never silently replaced by a later scan —
 it fills gaps in what a weaker, artifact-detected value would have said, but
 an existing declared value stands even when a subsequent scan disagrees.
 
+### Recording a run
+
+Writing the files above by hand is a five-step procedure — one JSON per arm,
+a config with the exact same stem, a `[metric_direction]` entry for any
+metric the ledger does not already know, an optional `corpora.toml`, then
+scan and compare — and the direction step is the one a model following it
+forgets: measured 0/15 on small local models, against ≥0.91 on every
+file-shape step. `attest runs record` writes the files deterministically
+instead of asking anyone to remember the rule:
+
+```bash
+attest runs record asr --arm baseline wer=0.12 --arm biglm wer=0.08 \
+  --corpus librispeech --scan
+```
+
+writes `results/asr_baseline.json`, `results/asr_biglm.json`, a matching
+`configs/*.yaml` per arm (provenance only — family, arm, corpus,
+`recorded_at`, never a metric value), and a `corpora.toml` entry for
+`librispeech` — then, because of `--scan`, reads them straight back into the
+ledger and prints `runs compare`. A metric not already in the built-in table
+needs `--direction METRIC=lower_is_better|higher_is_better`; leaving it out
+is a refusal, with the identical sentence `runs compare` itself would print,
+not a guess. `--dry-run` prints the manifest it would write — `{"files":
+{relpath: content}}` — without touching disk, and every target is checked to
+be a **new** file before anything is written; an existing target refuses the
+whole call unless `--force`.
+
 It reads the conventions research repos already use — `results/`, `logs/`,
 `configs/`, `outputs/`, `benchmarks/` holding JSON, JSONL, CSV, YAML or TOML —
 and no project is registered in advance. On the author's machine this found
