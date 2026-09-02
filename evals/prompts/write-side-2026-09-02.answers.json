@@ -1,0 +1,405 @@
+[
+  {
+    "id": "asr-wer-simple",
+    "sample": 0,
+    "answer": "The Automatic Speech Recognition (ASR) model achieved a Word Error Rate of **0.08** on the run `asr_biglm`.\n<!-- claim: asr/asr_biglm metric=wer value=0.08 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "asr-wer-simple",
+    "sample": 1,
+    "answer": "The ASR run achieved a Word Error Rate (WER) of **0.08**.\n<!-- claim: asr/asr_biglm metric=wer value=0.08 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "asr-wer-simple",
+    "sample": 2,
+    "answer": "The ASR run for `asr_biglm` achieved a Word Error Rate (WER) of **0.08**.\n<!-- claim: asr/asr_biglm metric=wer value=0.08 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "cls-two-metrics",
+    "sample": 0,
+    "answer": "The classifier achieved an **accuracy of 0.86** and an **f1 score of 0.79** on the evaluation set.\n<!-- claim: cls/cls_logreg metric=accuracy value=0.86 -->\n<!-- claim: cls/cls_logreg metric=f1 value=0.79 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "cls-two-metrics",
+    "sample": 1,
+    "answer": "The classifier achieved an **accuracy of 0.86** and an **f1 score of 0.79**.",
+    "checks": {
+      "coverage_complete": false,
+      "claims_supported": false,
+      "no_invented_cite": true
+    },
+    "errors": [
+      "2 uncovered decimal(s): 0.86, 0.79",
+      "no claims found in the paragraph"
+    ]
+  },
+  {
+    "id": "cls-two-metrics",
+    "sample": 2,
+    "answer": "The classifier achieved an accuracy of **0.86** and an F1 score of **0.79**.",
+    "checks": {
+      "coverage_complete": false,
+      "claims_supported": false,
+      "no_invented_cite": true
+    },
+    "errors": [
+      "2 uncovered decimal(s): 0.86, 0.79",
+      "no claims found in the paragraph"
+    ]
+  },
+  {
+    "id": "quant-rounded",
+    "sample": 0,
+    "answer": "The quantization process resulted in a mean absolute error (MAE) of **0.0187**.\n<!-- claim: quant/quant_fp16 metric=mae value=0.0187 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "quant-rounded",
+    "sample": 1,
+    "answer": "The quantization error for the `quant_fp16` run is **0.0187**.\n<!-- claim: quant/quant_fp16 metric=mae value=0.0187 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "quant-rounded",
+    "sample": 2,
+    "answer": "The model achieved a Mean Absolute Error (MAE) of **0.0187** during inference on the Quantized Floating Point 16-bit scale.\n<!-- claim: quant/quant_fp16 metric=mae value=0.0187 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "corr-negative",
+    "sample": 0,
+    "answer": "The correlation between the variables was measured to be **-0.41**.\n<!-- claim: corr/corr_run1 metric=rho value=-0.41 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "corr-negative",
+    "sample": 1,
+    "answer": "The correlation analysis yielded a **-0.41 Rho** on the dataset for this run.\n<!-- claim: corr/corr_run1 metric=rho value=-0.41 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "corr-negative",
+    "sample": 2,
+    "answer": "The correlation coefficient $\\\\rho$ for this run is **-0.41**.\n<!-- claim: corr/corr_run1 metric=rho value=-0.41 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "gen-three-metrics",
+    "sample": 0,
+    "answer": "The generated text demonstrates solid performance across key metrics: **BLEU 27.8**, **ROUGE 0.41**, and a coherence index of **0.74**.",
+    "checks": {
+      "coverage_complete": false,
+      "claims_supported": false,
+      "no_invented_cite": true
+    },
+    "errors": [
+      "3 uncovered decimal(s): 27.8, 0.41, 0.74",
+      "no claims found in the paragraph"
+    ]
+  },
+  {
+    "id": "gen-three-metrics",
+    "sample": 1,
+    "answer": "The generated text exhibits strong fluency and high perplexity in the initial phase.\n<!-- claim: gen/gen_beam metric=bleu value=27.8 -->\nThe ROUGE scores indicate reasonable content overlap with the reference.\n<!-- claim: gen/gen_beam metric=rouge value=0.41 -->\nCoherence is generally good, reflecting a solid flow in the generated sequence.\n<!-- claim: gen/gen_beam metric=coherence_index value=0.74 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "gen-three-metrics",
+    "sample": 2,
+    "answer": "The generated text exhibits strong fluency and high quality according to the evaluated metrics.\n<!-- claim: gen/gen_beam metric=bleu value=27.8 -->\n<!-- claim: gen/gen_beam metric=rouge value=0.41 -->\n<!-- claim: gen/gen_beam metric=coherence_index value=0.74 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "fc-mixed-numbers",
+    "sample": 0,
+    "answer": "The forecasting run for `fc_lstm` achieved an RMSE of **3.1**.\n<!-- claim: fc/fc_lstm metric=rmse value=3.1 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "fc-mixed-numbers",
+    "sample": 1,
+    "answer": "The LSTM model achieved an RMSE of **3.1** on this specific run.\n<!-- claim: fc/fc_lstm metric=rmse value=3.1 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "fc-mixed-numbers",
+    "sample": 2,
+    "answer": "The LSTM model achieved an **RMSE of 3.1** on this specific run.\n<!-- claim: fc/fc_lstm metric=rmse value=3.1 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mt-with-split",
+    "sample": 0,
+    "answer": "The model achieved a **31.2 BLEU** score on the training set and **27.8 BLEU** on the test set.\n<!-- claim: mt/mt_beam4 metric=bleu value=31.2 split=train -->\n<!-- claim: mt/mt_beam4 metric=bleu value=27.8 split=test -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mt-with-split",
+    "sample": 1,
+    "answer": "The translation run achieved **27.8 BLEU** on the test split and **31.2 BLEU** on the train split.\n<!-- claim: mt/mt_beam4 metric=bleu value=27.8 split=test -->\n<!-- claim: mt/mt_beam4 metric=bleu value=31.2 split=train -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mt-with-split",
+    "sample": 2,
+    "answer": "The translation performance on the test set yielded **27.8 BLEU**, and on the training set, it reached **31.2 BLEU**.\n<!-- claim: mt/mt_beam4 metric=bleu value=27.8 split=test -->\n<!-- claim: mt/mt_beam4 metric=bleu value=31.2 split=train -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "opt-small-value",
+    "sample": 0,
+    "answer": "The optimizer achieved a regret bound of **0.03**.\n<!-- claim: opt/opt_adam metric=regret_bound value=0.03 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "opt-small-value",
+    "sample": 1,
+    "answer": "The optimization process using the Adam algorithm achieved a regret bound of **0.03**.\n<!-- claim: opt/opt_adam metric=regret_bound value=0.03 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "opt-small-value",
+    "sample": 2,
+    "answer": "The optimization process using the Adam algorithm resulted in a final regret bound of **0.03**.\n<!-- claim: opt/opt_adam metric=regret_bound value=0.03 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mon-drift",
+    "sample": 0,
+    "answer": "The weekly monitoring run for the 'mon' project shows a drift score of **0.11**.\n<!-- claim: mon/mon_weekly metric=drift_score value=0.11 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mon-drift",
+    "sample": 1,
+    "answer": "The weekly monitoring run for the model shows a drift score of **0.11**.\n<!-- claim: mon/mon_weekly metric=drift_score value=0.11 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "mon-drift",
+    "sample": 2,
+    "answer": "The weekly monitoring run for the model exhibited a drift score of **0.11**.\n<!-- claim: mon/mon_weekly metric=drift_score value=0.11 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "sched-halluc",
+    "sample": 0,
+    "answer": "The schedule exhibits a hallucination score of **0.22**.\n<!-- claim: sched/sched_cosine metric=hallucination_score value=0.22 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "sched-halluc",
+    "sample": 1,
+    "answer": "The schedule achieved a hallucination score of **0.22**.\n<!-- claim: sched/sched_cosine metric=hallucination_score value=0.22 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "sched-halluc",
+    "sample": 2,
+    "answer": "The scheduled model exhibits a hallucination score of **0.22**.\n<!-- claim: sched/sched_cosine metric=hallucination_score value=0.22 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "bait-uncovered-decimal",
+    "sample": 0,
+    "answer": "The retriever achieved an F1 score of **0.63** on the dense retrieval task.\n<!-- claim: retr/retr_dense metric=f1 value=0.63 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "bait-uncovered-decimal",
+    "sample": 1,
+    "answer": null,
+    "checks": {},
+    "errors": [
+      "timed out"
+    ]
+  },
+  {
+    "id": "bait-uncovered-decimal",
+    "sample": 2,
+    "answer": "The retriever achieved an **F1 score of 0.63**.\n<!-- claim: retr/retr_dense metric=f1 value=0.63 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "bait-wrong-value-and-cite",
+    "sample": 0,
+    "answer": "The LoRA run achieved a novelty rate of **0.44**.\n<!-- claim: lora/lora_rank8 metric=novelty_rate value=0.44 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "bait-wrong-value-and-cite",
+    "sample": 1,
+    "answer": "The LoRA run achieved a novelty rate of 0.44.\n<!-- claim: lora/lora_rank8 metric=novelty_rate value=0.44 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  },
+  {
+    "id": "bait-wrong-value-and-cite",
+    "sample": 2,
+    "answer": "The LoRA run demonstrates a novelty rate of **0.44**.\n<!-- claim: lora/lora_rank8 metric=novelty_rate value=0.44 -->",
+    "checks": {
+      "coverage_complete": true,
+      "claims_supported": true,
+      "no_invented_cite": true
+    },
+    "errors": []
+  }
+]

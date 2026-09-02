@@ -368,6 +368,18 @@ refuses to proceed without the declaration, which is why the agent path
 (`runs.record` / `attest runs record`) is the one the skill leads with and
 the manifest path is the fallback for a harness that cannot run `attest`.
 
+**Annotate, re-run 2026-09-02 on the unchanged skill (three sample sets
+now).** Same text (`a4c43a3`), same model, same 12 scenarios × 3: **0.889**
+(32/36; coverage 32/35, supported 32/35, no invented `cite=` 35/35;
+record in `evals/prompts/write-side-2026-09-02.md`). The three sets on
+identical input are 0.861, 0.833, 0.889 — a spread of 0.056 with nothing
+changed, which is the noise floor for this eval at n=36, and the number
+to quote is "about 0.86 ± 0.03", not any one run. The one case called
+deterministic on 09-01 (`cls-two-metrics`, byte-identical failures three
+times) passed 1/3 this time: it was not deterministic either, only
+strongly biased. A claim that one prompt edit moved this eval needs to
+clear that spread before it is believed.
+
 ### Routing with seven entries
 
 The same harness as the five-entry measurement, the same 56 questions and
