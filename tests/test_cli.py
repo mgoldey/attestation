@@ -292,6 +292,57 @@ def test_runs_record_writes_and_refuses_to_overwrite_without_force(tmp_path, cap
     assert rc == 0
 
 
+def test_runs_record_refuses_a_conflicting_corpus_assignment_without_a_traceback(tmp_path, capsys):
+    """IMPORTANT D (round 2 review): `record.merge_toml_table`'s `ValueError`
+    on a differing existing value escaped `cmd_runs_record` as an UNCAUGHT
+    exception -- a raw traceback to the user, not a controlled refusal --
+    because `_write_toml_files`'s call, unlike `record.write`'s, was never
+    wrapped. Reproduced live: assigning family `asr` to `librispeech` then
+    to `commonvoice` (no --force) crashed with a bare `ValueError` after
+    already writing the second call's results/config files."""
+    root = tmp_path
+    rc = main(
+        [
+            "runs",
+            "record",
+            "asr",
+            "--root",
+            str(root),
+            "--arm",
+            "base",
+            "wer=0.12",
+            "--corpus",
+            "librispeech",
+        ]
+    )
+    assert rc == 0
+    capsys.readouterr()
+
+    rc = main(
+        [
+            "runs",
+            "record",
+            "asr",
+            "--root",
+            str(root),
+            "--arm",
+            "other",
+            "wer=0.09",
+            "--corpus",
+            "commonvoice",
+        ]
+    )
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "assign" in err or "corpus" in err.lower()
+    # The whole call is all-or-nothing, not just each half: a TOML conflict
+    # must refuse before the SECOND call's own per-arm files land either.
+    assert not (root / "results" / "asr_other.json").exists()
+    assert not (root / "configs" / "asr_other.yaml").exists()
+
+
 def test_runs_record_refuses_a_family_that_escapes_root(tmp_path, capsys):
     """CRITICAL 2 (final review, round 2): `family`/arm names become PATH
     SEGMENTS. `../../victim/asr` must refuse BEFORE any write, not walk out
@@ -353,6 +404,60 @@ def test_runs_record_accepts_a_plain_family_and_arm_name(tmp_path, capsys):
 
     assert rc == 0
     assert (tmp_path / "results" / "asr-v2_run.1.json").exists()
+
+
+def test_runs_record_refuses_a_corpus_that_escapes_root(tmp_path, capsys):
+    """Round 2 review requirement (2): `--corpus` was left out of the
+    path-safety validation entirely -- it becomes a bare TOML table name
+    (`[corpus.<name>]`), so an unsafe value must refuse before any write."""
+    rc = main(
+        [
+            "runs",
+            "record",
+            "asr",
+            "--root",
+            str(tmp_path),
+            "--arm",
+            "base",
+            "wer=0.12",
+            "--corpus",
+            "../../victim",
+        ]
+    )
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "corpus" in err
+    assert not (tmp_path / "results").exists()
+
+
+def test_runs_record_config_value_with_a_quote_is_not_rejected(tmp_path, capsys):
+    """Round 2 review requirement (2): `--config` VALUES are arbitrary
+    provenance strings -- unlike `family`/an arm name/`--corpus`, they never
+    become a path segment or a TOML table name (they land in the per-arm
+    YAML config only, via `record._config_yaml`), so `validate_name`'s
+    path-safety grammar must NOT be applied to them. A value containing a
+    quote must be accepted and written, not refused."""
+    rc = main(
+        [
+            "runs",
+            "record",
+            "asr",
+            "--root",
+            str(tmp_path),
+            "--arm",
+            "base",
+            "wer=0.12",
+            "--corpus",
+            "libri",
+            "--config",
+            'note=say "hi"',
+        ]
+    )
+
+    assert rc == 0
+    config_text = (tmp_path / "configs" / "asr_base.yaml").read_text()
+    assert 'note: say "hi"' in config_text
 
 
 def test_parser_claims_subcommand():

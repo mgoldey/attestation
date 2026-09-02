@@ -324,49 +324,105 @@ def _set_at(doc: dict, table: str, entries: dict[str, str]) -> None:
     current.setdefault(segments[-1], {}).update(entries)
 
 
-def _emit_table(path: tuple[str, ...], values: dict[str, str]) -> str:
-    """One `[dotted.path]` header plus its flat `key = "value"` lines --
-    the only table shape `toml_tables()` ever hands `merge_toml_table` (a
-    dotted path to a table whose own values are all strings), so this is
-    the whole emitter this codebase's two TOML files need."""
-    header = f"[{'.'.join(path)}]"
-    lines = "\n".join(f'{k} = "{v}"' for k, v in values.items())
-    return f"{header}\n{lines}\n"
+# A TOML bare key needs no quoting; anything else (a hyphen alone is fine,
+# but a space, a dot, or an empty string is not a BARE key even though "-"
+# is legal in one) is quoted the same way a string VALUE is.
+_BARE_KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
-def _leaf_tables(doc: dict, prefix: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], dict]]:
-    """Every leaf table in `doc` (a dict whose own values are all strings,
-    the shape `toml_tables()`'s walk produces) as `(dotted_path, values)`,
-    in dict insertion order -- which is FIRST-SEEN order for a table
-    already in `existing_text` (Python dicts preserve insertion order, and
-    `tomllib.loads` inserts in the order tables appear in the source text),
-    so an unrelated table's position in the re-emitted file matches where
-    it already was. A table `_set_at` just created for a brand-new `table`
-    argument is inserted (dict `setdefault`) after every table that was
-    already present, so it is appended at the end -- matching the old
-    text-appending behaviour for a table not yet in the file.
+def _toml_key(key: str) -> str:
+    """`key`, bare if it matches TOML's bare-key grammar, else a quoted
+    basic string -- so `corpus."my-key"` round-trips instead of emitting
+    `my-key = ...` as three separate bare-key tokens (TOML has no bare key
+    containing `-` followed by more identifier characters split by
+    something else, but a hyphenated key like `my-key` IS a legal bare key
+    on its own; this exists for keys tomllib accepts that are NOT covered
+    by that grammar -- a space, a leading digit is fine but an empty string
+    or one containing `.` is not)."""
+    if _BARE_KEY_RE.fullmatch(key):
+        return key
+    return _toml_string(key)
+
+
+def _toml_string(value: str) -> str:
+    r"""`value` as a TOML basic string, quotes and backslashes escaped.
+
+    A TOML basic string's escaping rules for the characters this codebase's
+    two files ever carry (arbitrary `--corpus`/`--config` text -- no
+    control characters, no need for literal/multi-line strings) are
+    IDENTICAL to JSON's: both escape `"` as `\"` and `\` as `\\`, and both
+    require it. `json.dumps` on a plain `str` is exactly that escaping
+    (see its own docs: the JSON string grammar is a subset TOML's basic
+    string grammar was modelled on for this exact reason), so reusing it
+    avoids hand-rolling a second escaper for a language this module already
+    depends on stdlib `json` conventions for nowhere else -- verified by
+    the round-trip property test rather than assumed.
     """
-    out: list[tuple[tuple[str, ...], dict]] = []
-    for key, value in doc.items():
-        path = (*prefix, key)
-        if isinstance(value, dict):
-            if value and all(isinstance(v, str) for v in value.values()):
-                out.append((path, value))
-            else:
-                out.extend(_leaf_tables(value, path))
-    return out
+    return json.dumps(value)
+
+
+def _toml_scalar(value) -> str:
+    """`value` (`str`, `bool`, `int`, or `float` -- the only leaf types
+    `tomllib.loads` ever hands back) as a TOML literal. `bool` is checked
+    BEFORE `int` since `bool` is an `int` subclass in Python and `True`
+    must emit `true`, not `1`."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return _toml_string(value)
+    if isinstance(value, int | float):
+        return repr(value)
+    raise TypeError(f"cannot emit TOML value of type {type(value).__name__}: {value!r}")
+
+
+def _emit_table(path: tuple[str, ...], scalars: dict) -> str:
+    """One `[dotted.path]` header plus its `key = value` lines, in dict
+    order -- covers every scalar type `tomllib.loads` returns (`str`,
+    `bool`, `int`, `float`), not only `str`: the round-1 emitter collected
+    a table only when EVERY value was a string and silently dropped any
+    table holding an int/float/bool (`seq_len = 256`, `local = true`),
+    which this fixes (CRITICAL A, round-2 review)."""
+    header = f"[{'.'.join(_toml_key(p) for p in path)}]"
+    lines = "\n".join(f"{_toml_key(k)} = {_toml_scalar(v)}" for k, v in scalars.items())
+    return f"{header}\n{lines}\n" if lines else f"{header}\n"
+
+
+def _emit_sections(doc: dict, prefix: tuple[str, ...] = ()) -> list[str]:
+    """Every table in `doc` as a rendered `[dotted.path]` block, walked
+    depth-first in dict insertion order (first-seen order for anything
+    already in `existing_text`, since both Python dicts and `tomllib.loads`
+    preserve source order; a brand-new table `_set_at` created is
+    `setdefault`-appended after everything that already existed).
+
+    A table's OWN header carries its own scalar keys (never its children's
+    -- CRITICAL A's second shape: `[corpus]`'s scalars and `[corpus.
+    splits.train]`'s must both survive, as two separate headers, neither
+    promoted over the other) plus a recursive walk into every nested dict
+    child as ITS OWN `[dotted.path.child]` section. A table with no scalars
+    of its own (only nested children) emits no header at all, so an
+    intermediate node `_set_at` created purely to reach a deeper path never
+    appends an empty `[table]\n` block nobody asked for.
+    """
+    scalars = {k: v for k, v in doc.items() if not isinstance(v, dict)}
+    children = {k: v for k, v in doc.items() if isinstance(v, dict)}
+    # The root (prefix == ()) never gets a header -- there is no `[]` table
+    # -- regardless of whether it happens to carry scalars; every non-root
+    # table with at least one scalar key of its own gets exactly one.
+    sections = [_emit_table(prefix, scalars)] if prefix and scalars else []
+    for key, child in children.items():
+        sections.extend(_emit_sections(child, (*prefix, key)))
+    return sections
 
 
 def _emit_toml(doc: dict, header_comment: str) -> str:
     """`doc` (as merged by `_set_at`) re-emitted deterministically: the
-    preserved leading comment block, then every leaf table in first-seen
-    order. Replaces the old text-substitution path entirely -- merging
-    happens on the PARSED structure, so a foreign table's entry sharing a
-    key name with the target table is never touched, only the table
-    actually named by `_set_at`'s dotted path is."""
-    return header_comment + "\n".join(
-        _emit_table(path, values) for path, values in _leaf_tables(doc)
-    )
+    preserved leading comment block, then every table -- at every depth,
+    every scalar type -- in first-seen order. Replaces the old
+    text-substitution path entirely -- merging happens on the PARSED
+    structure, so a foreign table's entry sharing a key name with the
+    target table is never touched, only the table actually named by
+    `_set_at`'s dotted path is."""
+    return header_comment + "\n".join(_emit_sections(doc))
 
 
 def _refuse_conflicts(table: str, current: dict, entries: dict[str, str]) -> None:

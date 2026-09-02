@@ -281,6 +281,186 @@ def test_merge_toml_table_merges_two_dotted_tables_in_the_same_file():
     assert doc["assign"]["family"]["asr"] == "librispeech"
 
 
+def test_merge_toml_table_does_not_delete_a_table_with_non_string_values():
+    """CRITICAL A (round 2 review): the round-1 emitter collected a leaf
+    table only when EVERY value was a string, and silently DROPPED any
+    table holding an int/float/bool -- worse than the bug it replaced,
+    since the base commit's text-substitution path preserved these files
+    untouched. Reproduced with the exact `corpora.toml` from
+    `docs/guides/ledger.md:92-96` (`seq_len = 256` is an int)."""
+    existing = (
+        "[corpus.wikitext2]\n"
+        'source = "Salesforce/wikitext"\n'
+        'tokenizer = "gpt2"\n'
+        "seq_len = 256\n"
+        "\n"
+        "[assign]\n"
+        'family.lm = "wikitext2"\n'
+    )
+
+    out = record.merge_toml_table(
+        existing, "corpus.librispeech", {"source": "librispeech"}, force=False
+    )
+
+    import tomllib
+
+    doc = tomllib.loads(out)
+    assert doc["corpus"]["wikitext2"]["seq_len"] == 256, "the int-valued table must survive"
+    assert doc["corpus"]["wikitext2"]["source"] == "Salesforce/wikitext"
+    assert doc["assign"]["family"]["lm"] == "wikitext2"
+    assert doc["corpus"]["librispeech"]["source"] == "librispeech"
+
+
+def test_merge_toml_table_does_not_promote_a_nested_sub_table():
+    """Second shape from the same finding: a nested `[corpus.x.splits.*]`
+    sub-table must not survive while its PARENT's own scalars (sitting
+    directly under `[corpus.x]`) are dropped -- the exact
+    `examples/workspace/speech-distill/corpus.toml` shape."""
+    existing = (
+        "[corpus]\n"
+        'name = "librispeech-100h"\n'
+        'source = "openslr-12"\n'
+        'tokenizer = "char"\n'
+        "seq_len = 1024\n"
+        "\n"
+        "[corpus.splits.train]\n"
+        "n_records = 28539\n"
+        "n_tokens = 9412000\n"
+        "\n"
+        "[corpus.splits.test]\n"
+        "n_records = 2620\n"
+    )
+
+    out = record.merge_toml_table(
+        existing, "assign.family", {"asr": "librispeech-100h"}, force=False
+    )
+
+    import tomllib
+
+    doc = tomllib.loads(out)
+    assert doc["corpus"]["name"] == "librispeech-100h"
+    assert doc["corpus"]["seq_len"] == 1024
+    assert doc["corpus"]["splits"]["train"]["n_records"] == 28539
+    assert doc["corpus"]["splits"]["test"]["n_records"] == 2620
+    assert doc["assign"]["family"]["asr"] == "librispeech-100h"
+
+
+def test_merge_toml_table_escapes_a_quote_and_backslash_in_a_value():
+    """CRITICAL B (round 2 review): an unescaped `"` in a value emits
+    invalid TOML (`source = "a"b"`), which `write()` had already written
+    to disk (results/configs) by the time the CLI's `tomllib`-based re-read
+    somewhere downstream would notice -- a half-written manifest, exactly
+    what `write()`'s all-or-nothing precheck exists to prevent."""
+    out = record.merge_toml_table("", "corpus.a", {"source": 'a"b\\c'}, force=False)
+
+    import tomllib
+
+    doc = tomllib.loads(out)
+    assert doc["corpus"]["a"]["source"] == 'a"b\\c'
+
+
+def test_merge_toml_table_quotes_a_key_that_is_not_a_bare_key():
+    out = record.merge_toml_table("", "corpus.a", {"my-key": "value"}, force=False)
+
+    import tomllib
+
+    doc = tomllib.loads(out)
+    assert doc["corpus"]["a"]["my-key"] == "value"
+
+
+@pytest.mark.parametrize(
+    "existing",
+    [
+        pytest.param(
+            (
+                '[corpus.wikitext2]\nsource = "Salesforce/wikitext"\ntokenizer = "gpt2"\n'
+                'seq_len = 256\n\n[assign]\nfamily.lm = "wikitext2"\n'
+            ),
+            id="ledger-guide-example",
+        ),
+        pytest.param(
+            (
+                "[corpus]\n"
+                'name = "librispeech-100h"\nsource = "openslr-12"\ntokenizer = "char"\n'
+                "seq_len = 1024\n\n[corpus.splits.train]\nn_records = 28539\n"
+                "n_tokens = 9412000\n\n[corpus.splits.test]\nn_records = 2620\n"
+            ),
+            id="speech-distill-corpus-toml",
+        ),
+        pytest.param(
+            "[corpus.a]\nlocal = true\nseq_len = 256\nweight = 0.5\n",
+            id="bool-int-float-table",
+        ),
+        pytest.param('[corpus.a]\nsource = "a\\"b\\\\c"\n', id="quote-and-backslash-value"),
+        pytest.param('[corpus."my-key"]\nsource = "x"\n', id="quoted-table-key"),
+    ],
+)
+def test_merge_toml_table_round_trips_every_required_fixture(existing):
+    """Property test (round 2 review): merging into an UNRELATED table must
+    leave every one of these fixtures semantically byte-identical --
+    `tomllib.loads(before) == tomllib.loads(after)` restricted to the keys
+    that were already there, for every value shape the review named:
+    str, int, float, bool, a nested sub-table, an escaped string, and a
+    non-bare-key table name."""
+    import tomllib
+
+    before = tomllib.loads(existing)
+
+    out = record.merge_toml_table(existing, "unrelated.table", {"k": "v"}, force=False)
+
+    after = tomllib.loads(out)
+    assert after["unrelated"]["table"]["k"] == "v"
+    # Delete the newly-added table before comparing -- everything else must
+    # be exactly what was already there, not merely "still present".
+    del after["unrelated"]
+    assert after == before, "an unrelated merge altered or dropped existing entries"
+
+
+def test_merge_toml_table_the_reviewers_reproduction_the_guide_corpora_survives(tmp_path):
+    """IMPORTANT D (round 2 review): the reviewer's own end-to-end
+    reproduction, run through the real CLI -- the guide's `corpora.toml`
+    plus a `runs record --corpus` for a NEW corpus must leave the old
+    table byte-identical and add the new one, not delete the old table."""
+    root = tmp_path
+    corpora = root / "corpora.toml"
+    corpora.write_text(
+        "[corpus.wikitext2]\n"
+        'source = "Salesforce/wikitext"\n'
+        'tokenizer = "gpt2"\n'
+        "seq_len = 256\n"
+        "\n"
+        "[assign]\n"
+        'family.lm = "wikitext2"\n'
+    )
+
+    from attestation.cli import main
+
+    rc = main(
+        [
+            "runs",
+            "record",
+            "asr",
+            "--root",
+            str(root),
+            "--arm",
+            "base",
+            "wer=0.12",
+            "--corpus",
+            "librispeech",
+        ]
+    )
+    assert rc == 0
+
+    import tomllib
+
+    doc = tomllib.loads(corpora.read_text())
+    assert doc["corpus"]["wikitext2"]["seq_len"] == 256, "the old corpus must survive"
+    assert doc["corpus"]["wikitext2"]["source"] == "Salesforce/wikitext"
+    assert doc["assign"]["family"]["lm"] == "wikitext2", "the old assignment must survive"
+    assert doc["corpus"]["librispeech"]["source"] == "librispeech", "the new corpus must be added"
+    assert doc["assign"]["family"]["asr"] == "librispeech"
+
+
 def test_merge_toml_table_force_does_not_rewrite_a_foreign_tables_same_named_key():
     """CRITICAL 1 (final review, round 2): a foreign table declaring the
     same KEY NAME earlier in the file must be left byte-identical when

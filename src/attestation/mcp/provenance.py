@@ -348,27 +348,35 @@ def _validate_record_names(
     family: str,
     arm_metrics: dict[str, dict[str, float]],
     project: str | None,
+    corpus: str | None,
     declared: dict[str, str],
 ) -> None:
-    """Raise `ToolError` for any unsafe `family`/arm name/`project`, or any
-    `declared` direction that is not one of the two the ledger ranks by.
+    """Raise `ToolError` for any unsafe `family`/arm name/`project`/`corpus`,
+    or any `declared` direction that is not one of the two the ledger ranks
+    by.
 
     `family` and an arm's name both become PATH SEGMENTS
     (`record.plan` -> `results/<family>_<arm>.json`), and `project` names the
     subdirectory `_record_target` writes under -- an unvalidated `../../x`
     in any of the three walks a write clean out of the workspace `--root`
-    (equivalently `root`) is supposed to confine it to. Checked here, before
-    `record.plan` ever builds a manifest, using the SAME `record.validate_
-    name`/`record.validate_direction` the CLI's `_parse_record_args` uses,
-    so both callers refuse identically rather than the tool trusting an
-    agent caller more than the CLI trusts a human one -- the opposite of
-    what the spec's write-safety rules intend, since the tool has no
-    `--force` a mistake could even be undone with.
+    (equivalently `root`) is supposed to confine it to. `corpus` never
+    becomes a path segment, but it IS interpolated as a bare TOML table
+    name (`[corpus.<name>]`) by `record.plan` -- the same `validate_name`
+    grammar (no `/`, no leading `.`) keeps it a safe, unambiguous table
+    name, consistent with the CLI's own `--corpus` check. Checked here,
+    before `record.plan` ever builds a manifest, using the SAME
+    `record.validate_name`/`record.validate_direction` the CLI's
+    `_parse_record_args` uses, so both callers refuse identically rather
+    than the tool trusting an agent caller more than the CLI trusts a human
+    one -- the opposite of what the spec's write-safety rules intend, since
+    the tool has no `--force` a mistake could even be undone with.
     """
     try:
         record.validate_name(family, label="family")
         if project is not None:
             record.validate_name(project, label="project")
+        if corpus is not None:
+            record.validate_name(corpus, label="corpus")
         for name in arm_metrics:
             record.validate_name(name, label="arm name")
         for metric, direction in declared.items():
@@ -394,7 +402,7 @@ def _record(
 
     arm_metrics = _arm_metrics(arms)
     declared = directions or {}
-    _validate_record_names(family, arm_metrics, project, declared)
+    _validate_record_names(family, arm_metrics, project, corpus, declared)
     known = ledger.metric_directions()
     missing = record.undeclared(arm_metrics, {**known, **declared})
     if missing:

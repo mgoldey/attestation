@@ -765,6 +765,8 @@ def _parse_record_args(args: argparse.Namespace) -> tuple[dict, dict, dict]:
     from attestation import record
 
     record.validate_name(args.family, label="family")
+    if args.corpus is not None:
+        record.validate_name(args.corpus, label="--corpus")
     arms = _parse_arms(args.arms)
     declared = _parse_kv_pairs(args.directions, label="--direction")
     for metric, direction in declared.items():
@@ -787,9 +789,19 @@ def _toml_target(relpath: str, root: Path):
     return ledger._metric_direction_path() if relpath == "metric_direction.toml" else root / relpath
 
 
-def _write_toml_files(toml_files: dict[str, str], root: Path, *, force: bool) -> list[Path]:
-    """Merge each manifest TOML entry into whatever already exists at its
-    real target (see `_toml_target`), and return the paths written.
+def _merge_toml_files(toml_files: dict[str, str], root: Path, *, force: bool) -> dict[Path, str]:
+    """Every manifest TOML entry, merged (never yet written) into whatever
+    text already exists at its real target (see `_toml_target`) --
+    computed ENTIRELY IN MEMORY so a conflict (`record.merge_toml_table`'s
+    `ValueError` without `--force`) is raised before any file this call
+    touches is written, matching `record.write`'s own "refuse before
+    writing anything" guarantee for the per-arm results/configs files.
+    Split out of the old `_write_toml_files` for exactly that reordering --
+    `cmd_runs_record` used to call `record.write` (which already had this
+    property) and then this function (which did not: it merged AND wrote
+    in the same loop, so a second TOML table's conflict crashed after the
+    first table's merge, and after the per-arm files, had already reached
+    disk).
 
     Each entry holds exactly one declared table's worth of new entries
     (parsed back out of the fresh-file content `plan()` built):
@@ -799,14 +811,24 @@ def _write_toml_files(toml_files: dict[str, str], root: Path, *, force: bool) ->
     """
     from attestation import record
 
-    written = []
+    merged: dict[Path, str] = {}
     for relpath, content in toml_files.items():
         path = _toml_target(relpath, root)
         existing_text = path.read_text() if path.exists() else ""
         for table, entries in record.toml_tables(content):
             existing_text = record.merge_toml_table(existing_text, table, entries, force=force)
+        merged[path] = existing_text
+    return merged
+
+
+def _write_merged_toml(merged: dict[Path, str]) -> list[Path]:
+    """Write every already-merged TOML text (see `_merge_toml_files`) and
+    return the paths written -- the only I/O half of the old
+    `_write_toml_files`."""
+    written = []
+    for path, text in merged.items():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(existing_text)
+        path.write_text(text)
         written.append(path)
     return written
 
@@ -878,11 +900,23 @@ def cmd_runs_record(args: argparse.Namespace) -> int:
     per_arm = {k: v for k, v in manifest.items() if not k.endswith(".toml")}
     toml_files = {k: v for k, v in manifest.items() if k.endswith(".toml")}
 
+    # TOML merges are computed BEFORE any write -- record.write's own
+    # per-arm collision check already refuses before writing anything; a
+    # differing TOML entry (no --force) must refuse just as cleanly, not
+    # crash with a raw traceback after the per-arm files already landed on
+    # disk (found in review: assigning family `asr` to a second corpus
+    # without --force wrote the second call's results/config files, THEN
+    # raised an uncaught ValueError).
+    try:
+        merged_toml = _merge_toml_files(toml_files, root, force=args.force)
+    except ValueError as exc:
+        return fail(str(exc))
+
     try:
         written = record.write(root, per_arm, force=args.force)
     except FileExistsError as exc:
         return fail(str(exc))
-    written += _write_toml_files(toml_files, root, force=args.force)
+    written += _write_merged_toml(merged_toml)
 
     for path in written:
         print(f"wrote {path}")

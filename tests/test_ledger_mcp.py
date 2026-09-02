@@ -354,6 +354,19 @@ def test_record_refuses_a_project_that_escapes_root(record_workspace):
     assert not (record_workspace.parent / "victim").exists()
 
 
+def test_record_refuses_a_corpus_that_escapes_root(record_workspace):
+    """Round 2 review requirement (2): `corpus` becomes a bare TOML table
+    name (`[corpus.<name>]`) and was left out of the tool's own path-safety
+    validation entirely."""
+    out = mcp_server._runs_record_impl(
+        "asr", _two_arms(), project="proj", corpus="../../victim", confirm=True
+    )
+
+    assert out["ok"] is False
+    assert "corpus" in out["message"]
+    assert out["written"] == []
+
+
 def test_record_accepts_a_plain_family_arm_and_project(record_workspace):
     out = mcp_server._runs_record_impl(
         "asr-v2", [{"name": "run.1", "metrics": {"wer": 0.1}}], project="proj", confirm=True
