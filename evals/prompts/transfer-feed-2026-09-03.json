@@ -1,0 +1,16 @@
+{
+  "skill": "feed",
+  "scores": {
+    "baseline": {
+      "gemma4:e2b": 0.5,
+      "gemma4:e4b": 0.5,
+      "hermes3:8b": 0.2857142857142857
+    },
+    "feed-trigger-2026-09-03": {
+      "gemma4:e2b": 0.7857142857142857,
+      "gemma4:e4b": 0.7857142857142857,
+      "hermes3:8b": 0.21428571428571427
+    }
+  },
+  "split": "all"
+}

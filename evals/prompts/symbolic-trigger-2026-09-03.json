@@ -1,0 +1,59 @@
+{
+  "skill": "symbolic",
+  "instruction": "## When NOT to use this\n- Numerical simulation, plotting, or anything needing data: this is exact symbolic computation on expressions the reader gives you.\n- Checking a *number* in a draft against an experiment: the provenance agent (`attestation-provenance`).\n\n## Mandatory Entry Point: Use sym.ask for all symbolic expressions\nEvery request involving mathematical formulas, variables, or symbolic operations **must** be submitted to `sym.ask` first. \n\n**Do not attempt to call specific calculation tools (such as `sym.solve`, `sym.simplify`, `sym.integrate`, etc.) directly.** Even if the user's intent is explicitly stated (e.g., \"solve for x\", \"simplify this expression\", or \"is [x] equal to [y]?\"), you must pass that intent as the `question` argument into `sym.ask`.\n\n### Example behavior:\n- User: \"solve x squared minus four for x\"\n  - CORRECT: `sym.ask(expr=\"x**2 - 4\", question=\"solve\")`\n  - INCORRECT: `sym.solve(expr=\"x**2 - 4\", question=\"solve\")` (Do not bypass the router)\n\n- User: \"is sin squared plus cos squared equal to one?\"\n  - CORRECT: `sym.ask(expr=\"sin(x)**2 + cos(x)**2\", question=\"simplify\")`\n  - INCORRECT: `sym.simplify(expr=\"sin(x)**2 + cos(x)**2\")` (Do not bypass the router)\n\nUnless you are specifically instructed to bypass the router by a system override, `sym.ask` is the only valid entry point for symbolic math.",
+  "default": "## When NOT to use this\n\n- Numerical simulation, plotting, or anything needing data: this is exact\n  symbolic computation on expressions the reader gives you.\n- Checking a *number* in a draft against an experiment: the provenance\n  agent (`attestation-provenance`).\n\n\n## Ask the router first\n\n```\nsym.ask(expr=\"x**2 - 4\", question=\"solve\")\nsym.ask(expr=\"sin(x)**2 + cos(x)**2\", question=\"simplify\")\n```\n\nReturns `answer` (relay VERBATIM), `refs`, `caveat`, `options` and\n`tool_used`; `ok=false` with `options` means ask the reader which operation\nthey meant. Specific tools may be hidden from your session; `sym.tools`\nexplains why and how to reveal them.\n",
+  "optimizer": "dspy.GEPA",
+  "created": "2026-09-03",
+  "student_model": "gemma4:e2b-it-q4_K_M",
+  "reflection_model": "gemma4:12b",
+  "max_metric_calls": 16,
+  "seed": 0,
+  "train_ids": [
+    "symbolic-solve",
+    "symbolic-verify-identity"
+  ],
+  "dev_ids": [
+    "symbolic-not-a-number-check",
+    "symbolic-derivation-steps"
+  ],
+  "scores": {
+    "baseline": {
+      "train": {
+        "overall": 0.5,
+        "per_case": {
+          "symbolic-solve": 0.0,
+          "symbolic-verify-identity": 1.0
+        },
+        "median_latency_s": 1.74
+      },
+      "dev": {
+        "overall": 0.5,
+        "per_case": {
+          "symbolic-not-a-number-check": 1.0,
+          "symbolic-derivation-steps": 0.0
+        },
+        "median_latency_s": 1.57
+      }
+    },
+    "candidate": {
+      "train": {
+        "overall": 1.0,
+        "per_case": {
+          "symbolic-solve": 1.0,
+          "symbolic-verify-identity": 1.0
+        },
+        "median_latency_s": 1.71
+      },
+      "dev": {
+        "overall": 1.0,
+        "per_case": {
+          "symbolic-not-a-number-check": 1.0,
+          "symbolic-derivation-steps": 1.0
+        },
+        "median_latency_s": 1.58
+      }
+    }
+  },
+  "shipped": false,
+  "note": "Candidate only. Run evals/transfer_skill_triggers.py --artifact <this file> to decide whether it clears the transfer gate; `shipped` records that decision -- same division of labour as optimize_tagging.py vs transfer_matrix.py."
+}

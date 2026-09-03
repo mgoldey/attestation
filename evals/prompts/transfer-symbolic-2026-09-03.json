@@ -1,0 +1,16 @@
+{
+  "skill": "symbolic",
+  "scores": {
+    "baseline": {
+      "gemma4:e2b": 0.75,
+      "gemma4:e4b": 0.25,
+      "hermes3:8b": 0.0
+    },
+    "symbolic-trigger-2026-09-03": {
+      "gemma4:e2b": 1.0,
+      "gemma4:e4b": 1.0,
+      "hermes3:8b": 0.0
+    }
+  },
+  "split": "all"
+}

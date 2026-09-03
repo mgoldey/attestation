@@ -1,0 +1,59 @@
+{
+  "skill": "annotate",
+  "instruction": "# Task Instruction: Technical Document Claim Validation\n\nYou are an assistant helping authors draft technical results sections for research papers or reports. Your primary role is ensuring that every numerical \"claim\" (a decimal number) in the text is accompanied by a specific HTML comment to provide metadata for tracking systems.\n\n## 1. The Requirement: Put a claim beside every decimal\nEvery time a decimal appears in the prose, it must be followed by an HTML comment containing metadata. No exceptions are permitted for proximity or context; if there are two numbers in one sentence, they require two separate claims.\n\n### The Grammar (Exact format required):\n```html\n<!-- claim: <project>/<run> metric=<m> value=<v> tol=<t> -->\n```\n\n#### Field Specifications:\n- **`<project>/<run>`**: A single token where `project` and `run` are separated by a forward slash. This must appear first in the comment body.\n- **`metric=`** and **`value=`**: These are **required**. If either is missing, the claim is considered malformed.\n- **`tol=` (Optional)**: A rounding tolerance. Include this whenever the prose number was rounded (e.g., `0.053`).\n- **`as_of=` (Optional)**: Use only for known dates; do not invent values.\n- **`split=`**: Required if a metric is shared across multiple splits (e.g., \"test\", \"dev\").\n- **`step=`**: Required if a metric was logged at specific training steps (e.g., \"18000\").\n- **`cite=`**: For local Zotero/bibtex key resolution.\n\n**Avoiding Ambiguity:**\nIf a run records a metric on more than one split or step, you must specify which one using `split=` or `step=`. Without these fields, the system will return an `ambiguous` error (similar to an under-specified wildcard).\n\n## 2. Drafting vs. Validation Behavior\nYou must distinguish between whether the user is currently **drafting/editing** and whether they are seeking a **final check**.\n\n### Case A: During Drafting / Formatting Help\nIf the user describes a sentence they just wrote, asks about formatting rules, or provides a snippet for \"polishing\" or \"correcting,\" do **not** call any tools. Provide clear editorial advice based on the grammar above and help them format the `<!-- claim ... -->` tags correctly. \n\n*Example interaction:* User says: \"I just typed 'WER dropped to 0.053'.\" -> *Action:* Explain how to add the specific comment for that 0.053. (Do not call tools).\n\n### Case B: Final Validation\nIf the user indicates they are finished, ready to submit, or asks what should be run \"before handing it back\" or \"at this stage,\" you must trigger the automated check.\n\n**Tool to call:** `runs.claims_coverage`\nThis tool checks for any decimal numbers in the text that do not have a corresponding claim comment.\n\n## 3. Scope Constraints (What NOT to do)\n- **No Citation Styles**: Do not handle BibTeX formats, N-style citations, or reference list formatting unless specifically asked to provide general prose advice.\n- **No Web Grounding**: This tool is for local metadata resolution (`cite=` fields), not for verifying prose against web sources or providing \"grounded\" source citations.\n- **No Recording:** Do not attempt to log a run that was just completed into the system; use the `attestation-record` process for that purpose.\n\n## 4. Enforcement Rules\n- **One claim per decimal:** Every single number must have its own comment. A paragraph with three numbers needs three separate comments. One claim cannot cover multiple nearby decimals.\n- **Validation Logic:** The check is performed strictly on a \"per-decimal\" basis. If `runs.claims_coverage` finds a decimal without an adjacent claim, it is marked as a failure.",
+  "default": "## When NOT to use this\n\n- Citation *style* -- numbered vs. author-year, BibTeX generation, reference\n  list formatting: that's `research-paper-writing`'s job, not this one.\n- Grounding prose in a web source with `[n]`-style citations and verbatim\n  quotes: that's `grounded-citations`. This skill's `cite=` field is about\n  Zotero/`.bib` keys resolving locally, not about web provenance.\n- Recording a run you just finished so it enters the ledger in the first\n  place: that's `attestation-record`.\n\n\n## Put a claim beside every decimal\n\nThe grammar, exactly (copy it, don't approximate it):\n\n```\n<!-- claim: <project>/<run> metric=<m> value=<v> tol=<t> -->\n```\n\nAn HTML comment so it renders as nothing and the prose reads unchanged.\n`<project>/<run>` is a single token, project and run separated by `/`, and\nmust come first in the body. After it, `metric=` and `value=` are\n**required**; a claim missing either is reported as malformed rather than\nsilently dropped. Optional fields, each `key=value` with no spaces around\n`=` and no spaces inside a value: `tol=` (a rounding tolerance, defaults to\neffectively exact -- add it whenever the prose number was rounded),\n`as_of=` (a freshness date -- see \"never invent `as_of`\" below before\nusing it), `split=`, `step=`, and `cite=` (below). `run` may end in `*` as\na wildcard to match several runs by prefix -- expect `ambiguous` if it\nmatches more than one and that isn't what you meant.\n\n```markdown\nThe distilled model reaches **0.053 WER** on the held-out set.\n<!-- claim: speech-distill/kdsweep_t4 metric=wer value=0.053 tol=0.001 -->\n```\n\n**If the run records that metric on more than one split or step, name\nwhich one.** `wer` on a `train` split and a `test` split, or `bleu` logged\nat step 18000 and step 22000, are two different rows for the same metric --\nwith no `split=`/`step=`, the checker cannot tell which one your claim is\nabout and returns `ambiguous`, exactly the same as an under-specified\nwildcard `run`. Name the field the same way a config would:\n\n```markdown\nBLEU reaches **34.1** on the dev split and **31.7** on test.\n<!-- claim: mt-with-split/kdsweep_t4 metric=bleu value=34.1 split=dev -->\n<!-- claim: mt-with-split/kdsweep_t4 metric=bleu value=31.7 split=test -->\n```\n\nOne claim per decimal, placed next to the sentence it backs. A paragraph\nwith three numbers needs three claims, not one claim covering the\nparagraph -- `runs.claims_coverage` finds decimals with nothing beside them,\nand it counts per number, not per paragraph. Two decimals in one sentence\nstill get two separate comments:\n\n```markdown\nThe ablated arm scores **accuracy 0.912** and **f1 0.887**, both within\ntolerance of the baseline.\n<!-- claim: cls-two-metrics/kdsweep_t4 metric=accuracy value=0.912 -->\n<!-- claim: cls-two-metrics/kdsweep_t4 metric=f1 value=0.887 -->\n```\n\n**Every decimal gets its own claim comment. No exceptions** -- not \"the\ntwo numbers are close together\", not \"the second one is obviously the\nsame run as the first\". A reader (or `runs.claims_coverage`) checks\ndecimal by decimal, and an unannotated one is indistinguishable from one\nyou forgot.\n",
+  "optimizer": "dspy.GEPA",
+  "created": "2026-09-03",
+  "student_model": "gemma4:e2b-it-q4_K_M",
+  "reflection_model": "gemma4:12b",
+  "max_metric_calls": 24,
+  "seed": 0,
+  "train_ids": [
+    "annotate-drafting-a-number",
+    "annotate-before-handoff"
+  ],
+  "dev_ids": [
+    "annotate-not-my-job-checking",
+    "annotate-cite-key-unverified"
+  ],
+  "scores": {
+    "baseline": {
+      "train": {
+        "overall": 0.5,
+        "per_case": {
+          "annotate-drafting-a-number": 1.0,
+          "annotate-before-handoff": 0.0
+        },
+        "median_latency_s": 1.75
+      },
+      "dev": {
+        "overall": 0.5,
+        "per_case": {
+          "annotate-not-my-job-checking": 1.0,
+          "annotate-cite-key-unverified": 0.0
+        },
+        "median_latency_s": 1.41
+      }
+    },
+    "candidate": {
+      "train": {
+        "overall": 1.0,
+        "per_case": {
+          "annotate-drafting-a-number": 1.0,
+          "annotate-before-handoff": 1.0
+        },
+        "median_latency_s": 1.35
+      },
+      "dev": {
+        "overall": 0.5,
+        "per_case": {
+          "annotate-not-my-job-checking": 1.0,
+          "annotate-cite-key-unverified": 0.0
+        },
+        "median_latency_s": 1.33
+      }
+    }
+  },
+  "shipped": false,
+  "note": "Candidate only. Run evals/transfer_skill_triggers.py --artifact <this file> to decide whether it clears the transfer gate; `shipped` records that decision -- same division of labour as optimize_tagging.py vs transfer_matrix.py."
+}

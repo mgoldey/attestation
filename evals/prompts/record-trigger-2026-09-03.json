@@ -1,0 +1,56 @@
+{
+  "skill": "record",
+  "instruction": "## Run one command\n\nMCP first: `runs.record(family, arms, corpus=..., confirm=true)` writes the\nfiles below for you, in one call, and refuses rather than guesses a\ndirection it doesn't know. No `confirm` previews the manifest and writes\nnothing. No MCP client? `attest runs record` is the same command at the\nshell:\n\n```bash\nattest runs record asr --arm baseline wer=0.12 --arm biglm wer=0.08 \\\n  --corpus librispeech --scan\n```\n\nwrites `results/asr_baseline.json` / `results/asr_biglm.json`, a matching\n`configs/*.yaml` per arm (provenance only), and a `corpora.toml` entry for\n`librispeech` -- then `--scan` (`confirm=true` for the tool) reads them\nstraight back and prints `runs.compare`. A metric not already built in (see\nthe list below) needs a declaration, e.g. for a family scored on\n`novelty_rate`:\n\n```bash\nattest runs record lora --arm rank4 novelty_rate=0.31 --arm rank8 novelty_rate=0.44 \\\n  --direction novelty_rate=higher_is_better --scan\n```\n\nLeaving out a direction for an unfamiliar metric is a **refusal**, not a\nguess, with the same sentence `runs.compare` itself would print. Without\n`confirm`/`--dry-run`, both print the manifest (`{relpath: content}`)\nwithout writing anything; every target must be a NEW file or the whole call\nrefuses -- `runs.record` has no override, `--force` is CLI-only. No shell\nand no MCP client? Follow \"The shape a scan will read\" below and write the\nfiles yourself -- everything either one does for you is stated there as a\nrule.\n\n\n## When NOT to use this\n\n- Checking whether a draft's numbers are still true, or whether a claim is\n  supported: that is `attestation-provenance` (reading) and\n  `attestation-annotate` (writing the claim comments).\n- Instrumenting a run with W&B, MLflow, Sacred, DVC or Hydra tracking as it\n  runs: the ledger reads five tracker layouts after the fact (see below);\n  it does not add discipline to the run itself.",
+  "default": "## Run one command\n\nMCP first: `runs.record(family, arms, corpus=..., confirm=true)` writes the\nfiles below for you, in one call, and refuses rather than guesses a\ndirection it doesn't know. No `confirm` previews the manifest and writes\nnothing. No MCP client? `attest runs record` is the same command at the\nshell:\n\n```bash\nattest runs record asr --arm baseline wer=0.12 --arm biglm wer=0.08 \\\n  --corpus librispeech --scan\n```\n\nwrites `results/asr_baseline.json` / `results/asr_biglm.json`, a matching\n`configs/*.yaml` per arm (provenance only), and a `corpora.toml` entry for\n`librispeech` -- then `--scan` (`confirm=true` for the tool) reads them\nstraight back and prints `runs.compare`. A metric not already built in (see\nthe list below) needs a declaration, e.g. for a family scored on\n`novelty_rate`:\n\n```bash\nattest runs record lora --arm rank4 novelty_rate=0.31 --arm rank8 novelty_rate=0.44 \\\n  --direction novelty_rate=higher_is_better --scan\n```\n\nLeaving out a direction for an unfamiliar metric is a **refusal**, not a\nguess, with the same sentence `runs.compare` itself would print. Without\n`confirm`/`--dry-run`, both print the manifest (`{relpath: content}`)\nwithout writing anything; every target must be a NEW file or the whole call\nrefuses -- `runs.record` has no override, `--force` is CLI-only. No shell\nand no MCP client? Follow \"The shape a scan will read\" below and write the\nfiles yourself -- everything either one does for you is stated there as a\nrule.\n\n\n## When NOT to use this\n\n- Checking whether a draft's numbers are still true, or whether a claim is\n  supported: that is `attestation-provenance` (reading) and\n  `attestation-annotate` (writing the claim comments).\n- Instrumenting a run with W&B, MLflow, Sacred, DVC or Hydra tracking as it\n  runs: the ledger reads five tracker layouts after the fact (see below);\n  it does not add discipline to the run itself.\n",
+  "optimizer": "dspy.GEPA",
+  "created": "2026-09-03",
+  "student_model": "gemma4:e2b-it-q4_K_M",
+  "reflection_model": "gemma4:12b",
+  "max_metric_calls": 24,
+  "seed": 0,
+  "train_ids": [
+    "record-just-finished-run"
+  ],
+  "dev_ids": [
+    "record-checking-not-recording",
+    "record-new-metric-needs-direction"
+  ],
+  "scores": {
+    "baseline": {
+      "train": {
+        "overall": 1.0,
+        "per_case": {
+          "record-just-finished-run": 1.0
+        },
+        "median_latency_s": 2.34
+      },
+      "dev": {
+        "overall": 0.5,
+        "per_case": {
+          "record-checking-not-recording": 0.0,
+          "record-new-metric-needs-direction": 1.0
+        },
+        "median_latency_s": 1.83
+      }
+    },
+    "candidate": {
+      "train": {
+        "overall": 1.0,
+        "per_case": {
+          "record-just-finished-run": 1.0
+        },
+        "median_latency_s": 2.25
+      },
+      "dev": {
+        "overall": 0.5,
+        "per_case": {
+          "record-checking-not-recording": 0.0,
+          "record-new-metric-needs-direction": 1.0
+        },
+        "median_latency_s": 1.82
+      }
+    }
+  },
+  "shipped": false,
+  "note": "Candidate only. Run evals/transfer_skill_triggers.py --artifact <this file> to decide whether it clears the transfer gate; `shipped` records that decision -- same division of labour as optimize_tagging.py vs transfer_matrix.py."
+}

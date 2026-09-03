@@ -199,17 +199,24 @@ def test_dspy_never_enters_the_library():
         assert offenders == [], f"{name} imported under src/: {offenders}"
 
 
+_DSPY_OPTIMIZERS = ("optimize_tagging.py", "optimize_skill_triggers.py")
+
+
 def test_dspy_stays_confined_to_the_optimizer_under_evals():
     """`evals/` is not a package and every script there imports its peers
     top-level (see tagging_eval.py's own docstring), so a reaction or
     explanation eval could import dspy by accident -- e.g. copying a helper
-    out of optimize_tagging.py -- without src/ ever seeing it. Only the
-    optimizer itself may import it."""
+    out of optimize_tagging.py -- without src/ ever seeing it. Only a script
+    named in `_DSPY_OPTIMIZERS` may import it -- optimize_skill_triggers.py
+    joined optimize_tagging.py 2026-09-03, same shape: `_dspy()` imports it
+    lazily inside a function, never at module top level, so every OTHER
+    evals/ script (including skill_trigger_eval.py, the module the optimizer
+    imports from) still runs with no dspy installed at all."""
     evals_dir = Path(__file__).resolve().parents[1] / "evals"
     pattern = re.compile(r"^\s*(import|from)\s+dspy\b", re.MULTILINE)
     offenders = [
         str(p.relative_to(evals_dir))
         for p in evals_dir.rglob("*.py")
-        if p.name != "optimize_tagging.py" and pattern.search(p.read_text())
+        if p.name not in _DSPY_OPTIMIZERS and pattern.search(p.read_text())
     ]
-    assert offenders == [], f"dspy imported outside optimize_tagging.py: {offenders}"
+    assert offenders == [], f"dspy imported outside {_DSPY_OPTIMIZERS}: {offenders}"

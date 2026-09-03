@@ -72,7 +72,9 @@ async def run() -> int:
 
         _heading("kg.path — disjoint topics (a real 'no path' answer, not an error)")
         no_path = _payload(
-            await session.call_tool("kg.path", {"source": "machine-learning", "target": "catalysis"})
+            await session.call_tool(
+                "kg.path", {"source": "machine-learning", "target": "catalysis"}
+            )
         )
         print(f"  machine-learning -> catalysis: ok={no_path.get('ok')} path={no_path.get('path')}")
 
@@ -105,9 +107,7 @@ async def run() -> int:
 
         _heading("sym.derivation — the steps, not just the answer")
         derivation = _payload(
-            await session.call_tool(
-                "sym.derivation", {"expr": "x**2", "operation": "integrate"}
-            )
+            await session.call_tool("sym.derivation", {"expr": "x**2", "operation": "integrate"})
         )
         for step in derivation.get("steps") or []:
             rule = step.get("rule", "?")

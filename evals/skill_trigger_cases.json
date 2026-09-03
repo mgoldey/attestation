@@ -1,0 +1,253 @@
+[
+  {
+    "id": "feed-list-today",
+    "skill": "feed",
+    "split": "train",
+    "question": "what should I read today?",
+    "expect_tool": "feed.ask",
+    "note": "the router's own case; the trigger text must send the model to feed.ask rather than a specific tool"
+  },
+  {
+    "id": "feed-search-topic",
+    "skill": "feed",
+    "split": "train",
+    "question": "anything new on retrieval augmented generation?",
+    "expect_tool": "feed.ask",
+    "note": "a topic search phrased as a question -- still routes through feed.ask, not a direct feed.search guess"
+  },
+  {
+    "id": "feed-rate-implicit",
+    "skill": "feed",
+    "split": "dev",
+    "question": "that first one isn't relevant to what I'm working on",
+    "expect_tool": "feed.ask",
+    "note": "implicit negative feedback in ordinary discourse, never a labelled 'rate this' instruction"
+  },
+  {
+    "id": "feed-explain",
+    "skill": "feed",
+    "split": "train",
+    "question": "why did that paper rank so high?",
+    "expect_tool": "feed.ask",
+    "note": "explanation request; router-first still applies even though feed.explain exists directly"
+  },
+  {
+    "id": "feed-capability",
+    "skill": "feed",
+    "split": "dev",
+    "question": "what can you do?",
+    "expect_tool": "feed.ask",
+    "note": "skill says answer 'what can you do' by calling feed.ask, not by listing tools -- the live measured failure mode"
+  },
+  {
+    "id": "feed-persona-name",
+    "skill": "feed",
+    "split": "dev",
+    "question": "what should I read today?",
+    "expect_tool": "feed.ask",
+    "expect_args_contains": {"user": "not_placeholder"},
+    "note": "regression guard for the measured 9/9 placeholder-user failure: user must not be the literal string 'user'"
+  },
+  {
+    "id": "feed-digest-lately",
+    "skill": "feed",
+    "split": "train",
+    "question": "what have I been reading about lately?",
+    "expect_tool": "feed.ask",
+    "note": "digest phrasing, router case"
+  },
+  {
+    "id": "provenance-which-arm-won",
+    "skill": "provenance",
+    "split": "train",
+    "question": "which arm of my kdsweep sweep won on WER?",
+    "expect_tool": "runs.ask",
+    "expect_args_contains": {"family": "kdsweep"},
+    "note": "grounded in examples/workspace/speech-distill's real kdsweep_baseline/t2/t4/t4b family"
+  },
+  {
+    "id": "provenance-which-arm-no-family",
+    "skill": "provenance",
+    "split": "dev",
+    "question": "which arm of my sweep won?",
+    "expect_tool": "runs.ask",
+    "note": "no family named -- must still route to runs.ask (which lists comparables) rather than guessing a family or refusing outright"
+  },
+  {
+    "id": "provenance-check-draft",
+    "skill": "provenance",
+    "split": "train",
+    "question": "are the numbers in my draft still right?",
+    "expect_tool": "runs.ask",
+    "note": "grounded in examples/citations/DRAFT.md, which has both supported and one deliberately-uncited claim"
+  },
+  {
+    "id": "provenance-uncited",
+    "skill": "provenance",
+    "split": "dev",
+    "question": "what numbers did I forget to cite in this paper?",
+    "expect_tool": "runs.ask",
+    "note": "coverage phrasing distinct from claims_check phrasing -- both must reach runs.ask, the router decides beneath it"
+  },
+  {
+    "id": "provenance-cite-check",
+    "skill": "provenance",
+    "split": "dev",
+    "question": "does the vaswani2017 citation in my draft actually resolve to something?",
+    "expect_tool": "cite.check",
+    "note": "citation-key resolution is explicitly cite.check, not runs.ask -- the skill's own table lists this distinction"
+  },
+  {
+    "id": "provenance-support-vs-cite-confusion",
+    "skill": "provenance",
+    "split": "dev",
+    "question": "does the paper I cited actually support this claim?",
+    "expect_tool": null,
+    "note": "the skill's own 'When NOT to use this' -- judging whether a cited work supports a claim needs a model and isn't served here; must not silently call cite.check and imply it answered this"
+  },
+  {
+    "id": "knowledge-connect-topics",
+    "skill": "knowledge",
+    "split": "train",
+    "question": "how does retrieval connect to transformers in what I've read?",
+    "expect_tool": "kg.ask",
+    "note": "router case; two named concepts implies kg.path beneath kg.ask"
+  },
+  {
+    "id": "knowledge-main-areas",
+    "skill": "knowledge",
+    "split": "train",
+    "question": "what topics do I read about most?",
+    "expect_tool": "kg.ask",
+    "note": "central-concepts phrasing, matches test_ask_routing.py's own KG_CASES"
+  },
+  {
+    "id": "knowledge-vs-feed-search",
+    "skill": "knowledge",
+    "split": "dev",
+    "question": "find me the papers behind the 'diffusion-models' concept",
+    "expect_tool": "feed.search",
+    "note": "knowledge surface duplicates feed.search on purpose -- 'what did I read about X' inside the graph reaches items directly, not kg.ask"
+  },
+  {
+    "id": "knowledge-not-todays-feed",
+    "skill": "knowledge",
+    "split": "dev",
+    "question": "what should I read today?",
+    "expect_tool": null,
+    "note": "today's recommendations are explicitly out of scope for this surface per its own 'When NOT to use this' section"
+  },
+  {
+    "id": "symbolic-solve",
+    "skill": "symbolic",
+    "split": "train",
+    "question": "solve x squared minus four for x",
+    "expect_tool": "sym.ask",
+    "note": "router case, matches test_ask_routing's SYM_CASES"
+  },
+  {
+    "id": "symbolic-verify-identity",
+    "skill": "symbolic",
+    "split": "train",
+    "question": "is sin squared plus cos squared equal to one?",
+    "expect_tool": "sym.ask",
+    "note": "router case; verify beneath sym.ask"
+  },
+  {
+    "id": "symbolic-not-a-number-check",
+    "skill": "symbolic",
+    "split": "dev",
+    "question": "is the WER of 0.053 in my draft still correct?",
+    "expect_tool": null,
+    "note": "a numeric CLAIM check against experiment runs, not a symbolic expression -- this surface's own 'When NOT to use this' hands this off to provenance; must not call sym.evaluate on it"
+  },
+  {
+    "id": "symbolic-derivation-steps",
+    "skill": "symbolic",
+    "split": "dev",
+    "question": "show me the steps for integrating x^2 from 0 to 1",
+    "expect_tool": "sym.ask",
+    "note": "derivation phrasing"
+  },
+  {
+    "id": "record-just-finished-run",
+    "skill": "record",
+    "split": "train",
+    "question": "I just finished the asr sweep, baseline got wer 0.12 and biglm got wer 0.08, can you record that for the ledger?",
+    "expect_tool": "runs.record",
+    "note": "the lead scenario record's SKILL.md opens with; matches evals/record_cases.json's asr-wer-2arm shape"
+  },
+  {
+    "id": "record-checking-not-recording",
+    "skill": "record",
+    "split": "dev",
+    "question": "can you check whether the numbers in my draft still match the runs I recorded last week?",
+    "expect_tool": null,
+    "note": "a READ scenario wearing record-shaped vocabulary ('runs', 'recorded'); the skill's own 'When NOT to use this' hands this to attestation-provenance, so runs.record must not fire"
+  },
+  {
+    "id": "record-new-metric-needs-direction",
+    "skill": "record",
+    "split": "dev",
+    "question": "I just ran the lora rank sweep, rank4 got novelty_rate 0.31 and rank8 got 0.44 -- higher is better. Record it.",
+    "expect_tool": "runs.record",
+    "expect_args_contains": {"direction": "present"},
+    "note": "novelty_rate is not in ledger.METRIC_DIRECTION -- the skill must have the model declare a direction, not omit it"
+  },
+  {
+    "id": "annotate-drafting-a-number",
+    "skill": "annotate",
+    "split": "train",
+    "question": "I'm writing a results section and just typed 'WER dropped to 0.053 on the held-out set' -- what should I do before moving on?",
+    "expect_tool": null,
+    "note": "the core write-side trigger: a decimal just typed in prose needs a <!-- claim: ... --> comment written directly beside it -- this is a text edit the model makes itself, not an MCP tool call, so the correct answer is tool=null"
+  },
+  {
+    "id": "annotate-before-handoff",
+    "skill": "annotate",
+    "split": "train",
+    "question": "I think my draft is done. Before I hand it back, what should I run?",
+    "expect_tool": "runs.claims_coverage",
+    "note": "the skill's own rule: always run coverage before calling a draft done, since zero contradicted claims can still hide unverifiable numbers"
+  },
+  {
+    "id": "annotate-not-my-job-checking",
+    "skill": "annotate",
+    "split": "dev",
+    "question": "someone handed me their manuscript to check -- are the numbers in it still true?",
+    "expect_tool": null,
+    "note": "reading someone ELSE's draft is explicitly attestation-provenance's job per this skill's own opening paragraph, not annotate's"
+  },
+  {
+    "id": "annotate-cite-key-unverified",
+    "skill": "annotate",
+    "split": "dev",
+    "question": "I want to cite vaswani2017 for this sentence about self-attention -- can I just add cite=vaswani2017 to my claim comment?",
+    "expect_tool": "cite.lookup",
+    "note": "skill rule: only add cite= after confirming the key resolves via cite.lookup, never add it speculatively"
+  },
+  {
+    "id": "setup-tool-missing",
+    "skill": "setup",
+    "split": "train",
+    "question": "I don't see any runs tools available, is something broken?",
+    "expect_tool": "attest install --check",
+    "note": "a missing tool is either a hidden surface or a stale server -- setup's own remit; the shell command named in its own SKILL.md, not an MCP tool"
+  },
+  {
+    "id": "setup-not-a-question-for-us",
+    "skill": "setup",
+    "split": "dev",
+    "question": "which arm of my sweep won?",
+    "expect_tool": null,
+    "note": "an ordinary provenance question must NOT be answered or repaired by setup -- setup's own rule: say which agent answers it rather than trying"
+  },
+  {
+    "id": "setup-stale-server",
+    "skill": "setup",
+    "split": "dev",
+    "question": "I edited the MCP code but the tool is still behaving the old way",
+    "expect_tool": "attest reload",
+    "note": "the stale-server case named explicitly by CLAUDE.md's own MCP-servers-never-reload note; the shell command the skill names"
+  }
+]

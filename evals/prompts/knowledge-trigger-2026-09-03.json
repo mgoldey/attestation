@@ -1,0 +1,59 @@
+{
+  "skill": "knowledge",
+  "instruction": "## When NOT to use this\n\n- Today's recommendations, rating an item, or widening the feed: the feed\n  agent (`attestation-feed`). This surface has `feed.search` for finding\n  the items behind a concept, and nothing else from the feed.\n- Checking a draft's numbers or citation keys against runs: the\n  provenance agent (`attestation-provenance`).\n- Anything needing the web: the graph and the citation readers are local.\n\n\n## Ask the router first\n\n```\nkg.ask(question=\"how do protein folding and diffusion models connect?\",\n       source=\"protein-folding\", target=\"diffusion-models\")\nkg.ask(question=\"what are my main areas?\")\n```\n\nReturns `answer` (relay VERBATIM), `refs`, `caveat`, `options` and\n`tool_used`; `ok=false` with `options` means ask the reader, never pick for\nthem. Specific tools may be hidden from your session; `kg.tools` explains\nwhy and how to reveal them.",
+  "default": "## When NOT to use this\n\n- Today's recommendations, rating an item, or widening the feed: the feed\n  agent (`attestation-feed`). This surface has `feed.search` for finding\n  the items behind a concept, and nothing else from the feed.\n- Checking a draft's numbers or citation keys against runs: the\n  provenance agent (`attestation-provenance`).\n- Anything needing the web: the graph and the citation readers are local.\n\n\n## Ask the router first\n\n```\nkg.ask(question=\"how do protein folding and diffusion models connect?\",\n       source=\"protein-folding\", target=\"diffusion-models\")\nkg.ask(question=\"what are my main areas?\")\n```\n\nReturns `answer` (relay VERBATIM), `refs`, `caveat`, `options` and\n`tool_used`; `ok=false` with `options` means ask the reader, never pick for\nthem. Specific tools may be hidden from your session; `kg.tools` explains\nwhy and how to reveal them.\n",
+  "optimizer": "dspy.GEPA",
+  "created": "2026-09-03",
+  "student_model": "gemma4:e2b-it-q4_K_M",
+  "reflection_model": "gemma4:12b",
+  "max_metric_calls": 16,
+  "seed": 0,
+  "train_ids": [
+    "knowledge-connect-topics",
+    "knowledge-main-areas"
+  ],
+  "dev_ids": [
+    "knowledge-vs-feed-search",
+    "knowledge-not-todays-feed"
+  ],
+  "scores": {
+    "baseline": {
+      "train": {
+        "overall": 0.5,
+        "per_case": {
+          "knowledge-connect-topics": 1.0,
+          "knowledge-main-areas": 0.0
+        },
+        "median_latency_s": 1.62
+      },
+      "dev": {
+        "overall": 1.0,
+        "per_case": {
+          "knowledge-vs-feed-search": 1.0,
+          "knowledge-not-todays-feed": 1.0
+        },
+        "median_latency_s": 1.34
+      }
+    },
+    "candidate": {
+      "train": {
+        "overall": 0.5,
+        "per_case": {
+          "knowledge-connect-topics": 1.0,
+          "knowledge-main-areas": 0.0
+        },
+        "median_latency_s": 1.48
+      },
+      "dev": {
+        "overall": 0.5,
+        "per_case": {
+          "knowledge-vs-feed-search": 0.0,
+          "knowledge-not-todays-feed": 1.0
+        },
+        "median_latency_s": 1.34
+      }
+    }
+  },
+  "shipped": false,
+  "note": "Candidate only. Run evals/transfer_skill_triggers.py --artifact <this file> to decide whether it clears the transfer gate; `shipped` records that decision -- same division of labour as optimize_tagging.py vs transfer_matrix.py."
+}

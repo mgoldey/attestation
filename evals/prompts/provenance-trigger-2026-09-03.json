@@ -1,0 +1,65 @@
+{
+  "skill": "provenance",
+  "instruction": "## When NOT to use this\n\n- Launching or monitoring a training run: nothing here runs anything.\n- Whether a cited work *supports* a claim: `cite.check` says a key resolves\n  or does not, never that the paper agrees. Judging support needs a model\n  and is not what this does.\n- Finding papers, or what the reader has been reading about: the feed and\n  knowledge agents (`attestation-feed`, `attestation-knowledge`).\n\n\n## Ask the router first\n\n```\nruns.ask(question=\"which arm won?\")                        # names the comparable families\nruns.ask(question=\"which arm won?\", family=\"kdsweep\")      # compares\nruns.ask(question=\"are the numbers in my draft right?\", path=\"paper.md\")\n```\n\n`runs.ask` without a `family` does not guess one: it lists what is\ncomparable and asks. Pass the name back and it compares. Every router returns\n`answer` (relay VERBATIM), `refs`, `caveat` (unabridged), `options` and\n`tool_used`; `ok=false` with `options` means ask the reader, never pick for\nthem. Specific tools may be hidden from your session; `runs.tools` explains\nwhy and how to reveal them.",
+  "default": "## When NOT to use this\n\n- Launching or monitoring a training run: nothing here runs anything.\n- Whether a cited work *supports* a claim: `cite.check` says a key resolves\n  or does not, never that the paper agrees. Judging support needs a model\n  and is not what this does.\n- Finding papers, or what the reader has been reading about: the feed and\n  knowledge agents (`attestation-feed`, `attestation-knowledge`).\n\n\n## Ask the router first\n\n```\nruns.ask(question=\"which arm won?\")                        # names the comparable families\nruns.ask(question=\"which arm won?\", family=\"kdsweep\")      # compares\nruns.ask(question=\"are the numbers in my draft right?\", path=\"paper.md\")\n```\n\n`runs.ask` without a `family` does not guess one: it lists what is\ncomparable and asks. Pass the name back and it compares. Every router returns\n`answer` (relay VERBATIM), `refs`, `caveat` (unabridged), `options` and\n`tool_used`; `ok=false` with `options` means ask the reader, never pick for\nthem. Specific tools may be hidden from your session; `runs.tools` explains\nwhy and how to reveal them.\n",
+  "optimizer": "dspy.GEPA",
+  "created": "2026-09-03",
+  "student_model": "gemma4:e2b-it-q4_K_M",
+  "reflection_model": "gemma4:12b",
+  "max_metric_calls": 24,
+  "seed": 0,
+  "train_ids": [
+    "provenance-which-arm-won",
+    "provenance-check-draft"
+  ],
+  "dev_ids": [
+    "provenance-which-arm-no-family",
+    "provenance-uncited",
+    "provenance-cite-check",
+    "provenance-support-vs-cite-confusion"
+  ],
+  "scores": {
+    "baseline": {
+      "train": {
+        "overall": 1.0,
+        "per_case": {
+          "provenance-which-arm-won": 1.0,
+          "provenance-check-draft": 1.0
+        },
+        "median_latency_s": 1.67
+      },
+      "dev": {
+        "overall": 0.75,
+        "per_case": {
+          "provenance-which-arm-no-family": 1.0,
+          "provenance-uncited": 1.0,
+          "provenance-cite-check": 1.0,
+          "provenance-support-vs-cite-confusion": 0.0
+        },
+        "median_latency_s": 1.54
+      }
+    },
+    "candidate": {
+      "train": {
+        "overall": 1.0,
+        "per_case": {
+          "provenance-which-arm-won": 1.0,
+          "provenance-check-draft": 1.0
+        },
+        "median_latency_s": 1.5
+      },
+      "dev": {
+        "overall": 0.5,
+        "per_case": {
+          "provenance-which-arm-no-family": 1.0,
+          "provenance-uncited": 0.0,
+          "provenance-cite-check": 1.0,
+          "provenance-support-vs-cite-confusion": 0.0
+        },
+        "median_latency_s": 1.61
+      }
+    }
+  },
+  "shipped": false,
+  "note": "Candidate only. Run evals/transfer_skill_triggers.py --artifact <this file> to decide whether it clears the transfer gate; `shipped` records that decision -- same division of labour as optimize_tagging.py vs transfer_matrix.py."
+}
