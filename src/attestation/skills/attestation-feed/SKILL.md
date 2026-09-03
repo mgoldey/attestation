@@ -50,6 +50,12 @@ feed.ask(user="<name>", question="anything new on protein folding?")  # -> a sea
 feed.ask(user="<name>", question="what's worth reading this week?")   # -> the digest
 ```
 
+These dotted names are for you to read, not a literal call string: some MCP
+clients rewrite `feed.ask` to something like `mcp__attestation__feed_ask`
+before it ever reaches you. Call the tool by the exact name your own tool
+list shows for the same arguments, and never retry a plausible-looking
+variant of the dotted name.
+
 It returns `answer` (relay it VERBATIM), `refs` (item ids for your next
 call), `caveat` (ranking honesty, unabridged), `options` and `tool_used`.
 **A router never guesses.** When it does not claim a question confidently it

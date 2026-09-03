@@ -35,6 +35,12 @@ kg.ask(question="how do protein folding and diffusion models connect?",
 kg.ask(question="what are my main areas?")
 ```
 
+These dotted names are for you to read, not a literal call string: some MCP
+clients rewrite `kg.ask` to something like `mcp__attestation__kg_ask` before
+it ever reaches you. Call the tool by the exact name your own tool list
+shows for the same arguments, and never retry a plausible-looking variant
+of the dotted name.
+
 Returns `answer` (relay VERBATIM), `refs`, `caveat`, `options` and
 `tool_used`; `ok=false` with `options` means ask the reader, never pick for
 them. Specific tools may be hidden from your session; `kg.tools` explains

@@ -150,6 +150,11 @@ runs.scan(confirm=true)
 runs.compare(family="kdsweep", metric="wer")
 ```
 
+These dotted names are for you to read, not a literal call string: some MCP
+clients rewrite `runs.scan` to something like `mcp__attestation__runs_scan`
+before it ever reaches you. Call the tool by the exact name your own tool
+list shows for the same arguments.
+
 `runs.compare` names a caveat (small sample, a top-two within a few
 percent, arms on different corpora) if one applies; relay it, don't drop
 it. If `compare` refuses on direction, that's the signal to go back to the

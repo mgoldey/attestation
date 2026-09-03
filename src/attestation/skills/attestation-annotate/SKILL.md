@@ -134,6 +134,11 @@ runs.claims_coverage(path="paper.md")   # decimals with no claim beside them
 runs.claims_check(path="paper.md")      # do the claims that exist check out
 ```
 
+These dotted names are for you to read, not a literal call string: some MCP
+clients rewrite `runs.claims_coverage` to something like
+`mcp__attestation__runs_claims_coverage` before it ever reaches you. Call
+the tool by the exact name your own tool list shows for the same arguments.
+
 Report the uncovered decimals from `claims_coverage` back to the reader by
 value and location -- don't silently annotate them yourself with a guessed
 run, and don't drop them from the report because they're minor. Only

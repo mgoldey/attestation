@@ -31,6 +31,12 @@ sym.ask(expr="x**2 - 4", question="solve")
 sym.ask(expr="sin(x)**2 + cos(x)**2", question="simplify")
 ```
 
+These dotted names are for you to read, not a literal call string: some MCP
+clients rewrite `sym.ask` to something like `mcp__attestation__sym_ask`
+before it ever reaches you. Call the tool by the exact name your own tool
+list shows for the same arguments, and never retry a plausible-looking
+variant of the dotted name.
+
 Returns `answer` (relay VERBATIM), `refs`, `caveat`, `options` and
 `tool_used`; `ok=false` with `options` means ask the reader which operation
 they meant. Specific tools may be hidden from your session; `sym.tools`

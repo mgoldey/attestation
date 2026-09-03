@@ -501,3 +501,32 @@ def test_the_presentation_example_stays_markdown_not_a_foreign_surface():
         "the example shows an angle-bracket link; that trips the Telegram "
         "sender's HTML auto-detect and posts the whole message as HTML"
     )
+
+
+# --------------------------------------------------------------------------
+# dotted names are documentation, not a literal call string
+# --------------------------------------------------------------------------
+
+
+def test_every_skill_naming_a_dotted_tool_warns_the_name_may_be_rewritten():
+    """A real session (2026-09-03, hermes chat against qwen3.5:9b) tried
+    `runs.ask`, `runs_ask`, `runs`, and `runs.compare` as tool-call names and
+    got "does not exist" every time, because Hermes -- like this session's
+    own Claude Code client -- exposes the tool as
+    `mcp__attestation__runs_ask`, not the dotted name every skill's examples
+    show. The dotted names stay (they read better as documentation), but a
+    model that pattern-matches skill prose instead of its own tool list
+    needs to be told the two can differ. Every skill naming a dotted tool
+    call must carry this warning once; setup names no dotted calls and is
+    exempt."""
+    warned_phrase = "for you to read, not a literal call string"
+    for name in install.SKILL_NAMES:
+        if name == SETUP_SKILL:
+            continue
+        text = _skill_md(name)
+        if not _TOOL_TOKEN.search(text):
+            continue
+        assert warned_phrase in text, (
+            f"{name} names a dotted tool call but never warns that an MCP "
+            "client may rewrite it before the model sees it"
+        )

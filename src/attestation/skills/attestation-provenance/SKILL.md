@@ -38,6 +38,13 @@ runs.ask(question="which arm won?", family="kdsweep")      # compares
 runs.ask(question="are the numbers in my draft right?", path="paper.md")
 ```
 
+These dotted names are for you to read, not a literal call string: some MCP
+clients rewrite `runs.ask` to something like `mcp__attestation__runs_ask`
+before it ever reaches you. Call the tool by the exact name your own tool
+list shows for the same arguments -- never retry a plausible-looking
+variant of the dotted name, and never conclude a tool "does not exist"
+without checking your tool list first.
+
 `runs.ask` without a `family` does not guess one: it lists what is
 comparable and asks. Pass the name back and it compares. Every router returns
 `answer` (relay VERBATIM), `refs`, `caveat` (unabridged), `options` and
