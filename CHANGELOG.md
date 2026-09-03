@@ -11,6 +11,22 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- `demos/` (repo root, `2026-09-03`): recording scripts for four short
+  demos — the run ledger + claim checker (`ledger/`, asciinema), citations
+  (`claims/`, asciinema), `kg.*`/`sym.*` over MCP (`kg-symbolic/`,
+  asciinema, the one pair of MCP-only surfaces with no CLI/UI front end),
+  and the HTMX web UI (`feed/`, Playwright, its own `demos` dependency
+  group so a plain `uv sync` never installs a browser). Scripts are
+  committed; the `.cast`/`.gif`/`.webm` output is not — same convention as
+  the existing gitignored `demo/`. Lives at the repo root rather than under
+  `examples/`: a README one level under `examples/` is swept into
+  `test_golden_paths.py`'s discovery as a golden path needing the seven
+  sections and a pinned output line, neither of which a video has.
+  `kg-symbolic/` and `feed/` share a seeding path (`seed_kg_db.py`) that
+  runs the real ingest+tag pipeline against the flows fixture with a live
+  chat model, because the `--offline` stub's schema-shaped placeholder tags
+  ("existing", "vocabulary", "title") produce a graph with nothing topical
+  to show.
 - `attest runs record FAMILY --arm NAME METRIC=VALUE...` (`2026-09-01`)
   writes the results/config JSON+YAML pair, `corpora.toml`, and
   `metric_direction.toml` entries a run needs deterministically, refusing

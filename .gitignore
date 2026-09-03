@@ -14,8 +14,18 @@ __pycache__/
 # Local demo recordings: a 5.5MB .webm plus stills, never committed. Kept out
 # of the repo so a clone stays small -- a binary that large is permanent
 # history once added. Host it externally and link from the README if it needs to
-# be shared.
+# be shared. demos/*/record.sh and record.py write here by default.
 demo/
+
+# demos/: recording scripts are committed, their .cast/.gif/.webm output and
+# the scratch databases seed_*_db.py builds are not (same reasoning as
+# demo/ above -- regenerable, and a real .cast is a transcript that can
+# carry whatever path ran it). demos/ lives at the repo root, not under
+# examples/, on purpose -- see CLAUDE.md's Golden paths note.
+demos/**/*.cast
+demos/**/*.gif
+demos/**/*.webm
+demos/**/*.db
 
 # Build artifacts: `uv build` / CI wheel smoke test write here.
 dist/

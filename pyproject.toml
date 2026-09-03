@@ -85,6 +85,12 @@ examples = ["mlflow-skinny>=2.20"]
 # `gates` job does not install it.
 docs = ["mkdocs-material>=9", "mkdocstrings[python]>=0.26"]
 
+# Browser automation for demos/feed/record.py, the one demo that
+# needs a real browser (attest serve's HTMX UI). Never a runtime dependency;
+# nothing under src/ imports playwright. Run with `uv run --group demos
+# playwright install chromium` once, then `--group demos python record.py`.
+demos = ["playwright>=1.47"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
