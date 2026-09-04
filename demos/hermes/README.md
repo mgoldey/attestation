@@ -18,6 +18,17 @@ own paraphrase of the question is not reliable (a real session normalised
 straight) -- `runs.ask` now takes an explicit `metric` parameter, and the
 skill tells the agent to pass it.
 
+A separate finding on the feed surface (attestation-feed, same session):
+with no toolset restriction, hermes carries ~16k prompt tokens of its OWN
+built-in tools (filesystem, terminal, browser, ...) alongside attestation's
+2, and gemma4:e2b sometimes talked itself out of calling a tool it had
+already correctly identified in its own reasoning trace ("I need to know
+which feeds they subscribe to first" -- invented, not asked for), or
+reasoned to the right call and then printed it as literal text instead of
+invoking it. `-t <mcp-server-name>` (below) restricts hermes to just that
+server's tools and made both failures reliably go away in repeated live
+testing.
+
 ## Prerequisites
 
 - A running Ollama server with `gemma4:e2b-it-q4_K_M` pulled.
@@ -39,5 +50,10 @@ ATTEST_DB=/tmp/attest-hermes-demo.db uv run attest runs scan --root ../../exampl
 
 ./record.sh
 ```
+
+`record.sh` passes `-t attestation-provenance` to `hermes chat` -- the MCP
+server name from `~/.hermes/config.yaml`, used as an exclusive toolset
+allowlist. Reuse the same flag (with that server's own name) for any other
+skill: `-t attestation-feed`, `-t attestation-knowledge`, etc.
 
 Writes `../../demo/hermes.cast` and `.gif` (gitignored, not committed).

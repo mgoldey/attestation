@@ -25,6 +25,19 @@ commit that carries the reasoning rather than repeating it; `git log
   three runs straight before the tool ever saw it, so `runs.ask` gained an
   explicit `metric` parameter, and the provenance skill now tells an agent
   to pass it rather than rely on its own paraphrase carrying it.
+- `attestation-feed` skill text (`2026-09-03`): two failures found testing
+  `feed.ask` the same way, both live-verified fixed. With no toolset
+  restriction on the hermes session, gemma4:e2b carried ~16k prompt tokens
+  of hermes's own built-in tools alongside attestation's two, and either
+  invented a missing precondition ("I need to know which feeds they
+  subscribe to first") before calling a tool it had already correctly
+  identified, or reasoned to the right call and then printed it as literal
+  text instead of invoking it. The skill now says explicitly that `user`
+  and `question` are always enough and that the example call syntax is
+  documentation, not something to type; `demos/hermes/record.sh` passes
+  `-t <mcp-server-name>` to restrict hermes to just that server's tools,
+  which made both failures go away in repeated live testing. Neither fix
+  alone was reliable in this testing; both together were, twice.
 
 ### Added
 

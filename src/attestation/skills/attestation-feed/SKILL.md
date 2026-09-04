@@ -50,6 +50,24 @@ feed.ask(user="<name>", question="anything new on protein folding?")  # -> a sea
 feed.ask(user="<name>", question="what's worth reading this week?")   # -> the digest
 ```
 
+`user` and `question` are ALWAYS enough to call it -- do not invent a
+missing precondition first. "Which feeds do they subscribe to" is not
+something you need before calling: the tool already knows the reader's
+corpus, and a first-time persona is created inside the call, not before
+it. A real session (2026-09-03) correctly named `feed.ask` and its
+arguments, then talked itself out of calling it by deciding it needed
+subscription details first, and answered with nothing instead. If you can
+name the tool and its two arguments, call it now.
+
+`feed.ask(user="demo-reader", question="...")` above is an EXAMPLE to
+read, not something to type. Once you know the tool name and its
+arguments, invoke your actual tool-calling mechanism -- never write the
+call as text in your reply and stop there. A real session (2026-09-03)
+reasoned through the right tool and the right arguments correctly, then
+printed `feed.ask(user="demo-reader", question="what should I read
+today?")` as its final answer instead of calling anything, which reads to
+the person on the other end as "nothing happened."
+
 These dotted names are for you to read, not a literal call string: some MCP
 clients rewrite `feed.ask` to something like `mcp__attestation__feed_ask`
 before it ever reaches you. Call the tool by the exact name your own tool
