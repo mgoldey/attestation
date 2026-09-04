@@ -184,7 +184,7 @@ curl -s http://localhost:11434/api/ps | python3 -m json.tool | grep context
 ```
 
 hermes-agent sends ~13k of system context per turn (skill registry, persona,
-memory headers, tool schemas), so at 4096 the tool schemas and the user's
+memory headers, tool schemas; ~5k once section 8's allowlist is in), so at 4096 the tool schemas and the user's
 question are truncated away before the model sees them. Fix it in the systemd
 drop-in, each variable on **its own** `Environment=` line:
 
@@ -317,6 +317,96 @@ transactions short and WAL mode + `busy_timeout` absorb overlap.
 Concurrent ingest + serving is safe in practice: ingest keeps write
 transactions short — entries are embedded first with no lock held, then
 written in one quick transaction per feed.
+
+## 8. Chat from Discord or Telegram
+
+hermes-agent's gateway turns the same MCP server into a chat bot. Two things
+decide whether that is usable on a local model, and neither is the default:
+what the platform's toolset carries, and whether Ollama keeps the model
+loaded between messages.
+
+**Measured 2026-09-04, gemma4:e2b on a GTX 1080**, same question ("what are
+your recommendations for me today?") through the gateway before and after:
+
+| | tool schemas per turn | prompt tokens per call | turn time |
+|---|---|---|---|
+| Telegram, `hermes-telegram` default | 131 | ~15k-29k | 54s-249s |
+| Discord, allowlisted (below) | 2 | ~5k | 23s-28s |
+
+The 131 were 61 hermes built-ins (browser, terminal, kanban, home assistant,
+computer use...), the full `attestation` server (46 tools plus hermes's 4
+resource/prompt meta tools), and 20 from the filament plugin. The first turn also paid a 30s cold model load, and
+"list what skills you have" made the model dump 76 SKILL.md entries and hit
+its output cap four times in a row.
+
+### a) Credentials
+
+Discord: create an application and a Bot in the Developer Portal, switch on
+**Server Members Intent** and **Message Content Intent** on the Bot page
+(without them the bot connects and never sees message text), copy the token,
+and get your own user ID from Discord with Developer Mode on. Then either
+`hermes gateway setup` or, in `~/.hermes/.env`:
+
+```bash
+DISCORD_BOT_TOKEN=...
+DISCORD_ALLOWED_USERS=<your user id>        # the human, not the bot
+```
+
+A bot cannot be DMed until it shares a server with you, and it joins servers
+only through OAuth, never an invite link:
+`https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot&permissions=274878286912`.
+Telegram is the same shape with `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_ALLOWED_USERS`; a platform is enabled purely by its token being
+set, so swapping means commenting one out.
+
+### b) Allowlist the feed surface per platform
+
+In `~/.hermes/config.yaml`. `attest install` already wrote the four
+`attestation-<surface>` servers, disabled; enable the one you want:
+
+```yaml
+mcp_servers:
+  attestation-feed:
+    enabled: true
+    tools: {prompts: false, resources: false}   # drop hermes's 4 list/read meta tools
+platform_toolsets:
+  discord: [attestation-feed]       # naming an MCP server here is an ALLOWLIST;
+  telegram: [attestation-feed]      # no composite listed = no built-ins
+  cli: [hermes-cli, attestation]    # terminal sessions keep the full server
+known_plugin_toolsets:
+  discord: [filament, spotify]      # a plugin listed here and absent above is DECLINED
+  telegram: [filament, spotify]     # (unknown plugins default to on)
+agent:
+  disabled_toolsets: [kanban]       # re-added from the composite otherwise; global is the only lever
+```
+
+Dry-run without restarting, from hermes-agent's venv:
+`from hermes_cli.tools_config import _get_platform_tools` and call it with
+the loaded YAML and `"discord"`. Offline it warns that `attestation-feed` is
+unknown, because the MCP alias only exists once the server is connected; the
+gateway resolves it. Then `systemctl --user restart hermes-gateway`, and read
+the real number from `~/.hermes/state.db`'s `session_model_usage`, not from
+`hermes mcp test`, which spawns a fresh process.
+
+### c) Keep the model resident
+
+Ollama unloads after 5 minutes idle and hermes's `/v1` calls carry no
+`keep_alive`. A native-API touch pins the model, and a later `/v1` request
+does **not** reset it (measured). Editing the Ollama unit needs sudo, so a
+user timer does it without:
+
+```bash
+curl -s http://127.0.0.1:11434/api/generate \
+  -d '{"model":"gemma4:e2b-it-q4_K_M","keep_alive":-1}'
+curl -s http://127.0.0.1:11434/api/embed \
+  -d '{"model":"embeddinggemma","input":"warm","keep_alive":-1}'
+ollama ps        # UNTIL should read Forever
+```
+
+Put both lines in a `Type=oneshot` user service and a timer with
+`OnBootSec=2min` and `OnUnitActiveSec=1h`, so the pin survives an Ollama
+restart. This holds ~4.4 GB of GPU memory permanently; `attest warmup`
+(30 minutes) is the polite version for a shared card.
 
 ## Restricted surfaces and generated agent configs
 
