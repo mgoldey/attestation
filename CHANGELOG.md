@@ -9,8 +9,32 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Fixed
+
+- `runs.ask` (`2026-09-03`): comparing arms by a metric the question named
+  silently fell back to whichever metric most arms shared instead, because
+  `_runs_ask` called `_compare(family)` with no metric argument at all —
+  found via a real Hermes session asking "compare kdsweep by wer" that got
+  a caveat computed over a different metric's spread. The same call also
+  never surfaced `winner` in its own answer, because `winner` names one
+  arm rather than a collection and `_RESULT_KEYS`' generic "named list"
+  path never looked for it — a caller asking "which arm won?" got the arm
+  list back with no arm marked as the answer. Text-extracting a metric
+  from the question alone was not enough either: gemma4:e2b paraphrased
+  "using the wer metric, compare..." down to `question="which arm won?"`
+  three runs straight before the tool ever saw it, so `runs.ask` gained an
+  explicit `metric` parameter, and the provenance skill now tells an agent
+  to pass it rather than rely on its own paraphrase carrying it.
+
 ### Added
 
+- `demos/hermes/` (`2026-09-03`): a fifth demo, and the only one driving a
+  real agent rather than calling the tools directly — an asciinema
+  recording of `hermes chat` asking a real question against the
+  `attestation-provenance` skill, verified twice byte-identical after the
+  fixes above. `record.sh`/`README.md` follow the same convention as the
+  other four (script committed, output gitignored); needs a live Hermes
+  install and Ollama, so it is not run by any test.
 - `demos/` (repo root, `2026-09-03`): recording scripts for four short
   demos — the run ledger + claim checker (`ledger/`, asciinema), citations
   (`claims/`, asciinema), `kg.*`/`sym.*` over MCP (`kg-symbolic/`,

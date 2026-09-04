@@ -319,3 +319,81 @@ def test_kg_ask_returns_the_answer_not_just_a_count(tmp_path, monkeypatch):
     )
     assert any(c.isalpha() for c in path["answer"].replace("hop", "")), path["answer"]
     assert "retrieval" in path["answer"], f"the path itself is missing: {path['answer']!r}"
+
+
+def test_runs_ask_uses_the_metric_the_question_named(tmp_path, monkeypatch):
+    """`_runs_ask` called `_compare(family)` with no metric even when the
+    question named one, so `ledger.compare` fell back to `_pick_metric`'s own
+    choice on a family recording more than one metric -- silently answering a
+    different question than the one asked, with the wrong numbers in the
+    caveat and no refusal to signal it. A real session (2026-09-03) asked
+    "compare the kdsweep arms by wer" and got the caveat computed over a
+    different metric's spread.
+
+    Two arms here rank OPPOSITE ways depending on which metric wins the
+    auto-pick, so a wrong pick is not just a different number -- it is a
+    different winner.
+    """
+    import json
+
+    from attestation.db import get_db
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    get_db(tmp_path / "t.db").close()
+
+    ws = tmp_path / "ws" / "proj" / "results"
+    ws.mkdir(parents=True)
+    # wer: sweep_a wins (lower). accuracy: sweep_b wins (higher). accuracy
+    # has MORE arms than wer alone, so _pick_metric's "most arms share a
+    # directed metric" rule picks accuracy when metric=None.
+    (ws / "sweep_a.json").write_text(json.dumps({"wer": 0.1, "accuracy": 0.80}))
+    (ws / "sweep_b.json").write_text(json.dumps({"wer": 0.2, "accuracy": 0.95}))
+    (ws / "sweep_c.json").write_text(json.dumps({"accuracy": 0.70}))
+    monkeypatch.setenv("RESEARCH_ROOT", str(tmp_path / "ws"))
+
+    from attestation.mcp import provenance as prov
+    from attestation.mcp.ask import _runs_ask
+
+    prov._scan(confirm=True)
+
+    by_wer = _runs_ask("compare the sweep arms by wer, which won?", family="sweep")
+    assert "winner: sweep_a" in by_wer["answer"], (
+        f"asked for wer but got a different metric's winner: {by_wer!r}"
+    )
+
+    by_accuracy = _runs_ask("compare the sweep arms by accuracy, which won?", family="sweep")
+    assert "winner: sweep_b" in by_accuracy["answer"], (
+        f"asked for accuracy but got a different metric's winner: {by_accuracy!r}"
+    )
+
+
+def test_runs_ask_metric_argument_wins_over_a_paraphrased_question(tmp_path, monkeypatch):
+    """A caller that already extracted the metric should not depend on
+    `question` still carrying it: a real Hermes session (2026-09-03, three
+    runs) normalised "using the wer metric, compare the kdsweep arms" down
+    to `question="which arm won?"` before it ever reached `_runs_ask`, so
+    text extraction from `question` alone never saw "wer" -- the explicit
+    `metric` parameter is the reliable path."""
+    import json
+
+    from attestation.db import get_db
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    get_db(tmp_path / "t.db").close()
+
+    ws = tmp_path / "ws" / "proj" / "results"
+    ws.mkdir(parents=True)
+    (ws / "sweep_a.json").write_text(json.dumps({"wer": 0.1, "accuracy": 0.80}))
+    (ws / "sweep_b.json").write_text(json.dumps({"wer": 0.2, "accuracy": 0.95}))
+    (ws / "sweep_c.json").write_text(json.dumps({"accuracy": 0.70}))
+    monkeypatch.setenv("RESEARCH_ROOT", str(tmp_path / "ws"))
+
+    from attestation.mcp import provenance as prov
+    from attestation.mcp.ask import _runs_ask
+
+    prov._scan(confirm=True)
+
+    out = _runs_ask("which arm won?", family="sweep", metric="wer")
+    assert "winner: sweep_a" in out["answer"], (
+        f"explicit metric= was not honoured over the paraphrased question: {out!r}"
+    )

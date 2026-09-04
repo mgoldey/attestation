@@ -117,7 +117,7 @@ m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
 | `cite.sources()` | Which citation sources are configured, and which can reach the network | instant |
 | `feed.ask(user, question)` | Route a plain-language feed question to the right tool | fast |
 | `kg.ask(question, source, target)` | Route a plain-language graph question to the right tool | instant |
-| `runs.ask(question, family, path)` | Route a plain-language ledger question to the right tool | instant |
+| `runs.ask(question, family, path, metric)` | Route a plain-language ledger question to the right tool | instant |
 | `sym.ask(expr, question)` | Route a plain-language math question to the right tool | fast |
 | `feed.tools()`, `kg.tools()`, `runs.tools()`, `sym.tools()` | List the tools this agent surface actually has | instant |
 

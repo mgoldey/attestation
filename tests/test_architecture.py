@@ -179,7 +179,23 @@ def test_mcp_domain_modules_stay_small():
         # rule tables (pure functions over a string, no model, no database --
         # the regression guard for the measured 13/15), ask.py holds the four
         # tools that call them and touch the rest of the system.
-        "ask.py": 325,
+        # Raised 2026-09-03: `_runs_ask` called `_compare(family)` with no
+        # metric even when the question named one, so `ledger.compare` fell
+        # back to its own auto-pick and silently answered a different
+        # question's metric -- found via a real Hermes session that asked
+        # "compare kdsweep by wer" and got a caveat computed over a
+        # different metric's spread. `_metric_in_question` extracts a known
+        # metric name (via `ledger.metric_directions()`) from the question
+        # text. Same session also never named the winner in `_summarise`'s
+        # answer, because `winner` names one arm, not a collection, so the
+        # generic "named list" path never saw it -- fixed alongside. Raised
+        # again the same day: text extraction alone was not enough --
+        # gemma4:e2b paraphrased "using the wer metric, compare..." down to
+        # question="which arm won?" three runs straight, dropping "wer"
+        # before `_metric_in_question` ever saw it. `runs.ask` gained an
+        # explicit `metric` parameter so a caller does not depend on its own
+        # paraphrase carrying it.
+        "ask.py": 355,
         # Raised for runs.record (2026-09-01): a new tool plus its Arm
         # pydantic model in provenance.py, one new routing rule (with its
         # own ordering comment) in routing.py. Raised again the same day

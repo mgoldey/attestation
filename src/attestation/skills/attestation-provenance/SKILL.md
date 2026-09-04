@@ -35,8 +35,14 @@ picking a metric yourself.
 ```
 runs.ask(question="which arm won?")                        # names the comparable families
 runs.ask(question="which arm won?", family="kdsweep")      # compares
+runs.ask(question="which arm won?", family="kdsweep", metric="wer")  # by a named metric
 runs.ask(question="are the numbers in my draft right?", path="paper.md")
 ```
+
+If the question names a metric ("compare by wer"), pass it as `metric` too
+-- do not rely on it surviving into your own paraphrase of `question`. A
+comparison with no metric declared falls back to whichever one most arms
+share, which can silently answer a different question than the one asked.
 
 These dotted names are for you to read, not a literal call string: some MCP
 clients rewrite `runs.ask` to something like `mcp__attestation__runs_ask`

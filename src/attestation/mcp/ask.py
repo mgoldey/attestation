@@ -7,6 +7,7 @@ module is the part that touches the rest of the system.
 """
 
 import os
+import re
 
 from pydantic import BaseModel, Field
 
@@ -168,13 +169,30 @@ def _summarise(out: dict) -> str:
     """One line naming the actual results, not just counting them.
 
     "top 10 by degree" tells a reader nothing; the ten concepts do.
+
+    `runs.compare`'s `winner` is the same failure one level up: a caller
+    asking "which arm won?" got the arm list back with no arm marked as the
+    answer, because `winner` is not one of `_RESULT_KEYS` -- it names ONE
+    arm, not a collection, so the generic "named list" path never saw it. A
+    real session asked runs.ask "which arm won by wer" and reported no
+    winner at all, even though the tool it called knew one.
     """
     named: list = next((out[k] for k in _RESULT_KEYS if out.get(k)), [])
     labels = [x for x in (_label(n) for n in named[:5]) if x]
-    headline = (out.get("message") or "").split(";")[0].strip()
+    headline = _headline_with_winner(out)
     if not labels:
         return out.get("message") or ""
     return f"{headline}: {'; '.join(labels)}" if headline else "; ".join(labels)
+
+
+def _headline_with_winner(out: dict) -> str:
+    """The message's headline, with `winner` prefixed when the payload names
+    one. Split out of `_summarise` to keep that function's branching flat."""
+    headline = (out.get("message") or "").split(";")[0].strip()
+    winner = out.get("winner")
+    if not winner:
+        return headline
+    return f"winner: {winner} ({headline})" if headline else f"winner: {winner}"
 
 
 # One label's share of an answer. Five labels ride in every router reply, and
@@ -246,7 +264,30 @@ def _which_family(listed: dict) -> str:
     return answer
 
 
-def _runs_ask(question: str, family: str | None = None, path: str | None = None) -> dict:
+def _metric_in_question(question: str) -> str | None:
+    """A known metric name, named as a whole word in `question`.
+
+    `runs.ask` used to call `_compare(family)` with no metric even when the
+    question named one ("compare kdsweep by wer"), so `ledger.compare` fell
+    back to `_pick_metric`'s own choice -- whichever directed metric the most
+    arms share, not the one asked about. On a family recording more than one
+    metric, that silently answers a different question than the one asked,
+    with no refusal to signal it. Matched against `ledger.metric_directions()`
+    (built-in table plus any TOML override) so a user's own declared metric
+    is found too, not just the built-in set.
+    """
+    from attestation import ledger
+
+    q = question.lower()
+    for name in ledger.metric_directions():
+        if re.search(rf"\b{re.escape(name.lower())}\b", q):
+            return name
+    return None
+
+
+def _runs_ask(
+    question: str, family: str | None = None, path: str | None = None, metric: str | None = None
+) -> dict:
     from attestation.mcp import provenance as prov
 
     decision = route_runs(question)
@@ -262,7 +303,13 @@ def _runs_ask(question: str, family: str | None = None, path: str | None = None)
                 "options": ["runs.compare"],
                 "tool_used": None,
             }
-        out = prov._compare(family)
+        # `metric` is the caller's explicit choice; a paraphrasing agent that
+        # calls this tool often normalises the question down to "which arm
+        # won?" before it ever reaches here (measured on gemma4:e2b: "using
+        # the wer metric, compare..." became question="which arm won?" three
+        # times running), so extracting from `question` alone is a fallback,
+        # not the primary path.
+        out = prov._compare(family, metric or _metric_in_question(question))
     elif decision.tool == "runs.claims_check":
         out = prov._check(path)
     elif decision.tool == "runs.claims_coverage":
@@ -388,14 +435,22 @@ def register(mcp) -> None:
         return Answer(**_feed_ask(user, question))
 
     @mcp.tool(name="runs.ask")
-    def runs_ask(question: str, family: str | None = None, path: str | None = None) -> Answer:
+    def runs_ask(
+        question: str,
+        family: str | None = None,
+        path: str | None = None,
+        metric: str | None = None,
+    ) -> Answer:
         """Ask about recorded experiment runs, or numbers written in a draft.
 
         Start here. `family` names a set of arms to compare; `path` names a
-        Markdown file to check. Caveats from a comparison pass through
-        unabridged -- report them.
+        Markdown file to check. Pass `metric` when the question names one
+        ("compare by wer") -- your paraphrase of the question may not, and
+        without it the comparison falls back to whichever metric most arms
+        share, which can silently answer a different question. Caveats from
+        a comparison pass through unabridged -- report them.
         """
-        return Answer(**_runs_ask(question, family, path))
+        return Answer(**_runs_ask(question, family, path, metric))
 
     @mcp.tool(name="kg.ask")
     def kg_ask(question: str, source: str | None = None, target: str | None = None) -> Answer:
