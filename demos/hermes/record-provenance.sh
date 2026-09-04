@@ -16,7 +16,7 @@
 # in repeated live testing (2026-09-03).
 set -euo pipefail
 cd "$(dirname "$0")"
-OUT="${1:-../../demo/hermes}"
+OUT="${1:-../../demo/hermes-provenance}"
 mkdir -p "$(dirname "$OUT")"
 
 asciinema rec --overwrite --command "bash -c '

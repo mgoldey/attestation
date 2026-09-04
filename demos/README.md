@@ -1,13 +1,13 @@
 # Demo recordings
 
-Four short recordings of `attest` in use, one per major surface. Unlike
-`examples/*/`, these are not golden paths: they produce video, not a pinned
-output line, and two of the four need a running model server, so
-`tests/test_golden_paths.py` does not run them. What's committed here is the
-recording *scripts* — real commands against real fixtures, the same ones
-`examples/workspace/` and `examples/citations/` already use — not the
-video files themselves. Regenerate locally; see each subdirectory's own
-notes for what it needs.
+Six short recordings of `attest` in use, one per major surface plus one
+pair driving a real agent. Unlike `examples/*/`, these are not golden
+paths: they produce video, not a pinned output line, and most need a
+running model server, so `tests/test_golden_paths.py` does not run them.
+What's committed here is the recording *scripts* — real commands against
+real fixtures, the same ones `examples/workspace/` and `examples/citations/`
+already use — not the video files themselves. Regenerate locally; see each
+subdirectory's own notes for what it needs.
 
 | dir | what it shows | needs |
 |---|---|---|
@@ -15,6 +15,7 @@ notes for what it needs.
 | `claims/` | `attest claims` plus `cite.*` over MCP — the citation lint over `examples/citations/` | `none — pure local computation` |
 | `kg-symbolic/` | `kg.*` and `sym.*` over MCP — the reading graph and symbolic math, neither of which has a CLI command or web page | `kg.*` needs a model server once, to seed real tags; `sym.*` needs nothing |
 | `feed/` | the HTMX web UI (`attest serve`) — browsing a persona's feed, marking items useful/not, opening the onboarding form | a model server, to seed real tagged items |
+| `hermes/` | a real Hermes Agent (`hermes chat`) calling `runs.ask` and `feed.ask` over MCP — the only pair driving an agent rather than the tools directly | a live Hermes install, and a model server |
 
 ## Recording pipeline
 
