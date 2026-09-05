@@ -204,9 +204,11 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
             # rows, so counting as we go reported items that no longer exist.
             added_here = 0
             for entry, title, summary, guid, chash, vec in embedded:
+                doi, arxiv_id = extract_ids(guid, entry.get("link"))
                 cur = conn.execute(
-                    "INSERT INTO items(feed_id, guid, title, url, summary, published, content_hash)"
-                    " VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?)",
+                    "INSERT INTO items(feed_id, guid, title, url, summary, published,"
+                    " content_hash, doi, arxiv_id)"
+                    " VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?, ?, ?)",
                     (
                         feed["id"],
                         guid,
@@ -215,6 +217,8 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
                         summary,
                         _published_iso(entry),
                         chash,
+                        doi,
+                        arxiv_id,
                     ),
                 )
                 conn.execute(

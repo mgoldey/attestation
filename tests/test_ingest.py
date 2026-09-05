@@ -461,3 +461,30 @@ def test_extract_ids_from_live_formats(guid, url, want):
     from attestation.ingest import extract_ids
 
     assert extract_ids(guid, url) == want
+
+
+def test_ingest_stores_doi_and_arxiv_id(tmp_path, fake_embedder):
+    conn = get_db(tmp_path / "t.db")
+    feeds = write_feeds_toml(tmp_path, ["https://arxiv.example/rss"])
+    entries = [
+        {
+            "id": "oai:arXiv.org:2106.02347v2",
+            "title": "NequIP",
+            "summary": "E(3)-equivariant",
+            "link": "https://arxiv.org/abs/2106.02347",
+        },
+        {
+            "id": "https://www.nature.com/articles/s41557-026-02200-y",
+            "title": "N",
+            "summary": "s",
+            "link": "https://www.nature.com/articles/s41557-026-02200-y",
+        },
+    ]
+
+    def parse(url):
+        return SimpleNamespace(entries=entries, feed=SimpleNamespace(title="A"))
+
+    run_ingest(conn, fake_embedder, feeds, parse=parse)
+    rows = {r["title"]: (r["doi"], r["arxiv_id"]) for r in conn.execute("SELECT * FROM items")}
+    assert rows["NequIP"] == (None, "2106.02347")
+    assert rows["N"] == ("10.1038/s41557-026-02200-y", None)
