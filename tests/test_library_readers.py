@@ -177,7 +177,7 @@ def test_no_request_is_made_with_the_flags_unset(tmp_path, monkeypatch):
     monkeypatch.setattr(httpx, "Client", explode)
     monkeypatch.setattr(httpx, "get", explode)
     monkeypatch.delenv("ATTEST_CITATION_WEB", raising=False)
-    monkeypatch.delenv("ATTEST_CITATION_S2", raising=False)
+    monkeypatch.delenv("ATTEST_CITATION_SCHOLAR", raising=False)
     readers = library_readers.readers_from_env(
         conn, bib_paths=[FIX / "sample.bib"], zotero_path=tmp_path / "none.sqlite"
     )
@@ -188,10 +188,10 @@ def test_no_request_is_made_with_the_flags_unset(tmp_path, monkeypatch):
 def test_flags_arm_the_enrichers_at_construction(tmp_path, monkeypatch):
     conn = get_db(tmp_path / "t.db")
     monkeypatch.setenv("ATTEST_CITATION_WEB", "1")
-    monkeypatch.setenv("ATTEST_CITATION_S2", "1")
+    monkeypatch.setenv("ATTEST_CITATION_SCHOLAR", "1")
     readers = library_readers.readers_from_env(conn, bib_paths=[], zotero_path=tmp_path / "n")
     assert [r.name for r in readers] == ["feed", "arxiv", "crossref", "s2"]
-    monkeypatch.delenv("ATTEST_CITATION_S2")
+    monkeypatch.delenv("ATTEST_CITATION_SCHOLAR")
     assert [r.name for r in readers] == ["feed", "arxiv", "crossref", "s2"]  # already built
     assert [
         r.name

@@ -47,6 +47,7 @@ class BibtexRecords:
         self.paths = [Path(p) for p in paths]
 
     def records(self) -> Iterator[ReferenceRecord]:
+        """One record per entry with a title; a missing file is an absent source."""
         for path in self.paths:
             if not path.is_file():
                 continue
@@ -77,6 +78,7 @@ class ZoteroRecords:
         self.reader = citations.ZoteroReader(path)
 
     def records(self) -> Iterator[ReferenceRecord]:
+        """One record per titled, undeleted Zotero item; nothing on any sqlite error."""
         for key, data, authors in self.reader.raw_items():
             arxiv = None
             for line in (data.get("extra") or "").splitlines():
@@ -107,6 +109,7 @@ class FeedRecords:
         self.conn = conn
 
     def records(self) -> Iterator[ReferenceRecord]:
+        """One record per item with a DOI or arXiv id; the summary is its abstract."""
         rows = self.conn.execute(
             "SELECT id, title, url, summary, published, doi, arxiv_id FROM items"
             " WHERE doi IS NOT NULL OR arxiv_id IS NOT NULL ORDER BY id"
@@ -220,6 +223,7 @@ class ArxivEnricher(_Enricher):
     where = "r.arxiv_id IS NOT NULL"
 
     def records(self, conn: sqlite3.Connection, limit: int | None) -> Iterator[ReferenceRecord]:
+        """A record per untouched row with an arXiv id; a miss marks the row tried."""
         rows = self._todo(conn, limit)
         for i in range(0, len(rows), _ARXIV_BATCH):
             batch = rows[i : i + _ARXIV_BATCH]
@@ -279,6 +283,7 @@ class CrossrefEnricher(_Enricher):
     where = "r.doi IS NOT NULL"
 
     def records(self, conn: sqlite3.Connection, limit: int | None) -> Iterator[ReferenceRecord]:
+        """A record per untouched row with a DOI, one request each, cached."""
         for r in self._todo(conn, limit):
             url = f"https://api.crossref.org/works/{r['doi']}"
             body, fetched, _error = _cached_get(self.cache_dir, url)
@@ -347,6 +352,7 @@ class S2Enricher(_Enricher):
     where = "(r.doi IS NOT NULL OR r.arxiv_id IS NOT NULL)"
 
     def records(self, conn: sqlite3.Connection, limit: int | None) -> Iterator[ReferenceRecord]:
+        """A record with `cites` per untouched row that has a DOI or arXiv id."""
         for r in self._todo(conn, limit):
             paper = f"DOI:{r['doi']}" if r["doi"] else f"arXiv:{r['arxiv_id']}"
             url = f"https://api.semanticscholar.org/graph/v1/paper/{paper}?fields={_S2_FIELDS}"
@@ -404,7 +410,7 @@ def readers_from_env(
     """The reader list, in sync order; the two network flags are read HERE.
 
     Offline readers first (bibtex, zotero, feed), then the enrichers that
-    `ATTEST_CITATION_WEB` and `ATTEST_CITATION_S2` arm. `sources` filters by
+    `ATTEST_CITATION_WEB` and `ATTEST_CITATION_SCHOLAR` arm. `sources` filters by
     reader name so a caller can run one at a time.
     """
     readers = _offline_readers(conn, bib_paths, zotero_path) + _enrichers(cache_dir)

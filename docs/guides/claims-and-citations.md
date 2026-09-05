@@ -58,7 +58,7 @@ of a disagreement, recording the conflict on the source that offered it, so
 
 Two flags reach off the machine, both off by default and read only when the
 readers are built: `ATTEST_CITATION_WEB` (arXiv and CrossRef: abstracts,
-authors, venues) and `ATTEST_CITATION_S2` (Semantic Scholar reference lists,
+authors, venues) and `ATTEST_CITATION_SCHOLAR` (Semantic Scholar reference lists,
 one request per second, cached forever). They fill fields on references the
 library already holds and never add a paper on their own; `cite.sources` says
 which are live.

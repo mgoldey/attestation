@@ -47,7 +47,7 @@ identity rule that lets three sources fill one row.
   and year. Tested without a database.
 - **Network stays opt-in and construction-time.** `ATTEST_CITATION_WEB`
   keeps its meaning (CrossRef, now also arXiv). Semantic Scholar is a second
-  flag, `ATTEST_CITATION_S2`, because reference lists are a larger surface
+  flag, `ATTEST_CITATION_SCHOLAR`, because reference lists are a larger surface
   and a rate-limited one. Both are read when the sync's readers are built,
   never per call. `search` never fans out to the network, as today.
 - **No model in the store.** Tagging references calls the existing tagging
@@ -209,7 +209,7 @@ sync report and continue.
 ATTEST_BIB_PATHS=            # colon-separated .bib files; unset = *.bib in cwd (today's rule)
 ATTEST_ZOTERO_PATH=          # unset = ~/Zotero/zotero.sqlite if it exists (today's rule)
 ATTEST_CITATION_WEB=         # existing: CrossRef; now also the arXiv API
-ATTEST_CITATION_S2=          # new: Semantic Scholar reference lists
+ATTEST_CITATION_SCHOLAR=          # new: Semantic Scholar reference lists
 ```
 
 `Resolver.from_env` keeps its behaviour and grows the two path variables, so
@@ -303,7 +303,7 @@ the disk readers.
 |---|---|
 | `cite.lookup(key)` | store first (identity, DOI, arXiv id, bib key), then the disk readers as today. The row reports `sources: [{source, source_key, fetched_at}]` and `conflicts` when any. |
 | `cite.search(query, limit=5, author=None, year=None, tag=None)` | `library.search`. `semantic: true/false` and `caveat` in the envelope. Falls back to today's substring scan of the readers when the store is empty, and says so. |
-| `cite.sources()` | adds `store: {references, with_vectors, with_tags, with_cites}` and per-source counts; `offline` now reflects `ATTEST_CITATION_S2` too. |
+| `cite.sources()` | adds `store: {references, with_vectors, with_tags, with_cites}` and per-source counts; `offline` now reflects `ATTEST_CITATION_SCHOLAR` too. |
 | `cite.sync(sources=None, limit=None)` | **new**. Runs `library.sync` with the readers `from_env` arms. Returns `SyncReport`. Network readers run only if their flag was set when the server started — the tool cannot arm one. |
 | `cite.check(path)` | unchanged; `check_citations` resolves through the store as well, so a key in the store but in no `.bib` in cwd no longer lints as uncited. |
 

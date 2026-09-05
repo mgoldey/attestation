@@ -16,7 +16,7 @@
 - `uv run --frozen pre-commit run --all-files` is the gate (ruff format, ruff check, ty, lock sync, complexity/xenon ratchets, bandit, full pytest ~70 s). Run it before every commit that touches `src/`.
 - Domain modules (`library.py`, `citations.py`, `ingest.py`, `rank.py`) never import from `attestation.mcp`; `mcp/*` imports domain. `library.py` must not import `llm` (llm is a composition-root concern; pass `chat_fn`/`embedder` in).
 - Tests are hermetic: `conftest._hermetic_env` strips env; use `tmp_path` databases via `get_db(tmp_path / "t.db")`; never touch `~/.hermes`.
-- Nothing leaves the machine unless `ATTEST_CITATION_WEB` (arXiv + CrossRef) or `ATTEST_CITATION_S2` (Semantic Scholar) was set when the readers were built. `search` never calls a network reader.
+- Nothing leaves the machine unless `ATTEST_CITATION_WEB` (arXiv + CrossRef) or `ATTEST_CITATION_SCHOLAR` (Semantic Scholar) was set when the readers were built. `search` never calls a network reader.
 - Tool count moves 46 → 47 (`cite.sync`). Every doc quoting 46 (`CLAUDE.md` lines 5 and 50, `README.md:88`, `docs/guides/agents.md:64,324`) and the per-namespace line `cite.*(4)` → `cite.*(5)` must change in the same commit as the tool, or `test_architecture.py` fails.
 - `docs/reference/cli.md` is generated: run `uv run python scripts/render_cli_reference.py` after any parser change and commit the result.
 - Work happens in the worktree `/home/matt/attestation/.claude/worktrees/library-store` on branch `feat/library-store`. Never open the live database from this branch (migration 007 would lock the gateway's older code out); manual runs set `ATTEST_DB=/tmp/<scratch>.db`.
@@ -1144,7 +1144,7 @@ def test_no_request_is_made_with_the_flags_unset(tmp_path, monkeypatch):
     conn = get_db(tmp_path / "t.db")
     def explode(*a, **k): raise AssertionError("network touched")
     monkeypatch.setattr(httpx, "Client", explode); monkeypatch.setattr(httpx, "get", explode)
-    monkeypatch.delenv("ATTEST_CITATION_WEB", raising=False); monkeypatch.delenv("ATTEST_CITATION_S2", raising=False)
+    monkeypatch.delenv("ATTEST_CITATION_WEB", raising=False); monkeypatch.delenv("ATTEST_CITATION_SCHOLAR", raising=False)
     readers = library_readers.readers_from_env(conn, bib_paths=[FIX / "sample.bib"], zotero_path=tmp_path / "none.sqlite")
     assert [r.name for r in readers] == ["bibtex", "feed"]
     sync(conn, readers)
@@ -1152,7 +1152,7 @@ def test_no_request_is_made_with_the_flags_unset(tmp_path, monkeypatch):
 
 def test_flags_arm_the_enrichers_at_construction(tmp_path, monkeypatch):
     conn = get_db(tmp_path / "t.db")
-    monkeypatch.setenv("ATTEST_CITATION_WEB", "1"); monkeypatch.setenv("ATTEST_CITATION_S2", "1")
+    monkeypatch.setenv("ATTEST_CITATION_WEB", "1"); monkeypatch.setenv("ATTEST_CITATION_SCHOLAR", "1")
     names = [r.name for r in library_readers.readers_from_env(conn, bib_paths=[], zotero_path=tmp_path / "n")]
     assert names == ["feed", "arxiv", "crossref", "s2"]
 ```
@@ -1175,9 +1175,9 @@ def web_enabled() -> bool:
 
 
 def s2_enabled() -> bool:
-    """ATTEST_CITATION_S2: Semantic Scholar reference lists. A second flag
+    """ATTEST_CITATION_SCHOLAR: Semantic Scholar reference lists. A second flag
     because reference lists are a larger, rate-limited surface."""
-    return _flag("ATTEST_CITATION_S2")
+    return _flag("ATTEST_CITATION_SCHOLAR")
 ```
 
 and in `from_env`: `paths = list(bib_paths) if bib_paths else _bib_paths_from_env()` where `_bib_paths_from_env()` returns `[Path(p) for p in os.environ["ATTEST_BIB_PATHS"].split(os.pathsep) if p]` when set else `sorted(Path.cwd().glob("*.bib"))`; `zotero_path = zotero_path or os.environ.get("ATTEST_ZOTERO_PATH") or None`; use `web_enabled()` in place of the inline check.
@@ -1330,7 +1330,7 @@ def readers_from_env(conn, *, bib_paths=None, zotero_path=None, cache_dir=None, 
     return readers
 ```
 
-`.env.sample`: add `#ATTEST_BIB_PATHS=`, `#ATTEST_ZOTERO_PATH=`, `#ATTEST_CITATION_S2=1` beside the existing web flag with one comment line each (S2: "reference lists, one request per second, cached forever").
+`.env.sample`: add `#ATTEST_BIB_PATHS=`, `#ATTEST_ZOTERO_PATH=`, `#ATTEST_CITATION_SCHOLAR=1` beside the existing web flag with one comment line each (S2: "reference lists, one request per second, cached forever").
 
 - [ ] **Step 5: Run** `uv run pytest tests/test_library_readers.py tests/test_citations.py tests/test_library.py -q` → pass.
 - [ ] **Step 6: Commit** `git add -A src tests .env.sample && git commit -m "arXiv, CrossRef and Semantic Scholar enrichers: fill-only, cached content-addressed, armed by flags read at construction"`
@@ -1815,7 +1815,7 @@ Register in `register(mcp)`:
         BibTeX files, Zotero and the feed's own items with a DOI or arXiv id
         become rows; the same paper from three sources is one row with three
         source entries. arXiv/CrossRef (ATTEST_CITATION_WEB) and Semantic
-        Scholar reference lists (ATTEST_CITATION_S2) only run if the operator
+        Scholar reference lists (ATTEST_CITATION_SCHOLAR) only run if the operator
         set the flag before the server started -- this tool cannot arm them.
         Idempotent: re-running with unchanged sources changes nothing.
         """

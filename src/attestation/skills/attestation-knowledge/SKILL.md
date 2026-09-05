@@ -105,7 +105,7 @@ keys no configured source resolves. It is a lint -- the key is unknown
 here -- never "the cited work does not support this".
 
 **Everything above is local.** The exceptions are `ATTEST_CITATION_WEB`
-(CrossRef and the arXiv API) and `ATTEST_CITATION_S2` (Semantic Scholar
+(CrossRef and the arXiv API) and `ATTEST_CITATION_SCHOLAR` (Semantic Scholar
 reference lists), both off by default; they only fill fields on references
 the library already holds, and are read when the readers are *built*, so a
 disabled reader cannot be coaxed into a request and `cite.sync` cannot arm one.

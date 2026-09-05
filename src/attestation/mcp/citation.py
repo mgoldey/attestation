@@ -2,7 +2,7 @@
 
 Reads the reference library first -- the deduplicated store `cite.sync` fills
 from Zotero, `.bib` files and the feed -- and falls back to the disk readers
-when the store has nothing. Only when `ATTEST_CITATION_WEB` / `ATTEST_CITATION_S2`
+when the store has nothing. Only when `ATTEST_CITATION_WEB` / `ATTEST_CITATION_SCHOLAR`
 were set at server start do arXiv, CrossRef and Semantic Scholar enrich it.
 `cite.sources` reports which of those are configured and which can reach the
 network, because the answer to "did this leave my machine" has to be askable
@@ -243,7 +243,7 @@ def register(mcp) -> None:
         means nothing can leave this machine. The feed, ranking, graph, ledger
         and symbolic tools are always local; the only possible network readers
         are CrossRef and arXiv (ATTEST_CITATION_WEB) and Semantic Scholar
-        (ATTEST_CITATION_S2) for citations, and this says whether they are on.
+        (ATTEST_CITATION_SCHOLAR) for citations, and this says whether they are on.
 
         Both gemma4:e2b and hermes3:8b skipped this tool when asked "does
         anything I do here send data over the internet" -- one declined, and
@@ -270,7 +270,7 @@ def register(mcp) -> None:
         BibTeX files, Zotero and the feed's own items with a DOI or arXiv id
         become rows; the same paper from three sources is one row with three
         source entries. arXiv/CrossRef (ATTEST_CITATION_WEB) and Semantic
-        Scholar reference lists (ATTEST_CITATION_S2) only run if the operator
+        Scholar reference lists (ATTEST_CITATION_SCHOLAR) only run if the operator
         set the flag before the server started -- this tool cannot arm them.
         Idempotent: re-running with unchanged sources changes nothing.
         """

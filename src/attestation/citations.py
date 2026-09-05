@@ -38,8 +38,15 @@ from pathlib import Path
 DEFAULT_ZOTERO = Path.home() / "Zotero" / "zotero.sqlite"
 
 
-def _flag(name: str) -> bool:
-    return os.environ.get(name, "").strip() not in ("", "0", "false")
+def _on(value: str) -> bool:
+    return value.strip() not in ("", "0", "false")
+
+
+# The two flags are read with literal variable names, not through a helper
+# taking the name as an argument: tests/test_llm.py derives the set of
+# documented settings from the literals in the source, so an indirection
+# would make a real setting invisible to the guard that keeps .env.sample
+# honest. The names carry no digits for the same reason.
 
 
 def web_enabled() -> bool:
@@ -48,16 +55,16 @@ def web_enabled() -> bool:
     Read by the caller that BUILDS readers, never by a reader at call time --
     a disabled reader cannot be coaxed into one request by an unusual path.
     """
-    return _flag("ATTEST_CITATION_WEB")
+    return _on(os.environ.get("ATTEST_CITATION_WEB", ""))
 
 
 def s2_enabled() -> bool:
-    """ATTEST_CITATION_S2: Semantic Scholar reference lists.
+    """ATTEST_CITATION_SCHOLAR: Semantic Scholar reference lists.
 
     A second flag because reference lists are a larger, rate-limited surface
     than a metadata lookup, and a reader who accepts one need not accept both.
     """
-    return _flag("ATTEST_CITATION_S2")
+    return _on(os.environ.get("ATTEST_CITATION_SCHOLAR", ""))
 
 
 def bib_paths_from_env() -> list[Path]:

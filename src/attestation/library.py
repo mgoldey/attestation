@@ -274,11 +274,13 @@ class SyncReport:
     conflict_samples: list = field(default_factory=list)
 
     def bucket(self, name: str) -> dict:
+        """The per-source counters for `name`, created on first use."""
         return self.sources.setdefault(
             name, {"seen": 0, "added": 0, "merged": 0, "unchanged": 0, "enriched": 0, "failed": 0}
         )
 
     def to_dict(self) -> dict:
+        """The wire shape of the report; conflict samples capped at five."""
         return {
             "sources": self.sources,
             "embedded": self.embedded,
@@ -390,6 +392,8 @@ _LITERAL_BOOST = 0.02
 
 @dataclass
 class SearchHit:
+    """One library row as a search result, with its sources and tags beside it."""
+
     id: int
     identity: str
     title: str
@@ -432,6 +436,8 @@ class SearchHit:
 
 @dataclass
 class SearchResult:
+    """Hits plus the two facts a caller must relay: was it semantic, and why not."""
+
     hits: list[SearchHit]
     semantic: bool
     caveat: str | None
@@ -531,11 +537,11 @@ def _semantic(conn, embedder, q: str, where: str, params: list, limit: int) -> S
     ).fetchall()
     words = [w for w in normalise_title(q).split() if len(w) > 2]
 
-    def score(r) -> float:
+    def _score(r) -> float:
         text = normalise_title(f"{r['title']} {r['abstract'] or ''}")
         return sims[r["id"]] + _LITERAL_BOOST * sum(w in text for w in words)
 
-    rows.sort(key=score, reverse=True)
+    rows.sort(key=_score, reverse=True)
     hits = [_hit(conn, r, round(sims[r["id"]], 4)) for r in rows[:limit]]
     n_vectors = _count(conn, "SELECT count(*) FROM reference_vectors")
     n_refs = _count(conn, 'SELECT count(*) FROM "references"')

@@ -114,10 +114,10 @@ def test_cite_sources_reports_the_store_and_the_s2_flag(tmp_path, monkeypatch):
     monkeypatch.setenv("ATTEST_BIB_PATHS", str(tmp_path / "absent.bib"))
     monkeypatch.setenv("ATTEST_ZOTERO_PATH", str(tmp_path / "none.sqlite"))
     monkeypatch.delenv("ATTEST_CITATION_WEB", raising=False)
-    monkeypatch.delenv("ATTEST_CITATION_S2", raising=False)
+    monkeypatch.delenv("ATTEST_CITATION_SCHOLAR", raising=False)
     out = citation._sources()
     assert out["offline"] is True and out["store"]["references"] == 0
-    monkeypatch.setenv("ATTEST_CITATION_S2", "1")
+    monkeypatch.setenv("ATTEST_CITATION_SCHOLAR", "1")
     armed = citation._sources()
     assert armed["offline"] is False and {"name": "s2", "network": True} in armed["sources"]
 
