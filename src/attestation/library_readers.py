@@ -172,9 +172,20 @@ class FeedRecords:
 # ---------------------------------------------------------------------------
 
 
+_S2_PACE_SECONDS = 3.0  # unauthenticated S2 rate-limited 1 rps flat (429 x3) on 2026-09-05
+_RETRY_AFTER_DEFAULT = 10.0
+
+
 def _client() -> httpx.Client:
-    """One place to build the HTTP client, so tests can swap the transport."""
-    return httpx.Client(timeout=15.0, headers={"User-Agent": "attestation/library"})
+    """One place to build the HTTP client, so tests can swap the transport.
+
+    Redirects are followed: export.arxiv.org answers plain http with a 301 to
+    https, which read as a miss for every arXiv seed on the first generation
+    of examples/molecular-ai.
+    """
+    return httpx.Client(
+        timeout=15.0, headers={"User-Agent": "attestation/library"}, follow_redirects=True
+    )
 
 
 def _sleep(seconds: float) -> None:
@@ -199,7 +210,7 @@ def _cached_get(cache_dir: Path, url: str) -> tuple[bytes | None, str | None, st
         rec = json.loads(path.read_text())
         return rec["body"].encode(), rec["fetched_at"], None
     error = None
-    for _attempt in range(3):
+    for attempt in range(3):
         try:
             with _client() as client:
                 resp = client.get(url)
@@ -207,7 +218,13 @@ def _cached_get(cache_dir: Path, url: str) -> tuple[bytes | None, str | None, st
             return None, None, f"{type(exc).__name__}: {exc}"
         if resp.status_code == 429 or resp.status_code >= 500:
             error = f"HTTP {resp.status_code}"
-            _sleep(float(resp.headers.get("Retry-After") or 2))
+            # One back-off for a 429, then give the row up for this pass:
+            # a rate limit that outlasts one Retry-After is the pool being
+            # exhausted, and hammering it delays every other row behind it.
+            # A 5xx gets a second retry, since those are usually momentary.
+            if resp.status_code == 429 and attempt >= 1:
+                break
+            _sleep(max(float(resp.headers.get("Retry-After") or 0), _RETRY_AFTER_DEFAULT))
             continue
         if resp.status_code != 200:
             return None, None, f"HTTP {resp.status_code}"
@@ -223,7 +240,16 @@ def _cached_get(cache_dir: Path, url: str) -> tuple[bytes | None, str | None, st
 
 
 class _Enricher:
-    """Base: selects the rows it has not yet touched, oldest `updated` first."""
+    """Base: selects the rows it has not yet touched, oldest `updated` first.
+
+    A row is "touched" once this source has a `reference_sources` row for it.
+    A definite answer (a record, or a 404 / empty payload) writes one, so the
+    row is not asked again; a transport failure or an exhausted 429 writes
+    NOTHING, so the row is retried on the next sync -- the first generation of
+    examples/molecular-ai marked 24 papers as tried after S2 rate-limited them,
+    which a re-run could then never repair. Those failures are counted in
+    `errors` and reported as `failed`.
+    """
 
     network = True
     name = ""
@@ -231,6 +257,14 @@ class _Enricher:
 
     def __init__(self, cache_dir: Path | None = None):
         self.cache_dir = cache_dir or DEFAULT_CACHE
+        self.errors: list[str] = []
+
+    def _transient(self, row, error: str | None) -> bool:
+        """Record and skip a failure that a later sync should retry."""
+        if error is None or error.startswith("HTTP 404"):
+            return False
+        self.errors.append(f"{row['identity']}: {error}")
+        return True
 
     def _todo(self, conn: sqlite3.Connection, limit: int | None):
         sql = (
@@ -268,10 +302,12 @@ class ArxivEnricher(_Enricher):
         for i in range(0, len(rows), _ARXIV_BATCH):
             batch = rows[i : i + _ARXIV_BATCH]
             ids = ",".join(r["arxiv_id"] for r in batch)
-            url = f"http://export.arxiv.org/api/query?id_list={ids}&max_results={len(batch)}"
-            body, fetched, _error = _cached_get(self.cache_dir, url)
+            url = f"https://export.arxiv.org/api/query?id_list={ids}&max_results={len(batch)}"
+            body, fetched, error = _cached_get(self.cache_dir, url)
             found = _parse_arxiv(body, fetched) if body else {}
             for r in batch:
+                if not found and self._transient(r, error):
+                    continue
                 rec = found.get(r["arxiv_id"])
                 if rec is None:
                     yield self._miss(r, fetched)
@@ -326,8 +362,10 @@ class CrossrefEnricher(_Enricher):
         """A record per untouched row with a DOI, one request each, cached."""
         for r in self._todo(conn, limit):
             url = f"https://api.crossref.org/works/{r['doi']}"
-            body, fetched, _error = _cached_get(self.cache_dir, url)
+            body, fetched, error = _cached_get(self.cache_dir, url)
             msg = _json_message(body)
+            if msg is None and self._transient(r, error):
+                continue
             if msg is None:
                 yield self._miss(r, fetched)
             else:
@@ -397,10 +435,12 @@ class S2Enricher(_Enricher):
             paper = f"DOI:{r['doi']}" if r["doi"] else f"arXiv:{r['arxiv_id']}"
             url = f"https://api.semanticscholar.org/graph/v1/paper/{paper}?fields={_S2_FIELDS}"
             on_wire = not _cache_path(self.cache_dir, url).is_file()
-            body, fetched, _error = _cached_get(self.cache_dir, url)
+            body, fetched, error = _cached_get(self.cache_dir, url)
             if on_wire:
-                _sleep(1.0)
+                _sleep(_S2_PACE_SECONDS)
             data = _s2_paper(body)
+            if data is None and self._transient(r, error):
+                continue
             if data is None:
                 yield self._miss(r, fetched)
                 continue
