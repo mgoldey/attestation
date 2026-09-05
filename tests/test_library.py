@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import httpx
 import pytest
 
 from attestation import library
@@ -191,3 +192,119 @@ def test_sync_is_idempotent(tmp_path):
     assert first["unembedded"] == 2  # no embedder given: reported, not an error
     assert library.status(conn)["references"] == 2
     assert library.status(conn)["sources"] == {f"bibtex:{FIX / 'sample.bib'}": 2}
+
+
+# ---------------------------------------------------------------------------
+# embeddings and search
+# ---------------------------------------------------------------------------
+
+
+def _store_with(conn, **kw):
+    kw.setdefault("source", "bibtex:/a.bib")
+    kw.setdefault("source_key", kw.get("bib_key", "k"))
+    return library.upsert(conn, library.ReferenceRecord(**kw))[0]
+
+
+def test_search_is_semantic_with_an_embedder_and_says_so(tmp_path, fake_embedder):
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    a = _store_with(
+        conn,
+        bib_key="a",
+        title="E(3)-equivariant interatomic potentials",
+        abstract="force fields",
+        year=2022,
+    )
+    _store_with(
+        conn, bib_key="b", title="Sourdough starter maintenance", abstract="bread", year=2019
+    )
+    embedded, missing, err = library.embed_missing(conn, fake_embedder, None)
+    assert (embedded, missing, err) == (2, 0, None)
+    # FakeEmbedder is hash-based, so plant the query vector on `a` to make the
+    # ranking deterministic: what is tested is the plumbing (KNN + floor +
+    # envelope), not embeddinggemma.
+    q = fake_embedder.embed_query("equivariant force fields")
+    conn.execute("DELETE FROM reference_vectors WHERE rowid = ?", (a,))
+    conn.execute("INSERT INTO reference_vectors(rowid, embedding) VALUES (?, ?)", (a, q.tobytes()))
+    res = library.search(conn, "equivariant force fields", embedder=fake_embedder, limit=5)
+    assert res.semantic is True and res.caveat is None
+    assert res.hits[0].id == a and res.hits[0].similarity > 0.99
+    assert res.hits[0].to_row()["sources"] == ["bibtex:/a.bib"]
+    assert res.hits[0].to_row()["key"] == "a"
+
+
+def test_search_without_an_embedder_is_fielded_and_says_so(tmp_path):
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    _store_with(conn, bib_key="a", title="SchNet", year=2017, authors=["Schütt, Kristof"])
+    _store_with(conn, bib_key="b", title="NequIP", year=2022, authors=["Batzner, Simon"])
+    res = library.search(conn, "schn")
+    assert res.semantic is False and "no embedder" in res.caveat
+    assert [h.bib_key for h in res.hits] == ["a"]
+    assert [h.bib_key for h in library.search(conn, "", author="batzner").hits] == ["b"]
+    assert [h.bib_key for h in library.search(conn, "", year_from=2020).hits] == ["b"]
+    assert [h.bib_key for h in library.search(conn, "", year=2017).hits] == ["a"]
+
+
+def test_an_identifier_query_is_a_direct_lookup(tmp_path):
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    _store_with(
+        conn,
+        bib_key="n",
+        title="NequIP",
+        doi="10.1038/s41467-022-29939-5",
+        arxiv_id="2101.03164",
+    )
+    for q in (
+        "10.1038/S41467-022-29939-5",
+        "arXiv:2101.03164v1",
+        "N",
+        "doi:10.1038/s41467-022-29939-5",
+    ):
+        res = library.search(conn, q)
+        assert [h.bib_key for h in res.hits] == ["n"], q
+        assert res.n_matches == 1
+
+
+def test_an_unreachable_embedder_degrades_to_substring(tmp_path):
+    from attestation.db import get_db
+
+    class Dead:
+        def embed_query(self, text):
+            raise httpx.ConnectError("refused")
+
+        def embed_document(self, title, text):
+            raise httpx.ConnectError("refused")
+
+    conn = get_db(tmp_path / "t.db")
+    _store_with(conn, bib_key="a", title="SchNet", year=2017)
+    conn.execute("INSERT INTO reference_vectors(rowid, embedding) VALUES (1, ?)", (b"\x00" * 1024,))
+    done, missing, err = library.embed_missing(conn, Dead(), None)
+    assert (done, missing) == (0, 0) and err is None  # nothing to embed
+    res = library.search(conn, "schnet", embedder=Dead())
+    assert res.semantic is False and [h.bib_key for h in res.hits] == ["a"]
+
+
+def test_to_reference_keeps_the_provenance_pair(tmp_path):
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    rid = _store_with(conn, bib_key="a", title="SchNet", doi="10.5555/schnet")
+    library.upsert(
+        conn,
+        library.ReferenceRecord(
+            source="arxiv",
+            source_key="doi:10.5555/schnet",
+            doi="10.5555/schnet",
+            abstract="filled",
+            fetched_at="2026-09-05",
+        ),
+    )
+    row = conn.execute('SELECT * FROM "references" WHERE id = ?', (rid,)).fetchone()
+    ref = library.to_reference(conn, row)
+    assert ref.key == "a" and ref.source == "library:bibtex:/a.bib" and ref.fetched_at is None
+    assert ref.to_row()["doi"] == "10.5555/schnet"

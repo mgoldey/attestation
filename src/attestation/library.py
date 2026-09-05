@@ -16,6 +16,9 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+import httpx
+import numpy as np
+
 _DOI_PREFIX = re.compile(r"^(?:https?://(?:dx\.)?doi\.org/|doi:)\s*", re.IGNORECASE)
 _ARXIV_PREFIX = re.compile(r"^(?:arxiv:)\s*", re.IGNORECASE)
 _ARXIV_VERSION = re.compile(r"v\d+$")
@@ -338,8 +341,281 @@ def sync(conn: sqlite3.Connection, readers, *, embedder=None, limit: int | None 
 
 
 def embed_missing(conn, embedder, limit: int | None) -> tuple[int, int, str | None]:
-    """Embed rows with no vector: (embedded, still_missing, error). Filled in Task 7."""
-    return 0, _count(conn, _UNEMBEDDED), None
+    """Embed rows with no vector: (embedded, still_missing, error).
+
+    One embed call per row outside any transaction, then one short write --
+    the ingest discipline. An embedder that cannot be reached stops the pass
+    and is reported once; the rows stay unembedded and `search` degrades to
+    fielded, which is rank.py's policy (serve what you have, never 500).
+    """
+    sql = (
+        'SELECT r.id, r.title, r.abstract FROM "references" r WHERE NOT EXISTS'
+        " (SELECT 1 FROM reference_vectors v WHERE v.rowid = r.id) ORDER BY r.id"
+    )
+    params: tuple = ()
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = (limit,)
+    rows = conn.execute(sql, params).fetchall()
+    done, error = 0, None
+    for row in rows:
+        try:
+            vec = embedder.embed_document(row["title"], row["abstract"] or "")
+        except (httpx.HTTPError, OSError) as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            break
+        conn.execute(
+            "INSERT INTO reference_vectors(rowid, embedding) VALUES (?, ?)",
+            (row["id"], np.asarray(vec, dtype=np.float32).tobytes()),
+        )
+        done += 1
+    conn.commit()
+    return done, _count(conn, _UNEMBEDDED), error
+
+
+# ---------------------------------------------------------------------------
+# search
+# ---------------------------------------------------------------------------
+
+_ID_QUERY = re.compile(
+    r"^(10\.\d{4,9}/\S+|(?:arxiv:)?\d{4}\.\d{4,5}(?:v\d+)?|(?:arxiv:)?[a-z\-]+/\d{7})$",
+    re.IGNORECASE,
+)
+# A literal match moves a hit up; it never excludes one. Measured on the feed:
+# flooring on a literal made all 711 "llm" matches tie.
+_LITERAL_BOOST = 0.02
+
+
+@dataclass
+class SearchHit:
+    id: int
+    identity: str
+    title: str
+    authors: list[str]
+    year: int | None
+    doi: str | None
+    url: str | None
+    bib_key: str | None
+    venue: str | None
+    sources: list[str]
+    tags: list[str]
+    n_tags: int
+    similarity: float | None = None
+
+    def to_row(self) -> dict:
+        """The wire projection: the same budgets as `Reference.to_row` and
+        `RankedItem.to_row` (authors 6, tags 3, the true counts beside them)."""
+        return {
+            "id": self.id,
+            "key": self.bib_key or self.identity,
+            "title": self.title[:223],
+            "authors": self.authors[:6],
+            "n_authors": len(self.authors),
+            "year": self.year,
+            "doi": self.doi,
+            "url": self.url,
+            "venue": self.venue,
+            "sources": self.sources,
+            "tags": self.tags[:3],
+            "n_tags": self.n_tags,
+            "similarity": self.similarity,
+        }
+
+
+@dataclass
+class SearchResult:
+    hits: list[SearchHit]
+    semantic: bool
+    caveat: str | None
+    n_matches: int
+
+
+def _hit(conn: sqlite3.Connection, row, similarity: float | None = None) -> SearchHit:
+    sources = [
+        r["source"]
+        for r in conn.execute(
+            "SELECT source FROM reference_sources WHERE reference_id = ? ORDER BY source",
+            (row["id"],),
+        )
+    ]
+    tags = [
+        r["tag"]
+        for r in conn.execute(
+            "SELECT tag FROM reference_tags WHERE reference_id = ? ORDER BY tag", (row["id"],)
+        )
+    ]
+    return SearchHit(
+        id=row["id"],
+        identity=row["identity"],
+        title=row["title"],
+        authors=json.loads(row["authors"]),
+        year=row["year"],
+        doi=row["doi"],
+        url=row["url"],
+        bib_key=row["bib_key"],
+        venue=row["venue"],
+        sources=sources,
+        tags=tags,
+        n_tags=len(tags),
+        similarity=similarity,
+    )
+
+
+def _fielded_where(author, year, year_from, year_to, tag, source) -> tuple[str, list]:
+    where: list[str] = []
+    params: list = []
+    if author:
+        where.append("EXISTS (SELECT 1 FROM json_each(r.authors) a WHERE lower(a.value) LIKE ?)")
+        params.append(f"%{author.lower()}%")
+    if year is not None:
+        where.append("r.year = ?")
+        params.append(year)
+    if year_from is not None:
+        where.append("r.year >= ?")
+        params.append(year_from)
+    if year_to is not None:
+        where.append("r.year <= ?")
+        params.append(year_to)
+    if tag:
+        where.append(
+            "EXISTS (SELECT 1 FROM reference_tags t WHERE t.reference_id = r.id AND t.tag = ?)"
+        )
+        params.append(tag)
+    if source:
+        where.append(
+            "EXISTS (SELECT 1 FROM reference_sources s"
+            " WHERE s.reference_id = r.id AND s.source LIKE ?)"
+        )
+        params.append(f"{source}%")
+    return (" AND ".join(where) or "1=1"), params
+
+
+def lookup_row(conn: sqlite3.Connection, key: str):
+    """A row by identity, DOI, arXiv id, or bib key -- the direct forms."""
+    k = key.strip()
+    for sql, val in (
+        ('SELECT * FROM "references" WHERE identity = ?', k.lower()),
+        ('SELECT * FROM "references" WHERE doi = ?', normalise_doi(k)),
+        ('SELECT * FROM "references" WHERE arxiv_id = ?', normalise_arxiv(k)),
+        ('SELECT * FROM "references" WHERE bib_key = ? COLLATE NOCASE', k),
+    ):
+        if val and (row := conn.execute(sql, (val,)).fetchone()):
+            return row
+    return None
+
+
+def _semantic(conn, embedder, q: str, where: str, params: list, limit: int) -> SearchResult | None:
+    """KNN over reference_vectors, the relative floor, the filters, the boost;
+    None when the wire could not be reached or nothing cleared the floor."""
+    from attestation.rank import apply_relevance_floor, vector_search
+
+    try:
+        raw = vector_search(conn, embedder, q, k=4 * limit, table="reference_vectors")
+    except (httpx.HTTPError, OSError):
+        return None
+    sims = apply_relevance_floor(raw)
+    if not sims:
+        return None
+    marks = ",".join("?" * len(sims))
+    rows = conn.execute(
+        f'SELECT * FROM "references" r WHERE r.id IN ({marks}) AND {where}',
+        (*sims.keys(), *params),
+    ).fetchall()
+    words = [w for w in normalise_title(q).split() if len(w) > 2]
+
+    def score(r) -> float:
+        text = normalise_title(f"{r['title']} {r['abstract'] or ''}")
+        return sims[r["id"]] + _LITERAL_BOOST * sum(w in text for w in words)
+
+    rows.sort(key=score, reverse=True)
+    hits = [_hit(conn, r, round(sims[r["id"]], 4)) for r in rows[:limit]]
+    n_vectors = _count(conn, "SELECT count(*) FROM reference_vectors")
+    n_refs = _count(conn, 'SELECT count(*) FROM "references"')
+    caveat = None
+    if n_vectors < n_refs:
+        caveat = f"{n_vectors} of {n_refs} references are embedded; run `attest library embed`"
+    return SearchResult(hits, semantic=True, caveat=caveat, n_matches=len(rows))
+
+
+def _substring(conn, q: str, where: str, params: list, limit: int, reason: str) -> SearchResult:
+    like = f"%{q.lower()}%" if q else "%"
+    rows = conn.execute(
+        f'SELECT * FROM "references" r WHERE {where} AND ('
+        " lower(r.title) LIKE ? OR lower(coalesce(r.abstract, '')) LIKE ?"
+        " OR lower(r.authors) LIKE ? OR lower(coalesce(r.bib_key, '')) LIKE ?)"
+        " ORDER BY r.year DESC, r.title",
+        (*params, like, like, like, like),
+    ).fetchall()
+    return SearchResult(
+        [_hit(conn, r) for r in rows[:limit]], semantic=False, caveat=reason, n_matches=len(rows)
+    )
+
+
+def search(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    embedder=None,
+    author: str | None = None,
+    year: int | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    tag: str | None = None,
+    source: str | None = None,
+    limit: int = 10,
+) -> SearchResult:
+    """Semantic when it can be, fielded when it must be, and it says which.
+
+    A query that is an identifier or a bib key is a direct lookup. Otherwise
+    the feed's search shape: KNN over reference_vectors for 4x limit
+    candidates, the relative relevance floor, fielded filters, a literal
+    boost that never excludes. Falls back to substring over title, abstract,
+    authors and key when there is no embedder, no vectors, or no semantic
+    hit -- with a caveat a caller cannot mistake for a semantic answer.
+    """
+    q = (query or "").strip()
+    where, params = _fielded_where(author, year, year_from, year_to, tag, source)
+    if q and (row := lookup_row(conn, q)):
+        return SearchResult([_hit(conn, row)], semantic=False, caveat=None, n_matches=1)
+    n_vectors = _count(conn, "SELECT count(*) FROM reference_vectors")
+    if q and embedder is not None and n_vectors:
+        result = _semantic(conn, embedder, q, where, params, limit)
+        if result is not None:
+            return result
+        reason = "no semantic hit cleared the relevance floor; substring results"
+    elif embedder is None:
+        reason = "substring search only (no embedder); run `attest library embed` for semantic"
+    elif not n_vectors:
+        reason = "substring search only (no vectors yet); run `attest library embed`"
+    else:
+        reason = "substring search only (empty query)"
+    return _substring(conn, q, where, params, limit, reason)
+
+
+def to_reference(conn: sqlite3.Connection, row):
+    """A store row as the `Reference` the cite.* tools already emit.
+
+    `source` is `library:<first contributing source>` and `fetched_at` that
+    source's, so the provenance pair survives the projection.
+    """
+    from attestation.citations import Reference
+
+    first = conn.execute(
+        "SELECT source, fetched_at FROM reference_sources WHERE reference_id = ?"
+        " ORDER BY fetched_at IS NOT NULL, source LIMIT 1",
+        (row["id"],),
+    ).fetchone()
+    return Reference(
+        key=row["bib_key"] or row["identity"],
+        title=row["title"],
+        authors=json.loads(row["authors"]),
+        year=row["year"],
+        doi=row["doi"],
+        arxiv_id=row["arxiv_id"],
+        url=row["url"],
+        source="library:" + (first["source"] if first else "?"),
+        fetched_at=first["fetched_at"] if first else None,
+    )
 
 
 def status(conn: sqlite3.Connection) -> dict:
