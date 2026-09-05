@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS items(
   summary TEXT NOT NULL DEFAULT '',
   published TEXT NOT NULL DEFAULT (datetime('now')),
   content_hash TEXT NOT NULL,
+  -- Extracted by ingest.extract_ids from guid/url; NULL when neither carries one.
+  doi TEXT,
+  arxiv_id TEXT,
   UNIQUE(feed_id, guid)
 );
 CREATE INDEX IF NOT EXISTS idx_items_hash ON items(content_hash);
@@ -133,6 +136,7 @@ CREATE INDEX IF NOT EXISTS idx_runs_family ON runs(project, family);
 -- create the identical index by name on a database that predates it.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_project_name ON runs(project, name);
 {corpus_schema}
+{library_schema}
 CREATE TRIGGER IF NOT EXISTS trg_items_delete_vector AFTER DELETE ON items BEGIN
   DELETE FROM item_vectors WHERE rowid = old.id;
 END;
@@ -186,9 +190,73 @@ CREATE TABLE IF NOT EXISTS corpus_splits(
 -- a later item can silently inherit an earlier, unrelated item's vector.
 """
 
-# Single-sourced: SCHEMA embeds the same DDL migration 002 applies, so a fresh
-# database and a migrated one cannot drift apart.
-SCHEMA = SCHEMA.format(corpus_schema=_CORPUS_SCHEMA.strip())
+# The reference library, its own string so migration 007 applies exactly the
+# DDL SCHEMA uses for a fresh database (the same single-sourcing as _CORPUS_SCHEMA).
+_LIBRARY_SCHEMA = """
+-- One row per paper. `identity` is library.identity(): DOI, else versionless
+-- arXiv id, else normalised title+year. A paper held by Zotero and two .bib
+-- files under three keys is one row here with three reference_sources rows.
+CREATE TABLE IF NOT EXISTS "references"(
+  id INTEGER PRIMARY KEY,
+  identity TEXT NOT NULL UNIQUE,
+  doi TEXT,
+  arxiv_id TEXT,
+  title TEXT NOT NULL,
+  authors TEXT NOT NULL DEFAULT '[]',
+  year INTEGER,
+  venue TEXT,
+  abstract TEXT,
+  url TEXT,
+  bib_key TEXT,
+  first_seen TEXT NOT NULL,
+  updated TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_references_doi ON "references"(doi);
+CREATE INDEX IF NOT EXISTS idx_references_arxiv ON "references"(arxiv_id);
+CREATE INDEX IF NOT EXISTS idx_references_bib_key ON "references"(bib_key);
+-- Provenance per CONTRIBUTION, not per record: which source offered what,
+-- when (NULL fetched_at = read from disk), and any conflict merge() refused.
+CREATE TABLE IF NOT EXISTS reference_sources(
+  reference_id INTEGER NOT NULL REFERENCES "references"(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  source_key TEXT NOT NULL,
+  fetched_at TEXT,
+  raw TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (reference_id, source, source_key)
+);
+CREATE TABLE IF NOT EXISTS reference_tags(
+  reference_id INTEGER NOT NULL REFERENCES "references"(id) ON DELETE CASCADE,
+  tag TEXT NOT NULL,
+  PRIMARY KEY (reference_id, tag)
+);
+-- cited_identity is a string, not a foreign key: most of a paper's references
+-- are not in the library. Spec 2 decides what a citation neighbourhood shows.
+CREATE TABLE IF NOT EXISTS reference_cites(
+  citing_id INTEGER NOT NULL REFERENCES "references"(id) ON DELETE CASCADE,
+  cited_identity TEXT NOT NULL,
+  cited_title TEXT,
+  source TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (citing_id, cited_identity)
+);
+"""
+
+# Its own constant because _split_statements splits on ';' and a trigger body
+# holds one: migration 007 executes this whole, SCHEMA embeds it verbatim.
+# reference_vectors is a vec0 table created by _ensure_vec_tables before SCHEMA
+# runs; the trigger mirrors trg_items_delete_vector for the same reason.
+_LIBRARY_TRIGGER = """
+CREATE TRIGGER IF NOT EXISTS trg_references_delete_vector AFTER DELETE ON "references" BEGIN
+  DELETE FROM reference_vectors WHERE rowid = old.id;
+END;
+"""
+
+# Single-sourced: SCHEMA embeds the same DDL migrations 002 and 007 apply, so a
+# fresh database and a migrated one cannot drift apart.
+SCHEMA = SCHEMA.format(
+    corpus_schema=_CORPUS_SCHEMA.strip(),
+    library_schema=_LIBRARY_SCHEMA.strip() + "\n" + _LIBRARY_TRIGGER.strip(),
+)
 
 
 def _split_statements(script: str) -> list[str]:
@@ -317,6 +385,36 @@ def _migration_006_add_runs_scanned_at(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_project_name ON runs(project, name)")
 
 
+def _migration_007_add_library(conn: sqlite3.Connection) -> None:
+    """Add the reference library and items.doi / items.arxiv_id, backfilled.
+
+    The first migration that writes data: `extract_ids` fills the two new
+    columns from guid and url for every existing item. The ladder's explicit
+    BEGIN/COMMIT (see _migrate) is what makes running this exactly once a
+    property of the code rather than a hope; a re-run against the current
+    SCHEMA is a no-op because the columns then already exist.
+    """
+    from attestation.ingest import extract_ids
+
+    for statement in _split_statements(_LIBRARY_SCHEMA):
+        conn.execute(statement)
+    conn.execute(_LIBRARY_TRIGGER)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(items)")}
+    if "doi" in cols and "arxiv_id" in cols:
+        return
+    if "doi" not in cols:
+        conn.execute("ALTER TABLE items ADD COLUMN doi TEXT")
+    if "arxiv_id" not in cols:
+        conn.execute("ALTER TABLE items ADD COLUMN arxiv_id TEXT")
+    rows = conn.execute("SELECT id, guid, url FROM items").fetchall()
+    for row in rows:
+        doi, arxiv = extract_ids(row["guid"], row["url"])
+        if doi or arxiv:
+            conn.execute(
+                "UPDATE items SET doi = ?, arxiv_id = ? WHERE id = ?", (doi, arxiv, row["id"])
+            )
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -331,6 +429,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (4, _migration_004_drop_dead_kg_tables),
     (5, _migration_005_add_engagement),
     (6, _migration_006_add_runs_scanned_at),
+    (7, _migration_007_add_library),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]
@@ -396,8 +495,29 @@ def embed_dims() -> int:
     return int(os.environ.get("EMBED_DIMS", "256"))
 
 
-def _vec_schema(dims: int) -> str:
-    return f"CREATE VIRTUAL TABLE IF NOT EXISTS item_vectors USING vec0(embedding float[{dims}])"
+def _vec_schema(dims: int, table: str = "item_vectors") -> str:
+    return f"CREATE VIRTUAL TABLE IF NOT EXISTS {table} USING vec0(embedding float[{dims}])"
+
+
+def _ensure_vec_tables(conn: sqlite3.Connection) -> None:
+    """Create item_vectors and reference_vectors at EMBED_DIMS, refusing a mismatch.
+
+    Runs BEFORE SCHEMA because the two delete triggers reference these tables,
+    and a trigger cannot be created against a table that does not exist yet.
+    """
+    dims = embed_dims()
+    for table in ("item_vectors", "reference_vectors"):
+        existing = conn.execute("SELECT sql FROM sqlite_master WHERE name = ?", (table,)).fetchone()
+        if existing:
+            m = re.search(r"float\[(\d+)\]", existing["sql"])
+            stored = int(m.group(1)) if m else None
+            if stored is not None and stored != dims:
+                raise RuntimeError(
+                    f"database has float[{stored}] vectors in {table} but EMBED_DIMS={dims}"
+                    " — re-ingest into a fresh database or set matching dims"
+                )
+        else:
+            conn.execute(_vec_schema(dims, table))
 
 
 SEED_USERS = {
@@ -546,20 +666,9 @@ def get_db(path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
+    _ensure_vec_tables(conn)
     conn.executescript(SCHEMA)
     _migrate(conn)
-    dims = embed_dims()
-    existing = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'item_vectors'").fetchone()
-    if existing:
-        m = re.search(r"float\[(\d+)\]", existing["sql"])
-        stored = int(m.group(1)) if m else None
-        if stored is not None and stored != dims:
-            raise RuntimeError(
-                f"database has float[{stored}] vectors but EMBED_DIMS={dims}"
-                " — re-ingest into a fresh database or set matching dims"
-            )
-    else:
-        conn.execute(_vec_schema(dims))
     conn.commit()
     if is_new:
         # Again after the first commit: WAL mode creates -wal and -shm lazily,
