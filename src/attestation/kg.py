@@ -186,8 +186,19 @@ def canonical(tag: str) -> str:
 
 
 def tag_assignments(conn: sqlite3.Connection) -> list[tuple[int, str]]:
-    """Every (item_id, tag) pair. The only storage read the graph needs."""
-    return [(r["item_id"], r["tag"]) for r in conn.execute("SELECT item_id, tag FROM item_tags")]
+    """Every (id, tag) pair the graph is built from: items as their own ids,
+    references as NEGATIVE ids.
+
+    build_graph only groups by id, so the sign is a namespace rather than a
+    meaning: it keeps the two tables from colliding, and says which one a
+    pair came from if anything ever needs to know. What the reader cites
+    joins the graph beside what they read (spec 2026-09-05, library graph).
+    """
+    items = conn.execute("SELECT item_id, tag FROM item_tags")
+    refs = conn.execute("SELECT reference_id, tag FROM reference_tags")
+    return [(r["item_id"], r["tag"]) for r in items] + [
+        (-r["reference_id"], r["tag"]) for r in refs
+    ]
 
 
 def build_graph(
@@ -471,6 +482,10 @@ def health(conn: sqlite3.Connection) -> dict:
     return {
         "nodes": nodes,
         "edges": len(edges),
+        # Who contributed the assignments: items carry their own ids,
+        # references negative ones (see tag_assignments).
+        "n_items": len({i for i in per_item if i > 0}),
+        "n_references": len({i for i in per_item if i < 0}),
         "distinct_tags": len(tags),
         # tags used once never clear MIN_TAG_USES -- vocabulary the graph discards
         "singleton_rate": pct(singles, len(tags)),

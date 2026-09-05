@@ -303,6 +303,8 @@ def test_an_aliased_concept_is_found_by_the_name_people_write():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row  # tag_assignments indexes rows by name
     conn.execute("CREATE TABLE item_tags(item_id INTEGER, tag TEXT)")
+    # tag_assignments reads both tag tables since references joined the graph.
+    conn.execute("CREATE TABLE reference_tags(reference_id INTEGER, tag TEXT)")
     # Two items sharing both tags: enough for MIN_TAG_USES and MIN_EDGE_WEIGHT.
     for item_id in (1, 2):
         for tag in ("large-language-models", "transformers"):
@@ -335,3 +337,27 @@ def test_resolve_or_raise_reports_the_right_kind_in_its_message():
     with pytest.raises(ValueError, match="not a concept"):
         resolve_or_raise("nope", {"llm"}, kind="concept")
     assert resolve_or_raise("LLM", {"llm"}, kind="tag") == "llm"  # canonicalised
+
+
+def test_references_join_the_graph_with_negative_ids(tmp_path):
+    """What the reader cites joins the graph beside what they read: reference
+    tags come in as negative ids, so build_graph needs no change and a concept
+    carried only by references still clears the frequency floor."""
+    from attestation.library import ReferenceRecord, upsert
+
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO items(id, title, content_hash) VALUES (1, 'i', 'h')")
+    conn.executemany("INSERT INTO item_tags VALUES (1, ?)", [("gnn",), ("chemistry",)])
+    for k in ("a", "b"):
+        upsert(
+            conn,
+            ReferenceRecord(
+                source="bibtex:/x", source_key=k, bib_key=k, title=k, tags=["force-fields", "gnn"]
+            ),
+        )
+    pairs = kg.tag_assignments(conn)
+    assert (1, "gnn") in pairs and (-1, "force-fields") in pairs and (-2, "gnn") in pairs
+    adjacency, _ = kg.build_graph(pairs)
+    assert "force-fields" in adjacency and "gnn" in adjacency["force-fields"]
+    health = kg.health(conn)
+    assert health["n_references"] == 2 and health["n_items"] == 1

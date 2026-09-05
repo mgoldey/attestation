@@ -131,11 +131,15 @@ def tag_vocabulary(conn: sqlite3.Connection, limit: int = 150) -> list[str]:
     from attestation.kg import canonical
 
     totals: dict[str, int] = {}
-    for row in conn.execute("SELECT tag, COUNT(*) n FROM item_tags GROUP BY tag"):
-        name = canonical(row["tag"])
-        if name in NON_TOPIC_TAGS:
-            continue
-        totals[name] = totals.get(name, 0) + row["n"]
+    # Items and references count alike: the tagger is steered by what the
+    # reader cites as well as what they read, which is what lets a reference
+    # join the concept graph beside the items (spec 2026-09-05, library graph).
+    for table in ("item_tags", "reference_tags"):
+        for row in conn.execute(f"SELECT tag, COUNT(*) n FROM {table} GROUP BY tag"):
+            name = canonical(row["tag"])
+            if name in NON_TOPIC_TAGS:
+                continue
+            totals[name] = totals.get(name, 0) + row["n"]
     ranked = sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
     return [tag for tag, _ in ranked[: max(0, int(limit))]]
 
