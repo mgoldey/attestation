@@ -210,6 +210,40 @@ def test_sync_is_idempotent(tmp_path):
     assert library.status(conn)["sources"] == {f"bibtex:{FIX / 'sample.bib'}": 2}
 
 
+def test_sync_commits_after_every_enricher_record(tmp_path):
+    """An enricher sleeps between requests; holding a write transaction across
+    those sleeps locked the database for `attest library tag` running beside
+    the sync (measured 2026-09-05). Each network record must be committed
+    before the next one is fetched."""
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    _store_with(conn, bib_key="a", title="A", doi="10.1/a")
+    _store_with(conn, bib_key="b", title="B", doi="10.1/b")
+    conn.commit()
+    seen_open: list[bool] = []
+
+    class Enricher:
+        name = "fake"
+        network = True
+        errors: list[str] = []
+
+        def records(self, conn, limit):
+            for ident in ("doi:10.1/a", "doi:10.1/b"):
+                seen_open.append(conn.in_transaction)  # before fetching the next row
+                yield library.ReferenceRecord(
+                    source="fake",
+                    source_key=ident,
+                    doi=ident[4:],
+                    abstract="x",
+                    title="t",
+                    fetched_at="2026-09-05",
+                )
+
+    library.sync(conn, [Enricher()])
+    assert seen_open == [False, False]
+
+
 # ---------------------------------------------------------------------------
 # embeddings and search
 # ---------------------------------------------------------------------------

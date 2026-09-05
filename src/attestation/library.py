@@ -342,6 +342,13 @@ def sync(conn: sqlite3.Connection, readers, *, embedder=None, limit: int | None 
                 conflicts = _conflicts_of(conn, rec)
                 report.conflicts += len(conflicts)
                 report.conflict_samples.extend((rec.source_key, f) for f in conflicts)
+            if reader.network:
+                # Commit per record, not per reader: an enricher sleeps between
+                # requests (S2 paces at seconds per row), and a write lock held
+                # across those sleeps blocked `attest library tag` on the same
+                # database with "database is locked" -- measured 2026-09-05
+                # while generating examples/molecular-ai.
+                conn.commit()
         # An enricher's transient failures (a 429 that outlasted its retries, a
         # dead network) leave the row untouched for the next sync and are
         # counted here, not as a miss that would never be retried.
