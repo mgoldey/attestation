@@ -135,6 +135,16 @@ _FEED_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "recommend",
             "my feed",
             "anything for me",
+            # Naming the feed by rank or by day. "my feed" alone missed
+            # "my ranked feed" (the adjective split the phrase) and nothing
+            # matched "today's feed" -- measured over Discord 2026-09-04,
+            # where the ambiguity reply made the model claim it had no tool.
+            "ranked feed",
+            "daily feed",
+            "today's feed",
+            "feed today",
+            "for me today",
+            "top papers",
         ),
     ),
 )
