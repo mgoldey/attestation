@@ -14,12 +14,12 @@ import json
 import re
 import sqlite3
 import time
-import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+from defusedxml import ElementTree as SafeET
 
 from attestation import citations
 from attestation.library import ReferenceRecord, identity
@@ -237,28 +237,39 @@ class ArxivEnricher(_Enricher):
 
 
 def _parse_arxiv(body: bytes, fetched: str | None) -> dict[str, ReferenceRecord]:
-    """arXiv Atom entries keyed by versionless id."""
+    """arXiv Atom entries keyed by versionless id.
+
+    defusedxml rather than the stdlib parser: the body came off the wire, and
+    an entity-expansion payload would otherwise be parsed with no limit.
+    """
     out: dict[str, ReferenceRecord] = {}
-    for entry in ET.fromstring(body).iter(f"{_ATOM}entry"):
-        aid = (entry.findtext(f"{_ATOM}id") or "").rsplit("/", 1)[-1]
-        aid = re.sub(r"v\d+$", "", aid)
-        if not aid:
-            continue
-        doi_el = entry.find(f"{_ARXIV_NS}doi")
-        published = entry.findtext(f"{_ATOM}published") or ""
-        out[aid] = ReferenceRecord(
-            source="arxiv",
-            source_key=aid,
-            title=" ".join((entry.findtext(f"{_ATOM}title") or "").split()) or None,
-            authors=[a.findtext(f"{_ATOM}name") or "" for a in entry.iter(f"{_ATOM}author")],
-            year=int(published[:4]) if published[:4].isdigit() else None,
-            doi=doi_el.text if doi_el is not None else None,
-            arxiv_id=aid,
-            abstract=" ".join((entry.findtext(f"{_ATOM}summary") or "").split()) or None,
-            url=f"https://arxiv.org/abs/{aid}",
-            fetched_at=fetched,
-        )
+    for entry in SafeET.fromstring(body).iter(f"{_ATOM}entry"):
+        aid = re.sub(r"v\d+$", "", (entry.findtext(f"{_ATOM}id") or "").rsplit("/", 1)[-1])
+        if aid:
+            out[aid] = _arxiv_record(entry, aid, fetched)
     return out
+
+
+def _text(entry, tag: str) -> str | None:
+    """An Atom element's text, whitespace-collapsed, None when absent or empty."""
+    return " ".join((entry.findtext(f"{_ATOM}{tag}") or "").split()) or None
+
+
+def _arxiv_record(entry, aid: str, fetched: str | None) -> ReferenceRecord:
+    doi_el = entry.find(f"{_ARXIV_NS}doi")
+    published = entry.findtext(f"{_ATOM}published") or ""
+    return ReferenceRecord(
+        source="arxiv",
+        source_key=aid,
+        title=_text(entry, "title"),
+        authors=[a.findtext(f"{_ATOM}name") or "" for a in entry.iter(f"{_ATOM}author")],
+        year=int(published[:4]) if published[:4].isdigit() else None,
+        doi=doi_el.text if doi_el is not None else None,
+        arxiv_id=aid,
+        abstract=_text(entry, "summary"),
+        url=f"https://arxiv.org/abs/{aid}",
+        fetched_at=fetched,
+    )
 
 
 class CrossrefEnricher(_Enricher):
@@ -274,23 +285,42 @@ class CrossrefEnricher(_Enricher):
             msg = _json_message(body)
             if msg is None:
                 yield self._miss(r, fetched)
-                continue
-            issued = (msg.get("issued", {}).get("date-parts") or [[None]])[0][0]
-            yield ReferenceRecord(
-                source=self.name,
-                source_key=r["identity"],
-                title=" ".join(msg.get("title") or []) or None,
-                authors=[
-                    ", ".join(p for p in (a.get("family"), a.get("given")) if p)
-                    for a in msg.get("author", [])
-                ],
-                year=int(issued) if issued else None,
-                doi=msg.get("DOI"),
-                venue=" ".join(msg.get("container-title") or []) or None,
-                abstract=_JATS.sub("", msg.get("abstract") or "").strip() or None,
-                url=msg.get("URL"),
-                fetched_at=fetched,
-            )
+            else:
+                yield _crossref_record(msg, r["identity"], fetched)
+
+
+def _joined(msg: dict, key: str) -> str | None:
+    """CrossRef lists its title and container-title; one string or None."""
+    return " ".join(msg.get(key) or []) or None
+
+
+def _crossref_authors(msg: dict) -> list[str]:
+    names = []
+    for a in msg.get("author", []):
+        parts = [p for p in (a.get("family"), a.get("given")) if p]
+        names.append(", ".join(parts))
+    return names
+
+
+def _crossref_year(msg: dict) -> int | None:
+    issued = (msg.get("issued", {}).get("date-parts") or [[None]])[0][0]
+    return int(issued) if issued else None
+
+
+def _crossref_record(msg: dict, source_key: str, fetched: str | None) -> ReferenceRecord:
+    """A CrossRef `message` as a record; JATS markup stripped from the abstract."""
+    return ReferenceRecord(
+        source="crossref",
+        source_key=source_key,
+        title=_joined(msg, "title"),
+        authors=_crossref_authors(msg),
+        year=_crossref_year(msg),
+        doi=msg.get("DOI"),
+        venue=_joined(msg, "container-title"),
+        abstract=_JATS.sub("", msg.get("abstract") or "").strip() or None,
+        url=msg.get("URL"),
+        fetched_at=fetched,
+    )
 
 
 def _json_message(body: bytes | None) -> dict | None:
@@ -377,6 +407,14 @@ def readers_from_env(
     `ATTEST_CITATION_WEB` and `ATTEST_CITATION_S2` arm. `sources` filters by
     reader name so a caller can run one at a time.
     """
+    readers = _offline_readers(conn, bib_paths, zotero_path) + _enrichers(cache_dir)
+    if sources:
+        wanted = set(sources)
+        readers = [r for r in readers if r.name in wanted]
+    return readers
+
+
+def _offline_readers(conn, bib_paths, zotero_path) -> list:
     zp = Path(zotero_path) if zotero_path else citations.zotero_path_from_env()
     paths = (
         [Path(p) for p in bib_paths] if bib_paths is not None else citations.bib_paths_from_env()
@@ -387,11 +425,14 @@ def readers_from_env(
     if zp.is_file():
         readers.append(ZoteroRecords(zp))
     readers.append(FeedRecords(conn))
+    return readers
+
+
+def _enrichers(cache_dir: Path | None) -> list:
+    """The network readers the two flags arm -- read here, at construction."""
+    readers: list = []
     if citations.web_enabled():
         readers += [ArxivEnricher(cache_dir), CrossrefEnricher(cache_dir)]
     if citations.s2_enabled():
         readers.append(S2Enricher(cache_dir))
-    if sources:
-        wanted = set(sources)
-        readers = [r for r in readers if r.name in wanted]
     return readers

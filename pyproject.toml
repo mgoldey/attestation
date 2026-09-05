@@ -40,6 +40,7 @@ dependencies = [
     "tqdm>=4.66",
     "python-dotenv>=1.0",
     "sympy>=1.13",
+    "defusedxml>=0.7.1",
 ]
 
 [project.urls]

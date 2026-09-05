@@ -373,15 +373,32 @@ the response-size ceiling at `limit=13`; `cite.lookup` shows conflicts;
 stale-count guard after the 46 → 47 edits; `test_skill_files` after the
 knowledge skill names `cite.sync`.
 
-## 8. Measurements to take before this ships
+## 8. Measurements
 
-- Sync of the live feed source: how many of 9,401 items yield an id (expect
-  every arXiv and Nature item, none from Ars Technica or Hacker News).
-- Semantic vs substring on ten molecular-AI queries against the spec-2 example
-  library, recorded in the golden path README, so the claim "finds SchNet for
-  'equivariant force fields'" is a number, not a sentence.
-- S2 wall time for a 40-paper library at one request per second, to set the
-  CLI's `--limit` default honestly.
+Taken 2026-09-05 against a scratch copy of the live database (9,407 items,
+13 feeds), models pinned in Ollama:
+
+- **Feed-id yield: 7,787 of 9,407 items (83%) carry a DOI or arXiv id.**
+  Every arXiv item (6,105 cs.LG + 340 chem-ph) and every Nature-family item
+  (Nature 443, Scientific Reports 469, Nature Communications 321, Materials
+  39, Chemistry 35, Machine Intelligence 29) yields one; Hugging Face, Simon
+  Willison, Ars Technica and Quanta yield none, and Hacker News 6 of 559 --
+  the posts that link straight to arXiv or a DOI. As predicted, with HN the
+  only surprise.
+- **Dedup is real on the feed alone: 7,787 source rows collapsed to 7,580
+  references.** The 207 merges are the same arXiv paper announced in two
+  feeds (cs.LG and chem-ph cross-lists), which is exactly the case the
+  identity rule exists for.
+- **Embedding: 100 references in 33.9 s wall through the CLI (≈0.32 s each,
+  including process start), so the full feed-derived library is a ~40-minute
+  one-off `attest library embed`.** `sync --limit N` bounds the embed pass;
+  the default is unbounded because a partial index says `semantic: true`
+  with a caveat, which is the honest state either way.
+
+Still to take, in spec 2: semantic vs substring on ten molecular-AI queries
+against the example library, so "finds SchNet for 'equivariant force
+fields'" is a number; and S2 wall time for a 40-paper library at one request
+per second.
 
 ## What this spec does not decide
 

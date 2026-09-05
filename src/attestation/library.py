@@ -195,6 +195,8 @@ def _insert(conn: sqlite3.Connection, ident: str, fields: dict, now: str) -> int
             now,
         ),
     )
+    if cur.lastrowid is None:  # pragma: no cover - sqlite always sets it after INSERT
+        raise RuntimeError("INSERT returned no rowid")
     return cur.lastrowid
 
 
