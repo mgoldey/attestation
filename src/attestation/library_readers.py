@@ -209,34 +209,45 @@ def _cached_get(cache_dir: Path, url: str) -> tuple[bytes | None, str | None, st
     if path.is_file():
         rec = json.loads(path.read_text())
         return rec["body"].encode(), rec["fetched_at"], None
+    resp, error = _fetch_with_backoff(url)
+    if resp is None:
+        return None, None, error
+    fetched = datetime.now(UTC).date().isoformat()
+    _write_cache(cache_dir, path, url, fetched, resp.text)
+    return resp.content, fetched, None
+
+
+def _fetch_with_backoff(url: str) -> tuple[httpx.Response | None, str | None]:
+    """A 200 response, or (None, why). One back-off for a 429, then the row
+    is given up for this pass: a rate limit that outlasts one Retry-After is
+    the pool being exhausted, and hammering it delays every row behind it. A
+    5xx gets a second retry, since those are usually momentary."""
     error = None
     for attempt in range(3):
         try:
             with _client() as client:
                 resp = client.get(url)
         except httpx.HTTPError as exc:
-            return None, None, f"{type(exc).__name__}: {exc}"
-        if resp.status_code == 429 or resp.status_code >= 500:
-            error = f"HTTP {resp.status_code}"
-            # One back-off for a 429, then give the row up for this pass:
-            # a rate limit that outlasts one Retry-After is the pool being
-            # exhausted, and hammering it delays every other row behind it.
-            # A 5xx gets a second retry, since those are usually momentary.
-            if resp.status_code == 429 and attempt >= 1:
-                break
-            _sleep(max(float(resp.headers.get("Retry-After") or 0), _RETRY_AFTER_DEFAULT))
-            continue
-        if resp.status_code != 200:
-            return None, None, f"HTTP {resp.status_code}"
-        fetched = datetime.now(UTC).date().isoformat()
-        existed = cache_dir.is_dir()
-        cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if not existed:
-            citations._chmod(cache_dir, 0o700)
-        path.write_text(json.dumps({"url": url, "fetched_at": fetched, "body": resp.text}))
-        citations._chmod(path, 0o600)
-        return resp.content, fetched, None
-    return None, None, error
+            return None, f"{type(exc).__name__}: {exc}"
+        if resp.status_code == 200:
+            return resp, None
+        error = f"HTTP {resp.status_code}"
+        if resp.status_code != 429 and resp.status_code < 500:
+            return None, error
+        if resp.status_code == 429 and attempt >= 1:
+            return None, error
+        _sleep(max(float(resp.headers.get("Retry-After") or 0), _RETRY_AFTER_DEFAULT))
+    return None, error
+
+
+def _write_cache(cache_dir: Path, path: Path, url: str, fetched: str, body: str) -> None:
+    """0700 dir / 0600 file, applied at creation only (see citations._write_cached)."""
+    existed = cache_dir.is_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not existed:
+        citations._chmod(cache_dir, 0o700)
+    path.write_text(json.dumps({"url": url, "fetched_at": fetched, "body": body}))
+    citations._chmod(path, 0o600)
 
 
 class _Enricher:
@@ -444,16 +455,21 @@ class S2Enricher(_Enricher):
             if data is None:
                 yield self._miss(r, fetched)
                 continue
-            ext = data.get("externalIds") or {}
-            yield ReferenceRecord(
-                source=self.name,
-                source_key=r["identity"],
-                title=data.get("title") or r["title"],
-                doi=ext.get("DOI"),
-                arxiv_id=ext.get("ArXiv"),
-                fetched_at=fetched,
-                cites=_s2_cites(data.get("references") or []),
-            )
+            yield _s2_record(data, r, fetched)
+
+
+def _s2_record(data: dict, row, fetched: str | None) -> ReferenceRecord:
+    """A Semantic Scholar paper as a record: its ids and its reference list."""
+    ext = data.get("externalIds") or {}
+    return ReferenceRecord(
+        source="s2",
+        source_key=row["identity"],
+        title=data.get("title") or row["title"],
+        doi=ext.get("DOI"),
+        arxiv_id=ext.get("ArXiv"),
+        fetched_at=fetched,
+        cites=_s2_cites(data.get("references") or []),
+    )
 
 
 def _s2_paper(body: bytes | None) -> dict | None:

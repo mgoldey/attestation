@@ -317,6 +317,29 @@ def _conflicts_of(conn: sqlite3.Connection, rec: ReferenceRecord) -> dict:
     return json.loads(raw["raw"]).get("conflicts", {}) if raw else {}
 
 
+def _absorb(conn, reader, rec: ReferenceRecord, bucket: dict, report: SyncReport) -> None:
+    """One record into the store, counted into its reader's bucket."""
+    bucket["seen"] += 1
+    if rec.title is None:
+        # An offline record with no title cannot be a row; an enricher that
+        # found nothing still marks the row as tried.
+        bucket["failed"] += 1
+        return
+    _, how = upsert(conn, rec)
+    bucket["enriched" if reader.network else how] += 1
+    if how == "merged" or reader.network:
+        conflicts = _conflicts_of(conn, rec)
+        report.conflicts += len(conflicts)
+        report.conflict_samples.extend((rec.source_key, f) for f in conflicts)
+    if reader.network:
+        # Commit per record, not per reader: an enricher sleeps between
+        # requests (S2 paces at seconds per row), and a write lock held across
+        # those sleeps blocked `attest library tag` on the same database with
+        # "database is locked" -- measured 2026-09-05 while generating
+        # examples/molecular-ai.
+        conn.commit()
+
+
 def sync(conn: sqlite3.Connection, readers, *, embedder=None, limit: int | None = None):
     """Run every reader in order, then embed rows without a vector.
 
@@ -330,25 +353,7 @@ def sync(conn: sqlite3.Connection, readers, *, embedder=None, limit: int | None 
         bucket = report.bucket(reader.name)
         records = reader.records(conn, limit) if reader.network else reader.records()
         for rec in records:
-            bucket["seen"] += 1
-            if rec.title is None:
-                # An offline record with no title cannot be a row; an enricher
-                # that found nothing still marks the row as tried.
-                bucket["failed"] += 1
-                continue
-            _, how = upsert(conn, rec)
-            bucket["enriched" if reader.network else how] += 1
-            if how == "merged" or reader.network:
-                conflicts = _conflicts_of(conn, rec)
-                report.conflicts += len(conflicts)
-                report.conflict_samples.extend((rec.source_key, f) for f in conflicts)
-            if reader.network:
-                # Commit per record, not per reader: an enricher sleeps between
-                # requests (S2 paces at seconds per row), and a write lock held
-                # across those sleeps blocked `attest library tag` on the same
-                # database with "database is locked" -- measured 2026-09-05
-                # while generating examples/molecular-ai.
-                conn.commit()
+            _absorb(conn, reader, rec, bucket, report)
         # An enricher's transient failures (a 429 that outlasted its retries, a
         # dead network) leave the row untouched for the next sync and are
         # counted here, not as a miss that would never be retried.
