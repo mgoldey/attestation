@@ -28,6 +28,52 @@ def good_chat_fn(messages, schema):
     return {"content_type": "paper", "tags": ["quantum-chemistry", "dft"]}
 
 
+def test_run_reference_tagging_writes_reference_tags(tmp_path):
+    """References tag through the ONE renderer, into reference_tags, once."""
+    from attestation.features import run_reference_tagging
+    from attestation.library import ReferenceRecord, upsert
+
+    conn = seeded_db(tmp_path / "t.db")
+    rid = upsert(
+        conn,
+        ReferenceRecord(
+            source="bibtex:/a", source_key="k", bib_key="k", title="SchNet", abstract="quantum"
+        ),
+    )[0]
+    calls = []
+
+    def chat_fn(messages, schema):
+        calls.append(messages)
+        return {"content_type": "paper", "tags": ["quantum-chemistry", "graph-neural-networks"]}
+
+    stats = run_reference_tagging(conn, chat_fn, "m", limit=None)
+    assert (stats["tagged"], stats["failed"], stats["model"]) == (1, 0, "m")
+    tags = {
+        r["tag"]
+        for r in conn.execute("SELECT tag FROM reference_tags WHERE reference_id = ?", (rid,))
+    }
+    assert tags == {"quantum-chemistry", "graph-neural-networks"}
+    assert "SchNet" in calls[0][-1]["content"]  # rendered by tag_messages
+    assert run_reference_tagging(conn, chat_fn, "m")["tagged"] == 0  # already tagged
+
+
+def test_run_reference_tagging_stops_when_the_backend_is_down(tmp_path):
+    from attestation.features import run_reference_tagging
+    from attestation.library import ReferenceRecord, upsert
+
+    conn = seeded_db(tmp_path / "t.db")
+    for k in ("a", "b"):
+        upsert(conn, ReferenceRecord(source="bibtex:/a", source_key=k, bib_key=k, title=k))
+
+    def dead(messages, schema):
+        import httpx
+
+        raise httpx.ConnectError("refused")
+
+    stats = run_reference_tagging(conn, dead, "m")
+    assert stats["chat_down"] is True and stats["tagged"] == 0
+
+
 def test_itemtags_validates_good_output():
     parsed = ItemTags.model_validate({"content_type": "paper", "tags": ["a-tag", "b2"]})
     assert parsed.content_type == "paper"

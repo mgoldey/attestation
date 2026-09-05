@@ -42,3 +42,38 @@ claim". See `examples/citations/` for a worked run of both linters together.
 with zero contradicted claims can still assert a dozen unverifiable numbers.
 Only decimals count as measurements — on a real index, 212 numbers reduce to 30
 decimals and the decimals are the results.
+
+## The library
+
+One deduplicated store of references, filled by `attest library sync` (or the
+`cite.sync` tool) from every configured source: the `.bib` files named in
+`ATTEST_BIB_PATHS` (else any `*.bib` in the working directory), a Zotero
+library at `ATTEST_ZOTERO_PATH` (else Zotero's default), and the feed's own
+items that carry a DOI or arXiv id. The same paper from three sources is one
+row with three source entries, each recording what that source offered and
+when. Identity is a pure rule: DOI, else versionless arXiv id, else the
+normalised title and year. Merging fills empty fields and keeps the first value
+of a disagreement, recording the conflict on the source that offered it, so
+`cite.lookup` can show a disagreement rather than lose it.
+
+Two flags reach off the machine, both off by default and read only when the
+readers are built: `ATTEST_CITATION_WEB` (arXiv and CrossRef: abstracts,
+authors, venues) and `ATTEST_CITATION_SCHOLAR` (Semantic Scholar reference lists,
+one request per second, cached forever). They fill fields on references the
+library already holds and never add a paper on their own; `cite.sources` says
+which are live.
+
+```bash
+uv run attest library sync                  # read every source; embed what it can
+uv run attest library search "equivariant force fields"
+uv run attest library search "" --author batzner --year 2022
+uv run attest library tag --limit 50        # a model call per reference, ~2.3s each
+uv run attest library status
+```
+
+Search is semantic when the library is embedded (the model server was
+reachable during `sync` or `library embed`) and substring otherwise, and the
+output says which — the `cite.search` tool carries the same `semantic` flag
+and `caveat`. `cite.check` and `attest claims` resolve `cite=<key>` through
+the store first, so a key synced from Zotero resolves even when no `.bib` sits
+in the working directory. See `docs/superpowers/specs/2026-09-05-library-store-design.md`.

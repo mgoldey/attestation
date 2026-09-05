@@ -38,6 +38,49 @@ from pathlib import Path
 DEFAULT_ZOTERO = Path.home() / "Zotero" / "zotero.sqlite"
 
 
+def _on(value: str) -> bool:
+    return value.strip() not in ("", "0", "false")
+
+
+# The two flags are read with literal variable names, not through a helper
+# taking the name as an argument: tests/test_llm.py derives the set of
+# documented settings from the literals in the source, so an indirection
+# would make a real setting invisible to the guard that keeps .env.sample
+# honest. The names carry no digits for the same reason.
+
+
+def web_enabled() -> bool:
+    """ATTEST_CITATION_WEB: CrossRef and the arXiv API.
+
+    Read by the caller that BUILDS readers, never by a reader at call time --
+    a disabled reader cannot be coaxed into one request by an unusual path.
+    """
+    return _on(os.environ.get("ATTEST_CITATION_WEB", ""))
+
+
+def s2_enabled() -> bool:
+    """ATTEST_CITATION_SCHOLAR: Semantic Scholar reference lists.
+
+    A second flag because reference lists are a larger, rate-limited surface
+    than a metadata lookup, and a reader who accepts one need not accept both.
+    """
+    return _on(os.environ.get("ATTEST_CITATION_SCHOLAR", ""))
+
+
+def bib_paths_from_env() -> list[Path]:
+    """ATTEST_BIB_PATHS (os.pathsep-separated), else every `*.bib` in the cwd."""
+    configured = os.environ.get("ATTEST_BIB_PATHS", "")
+    if configured.strip():
+        return [Path(p).expanduser() for p in configured.split(os.pathsep) if p.strip()]
+    return sorted(Path.cwd().glob("*.bib"))
+
+
+def zotero_path_from_env() -> Path:
+    """ATTEST_ZOTERO_PATH, else Zotero's default location."""
+    configured = os.environ.get("ATTEST_ZOTERO_PATH", "")
+    return Path(configured).expanduser() if configured.strip() else DEFAULT_ZOTERO
+
+
 @dataclass(frozen=True)
 class Reference:
     """One bibliographic record, and where it came from.
@@ -110,6 +153,19 @@ _ENTRY = re.compile(r"@(\w+)\s*\{\s*([^,\s]+)\s*,(.*?)\n\}", re.DOTALL)
 _FIELD = re.compile(r"(\w+)\s*=\s*[{\"](.*?)[}\"]\s*,?\s*$", re.MULTILINE | re.DOTALL)
 
 
+def _parse_bib_entries(text: str) -> Iterator[tuple[str, dict]]:
+    """(key, {lowercased field: single-spaced value}) for each entry with a title.
+
+    The ONE `.bib` parser: `BibtexReader` (the cite.* lookup path) and
+    `library_readers.BibtexRecords` (the library sync) both read through it,
+    so a grammar fix lands in both.
+    """
+    for _kind, key, body in _ENTRY.findall(text):
+        fields = {k.lower(): " ".join(v.split()) for k, v in _FIELD.findall(body)}
+        if fields.get("title"):
+            yield key, fields
+
+
 class BibtexReader:
     """`.bib` files on disk.
 
@@ -139,11 +195,7 @@ class BibtexReader:
         for path in self.paths:
             if not path.is_file():
                 continue
-            text = path.read_text(errors="replace")
-            for _kind, key, body in _ENTRY.findall(text):
-                fields = {k.lower(): " ".join(v.split()) for k, v in _FIELD.findall(body)}
-                if not fields.get("title"):
-                    continue
+            for key, fields in _parse_bib_entries(path.read_text(errors="replace")):
                 authors = [a.strip() for a in fields.get("author", "").split(" and ") if a.strip()]
                 yield Reference(
                     key=key,
@@ -225,6 +277,24 @@ class ZoteroReader:
         was written, so the fixture is plausible, not verified. If you have a
         real one, point this at it.
         """
+        for key, data, authors in self.raw_items():
+            yield Reference(
+                key=key,
+                title=data["title"],
+                authors=authors,
+                year=_year(data.get("date")),
+                doi=data.get("DOI"),
+                url=data.get("url"),
+                source=self.name,
+            )
+
+    def raw_items(self) -> Iterator[tuple[str, dict, list[str]]]:
+        """(zotero key, {field: value}, [authors]) for every titled, undeleted item.
+
+        The library sync reads this rather than `all()` because it wants
+        fields `Reference` does not carry (abstractNote, publicationTitle,
+        extra). Same tolerance as `all()`: nothing on any sqlite error.
+        """
         if not self.path.is_file():
             return
         try:
@@ -247,17 +317,8 @@ class ZoteroReader:
             authors.setdefault(row["key"], []).append(name)
 
         for key, data in by_key.items():
-            if not data.get("title"):
-                continue
-            yield Reference(
-                key=key,
-                title=data["title"],
-                authors=authors.get(key, []),
-                year=_year(data.get("date")),
-                doi=data.get("DOI"),
-                url=data.get("url"),
-                source=self.name,
-            )
+            if data.get("title"):
+                yield key, data, authors.get(key, [])
 
     def lookup(self, key: str) -> Reference | None:
         """The item whose Zotero key or DOI matches `key`, case-insensitive.
@@ -393,34 +454,44 @@ class WebReader:
 class Resolver:
     """The configured readers, asked in order, recording which one answered."""
 
-    def __init__(self, readers):
+    def __init__(self, readers, store=None):
         self.readers = list(readers)
+        # A zero-arg callable returning an open connection to the reference
+        # library, consulted before any reader; None means readers only.
+        self.store = store
 
     @classmethod
-    def from_env(cls, *, zotero_path=None, bib_paths=None, cache_dir=None) -> Resolver:
+    def from_env(cls, *, zotero_path=None, bib_paths=None, cache_dir=None, store=None) -> Resolver:
         """Build from the environment.
 
-        `ATTEST_CITATION_WEB` is read HERE and nowhere else. Reading it at call
+        `ATTEST_CITATION_WEB` is read HERE (via `web_enabled`) and by the
+        library sync's reader list, both at construction. Reading it at call
         time would mean a resolver built while disabled could still make a
         request if the variable changed under it.
         """
-        readers: list = (
-            [ZoteroReader(zotero_path)] if zotero_path or DEFAULT_ZOTERO.is_file() else []
-        )
-        paths = list(bib_paths) if bib_paths else sorted(Path.cwd().glob("*.bib"))
+        zotero_path = zotero_path or zotero_path_from_env()
+        readers: list = [ZoteroReader(zotero_path)] if zotero_path.is_file() else []
+        paths = list(bib_paths) if bib_paths else bib_paths_from_env()
         if paths:
             readers.append(BibtexReader(paths))
-        if os.environ.get("ATTEST_CITATION_WEB", "").strip() not in ("", "0", "false"):
+        if web_enabled():
             readers.append(WebReader(cache_dir))
-        return cls(readers)
+        return cls(readers, store=store)
 
     def lookup(self, key: str) -> Reference | None:
-        """The first configured reader's answer for `key`, tried in order.
+        """The library store's answer, else the first reader's, tried in order.
 
         Order is the constructor's reader list, which `from_env` fixes as
         zotero, then bibtex, then web -- so a network lookup is only ever
         tried after every local, offline reader has already said no.
         """
+        if self.store is not None:
+            from attestation import library
+
+            conn = self.store()
+            row = library.lookup_row(conn, key)
+            if row is not None:
+                return library.to_reference(conn, row)
         for reader in self.readers:
             found = reader.lookup(key)
             if found is not None:

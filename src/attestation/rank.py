@@ -21,6 +21,82 @@ from attestation.features import pref_scores_for_items
 # rather than build one query with len(ids) placeholders.
 _SQL_VAR_CHUNK = 900
 
+# Keep semantic hits within this fraction of the BEST match for this query.
+#
+# Relative, not absolute, because absolute thresholds do not survive contact
+# with real data. Measured against embeddinggemma over 5,167 items: "large
+# language models" tops out at cosine 0.619 while "cryo-EM protein structure"
+# tops at 0.443, so any fixed cutoff either floods one query or starves the
+# other. Similarity also decays slowly -- 0.619 to 0.500 across 200 items --
+# so "everything above X" is never a clean answer.
+#
+# At 0.90 the same measurement gave 28 hits for a broad query, 12 for a
+# middling one, and 2 for "superconductivity" -- which had exactly two
+# genuinely superconducting papers when this was written. It has eight now, at
+# 5,222 items, which is what exposed the anchor problem below: a stated
+# measurement is a snapshot of a corpus, and this one aged into a wrong reason
+# for a right-looking number. The floor adapts to how well the
+# archive actually covers the question, which is the property that matters.
+#
+# Lived in mcp/feed.py until 2026-09-05, when the reference library needed the
+# same policy over its own vec table; a domain module cannot import from mcp/.
+RELEVANCE_FLOOR = 0.90
+
+# How many of the best hits the floor is measured against. ONE was the original
+# choice and it made the size of every answer a function of a single item: when
+# the top hit is a weak outlier, everything genuinely relevant falls below the
+# bar. Measured on the live corpus, `enzyme mechanism` returned exactly one
+# result -- a paper about snail slime -- while four real enzyme papers were
+# cut, three of them by less than 0.4% of the threshold. Six of sixteen queries
+# could not fill a five-result page.
+#
+# Three costs nothing: across nine queries, literal-stem precision was 62% at
+# either width while the kept set grew from 34 items to 63. The comment above
+# reasons about how far similarity DECAYS; the failure was in the anchor.
+RELEVANCE_ANCHOR = 3
+
+
+def vector_search(
+    conn, embedder, query: str, k: int, table: str = "item_vectors"
+) -> dict[int, float]:
+    """rowid -> similarity, via a sqlite-vec index (`item_vectors` or
+    `reference_vectors`). The query half of a semantic search, split from
+    `apply_relevance_floor`'s policy so each can be read and tested on its own.
+
+    Indexed with DOC_PROMPT and searched with QUERY_PROMPT: embed.py's prompts
+    are asymmetric because the model was trained that way, and mixing them
+    measurably degrades retrieval.
+
+    Vectors are L2-normalised by truncate_normalize, so sqlite-vec's L2
+    distance d relates to cosine similarity as cos = 1 - d^2/2.
+    """
+    if table not in ("item_vectors", "reference_vectors"):
+        raise ValueError(f"not a vector table: {table!r}")
+    vec = embedder.embed_query(query)
+    rows = conn.execute(
+        f"SELECT rowid, distance FROM {table} WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+        (vec.tobytes(), k),
+    ).fetchall()
+    return {r["rowid"]: 1.0 - (r["distance"] ** 2) / 2.0 for r in rows}
+
+
+def apply_relevance_floor(sims: dict[int, float]) -> dict[int, float]:
+    """Keep hits within RELEVANCE_FLOOR of the RELEVANCE_ANCHOR-averaged best
+    similarity in `sims`. The policy half of a semantic search, over a plain
+    rowid -> similarity dict so the three rounds of live tuning documented
+    above can be regression-tested with no database and no model.
+    """
+    if not sims:
+        return sims
+    # sqlite-vec returns k rows whether or not they are relevant, so without a
+    # floor a search for anything returns the whole archive in similarity
+    # order -- the same "returns everything" failure as the old substring
+    # search, only harder to notice.
+    top = sorted(sims.values(), reverse=True)[:RELEVANCE_ANCHOR]
+    best = sum(top) / len(top)
+    return {rid: sim for rid, sim in sims.items() if sim >= best * RELEVANCE_FLOOR}
+
+
 log = logging.getLogger(__name__)
 
 # Module-level in-memory cache: (db file path, user_id) -> (interests_hash, profile_vector).
