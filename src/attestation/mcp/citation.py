@@ -182,6 +182,22 @@ def _sync(conn, sources: list[str] | None = None, limit: int | None = None) -> d
     return out
 
 
+@tool(
+    empty={"reference": None, "cites": [], "cited_by": [], "n_cites": 0, "n_cited_by": 0},
+    label="cite_related",
+)
+def _related(conn, key: str) -> dict:
+    from attestation import library
+
+    rel = library.related(conn, key)
+    if rel is None:
+        stored = library.status(conn)["references"]
+        raise ToolError(
+            f"no library reference matches {key!r} (store: {stored} references; cite.sync fills it)"
+        )
+    return rel.to_row()
+
+
 def register(mcp) -> None:
     """Attach every cite.* tool to the server."""
 
@@ -275,3 +291,17 @@ def register(mcp) -> None:
         Idempotent: re-running with unchanged sources changes nothing.
         """
         return _sync(sources, limit)
+
+    @mcp.tool(name="cite.related")
+    def cite_related(
+        key: Annotated[str, Field(description="citation key, DOI, arXiv id, or library identity")],
+    ) -> dict:
+        """What a paper cites, and what in the library cites it.
+
+        Edges come from Semantic Scholar reference lists (ATTEST_CITATION_SCHOLAR
+        at sync time) or a .bib `cites` field. A cited paper that is not in
+        the library is listed with `in_library: false` and is never fetched.
+        Deterministic; no model. `n_cites` / `n_cited_by` are the true counts
+        behind the capped lists.
+        """
+        return _related(key)

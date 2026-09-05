@@ -61,7 +61,7 @@ mcp_servers:
 
 Verify with `hermes mcp list` — you should see `attestation ... ✓ enabled`.
 
-The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 47 tools.
+The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 48 tools.
 These counts move: re-measure rather than quoting this paragraph.
 
 ```bash
@@ -116,6 +116,7 @@ m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
 | `cite.check(path)` | Claims whose citation key no configured source can resolve | fast |
 | `cite.sources()` | Which citation sources are configured, which can reach the network, and what the store holds | instant |
 | `cite.sync(sources, limit)` | Read Zotero, `.bib` files and the feed into the one deduplicated library; enrich from the web only if a flag armed it at start | slow: a model call per unembedded reference |
+| `cite.related(key)` | What a paper cites and what in the library cites it, from real reference lists; a cited paper not in the library is a stub, never fetched | fast |
 | `feed.ask(user, question)` | Route a plain-language feed question to the right tool | fast |
 | `kg.ask(question, source, target)` | Route a plain-language graph question to the right tool | instant |
 | `runs.ask(question, family, path, metric)` | Route a plain-language ledger question to the right tool | instant |
@@ -322,7 +323,7 @@ written in one quick transaction per feed.
 ## Restricted surfaces and generated agent configs
 
 A model that can see a tool will eventually call it wrong, so a Claude Code
-session does not need all 47: `ATTEST_TOOLS=feed|provenance|knowledge|symbolic`
+session does not need all 48: `ATTEST_TOOLS=feed|provenance|knowledge|symbolic`
 restricts what an `attest-mcp` process registers to one namespace (`feed.*`,
 `runs.*` + `cite.check`, `kg.*` + `feed.search`, or `sym.*`), and
 `ATTEST_EXPAND=1` reveals the specific tools underneath a surface's `.ask`

@@ -100,6 +100,16 @@ about when the library is embedded and by substring otherwise -- read
 `semantic` and `caveat` in the reply before describing the result -- and
 **never touches the network**, even when a web reader is configured.
 
+`cite.related(key)` walks a paper's citation neighbourhood: what it cites
+and what in the library cites it, from reference lists Semantic Scholar
+supplied at sync time or a `.bib` `cites` field. A cited paper that is not
+in the library comes back with `in_library: false` and is never fetched;
+`n_cites` and `n_cited_by` are the true counts behind the capped lists.
+References tagged with `attest library tag` (or carrying `keywords` in the
+`.bib`) sit in the concept graph beside the items, so `kg.*` answers cover
+what the reader cites as well as what they read; `cite.search(query="",
+tag=...)` lists the references behind a concept.
+
 `cite.check(path)` lints a Markdown draft's `cite=<key>` annotations for
 keys no configured source resolves. It is a lint -- the key is unknown
 here -- never "the cited work does not support this".

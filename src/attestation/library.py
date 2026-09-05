@@ -640,6 +640,130 @@ def to_reference(conn: sqlite3.Connection, row):
     )
 
 
+# ---------------------------------------------------------------------------
+# citation neighbourhood
+# ---------------------------------------------------------------------------
+
+MAX_NEIGHBOURS = 20
+
+
+@dataclass
+class Neighbour:
+    """One end of a citation edge: a library row when it resolves, else a stub."""
+
+    identity: str
+    title: str | None
+    in_library: bool
+    key: str | None
+    id: int | None
+
+    def to_row(self) -> dict:
+        """The wire shape; a stub's title is whatever the reference list carried."""
+        return {
+            "identity": self.identity,
+            "title": (self.title or "")[:90] or None,
+            "in_library": self.in_library,
+            "key": self.key,
+            "id": self.id,
+        }
+
+
+@dataclass
+class Related:
+    """What a paper cites and what in the library cites it, capped, with true counts."""
+
+    reference: SearchHit
+    cites: list[Neighbour]
+    cited_by: list[Neighbour]
+    n_cites: int
+    n_cited_by: int
+
+    def to_row(self) -> dict:
+        """The wire shape `cite.related` returns."""
+        return {
+            "reference": self.reference.to_row(),
+            "cites": [n.to_row() for n in self.cites],
+            "cited_by": [n.to_row() for n in self.cited_by],
+            "n_cites": self.n_cites,
+            "n_cited_by": self.n_cited_by,
+        }
+
+
+def _identity_forms(row) -> list[str]:
+    """Every identity string that could name this row: its own, its DOI's, its arXiv id's."""
+    forms = [row["identity"]]
+    if row["doi"]:
+        forms.append(f"doi:{row['doi']}")
+    if row["arxiv_id"]:
+        forms.append(f"arxiv:{row['arxiv_id']}")
+    return list(dict.fromkeys(forms))
+
+
+def _row_for_identity(conn: sqlite3.Connection, ident: str):
+    """The row an identity names, by identity, DOI or arXiv column."""
+    kind, _, value = ident.partition(":")
+    for sql, val in (
+        ('SELECT * FROM "references" WHERE identity = ?', ident),
+        ('SELECT * FROM "references" WHERE doi = ?', value if kind == "doi" else None),
+        ('SELECT * FROM "references" WHERE arxiv_id = ?', value if kind == "arxiv" else None),
+    ):
+        if val and (row := conn.execute(sql, (val,)).fetchone()):
+            return row
+    return None
+
+
+def _neighbour(conn: sqlite3.Connection, ident: str, title: str | None) -> Neighbour:
+    row = _row_for_identity(conn, ident)
+    if row is None:
+        return Neighbour(ident, title, False, None, None)
+    return Neighbour(ident, row["title"], True, row["bib_key"] or row["identity"], row["id"])
+
+
+def _neighbour_order(n: Neighbour) -> tuple[bool, str]:
+    return (not n.in_library, (n.title or "").lower())
+
+
+def related(conn: sqlite3.Connection, key: str) -> Related | None:
+    """What a paper cites and what in the library cites it, deterministic.
+
+    Edges come from reference_cites (Semantic Scholar via sync, or a .bib
+    `cites` field). A cited identity resolves to a library row by identity,
+    DOI or arXiv form, so an edge recorded before a paper gained its DOI still
+    lands. In-library first, then by title; capped with the true counts
+    beside the lists. Never fetches: a paper not in the library is a stub.
+    """
+    row = lookup_row(conn, key)
+    if row is None:
+        return None
+    cites = [
+        _neighbour(conn, r["cited_identity"], r["cited_title"])
+        for r in conn.execute(
+            "SELECT cited_identity, cited_title FROM reference_cites WHERE citing_id = ?",
+            (row["id"],),
+        )
+    ]
+    forms = _identity_forms(row)
+    marks = ",".join("?" * len(forms))
+    citing = conn.execute(
+        f'SELECT DISTINCT r.* FROM "references" r JOIN reference_cites c ON c.citing_id = r.id'
+        f" WHERE c.cited_identity IN ({marks})",
+        forms,
+    ).fetchall()
+    cited_by = [
+        Neighbour(r["identity"], r["title"], True, r["bib_key"] or r["identity"], r["id"])
+        for r in citing
+    ]
+    cites.sort(key=_neighbour_order)
+    cited_by.sort(key=_neighbour_order)
+    return Related(
+        _hit(conn, row),
+        cites[:MAX_NEIGHBOURS],
+        cited_by[:MAX_NEIGHBOURS],
+        len(cites),
+        len(cited_by),
+    )
+
+
 def status(conn: sqlite3.Connection) -> dict:
     """Counts a caller can act on: what is stored, embedded, tagged, linked."""
     return {

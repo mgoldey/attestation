@@ -1183,3 +1183,39 @@ def test_library_sync_search_and_status(tmp_path, monkeypatch, capsys):
 
     assert main(["library", "status"]) == 0
     assert '"references": 1' in capsys.readouterr().out
+
+
+def test_library_related_prints_both_directions(tmp_path, monkeypatch, capsys):
+    from attestation.cli import main
+    from attestation.db import get_db
+    from attestation.library import ReferenceRecord, upsert
+
+    db = tmp_path / "t.db"
+    monkeypatch.setenv("ATTEST_DB", str(db))
+    conn = get_db(db)
+    upsert(
+        conn,
+        ReferenceRecord(
+            source="bibtex:/a",
+            source_key="n",
+            bib_key="n",
+            title="NequIP",
+            doi="10.1/n",
+            cites=[("doi:10.5555/schnet", "SchNet"), ("title:elsewhere:-", "Elsewhere")],
+        ),
+    )
+    upsert(
+        conn,
+        ReferenceRecord(
+            source="bibtex:/a", source_key="s", bib_key="s", title="SchNet", doi="10.5555/schnet"
+        ),
+    )
+    conn.commit()
+    conn.close()
+    assert main(["library", "related", "n"]) == 0
+    out = capsys.readouterr().out
+    assert "cites 2" in out and "[in library] s  SchNet" in out and "[not in library]" in out
+    assert main(["library", "related", "s"]) == 0
+    assert "cited_by 1" in capsys.readouterr().out
+    assert main(["library", "related", "ghost"]) == 1
+    assert "no library reference matches" in capsys.readouterr().err

@@ -102,6 +102,7 @@ HELP: dict[str, str] = {
     "library.tag": "LLM-tag untagged references",
     "library.embed": "embed references that have no vector",
     "library.status": "counts per source, vectors, tags, citation edges",
+    "library.related": "what a reference cites and what cites it, from real reference lists",
 }
 
 
@@ -296,6 +297,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     lp = lib_sub.add_parser("status", help=HELP["library.status"])
     lp.set_defaults(func=cmd_library_status)
+
+    lp = lib_sub.add_parser("related", help=HELP["library.related"])
+    lp.add_argument("key", help="citation key, DOI, arXiv id, or library identity")
+    lp.set_defaults(func=cmd_library_related)
 
     sp = sub.add_parser("bootstrap-persona", help=HELP["bootstrap-persona"])
     add_db(sp)
@@ -1142,6 +1147,28 @@ def cmd_library_embed(args: argparse.Namespace) -> int:
         done, missing, error = library.embed_missing(conn, Embedder(), args.limit)
     print(f"embedded {done}, {missing} still without a vector" + (f" ({error})" if error else ""))
     return 1 if error and done == 0 else 0
+
+
+@_documented("library.related")
+def cmd_library_related(args: argparse.Namespace) -> int:
+    from attestation import library
+
+    with open_db(args.db) as conn:
+        rel = library.related(conn, args.key)
+        if rel is None:
+            n = library.status(conn)["references"]
+            return fail(f"no library reference matches {args.key!r} ({n} references in the store)")
+    h = rel.reference
+    print(f"{h.year or '----'}  {h.title[:90]}  [{h.bib_key or h.identity}]")
+    for label, rows, n in (
+        ("cites", rel.cites, rel.n_cites),
+        ("cited_by", rel.cited_by, rel.n_cited_by),
+    ):
+        print(f"{label} {n}")
+        for nb in rows:
+            where = "in library" if nb.in_library else "not in library"
+            print(f"  [{where}] {nb.key or nb.identity}  {(nb.title or '')[:80]}")
+    return 0
 
 
 @_documented("library.status")

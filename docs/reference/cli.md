@@ -281,6 +281,18 @@ options:
   -h, --help  show this help message and exit
 ```
 
+## attest library related
+
+```
+usage: attest library related [-h] key
+
+positional arguments:
+  key         citation key, DOI, arXiv id, or library identity
+
+options:
+  -h, --help  show this help message and exit
+```
+
 ## attest bootstrap-persona
 
 ```

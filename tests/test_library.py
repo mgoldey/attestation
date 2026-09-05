@@ -324,3 +324,49 @@ def test_to_reference_keeps_the_provenance_pair(tmp_path):
     ref = library.to_reference(conn, row)
     assert ref.key == "a" and ref.source == "library:bibtex:/a.bib" and ref.fetched_at is None
     assert ref.to_row()["doi"] == "10.5555/schnet"
+
+
+# ---------------------------------------------------------------------------
+# citation neighbourhood
+# ---------------------------------------------------------------------------
+
+
+def test_related_resolves_edges_both_ways(tmp_path):
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    nequip = _store_with(
+        conn,
+        bib_key="nequip",
+        title="NequIP",
+        doi="10.1038/s41467-022-29939-5",
+        arxiv_id="2101.03164",
+    )
+    schnet = _store_with(conn, bib_key="schnet", title="SchNet", arxiv_id="1706.08566")
+    # An edge recorded by arXiv id must still find SchNet after it gains a DOI.
+    library.upsert(
+        conn,
+        _rec(
+            source="s2",
+            source_key="x",
+            doi="10.1038/s41467-022-29939-5",
+            fetched_at="2026-09-05",
+            cites=[("arxiv:1706.08566", "SchNet"), ("title:elsewhere:-", "Elsewhere")],
+        ),
+    )
+    library.upsert(
+        conn, _rec(bib_key="schnet2", title="SchNet", arxiv_id="1706.08566", doi="10.5555/schnet")
+    )
+    rel = library.related(conn, "nequip")
+    assert rel is not None and rel.reference.id == nequip
+    assert [(n.identity, n.in_library, n.key) for n in rel.cites] == [
+        ("arxiv:1706.08566", True, "schnet"),
+        ("title:elsewhere:-", False, None),
+    ]
+    assert rel.n_cites == 2 and rel.cited_by == [] and rel.n_cited_by == 0
+    back = library.related(conn, "schnet")
+    assert back is not None and back.reference.id == schnet
+    assert [n.key for n in back.cited_by] == ["nequip"]
+    assert library.related(conn, "nope") is None
+    row = rel.to_row()
+    assert row["reference"]["key"] == "nequip" and row["cites"][1]["title"] == "Elsewhere"
