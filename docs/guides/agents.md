@@ -61,7 +61,7 @@ mcp_servers:
 
 Verify with `hermes mcp list` — you should see `attestation ... ✓ enabled`.
 
-The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 46 tools.
+The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 47 tools.
 These counts move: re-measure rather than quoting this paragraph.
 
 ```bash
@@ -111,10 +111,11 @@ m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
 | `runs.claims_check(path, verdict)` | Verify Markdown claims against recorded runs | instant |
 | `runs.claims_coverage(path)` | Numbers asserted in prose that no claim covers | instant |
 | `feed.digest(user, days, per_topic, limit)` | Ranked unread feed grouped by topic, with a ranking-quality caveat | fast |
-| `cite.lookup(key)` | One bibliographic record, and which source it came from | fast |
-| `cite.search(query, limit)` | Find references by title or author, from local sources only | fast |
+| `cite.lookup(key)` | One bibliographic record, every source that contributed, and any field they disagreed on | fast |
+| `cite.search(query, limit, author, year, tag)` | Find references in the library: semantic when embedded, substring otherwise, and it says which | fast |
 | `cite.check(path)` | Claims whose citation key no configured source can resolve | fast |
-| `cite.sources()` | Which citation sources are configured, and which can reach the network | instant |
+| `cite.sources()` | Which citation sources are configured, which can reach the network, and what the store holds | instant |
+| `cite.sync(sources, limit)` | Read Zotero, `.bib` files and the feed into the one deduplicated library; enrich from the web only if a flag armed it at start | slow: a model call per unembedded reference |
 | `feed.ask(user, question)` | Route a plain-language feed question to the right tool | fast |
 | `kg.ask(question, source, target)` | Route a plain-language graph question to the right tool | instant |
 | `runs.ask(question, family, path, metric)` | Route a plain-language ledger question to the right tool | instant |
@@ -321,7 +322,7 @@ written in one quick transaction per feed.
 ## Restricted surfaces and generated agent configs
 
 A model that can see a tool will eventually call it wrong, so a Claude Code
-session does not need all 46: `ATTEST_TOOLS=feed|provenance|knowledge|symbolic`
+session does not need all 47: `ATTEST_TOOLS=feed|provenance|knowledge|symbolic`
 restricts what an `attest-mcp` process registers to one namespace (`feed.*`,
 `runs.*` + `cite.check`, `kg.*` + `feed.search`, or `sym.*`), and
 `ATTEST_EXPAND=1` reveals the specific tools underneath a surface's `.ask`

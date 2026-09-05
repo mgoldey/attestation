@@ -404,17 +404,23 @@ class SearchHit:
 
     def to_row(self) -> dict:
         """The wire projection: the same budgets as `Reference.to_row` and
-        `RankedItem.to_row` (authors 6, tags 3, the true counts beside them)."""
+        `RankedItem.to_row` (authors 6, tags 3, the true counts beside them,
+        title and venue clipped with the cut made visible). Measured against
+        test_library_tools' worst-case row: 13 rows at 223-char titles came to
+        7,736 characters, over the 7,000 a 2B model can render; at 90 they fit.
+        """
+        from attestation.rank import MAX_SOURCE_CHARS, MAX_URL_CHARS, _clip_field, _clip_title
+
         return {
             "id": self.id,
             "key": self.bib_key or self.identity,
-            "title": self.title[:223],
+            "title": _clip_title(self.title),
             "authors": self.authors[:6],
             "n_authors": len(self.authors),
             "year": self.year,
             "doi": self.doi,
-            "url": self.url,
-            "venue": self.venue,
+            "url": _clip_field(self.url, MAX_URL_CHARS) if self.url else None,
+            "venue": _clip_field(self.venue, MAX_SOURCE_CHARS) if self.venue else None,
             "sources": self.sources,
             "tags": self.tags[:3],
             "n_tags": self.n_tags,

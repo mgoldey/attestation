@@ -447,11 +447,14 @@ class WebReader:
 class Resolver:
     """The configured readers, asked in order, recording which one answered."""
 
-    def __init__(self, readers):
+    def __init__(self, readers, store=None):
         self.readers = list(readers)
+        # A zero-arg callable returning an open connection to the reference
+        # library, consulted before any reader; None means readers only.
+        self.store = store
 
     @classmethod
-    def from_env(cls, *, zotero_path=None, bib_paths=None, cache_dir=None) -> Resolver:
+    def from_env(cls, *, zotero_path=None, bib_paths=None, cache_dir=None, store=None) -> Resolver:
         """Build from the environment.
 
         `ATTEST_CITATION_WEB` is read HERE (via `web_enabled`) and by the
@@ -466,15 +469,22 @@ class Resolver:
             readers.append(BibtexReader(paths))
         if web_enabled():
             readers.append(WebReader(cache_dir))
-        return cls(readers)
+        return cls(readers, store=store)
 
     def lookup(self, key: str) -> Reference | None:
-        """The first configured reader's answer for `key`, tried in order.
+        """The library store's answer, else the first reader's, tried in order.
 
         Order is the constructor's reader list, which `from_env` fixes as
         zotero, then bibtex, then web -- so a network lookup is only ever
         tried after every local, offline reader has already said no.
         """
+        if self.store is not None:
+            from attestation import library
+
+            conn = self.store()
+            row = library.lookup_row(conn, key)
+            if row is not None:
+                return library.to_reference(conn, row)
         for reader in self.readers:
             found = reader.lookup(key)
             if found is not None:

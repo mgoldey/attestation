@@ -88,20 +88,27 @@ returns an empty graph -- a setup gap (`attest tag`, see
 
 ## References
 
-Read from disk: a Zotero library at `~/Zotero/zotero.sqlite` and any `.bib`
-files in the working directory. `cite.lookup(key)` returns one record by
-citation key, DOI or arXiv id; every record carries `source` (which reader
-answered) and `fetched_at` (`null` means from disk). `cite.search(query,
-limit)` finds references by title words or an author's name, and **never
-touches the network**, even when a web reader is configured.
+One deduplicated library, filled by `cite.sync()` from a Zotero library, the
+`.bib` files named in `ATTEST_BIB_PATHS` (else any in the working directory),
+and the feed's own items that carry a DOI or arXiv id: the same paper from
+three sources is one record with three `sources` entries. `cite.lookup(key)`
+returns one record by citation key, DOI, arXiv id or library identity, every
+source that contributed, and any field they disagreed on (`conflicts`); every
+record carries `source` (which reader answered) and `fetched_at` (`null` means
+from disk). `cite.search(query, limit)` finds references by what they are
+about when the library is embedded and by substring otherwise -- read
+`semantic` and `caveat` in the reply before describing the result -- and
+**never touches the network**, even when a web reader is configured.
 
 `cite.check(path)` lints a Markdown draft's `cite=<key>` annotations for
 keys no configured source resolves. It is a lint -- the key is unknown
 here -- never "the cited work does not support this".
 
-**Everything above is local.** The one exception is `ATTEST_CITATION_WEB`,
-off by default, which adds a CrossRef reader when set; it is read when the
-resolver is *built*, so a disabled reader cannot be coaxed into a request.
+**Everything above is local.** The exceptions are `ATTEST_CITATION_WEB`
+(CrossRef and the arXiv API) and `ATTEST_CITATION_S2` (Semantic Scholar
+reference lists), both off by default; they only fill fields on references
+the library already holds, and are read when the readers are *built*, so a
+disabled reader cannot be coaxed into a request and `cite.sync` cannot arm one.
 `cite.sources()` answers "did anything leave my machine" from the surface
 that would have done the leaving: each configured reader with a `network`
 flag, and `offline: true` means every one is on disk. Call it before telling
