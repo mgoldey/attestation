@@ -31,10 +31,20 @@ _ARXIV_VERSION = re.compile(r"v\d+$")
 _ARXIV_CATEGORY = re.compile(r"\s*\[[^\]]*\]\s*$")
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 # LaTeX accents and commands as a .bib file writes them: `Schr{\"o}dinger`,
-# `Sch{\"u}tt`, `\'e`, `\emph{x}`. Folded for COMPARISON only; the stored
-# title stays verbatim (de-escaping is the presentation edge's job).
+# `Sch{\"u}tt`, `\'e`, `\emph{x}`, `Fran\c{c}ois`. Folded for COMPARISON
+# only; the stored title stays verbatim (de-escaping is the presentation
+# edge's job). Formatting commands vanish; any other command keeps its name
+# as a word, so `$\alpha$-synuclein` and `$\beta$-synuclein` stay two papers
+# (review round 2: folding every command to a space had merged them).
 _LATEX_ACCENT = re.compile(r"\\[\"'`^~=.]")
-_LATEX_COMMAND = re.compile(r"\\[a-zA-Z]+")
+_LATEX_LETTER = re.compile(r"\\(c|o|ae|oe|ss|l|i|j)(?![a-zA-Z])(?:\{([a-zA-Z]?)\}|\s*)")
+_LATEX_FORMAT = re.compile(
+    r"\\(?:emph|textit|textbf|textrm|texttt|textsc|textup|mathrm|mathbf|mathit|mathcal"
+    r"|text|it|bf|rm|em|sc|tt|url|href)(?![a-zA-Z])"
+)
+_LATEX_COMMAND = re.compile(r"\\([a-zA-Z]+)")
+_LATEX_ESCAPED = re.compile(r"\\([&%$#_{}])")
+_PREPRINT_VENUE = re.compile(r"^\s*(arxiv|corr|biorxiv|chemrxiv|medrxiv|ssrn|preprint)", re.I)
 
 
 def normalise_doi(doi: str | None) -> str | None:
@@ -71,7 +81,13 @@ def normalise_title(title: str) -> str:
     Leading articles are kept on purpose: dropping them merges "A survey"
     with "Survey", which are different papers more often than not.
     """
-    folded = _LATEX_COMMAND.sub(" ", _LATEX_ACCENT.sub("", title)).replace("{", "").replace("}", "")
+    folded = _LATEX_ESCAPED.sub(r"\1", title)
+    folded = _LATEX_ACCENT.sub("", folded)
+    folded = _LATEX_LETTER.sub(
+        lambda m: (m.group(1) if m.group(1) != "c" else "") + (m.group(2) or ""), folded
+    )
+    folded = _LATEX_FORMAT.sub("", folded)
+    folded = _LATEX_COMMAND.sub(r" \1 ", folded).replace("{", "").replace("}", "")
     decomposed = unicodedata.normalize("NFKD", folded)
     ascii_only = "".join(c for c in decomposed if not unicodedata.combining(c))
     return _NON_ALNUM.sub(" ", ascii_only.lower()).strip()
@@ -144,7 +160,11 @@ def _year_follows_venue(existing: dict, incoming: dict, merged: dict, conflicts:
     read `Nature Communications 2021` for a 2022 paper this way. The one
     exception to first-wins, and it is recorded as a conflict like any other.
     """
-    venue_filled = not existing.get("venue") and incoming.get("venue")
+    venue = incoming.get("venue") or ""
+    # A preprint server named as the venue (Zotero's `arXiv:2101.00001
+    # [cs.LG]` in publicationTitle) carries a preprint year, not a
+    # publication year: it must not move the year backwards.
+    venue_filled = not existing.get("venue") and venue and not _PREPRINT_VENUE.match(venue)
     kept, offered = existing.get("year"), incoming.get("year")
     if venue_filled and kept and offered and kept != offered:
         merged["year"] = offered
@@ -210,51 +230,64 @@ def _row_by_ids(
     identity: str | None = None,
     doi: str | None = None,
     arxiv_id: str | None = None,
-    title_forms: tuple[str, ...] = (),
+    title_key: str | None = None,
+    year: int | None = None,
     bib_key: str | None = None,
 ) -> sqlite3.Row | None:
-    """The one lookup ladder: identity, DOI column, arXiv column, the title
-    identities a record would have had without its ids, then bib key."""
-    ladder: list[tuple[str, str | None]] = [
-        ('SELECT * FROM "references" WHERE identity = ?', identity),
-        ('SELECT * FROM "references" WHERE doi = ?', doi),
-        ('SELECT * FROM "references" WHERE arxiv_id = ?', arxiv_id),
-        *(('SELECT * FROM "references" WHERE identity = ?', t) for t in title_forms),
-        ('SELECT * FROM "references" WHERE bib_key = ? COLLATE NOCASE', bib_key),
+    """The one lookup ladder: identity, DOI column, arXiv column, normalised
+    title (same year, or a stored row with no year), then bib key.
+
+    `title_key` is a persisted column, so a record that knows only a title
+    finds the row whatever identity that row has since been upgraded to --
+    in either order (a .bib entry after the feed's DOI item, or before it).
+    """
+    ladder: list[tuple[str, tuple]] = [
+        ('SELECT * FROM "references" WHERE identity = ?', (identity,)),
+        ('SELECT * FROM "references" WHERE doi = ?', (doi,)),
+        ('SELECT * FROM "references" WHERE arxiv_id = ?', (arxiv_id,)),
+        (
+            'SELECT * FROM "references" WHERE title_key = ?'
+            " AND (year IS NULL OR ? IS NULL OR year = ?) ORDER BY year IS NULL, id",
+            (title_key, year, year),
+        ),
+        ('SELECT * FROM "references" WHERE bib_key = ? COLLATE NOCASE', (bib_key,)),
     ]
-    for sql, val in ladder:
-        if val and (row := conn.execute(sql, (val,)).fetchone()):
+    for sql, params in ladder:
+        if params[0] and (row := conn.execute(sql, params).fetchone()):
             return row
     return None
 
 
-def _title_forms(fields: dict) -> tuple[str, ...]:
-    """The title identities a record carrying ids would otherwise have, so a
-    hand-typed .bib row with no DOI still meets the DOI-bearing record for the
-    same paper (dated and undated forms both)."""
-    title = fields.get("title")
-    if not title or not (t := normalise_title(title)):
-        return ()
-    year = fields.get("year")
-    return tuple(dict.fromkeys((f"title:{t}:{year if year is not None else '-'}", f"title:{t}:-")))
-
-
 def _find(conn: sqlite3.Connection, fields: dict, ident: str):
-    """The row this record belongs to: by identity, DOI, arXiv id, then title form."""
+    """The row this record belongs to: by identity, DOI, arXiv id, then title."""
+    title = fields.get("title")
     return _row_by_ids(
         conn,
         identity=ident,
         doi=fields.get("doi"),
         arxiv_id=fields.get("arxiv_id"),
-        title_forms=_title_forms(fields),
+        title_key=normalise_title(title) if title else None,
+        year=fields.get("year"),
     )
+
+
+def _row_this_source_made(conn: sqlite3.Connection, rec: ReferenceRecord):
+    """The row this (source, key) already contributed to, if any: a re-sync
+    must land on the row it made even after every identifier on it changed."""
+    hit = conn.execute(
+        "SELECT reference_id FROM reference_sources WHERE source = ? AND source_key = ?",
+        (rec.source, rec.source_key),
+    ).fetchone()
+    if hit is None:
+        return None
+    return conn.execute('SELECT * FROM "references" WHERE id = ?', (hit[0],)).fetchone()
 
 
 def _insert(conn: sqlite3.Connection, ident: str, fields: dict, now: str) -> int:
     cur = conn.execute(
         'INSERT INTO "references"(identity, doi, arxiv_id, title, authors, year, venue,'
-        " abstract, url, bib_key, first_seen, updated)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " abstract, url, bib_key, title_key, first_seen, updated)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             ident,
             fields.get("doi"),
@@ -266,6 +299,7 @@ def _insert(conn: sqlite3.Connection, ident: str, fields: dict, now: str) -> int
             fields.get("abstract"),
             fields.get("url"),
             fields.get("bib_key"),
+            normalise_title(fields["title"]) or None,
             now,
             now,
         ),
@@ -277,13 +311,19 @@ def _insert(conn: sqlite3.Connection, ident: str, fields: dict, now: str) -> int
 
 def _upgrade_identity(conn, row, new_ident: str, changed: dict, conflicts: dict) -> None:
     """Move `row` to the identity its merged ids now give it -- unless another
-    row already holds it. Two rows that prove to be one paper are not folded
-    here (sources, tags, edges and a vector would all have to move): the ids
-    are refused, the collision is recorded, and both keep their provenance.
+    row already holds that identity, or holds one of the ids in a COLUMN. Two
+    rows that prove to be one paper are not folded here (sources, tags, edges
+    and a vector would all have to move): the ids are refused, the collision
+    is recorded, and both keep their provenance.
     """
-    holder = _row_by_ids(conn, identity=new_ident)
+    if new_ident == row["identity"] and not ({"doi", "arxiv_id"} & changed.keys()):
+        return
+    holder = _row_by_ids(
+        conn, identity=new_ident, doi=changed.get("doi"), arxiv_id=changed.get("arxiv_id")
+    )
     if holder is None or holder["id"] == row["id"]:
-        changed["identity"] = new_ident
+        if new_ident != row["identity"]:
+            changed["identity"] = new_ident
         return
     for c in ("doi", "arxiv_id"):
         changed.pop(c, None)
@@ -303,8 +343,7 @@ def _update(conn: sqlite3.Connection, row, fields: dict, now: str) -> tuple[str,
     new_ident = identity(
         merged.get("doi"), merged.get("arxiv_id"), merged.get("title"), merged.get("year")
     )
-    if new_ident != row["identity"]:
-        _upgrade_identity(conn, row, new_ident, changed, conflicts)
+    _upgrade_identity(conn, row, new_ident, changed, conflicts)
     if not changed:
         return "unchanged", conflicts
     sets = ", ".join(f"{c} = ?" for c in changed) + ", updated = ?"
@@ -348,19 +387,32 @@ def upsert(conn: sqlite3.Connection, rec: ReferenceRecord, *, row=None) -> tuple
     """
     fields = rec.fields()
     now = _now()
-    ident = identity(
-        fields.get("doi"), fields.get("arxiv_id"), fields.get("title"), fields.get("year")
-    )
     if row is None:
+        row = _row_this_source_made(conn, rec)
+    if row is None:
+        # Only a record that must find or make its own row needs an identity;
+        # an enricher's answer with no title and no id is a miss on `row`.
+        ident = identity(
+            fields.get("doi"), fields.get("arxiv_id"), fields.get("title"), fields.get("year")
+        )
         row = _find(conn, fields, ident)
-    if row is None:
-        rid, how, conflicts = _insert(conn, ident, fields, now), "added", {}
-    elif "title" not in fields:
+        if row is None:
+            rid, how, conflicts = _insert(conn, ident, fields, now), "added", {}
+            _write_source_row(conn, rid, rec, fields, conflicts)
+            _write_extras(conn, rid, rec, now)
+            return rid, how
+    if "title" not in fields:
         rid, how, conflicts = row["id"], "unchanged", {}
     else:
         rid = row["id"]
         how, conflicts = _update(conn, row, fields, now)
     _write_source_row(conn, rid, rec, fields, conflicts)
+    _write_extras(conn, rid, rec, now)
+    return rid, how
+
+
+def _write_extras(conn: sqlite3.Connection, rid: int, rec: ReferenceRecord, now: str) -> None:
+    """Tags and citation edges a record carries, both additive."""
     if rec.tags:
         # Tags from a file (a .bib `keywords` field) only ever ADD: they never
         # delete what the tagger wrote, and the tagger never deletes them.
@@ -374,7 +426,6 @@ def upsert(conn: sqlite3.Connection, rec: ReferenceRecord, *, row=None) -> tuple
             "(citing_id, cited_identity, cited_title, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
             (rid, cited_identity, cited_title, rec.source, rec.fetched_at or now),
         )
-    return rid, how
 
 
 @dataclass
@@ -387,6 +438,7 @@ class SyncReport:
     embed_error: str | None = None
     conflicts: int = 0
     conflict_samples: list = field(default_factory=list)
+    since: int = 0  # reference_sources rowid watermark: only THIS sync's conflicts count
 
     def bucket(self, name: str) -> dict:
         """The per-source counters for `name`, created on first use."""
@@ -416,10 +468,13 @@ _UNEMBEDDED = (
 )
 
 
-def _conflicts_of(conn: sqlite3.Connection, rec: ReferenceRecord) -> dict:
+def _conflicts_of(conn: sqlite3.Connection, rec: ReferenceRecord, since: int) -> dict:
+    """The conflicts this record's source row recorded, if that row was written
+    in the current sync (rowid above `since`): a re-sync must not re-report
+    what an earlier pass already reported."""
     raw = conn.execute(
-        "SELECT raw FROM reference_sources WHERE source = ? AND source_key = ?",
-        (rec.source, rec.source_key),
+        "SELECT raw FROM reference_sources WHERE source = ? AND source_key = ? AND rowid > ?",
+        (rec.source, rec.source_key, since),
     ).fetchone()
     return json.loads(raw["raw"]).get("conflicts", {}) if raw else {}
 
@@ -433,8 +488,7 @@ def _absorb(conn, reader, rec: ReferenceRecord, bucket: dict, report: SyncReport
             return
         _, how = upsert(conn, rec)
         bucket[how] += 1
-        if how == "merged":
-            _note_conflicts(conn, rec, report)
+        _note_conflicts(conn, rec, report)  # an unchanged merge can still have refused a field
         return
     # An enricher's answer belongs to the row it was fetched FOR (its
     # `source_key` is that row's identity), never to whatever row the ids it
@@ -446,7 +500,13 @@ def _absorb(conn, reader, rec: ReferenceRecord, bucket: dict, report: SyncReport
     if target is None:
         bucket["failed"] += 1
         return
-    upsert(conn, rec, row=target)
+    try:
+        upsert(conn, rec, row=target)
+    except (ValueError, OverflowError) as exc:
+        # A payload shape no reader anticipated (a year of 10**20, an id that
+        # normalises to nothing) is one failed row, never a dead sync.
+        reader.errors.append(f"{rec.source_key}: {type(exc).__name__}: {exc}")
+        return
     bucket["enriched" if rec.title is not None else "failed"] += 1
     _note_conflicts(conn, rec, report)
     # Commit per record, not per reader: an enricher sleeps between
@@ -458,7 +518,7 @@ def _absorb(conn, reader, rec: ReferenceRecord, bucket: dict, report: SyncReport
 
 
 def _note_conflicts(conn, rec: ReferenceRecord, report: SyncReport) -> None:
-    conflicts = _conflicts_of(conn, rec)
+    conflicts = _conflicts_of(conn, rec, report.since)
     report.conflicts += len(conflicts)
     report.conflict_samples.extend((rec.source_key, f) for f in conflicts)
 
@@ -471,7 +531,7 @@ def sync(conn: sqlite3.Connection, readers, *, embedder=None, limit: int | None 
     Each reader is its own short transaction, the ingest discipline, so
     `attest serve` keeps working alongside.
     """
-    report = SyncReport()
+    report = SyncReport(since=_count(conn, "SELECT coalesce(max(rowid), 0) FROM reference_sources"))
     for reader in readers:
         bucket = report.bucket(reader.name)
         records = reader.records(conn, limit) if reader.network else reader.records()
@@ -585,7 +645,12 @@ class SearchHit:
 
 @dataclass
 class SearchResult:
-    """Hits plus the two facts a caller must relay: was it semantic, and why not."""
+    """Hits plus the two facts a caller must relay: was it semantic, and why not.
+
+    `n_matches` is the true row count on the substring path, and on the
+    semantic path the number of candidates that cleared the relative floor
+    among the 4 x limit nearest -- a bound, not a census.
+    """
 
     hits: list[SearchHit]
     semantic: bool
@@ -669,22 +734,18 @@ def _candidates(conn, embedder, q: str, where: str, params: list, limit: int) ->
     """rowid -> similarity for the rows the filters admit, the floor applied
     AFTER the filter: flooring the global top-k and then filtering returned
     an empty `semantic: true` answer for any author or year outside the
-    nearest twenty (review round 1, 2026-09-05). With a filter the KNN runs
-    over every vector -- sqlite-vec scans them all either way."""
+    nearest twenty (review round 1, 2026-09-05). The filter is a KNN
+    prefilter (`rowid IN (subquery)`), so k stays 4 x limit whatever the
+    library's size -- round 2 found the first fix asking sqlite-vec for
+    k = every vector, which it refuses above 4,096."""
     from attestation.rank import apply_relevance_floor, vector_search
 
-    allowed: set[int] | None = None
+    restrict = None
     if where != "1=1":
-        allowed = {
-            r["id"] for r in conn.execute(f'SELECT r.id FROM "references" r WHERE {where}', params)
-        }
-        if not allowed:
-            return {}
-    k = 4 * limit if allowed is None else _count(conn, "SELECT count(*) FROM reference_vectors")
-    raw = vector_search(conn, embedder, q, k=k, table="reference_vectors")
-    if allowed is not None:
-        raw = {i: s for i, s in raw.items() if i in allowed}
-        raw = dict(sorted(raw.items(), key=lambda kv: -kv[1])[: 4 * limit])
+        restrict = (f'SELECT r.id FROM "references" r WHERE {where}', list(params))
+    raw = vector_search(
+        conn, embedder, q, k=4 * limit, table="reference_vectors", restrict=restrict
+    )
     return apply_relevance_floor(raw)
 
 
@@ -708,7 +769,10 @@ def _semantic(conn, embedder, q: str, where: str, params: list, limit: int) -> S
         return sims[r["id"]] + _LITERAL_BOOST * sum(w in tokens for w in words)
 
     rows.sort(key=_score, reverse=True)
-    hits = [_hit(conn, r, round(sims[r["id"]], 4)) for r in rows[:limit]]
+    # The emitted number is the one the order was made from (cosine plus the
+    # literal boost); emitting raw cosine beside a boosted order gave a caller
+    # a list that read as non-monotone with no way to reconstruct it.
+    hits = [_hit(conn, r, round(_score(r), 4)) for r in rows[:limit]]
     n_vectors = _count(conn, "SELECT count(*) FROM reference_vectors")
     n_refs = _count(conn, 'SELECT count(*) FROM "references"')
     caveat = None
@@ -723,6 +787,11 @@ _TEXT = (
 )
 
 
+def _like(word: str) -> str:
+    """A query word as a LIKE fragment: its own `%` and `_` are literal."""
+    return word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _substring(conn, q: str, where: str, params: list, limit: int, reason: str) -> SearchResult:
     """Every query word somewhere in title, abstract, authors or key (AND), newest first.
 
@@ -731,10 +800,10 @@ def _substring(conn, q: str, where: str, params: list, limit: int, reason: str) 
     the paper for all 10 -- it just cannot rank them, which is the caveat.
     """
     words = [w for w in q.lower().split() if w] or [""]
-    clauses = " AND ".join(f"{_TEXT} LIKE ?" for _ in words)
+    clauses = " AND ".join(f"{_TEXT} LIKE ? ESCAPE '\\'" for _ in words)
     rows = conn.execute(
         f'SELECT * FROM "references" r WHERE {where} AND ({clauses}) ORDER BY r.year DESC, r.title',
-        (*params, *(f"%{w}%" for w in words)),
+        (*params, *(f"%{_like(w)}%" for w in words)),
     ).fetchall()
     return SearchResult(
         [_hit(conn, r) for r in rows[:limit]], semantic=False, caveat=reason, n_matches=len(rows)
@@ -766,7 +835,9 @@ def search(
     q = (query or "").strip()
     where, params = _fielded_where(author, year, year_from, year_to, tag, source)
     if q and (row := lookup_row(conn, q)):
-        return SearchResult([_hit(conn, row)], semantic=False, caveat=None, n_matches=1)
+        return SearchResult(
+            [_hit(conn, row)], semantic=False, caveat="direct lookup by key or id", n_matches=1
+        )
     n_vectors = _count(conn, "SELECT count(*) FROM reference_vectors")
     if q and embedder is not None and n_vectors:
         result = _semantic(conn, embedder, q, where, params, limit)
@@ -868,13 +939,21 @@ def _identity_forms(row) -> list[str]:
 
 
 def _row_for_identity(conn: sqlite3.Connection, ident: str):
-    """The row an identity names, by identity, DOI or arXiv column."""
+    """The row an identity names, by identity, DOI or arXiv column, or -- for
+    a `title:<key>:<year>` form -- the persisted normalised title, so a stub
+    cited by title lands on the row that has since gained a DOI."""
     kind, _, value = ident.partition(":")
+    title_key, year = None, None
+    if kind == "title":
+        title_key, _, tail = value.rpartition(":")
+        year = int(tail) if tail.isdigit() else None
     return _row_by_ids(
         conn,
         identity=ident,
         doi=value if kind == "doi" else None,
         arxiv_id=value if kind == "arxiv" else None,
+        title_key=title_key or None,
+        year=year,
     )
 
 

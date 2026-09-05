@@ -194,18 +194,24 @@ def tag_assignments(conn: sqlite3.Connection) -> list[tuple[int, str]]:
     pair came from if anything ever needs to know. What the reader cites
     joins the graph beside what they read (spec 2026-09-05, library graph).
     """
-    items = conn.execute("SELECT item_id, tag FROM item_tags")
     # A reference the feed itself supplied IS an item already in the graph:
-    # counting it twice let one paper clear both the two-uses and two-edges
-    # thresholds on its own (review round 1, 2026-09-05).
-    refs = conn.execute(
-        "SELECT t.reference_id, t.tag FROM reference_tags t WHERE NOT EXISTS"
-        " (SELECT 1 FROM reference_sources s WHERE s.reference_id = t.reference_id"
-        "  AND s.source = 'feed')"
-    )
-    return [(r["item_id"], r["tag"]) for r in items] + [
-        (-r["reference_id"], r["tag"]) for r in refs
-    ]
+    # its tags (a .bib `keywords` field, say) join the ITEM's node, so one
+    # paper is one node however many tables tag it -- counting it twice let
+    # one paper clear both thresholds alone (review round 1), and dropping
+    # the reference's tags lost the reader's own keywords (review round 2).
+    return [(r["pid"], r["tag"]) for r in conn.execute(_PAPER_TAGS)]
+
+
+_PAPER_TAGS = """
+SELECT item_id AS pid, tag FROM item_tags
+UNION
+SELECT CAST(s.source_key AS INTEGER), t.tag FROM reference_tags t
+  JOIN reference_sources s ON s.reference_id = t.reference_id AND s.source = 'feed'
+UNION
+SELECT -t.reference_id, t.tag FROM reference_tags t
+  WHERE NOT EXISTS (SELECT 1 FROM reference_sources s
+                    WHERE s.reference_id = t.reference_id AND s.source = 'feed')
+"""
 
 
 def build_graph(

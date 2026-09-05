@@ -188,11 +188,14 @@ OC22, Matbench Discovery, M3GNet, CHGNet, MatterSim, GNoME, AlphaFold 2,
 RoseTTAFold, ESM-2, RFdiffusion, ProteinMPNN, DeePMD, DeepChem. That was
 the draft list; `seeds.toml` is the record of what was seeded -- 48 papers,
 all of which resolved -- and it differs: AIMNet2, Uni-Mol and DeepChem were
-dropped (no single canonical paper with an id), and SE(3)-Transformers,
-EGNN, MPNN, CGCNN, MEGNet, Behler-Parrinello, GAP, SOAP and MTP were added
-so the interatomic-potential line starts where a chemist would start it.
-Still missing, and named by the file's own `cites` edges: Tensor Field
-Networks, ACE, sGDML, QM9; and nothing after May 2024.
+not carried over (Uni-Mol and AIMNet2 have ChemRxiv DOIs and could be;
+DeepChem has no paper), and SE(3)-Transformers, EGNN, MPNN, CGCNN, MEGNet,
+Behler-Parrinello, GAP, SOAP and MTP were added so the interatomic-potential
+line starts where a chemist would start it. Still missing, in the order the
+file's own `cites` edges name them: Duvenaud 2015 neural fingerprints, DTNN,
+Behler 2011 symmetry functions, the Coulomb matrix, Tensor Field Networks,
+ACE, sGDML, QM9, EDM for the generative line; and nothing after May 2024
+(AlphaFold 3 sits inside the cutoff).
 
 ## 5. Docs and counts
 
@@ -211,19 +214,22 @@ Taken 2026-09-05 while generating the example (full tables in
 - **Semantic vs substring, ten molecular-AI queries, embeddinggemma
   (re-measured after review round 1, with an `expected` paper written down
   per query):** semantic put the expected paper in its top three for 10 of
-  10 (top two for 8); the word-AND substring fallback found something for
+  10 (top two for 9); the word-AND substring fallback found something for
   10 of 10 but had it in the top three for 7, since it orders by year and
   cannot rank. The first measurement compared against a whole-phrase
   substring that found nothing for 7 of 10 -- a strawman; `_substring` is
   now word-AND and the README table carries both columns and the expected
-  paper. "equivariant force fields": MACE 0.550, TorchMD-NET 0.542, NequIP
-  0.540 above the relative floor.
+  paper. "equivariant force fields": MACE 0.610, TorchMD-NET 0.602, NequIP
+  0.560 above the relative floor (cosine plus the literal boost, the number
+  `cite.search` now emits).
 - **Generation (second, after review round 1):** 48 of 48 seeds resolved.
-  Semantic Scholar answered 47 of 48 across four resumed passes (DimeNet
-  still rate-limited); 5 entries carry no `cites` (that one, plus four whose
-  record lists no traceable reference). arXiv answered 40 ids (37 seeds plus
-  3 DataCite `10.48550/arxiv.*` DOIs now read as arXiv ids) in one batched
-  request; CrossRef enriched 25. The first generation surfaced and fixed:
+  Semantic Scholar answered 48 of 48 across five resumed passes; 4 entries
+  carry no `cites` (their record lists no traceable reference). arXiv
+  answered 40 ids (37 seeds plus 3 DOI seeds -- GAP, SOAP, MTP -- that
+  Semantic Scholar gave an arXiv id) in one batched request; CrossRef
+  enriched 25. The three DataCite `10.48550/arxiv.*` DOIs Semantic Scholar
+  offered (MACE, DiffDock, CHGNet) are read as the arXiv ids those rows
+  already had. The first generation surfaced and fixed:
   the arXiv API 301s plain http; a rate-limited row recorded as tried; a
   paced enricher holding the write lock across its sleeps. The review of
   that generation surfaced and fixed: a 404 never marking a row tried
@@ -235,8 +241,16 @@ Taken 2026-09-05 while generating the example (full tables in
   `test_every_committed_bib_is_valid_bibtex`); and id-less junk in
   Semantic Scholar's parsed reference lists (`Phys. Rev. B`, checklist
   questions, equation fragments) counted as citations -- now dropped unless
-  the title has four words of three or more letters and no brace: 2,472
-  edges, 205 in-library, 287 title-only stubs.
+  the title has four words of three or more letters and no brace: 2,678
+  edges, 227 in-library by id, 311 title-only stubs, of which roughly a
+  third are still parse noise the rule cannot see (checklist questions,
+  figure captions). Round 2 added: the persisted `title_key` column
+  (migration 008) so a title-only .bib entry survives a second sync and a
+  title stub resolves to the row that gained a DOI; a KNN prefilter so a
+  filtered semantic search works above 4,096 vectors; a reader's `.bib`
+  keywords on a feed paper joining the item's node instead of vanishing;
+  the boosted similarity emitted as the number the order is made from; and
+  `@misc` plus `\&` in the writer so the file compiles under `bibtex`.
 - **Graph with and without references:** the example's scratch database has
   no items, so without references `kg-report` exits 1 ("no items yet"); with
   the 48 tagged references it reports 18 nodes, 22 edges, 67 distinct tags,

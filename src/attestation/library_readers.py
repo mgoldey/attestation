@@ -20,8 +20,10 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
+from defusedxml import DefusedXmlException
 from defusedxml import ElementTree as SafeET
 
 from attestation import citations
@@ -31,6 +33,7 @@ from attestation.library import (
     identity,
     normalise_arxiv,
     normalise_doi,
+    normalise_title,
 )
 
 DEFAULT_CACHE = Path.home() / ".hermes" / "citation-cache"
@@ -91,16 +94,22 @@ def _bib_cites(value: str) -> list[tuple[str, str | None]]:
 def _normalise_identity(ident: str) -> str:
     """`kind:value` with the value put through the kind's normaliser."""
     kind, sep, value = ident.partition(":")
+    if not sep:
+        return ident
     kind = kind.lower()
-    if kind == "doi" and sep:
+    if kind == "doi":
         norm = normalise_doi(value)
-        if norm:
-            return f"doi:{norm}"
-        if a := arxiv_from_doi(value):
-            return f"arxiv:{a}"
-    if kind == "arxiv" and sep and (a := normalise_arxiv(value)):
-        return f"arxiv:{a}"
-    return ident.lower() if kind == "title" else ident
+        return f"doi:{norm}" if norm else _arxiv_form(arxiv_from_doi(value), ident)
+    if kind == "arxiv":
+        return _arxiv_form(normalise_arxiv(value), ident)
+    if kind == "title":
+        key, _, year = value.rpartition(":")
+        return f"title:{normalise_title(key)}:{year if year.isdigit() else '-'}"
+    return ident
+
+
+def _arxiv_form(arxiv_id: str | None, fallback: str) -> str:
+    return f"arxiv:{arxiv_id}" if arxiv_id else fallback
 
 
 class BibtexRecords:
@@ -111,6 +120,15 @@ class BibtexRecords:
 
     def __init__(self, paths):
         self.paths = [Path(p) for p in paths]
+        # The source string is the file NAME (a path would put a machine
+        # string into every tool reply); two files sharing a name are told
+        # apart with a suffix so neither's provenance is lost.
+        seen: dict[str, int] = {}
+        self.labels: dict[Path, str] = {}
+        for p in self.paths:
+            n = seen.get(p.name, 0) + 1
+            seen[p.name] = n
+            self.labels[p] = f"bibtex:{p.name}" if n == 1 else f"bibtex:{p.name}#{n}"
 
     def records(self) -> Iterator[ReferenceRecord]:
         """One record per entry with a title; a missing file is an absent source."""
@@ -120,9 +138,7 @@ class BibtexRecords:
             for key, f in citations._parse_bib_entries(path.read_text(errors="replace")):
                 is_arxiv = f.get("archiveprefix", "").lower() == "arxiv"
                 yield ReferenceRecord(
-                    # The file name, not its path: the path would put a
-                    # machine-specific string into every tool reply.
-                    source=f"bibtex:{path.name}",
+                    source=self.labels[path],
                     source_key=key,
                     title=f["title"],
                     authors=_bib_authors(f.get("author", "")),
@@ -286,8 +302,26 @@ def _fetch_with_backoff(url: str) -> tuple[httpx.Response | None, str | None]:
             return None, error
         if resp.status_code == 429 and attempt >= 1:
             return None, error
-        _sleep(_retry_after(resp.headers.get("Retry-After")))
+        if attempt < 2:  # no sleep after the last attempt: nothing follows it
+            _sleep(_retry_after(resp.headers.get("Retry-After")))
     return None, error
+
+
+# What an identifier must look like before it is put on a URL. A stored id
+# that fails this is one row marked tried-with-error, never a batch poisoned
+# (one `#frag` in an arXiv id truncated the id_list and marked 49 other rows
+# as answered; review round 2).
+_ARXIV_ID = re.compile(r"^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7})$")
+_DOI = re.compile(r"^10\.\d+/[^\s#?]+$")  # separators are the concern, not the prefix width
+
+
+def _well_formed(row) -> str | None:
+    """Why this row's identifiers cannot go on a URL, or None when they can."""
+    if row["arxiv_id"] and not _ARXIV_ID.match(row["arxiv_id"]):
+        return f"malformed arXiv id {row['arxiv_id']!r}"
+    if row["doi"] and (not _DOI.match(row["doi"]) or "/../" in f"/{row['doi']}/"):
+        return f"malformed DOI {row['doi']!r}"
+    return None
 
 
 def _forget(cache_dir: Path, url: str) -> None:
@@ -367,21 +401,15 @@ class ArxivEnricher(_Enricher):
 
     def records(self, conn: sqlite3.Connection, limit: int | None) -> Iterator[ReferenceRecord]:
         """A record per untouched row with an arXiv id; a miss marks the row tried."""
-        rows = self._todo(conn, limit)
+        rows = []
+        for r in self._todo(conn, limit):
+            if _well_formed(r):
+                yield self._miss(r, None)  # marked tried: an id that cannot go on a URL never will
+            else:
+                rows.append(r)
         for i in range(0, len(rows), _ARXIV_BATCH):
             batch = rows[i : i + _ARXIV_BATCH]
-            ids = ",".join(r["arxiv_id"] for r in batch)
-            url = f"https://export.arxiv.org/api/query?id_list={ids}&max_results={len(batch)}"
-            body, fetched, error = _cached_get(self.cache_dir, url)
-            found: dict[str, ReferenceRecord] = {}
-            if body:
-                try:
-                    found = _parse_arxiv(body, fetched)
-                except SafeET.ParseError as exc:
-                    # A 200 that is not the feed it claims: not a miss (the
-                    # row is not tried), not a crash (the sync finishes).
-                    _forget(self.cache_dir, url)
-                    error = f"unparseable body: {exc}"
+            found, fetched, error = self._fetch_batch(batch)
             for r in batch:
                 if not found and self._transient(r, error):
                     continue
@@ -391,6 +419,22 @@ class ArxivEnricher(_Enricher):
                 else:
                     rec.source_key = r["identity"]
                     yield rec
+
+    def _fetch_batch(self, batch) -> tuple[dict[str, ReferenceRecord], str | None, str | None]:
+        """One id_list request: (records by id, fetched_at, error)."""
+        ids = quote(",".join(r["arxiv_id"] for r in batch), safe=",/")
+        url = f"https://export.arxiv.org/api/query?id_list={ids}&max_results={len(batch)}"
+        body, fetched, error = _cached_get(self.cache_dir, url)
+        found: dict[str, ReferenceRecord] = {}
+        if body is not None:
+            try:
+                found = _parse_arxiv(body, fetched)
+            except (SafeET.ParseError, DefusedXmlException) as exc:
+                # A 200 that is not the feed it claims: not a miss (the
+                # row is not tried), not a crash (the sync finishes).
+                _forget(self.cache_dir, url)
+                error = f"unparseable body: {exc}"
+        return found, fetched, error
 
 
 def _parse_arxiv(body: bytes, fetched: str | None) -> dict[str, ReferenceRecord]:
@@ -440,15 +484,24 @@ class CrossrefEnricher(_Enricher):
     def records(self, conn: sqlite3.Connection, limit: int | None) -> Iterator[ReferenceRecord]:
         """A record per untouched row with a DOI, one request each, cached."""
         for r in self._todo(conn, limit):
-            url = f"https://api.crossref.org/works/{r['doi']}"
+            if _well_formed(r):
+                yield self._miss(r, None)  # marked tried: an id that cannot go on a URL never will
+                continue
+            url = f"https://api.crossref.org/works/{quote(r['doi'], safe='/')}"
             body, fetched, error = _cached_get(self.cache_dir, url)
-            msg = _json_message(body)
+            msg = None
+            if body is not None:  # an empty 200 is unparseable, not an answer
+                try:
+                    msg = _json_message(body)
+                except ValueError as exc:
+                    _forget(self.cache_dir, url)
+                    error = f"unparseable body: {exc}"
             if msg is None and self._transient(r, error):
                 continue
             if msg is None:
                 yield self._miss(r, fetched)
             else:
-                yield _crossref_record(msg, r["identity"], fetched)
+                yield _crossref_record(msg, r, fetched)
 
 
 def _joined(msg: dict, key: str) -> str | None:
@@ -486,25 +539,42 @@ def _crossref_year(msg: dict) -> int | None:
 _ABSTRACT_HEADING = re.compile(r"^\s*abstract\s*[:.]?\s*", re.IGNORECASE)
 
 
+_JATS_SUP = re.compile(r"<jats:sup>.*?</jats:sup>", re.DOTALL)
+# Science's "abstract" for some papers is the editor's summary, signed with
+# initials ("...Anfinsen won a Nobel prize... —VV"); that is not the paper's
+# abstract and the embedding should not see it.
+_SIGNED_BLURB = re.compile(r"[—–-]\s*[A-Z]{2,4}\s*$")
+
+
 def _crossref_abstract(msg: dict) -> str | None:
-    """JATS markup stripped, entities decoded, a leading `Abstract` heading
-    (Nature's and Science's habit) dropped so the embedding sees the text."""
+    """JATS markup stripped (citation superscripts with their numbers),
+    entities decoded, a leading `Abstract` heading (Nature's and Science's
+    habit) dropped, a signed editor's summary dropped entirely."""
     raw = msg.get("abstract")
     if not isinstance(raw, str):
         return None
-    text = html.unescape(_JATS.sub("", raw)).strip()
-    return _ABSTRACT_HEADING.sub("", text, count=1).strip() or None
+    text = html.unescape(_JATS.sub("", _JATS_SUP.sub("", raw)))
+    text = " ".join(text.split())
+    text = _ABSTRACT_HEADING.sub("", text, count=1).strip()
+    if not text or _SIGNED_BLURB.search(text):
+        return None
+    return text
 
 
-def _crossref_record(msg: dict, source_key: str, fetched: str | None) -> ReferenceRecord:
-    """A CrossRef `message` as a record; JATS markup stripped from the abstract."""
+def _crossref_record(msg: dict, row, fetched: str | None) -> ReferenceRecord:
+    """A CrossRef `message` as a record for `row`; JATS markup stripped from
+    the abstract. The row's own ids ride along, so a shapeless message (no
+    DOI, no title) is a titleless miss on that row rather than a record with
+    nothing to identify it."""
+    doi = msg.get("DOI") if isinstance(msg.get("DOI"), str) else None
     return ReferenceRecord(
         source="crossref",
-        source_key=source_key,
+        source_key=row["identity"],
         title=_joined(msg, "title"),
         authors=_crossref_authors(msg),
         year=_crossref_year(msg),
-        doi=msg.get("DOI") if isinstance(msg.get("DOI"), str) else None,
+        doi=doi or row["doi"],
+        arxiv_id=row["arxiv_id"],
         venue=_joined(msg, "container-title"),
         abstract=_crossref_abstract(msg),
         url=msg.get("URL") if isinstance(msg.get("URL"), str) else None,
@@ -512,14 +582,23 @@ def _crossref_record(msg: dict, source_key: str, fetched: str | None) -> Referen
     )
 
 
-def _json_message(body: bytes | None) -> dict | None:
+def _json_object(body: bytes | None) -> dict:
+    """The JSON object a 200 body must be; anything else raises ValueError so
+    the caller forgets the cached body and leaves the row for the next sync
+    (an interstitial page cached as an answer marked the row tried forever,
+    review round 2)."""
     if not body:
-        return None
-    try:
-        data = json.loads(body)
-    except ValueError:
-        return None
-    msg = data.get("message") if isinstance(data, dict) else None
+        raise ValueError("empty body")
+    data = json.loads(body)
+    if not isinstance(data, dict):
+        raise ValueError(f"expected a JSON object, got {type(data).__name__}")
+    return data
+
+
+def _json_message(body: bytes | None) -> dict | None:
+    """CrossRef's `message` object; None when the reply parsed but holds none.
+    Raises ValueError when the body is not JSON at all."""
+    msg = _json_object(body).get("message")
     return msg if isinstance(msg, dict) else None
 
 
@@ -539,19 +618,36 @@ class S2Enricher(_Enricher):
     def records(self, conn: sqlite3.Connection, limit: int | None) -> Iterator[ReferenceRecord]:
         """A record with `cites` per untouched row that has a DOI or arXiv id."""
         for r in self._todo(conn, limit):
-            paper = f"DOI:{r['doi']}" if r["doi"] else f"arXiv:{r['arxiv_id']}"
-            url = f"https://api.semanticscholar.org/graph/v1/paper/{paper}?fields={_S2_FIELDS}"
-            on_wire = not _cache_path(self.cache_dir, url).is_file()
-            body, fetched, error = _cached_get(self.cache_dir, url)
-            if on_wire:
-                _sleep(_S2_PACE_SECONDS)
-            data = _s2_paper(body)
+            if _well_formed(r):
+                yield self._miss(r, None)  # marked tried: an id that cannot go on a URL never will
+                continue
+            data, fetched, error = self._fetch_paper(r)
             if data is None and self._transient(r, error):
                 continue
             if data is None:
                 yield self._miss(r, fetched)
                 continue
             yield _s2_record(data, r, fetched)
+
+    def _fetch_paper(self, r) -> tuple[dict | None, str | None, str | None]:
+        """One paper request, paced when it touches the wire: (paper, fetched_at, error)."""
+        paper = f"DOI:{r['doi']}" if r["doi"] else f"arXiv:{r['arxiv_id']}"
+        url = (
+            "https://api.semanticscholar.org/graph/v1/paper/"
+            f"{quote(paper, safe=':/')}?fields={_S2_FIELDS}"
+        )
+        on_wire = not _cache_path(self.cache_dir, url).is_file()
+        body, fetched, error = _cached_get(self.cache_dir, url)
+        if on_wire:
+            _sleep(_S2_PACE_SECONDS)
+        data = None
+        if body is not None:
+            try:
+                data = _s2_paper(body)
+            except ValueError as exc:
+                _forget(self.cache_dir, url)
+                error = f"unparseable body: {exc}"
+        return data, fetched, error
 
 
 def _s2_record(data: dict, row, fetched: str | None) -> ReferenceRecord:
@@ -594,13 +690,10 @@ def _traceable_title(title) -> bool:
 
 
 def _s2_paper(body: bytes | None) -> dict | None:
-    if not body:
-        return None
-    try:
-        data = json.loads(body)
-    except ValueError:
-        return None
-    return data if isinstance(data, dict) and "paperId" in data else None
+    """A Semantic Scholar paper object; None when the reply parsed but is not
+    one. Raises ValueError when the body is not JSON at all."""
+    data = _json_object(body)
+    return data if "paperId" in data else None
 
 
 def _s2_cites(references: list) -> list[tuple[str, str | None]]:

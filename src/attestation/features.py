@@ -134,19 +134,15 @@ def tag_vocabulary(conn: sqlite3.Connection, limit: int = 150) -> list[str]:
     # Items and references count alike: the tagger is steered by what the
     # reader cites as well as what they read, which is what lets a reference
     # join the concept graph beside the items (spec 2026-09-05, library graph).
-    # A reference the feed supplied is an item already counted: skipped here
-    # and in kg.tag_assignments so one paper never counts twice.
-    for sql in (
-        "SELECT tag, COUNT(*) n FROM item_tags GROUP BY tag",
-        "SELECT tag, COUNT(*) n FROM reference_tags t WHERE NOT EXISTS"
-        " (SELECT 1 FROM reference_sources s WHERE s.reference_id = t.reference_id"
-        "  AND s.source = 'feed') GROUP BY tag",
-    ):
-        for row in conn.execute(sql):
-            name = canonical(row["tag"])
-            if name in NON_TOPIC_TAGS:
-                continue
-            totals[name] = totals.get(name, 0) + row["n"]
+    # One count per (paper, tag): a reference the feed supplied is the same
+    # paper as its item, and kg.tag_assignments unions the two the same way.
+    from attestation.kg import _PAPER_TAGS
+
+    for row in conn.execute(f"SELECT tag, COUNT(*) n FROM ({_PAPER_TAGS}) GROUP BY tag"):
+        name = canonical(row["tag"])
+        if name in NON_TOPIC_TAGS:
+            continue
+        totals[name] = totals.get(name, 0) + row["n"]
     ranked = sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
     return [tag for tag, _ in ranked[: max(0, int(limit))]]
 

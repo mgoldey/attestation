@@ -403,10 +403,11 @@ Taken 2026-09-05 against a scratch copy of the live database (9,407 items,
   the default is unbounded because a partial index says `semantic: true`
   with a caveat, which is the honest state either way.
 
-Still to take, in spec 2: semantic vs substring on ten molecular-AI queries
-against the example library, so "finds SchNet for 'equivariant force
-fields'" is a number; and S2 wall time for a 40-paper library at one request
-per second.
+Taken, in spec 2 §6 and `examples/molecular-ai/README.md`: semantic vs
+substring on ten molecular-AI queries against the example library, with an
+expected paper written down per query; and Semantic Scholar wall time for a
+48-paper library -- five resumed passes at three seconds per request under
+the shared unauthenticated rate limit, not the minute first estimated.
 
 ## What this spec does not decide
 

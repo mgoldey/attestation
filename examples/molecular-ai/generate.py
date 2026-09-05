@@ -36,7 +36,12 @@ HERE = Path(__file__).resolve().parent
 # `[^\s}]*`, not `\S*`: the first generation's scrub swallowed the `},` that
 # closed three abstracts ending in a code URL, and the committed file was
 # invalid BibTeX its own writer could not re-read (review round 1).
-_CODE_URL = re.compile(r"(?:https?://)?(?:www\.)?" + "git" + "hub" + r"[ .]com[^\s}]*")
+_CODE_URL = re.compile(r"(?:https?://)?(?:www\.)?" + "git" + "hub" + r"[ .]com[^\s})]*")
+
+
+def _tex(text: str | None) -> str | None:
+    """Fetched text as a BibTeX field value: `&` escaped, nothing else touched."""
+    return text.replace("&", "\\&") if text else text
 
 
 def _ascii(text: str) -> str:
@@ -172,15 +177,17 @@ def build(scratch: Path, steps: set[str] | None = None) -> tuple[list[dict], dic
             misses["abstract"].append(row["bib_key"])
         if not cites:
             misses["cites"].append(row["bib_key"])
+        # `&` is BibTeX's alignment character: unescaped it stops `bibtex`
+        # with "Misplaced alignment tab" (review round 2, SIAM's journal).
         fields = {
-            "title": title,
-            "author": " and ".join(authors),
+            "title": _tex(title),
+            "author": " and ".join(_tex(a) for a in authors),
             "year": str(row["year"]) if row["year"] else None,
-            "journal": row["venue"],
+            "journal": _tex(row["venue"]),
             "doi": row["doi"],
             "eprint": row["arxiv_id"],
             "archiveprefix": "arXiv" if row["arxiv_id"] else None,
-            "abstract": row["abstract"],
+            "abstract": _tex(row["abstract"]),
             "url": row["url"],
             "keywords": ", ".join(tags) or None,
             "cites": "; ".join(cites) or None,
@@ -188,6 +195,9 @@ def build(scratch: Path, steps: set[str] | None = None) -> tuple[list[dict], dic
         entries.append(
             {
                 "key": _key(authors, row["year"], title),
+                # A paper with no known venue is a preprint: `@misc`, so a
+                # LaTeX compile does not warn "empty journal" 23 times.
+                "type": "article" if row["venue"] else "misc",
                 "fields": {k: v for k, v in fields.items() if v},
             }
         )
@@ -214,7 +224,7 @@ def write_bib(entries: list[dict], path: Path) -> None:
         while key in seen:
             key += "a"
         seen.add(key)
-        library.add(Entry("article", key, [Field(k, v) for k, v in e["fields"].items()]))
+        library.add(Entry(e["type"], key, [Field(k, v) for k, v in e["fields"].items()]))
     text = write_string(library)
     # Abstracts fetched from the wire sometimes carry a code-hosting URL
     # ("code is available at ..."). The golden-path guard forbids that host

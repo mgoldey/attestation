@@ -281,11 +281,11 @@ def test_crossref_shapes_off_the_wire_are_tolerated():
             "abstract": "<jats:p>Abstract Deep learning takes on folding.</jats:p>",
             "DOI": ["not-a-string"],
         },
-        "doi:x",
+        {"identity": "doi:x", "doi": "x", "arxiv_id": None},
         None,
     )
     assert rec.title == "A & B" and rec.venue == "Multiscale Modeling & Simulation"
-    assert rec.abstract == "Deep learning takes on folding." and rec.doi is None
+    assert rec.abstract == "Deep learning takes on folding." and rec.doi == "x"
 
 
 def test_s2_shapes_off_the_wire_are_tolerated():
