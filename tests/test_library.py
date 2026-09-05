@@ -171,6 +171,22 @@ def test_upsert_records_citation_edges(tmp_path):
     ]
 
 
+def test_upsert_writes_tags_from_the_record_without_deleting_others(tmp_path):
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    rid, _ = library.upsert(conn, _rec(bib_key="k", title="K", tags=["force-fields"]))
+    conn.execute("INSERT INTO reference_tags VALUES (?, 'from-the-tagger')", (rid,))
+    library.upsert(
+        conn, _rec(source="zotero", source_key="Z", bib_key="Z", title="K", tags=["gnn"])
+    )
+    tags = {
+        r["tag"]
+        for r in conn.execute("SELECT tag FROM reference_tags WHERE reference_id = ?", (rid,))
+    }
+    assert tags == {"force-fields", "from-the-tagger", "gnn"}
+
+
 def test_sync_is_idempotent(tmp_path):
     from attestation.db import get_db
     from attestation.library_readers import BibtexRecords

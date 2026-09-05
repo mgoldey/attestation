@@ -26,6 +26,34 @@ def test_bibtex_records_carry_abstract_venue_and_arxiv_from_eprint():
     assert n.doi == "10.1038/s41467-022-29939-5" and n.venue == "Nature Communications"
 
 
+def test_bib_keywords_and_cites_fields_are_read():
+    from attestation.library_readers import _bib_cites, _bib_tags
+
+    assert _bib_tags("Force Fields, equivariant GNN; Molecular Dynamics") == [
+        "force-fields",
+        "equivariant-gnn",
+        "molecular-dynamics",
+    ]
+    assert _bib_tags("!!!, ok, ok") == ["ok"]
+    assert _bib_tags("") == []
+    assert _bib_cites("doi:10.5555/schnet|SchNet: a CNN; arxiv:2101.03164") == [
+        ("doi:10.5555/schnet", "SchNet: a CNN"),
+        ("arxiv:2101.03164", None),
+    ]
+    assert _bib_cites("") == []
+
+
+def test_bibtex_records_carry_keywords_and_cites(tmp_path):
+    bib = tmp_path / "k.bib"
+    bib.write_text(
+        "@article{k,\n  title = {K},\n  keywords = {force-fields, gnn},\n"
+        "  cites = {doi:10.5555/schnet|SchNet},\n}\n"
+    )
+    (rec,) = library_readers.BibtexRecords([bib]).records()
+    assert rec.tags == ["force-fields", "gnn"]
+    assert rec.cites == [("doi:10.5555/schnet", "SchNet")]
+
+
 def test_a_missing_bib_is_an_absent_source(tmp_path):
     assert list(library_readers.BibtexRecords([tmp_path / "nope.bib"]).records()) == []
 

@@ -37,6 +37,44 @@ def _bib_authors(value: str) -> list[str]:
     return [a.strip() for a in value.split(" and ") if a.strip() and a.strip() != "others"]
 
 
+_TAG_SPLIT = re.compile(r"[,;]")
+
+
+def _bib_tags(value: str) -> list[str]:
+    """A `keywords` field as tags, folded the way ItemTags folds; unusable ones dropped.
+
+    BibTeX's standard `keywords` field is how a Zotero or JabRef export, or
+    the generated molecular-AI example, carries tags into the graph with no
+    model call. Same normalisation as the tagger's output so the two agree.
+    """
+    from attestation.features import TAG_PATTERN
+
+    out: list[str] = []
+    for raw in _TAG_SPLIT.split(value or ""):
+        tag = raw.strip().lower().replace(" ", "-")
+        if tag and re.match(TAG_PATTERN, tag) and tag not in out:
+            out.append(tag)
+    return out
+
+
+def _bib_cites(value: str) -> list[tuple[str, str | None]]:
+    """A `cites` field (`identity|title; identity`) as (identity, title) pairs.
+
+    Not a standard BibTeX field: it is what `examples/molecular-ai/generate.py`
+    writes so that citation edges fetched from Semantic Scholar survive as a
+    committed file and load offline. Identities are stored as given; they
+    were produced by `library.identity` when written.
+    """
+    out: list[tuple[str, str | None]] = []
+    for raw in (value or "").split(";"):
+        entry = raw.strip()
+        if not entry:
+            continue
+        ident, _, title = entry.partition("|")
+        out.append((ident.strip(), title.strip() or None))
+    return out
+
+
 class BibtexRecords:
     """Every entry of every `.bib` file given, through citations' one parser."""
 
@@ -65,6 +103,8 @@ class BibtexRecords:
                     abstract=f.get("abstract"),
                     url=f.get("url"),
                     bib_key=key,
+                    tags=_bib_tags(f.get("keywords", "")),
+                    cites=_bib_cites(f.get("cites", "")),
                 )
 
 

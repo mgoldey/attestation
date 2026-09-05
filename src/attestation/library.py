@@ -134,6 +134,7 @@ class ReferenceRecord:
     url: str | None = None
     bib_key: str | None = None
     fetched_at: str | None = None
+    tags: list[str] = field(default_factory=list)
     cites: list[tuple[str, str | None]] = field(default_factory=list)
 
     def fields(self) -> dict:
@@ -252,6 +253,13 @@ def upsert(conn: sqlite3.Connection, rec: ReferenceRecord) -> tuple[int, str]:
             "INSERT INTO reference_sources(reference_id, source, source_key, fetched_at, raw)"
             " VALUES (?, ?, ?, ?, ?)",
             (rid, rec.source, rec.source_key, rec.fetched_at, json.dumps(raw)),
+        )
+    if rec.tags:
+        # Tags from a file (a .bib `keywords` field) only ever ADD: they never
+        # delete what the tagger wrote, and the tagger never deletes them.
+        conn.executemany(
+            "INSERT OR IGNORE INTO reference_tags(reference_id, tag) VALUES (?, ?)",
+            [(rid, t) for t in dict.fromkeys(rec.tags)],
         )
     for cited_identity, cited_title in rec.cites:
         conn.execute(
