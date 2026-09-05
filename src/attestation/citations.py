@@ -110,6 +110,19 @@ _ENTRY = re.compile(r"@(\w+)\s*\{\s*([^,\s]+)\s*,(.*?)\n\}", re.DOTALL)
 _FIELD = re.compile(r"(\w+)\s*=\s*[{\"](.*?)[}\"]\s*,?\s*$", re.MULTILINE | re.DOTALL)
 
 
+def _parse_bib_entries(text: str) -> Iterator[tuple[str, dict]]:
+    """(key, {lowercased field: single-spaced value}) for each entry with a title.
+
+    The ONE `.bib` parser: `BibtexReader` (the cite.* lookup path) and
+    `library_readers.BibtexRecords` (the library sync) both read through it,
+    so a grammar fix lands in both.
+    """
+    for _kind, key, body in _ENTRY.findall(text):
+        fields = {k.lower(): " ".join(v.split()) for k, v in _FIELD.findall(body)}
+        if fields.get("title"):
+            yield key, fields
+
+
 class BibtexReader:
     """`.bib` files on disk.
 
@@ -139,11 +152,7 @@ class BibtexReader:
         for path in self.paths:
             if not path.is_file():
                 continue
-            text = path.read_text(errors="replace")
-            for _kind, key, body in _ENTRY.findall(text):
-                fields = {k.lower(): " ".join(v.split()) for k, v in _FIELD.findall(body)}
-                if not fields.get("title"):
-                    continue
+            for key, fields in _parse_bib_entries(path.read_text(errors="replace")):
                 authors = [a.strip() for a in fields.get("author", "").split(" and ") if a.strip()]
                 yield Reference(
                     key=key,
@@ -225,6 +234,24 @@ class ZoteroReader:
         was written, so the fixture is plausible, not verified. If you have a
         real one, point this at it.
         """
+        for key, data, authors in self.raw_items():
+            yield Reference(
+                key=key,
+                title=data["title"],
+                authors=authors,
+                year=_year(data.get("date")),
+                doi=data.get("DOI"),
+                url=data.get("url"),
+                source=self.name,
+            )
+
+    def raw_items(self) -> Iterator[tuple[str, dict, list[str]]]:
+        """(zotero key, {field: value}, [authors]) for every titled, undeleted item.
+
+        The library sync reads this rather than `all()` because it wants
+        fields `Reference` does not carry (abstractNote, publicationTitle,
+        extra). Same tolerance as `all()`: nothing on any sqlite error.
+        """
         if not self.path.is_file():
             return
         try:
@@ -247,17 +274,8 @@ class ZoteroReader:
             authors.setdefault(row["key"], []).append(name)
 
         for key, data in by_key.items():
-            if not data.get("title"):
-                continue
-            yield Reference(
-                key=key,
-                title=data["title"],
-                authors=authors.get(key, []),
-                year=_year(data.get("date")),
-                doi=data.get("DOI"),
-                url=data.get("url"),
-                source=self.name,
-            )
+            if data.get("title"):
+                yield key, data, authors.get(key, [])
 
     def lookup(self, key: str) -> Reference | None:
         """The item whose Zotero key or DOI matches `key`, case-insensitive.
