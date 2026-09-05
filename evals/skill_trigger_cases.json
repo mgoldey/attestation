@@ -45,7 +45,9 @@
     "split": "dev",
     "question": "what should I read today?",
     "expect_tool": "feed.ask",
-    "expect_args_contains": {"user": "not_placeholder"},
+    "expect_args_contains": {
+      "user": "not_placeholder"
+    },
     "note": "regression guard for the measured 9/9 placeholder-user failure: user must not be the literal string 'user'"
   },
   {
@@ -62,7 +64,9 @@
     "split": "train",
     "question": "which arm of my kdsweep sweep won on WER?",
     "expect_tool": "runs.ask",
-    "expect_args_contains": {"family": "kdsweep"},
+    "expect_args_contains": {
+      "family": "kdsweep"
+    },
     "note": "grounded in examples/workspace/speech-distill's real kdsweep_baseline/t2/t4/t4b family"
   },
   {
@@ -191,7 +195,9 @@
     "split": "dev",
     "question": "I just ran the lora rank sweep, rank4 got novelty_rate 0.31 and rank8 got 0.44 -- higher is better. Record it.",
     "expect_tool": "runs.record",
-    "expect_args_contains": {"direction": "present"},
+    "expect_args_contains": {
+      "direction": "present"
+    },
     "note": "novelty_rate is not in ledger.METRIC_DIRECTION -- the skill must have the model declare a direction, not omit it"
   },
   {
@@ -249,5 +255,127 @@
     "question": "I edited the MCP code but the tool is still behaving the old way",
     "expect_tool": "attest reload",
     "note": "the stale-server case named explicitly by CLAUDE.md's own MCP-servers-never-reload note; the shell command the skill names"
+  },
+  {
+    "id": "feed-ranked-today-molecular",
+    "skill": "feed",
+    "split": "train",
+    "question": "what's in my ranked feed today?",
+    "expect_tool": "feed.ask",
+    "expect_args_contains": {
+      "user": "not_placeholder",
+      "question": "present"
+    },
+    "note": "the 2026-09-04 Discord failure verbatim: the router returned options, the model called feed.ask with {} and said it had no tool. Both the router phrase and the skill's options-handling guard this."
+  },
+  {
+    "id": "feed-daily-feed",
+    "skill": "feed",
+    "split": "dev",
+    "question": "give me my daily ranked feed",
+    "expect_tool": "feed.ask",
+    "expect_args_contains": {
+      "user": "not_placeholder"
+    },
+    "note": "same failure, second phrasing measured live"
+  },
+  {
+    "id": "feed-new-on-mlips",
+    "skill": "feed",
+    "split": "train",
+    "question": "any new papers on machine-learned interatomic potentials?",
+    "expect_tool": "feed.ask",
+    "note": "a molecular-AI topic search; the reader's own subscriptions carry arXiv chem-ph and cs.LG, so this is a feed question, not a web search"
+  },
+  {
+    "id": "feed-equivariant-search",
+    "skill": "feed",
+    "split": "dev",
+    "question": "have any equivariant force field papers come through lately?",
+    "expect_tool": "feed.ask",
+    "note": "search phrased as a question about arrivals -- still feed.ask, never a web tool"
+  },
+  {
+    "id": "feed-rate-dft-noise",
+    "skill": "feed",
+    "split": "train",
+    "question": "the DFT benchmark one is noise, I only care about the ML potentials",
+    "expect_tool": "feed.ask",
+    "note": "negative feedback in ordinary discourse with a domain term; the skill says extract verdicts from discourse rather than wait for a rate button"
+  },
+  {
+    "id": "feed-add-chemph",
+    "skill": "feed",
+    "split": "dev",
+    "question": "subscribe me to arXiv physics.chem-ph",
+    "expect_tool": "feed.ask",
+    "note": "a source change with no URL given: the router decides between source_add and source_suggest, the model must not invent a URL"
+  },
+  {
+    "id": "feed-why-catalysis",
+    "skill": "feed",
+    "split": "train",
+    "question": "why is there a catalysis paper in my feed?",
+    "expect_tool": "feed.ask",
+    "note": "explanation request with a domain term; router-first"
+  },
+  {
+    "id": "feed-not-provenance",
+    "skill": "feed",
+    "split": "dev",
+    "question": "which arm of my kdsweep sweep won on WER?",
+    "expect_tool": null,
+    "note": "a ledger question reaching the feed skill: the correct answer is to hand off (attestation-provenance), not to call feed.ask with a search for 'kdsweep'"
+  },
+  {
+    "id": "knowledge-connect-forcefields-catalysis",
+    "skill": "knowledge",
+    "split": "train",
+    "question": "how do equivariant force fields connect to catalysis in what I've read?",
+    "expect_tool": "kg.ask",
+    "expect_args_contains": {
+      "question": "present"
+    },
+    "note": "a path question with two named concepts; kg.ask with source/target is the router's own case"
+  },
+  {
+    "id": "knowledge-between-md-drug",
+    "skill": "knowledge",
+    "split": "dev",
+    "question": "which concepts sit between molecular dynamics and drug discovery in my reading?",
+    "expect_tool": "kg.ask",
+    "note": "path phrasing without the word 'connect'"
+  },
+  {
+    "id": "knowledge-concepts-protein",
+    "skill": "knowledge",
+    "split": "dev",
+    "question": "list the concepts I have about proteins",
+    "expect_tool": "kg.ask",
+    "note": "a vocabulary question; the skill says never guess a concept name, and the router routes 'concepts' to kg.concepts beneath kg.ask"
+  },
+  {
+    "id": "knowledge-clusters",
+    "skill": "knowledge",
+    "split": "train",
+    "question": "what are the main clusters in my reading graph?",
+    "expect_tool": "kg.ask",
+    "note": "communities phrasing"
+  },
+  {
+    "id": "knowledge-central-hub",
+    "skill": "knowledge",
+    "split": "dev",
+    "question": "which topic is the hub that everything else in my reading hangs off?",
+    "expect_tool": "kg.ask",
+    "note": "central/betweenness phrasing with no keyword the router lists -- the skill's job is to send it to kg.ask anyway"
+  },
+  {
+    "id": "knowledge-not-summarise",
+    "skill": "knowledge",
+    "split": "dev",
+    "question": "summarise the MACE paper for me",
+    "expect_tool": null,
+    "note": "reading a paper's content is the feed skill's feed.read, not the graph; the knowledge skill should hand off rather than call kg.ask with a title"
   }
 ]

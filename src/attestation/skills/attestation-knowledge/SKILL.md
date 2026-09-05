@@ -42,9 +42,15 @@ shows for the same arguments, and never retry a plausible-looking variant
 of the dotted name.
 
 Returns `answer` (relay VERBATIM), `refs`, `caveat`, `options` and
-`tool_used`; `ok=false` with `options` means ask the reader, never pick for
-them. Specific tools may be hidden from your session; `kg.tools` explains
-why and how to reveal them.
+`tool_used`; `ok=false` with `options` means ask the reader which, or re-ask
+`kg.ask` with the question reworded for the option that plainly fits --
+never call it with empty arguments, and never say you lack a tool for the
+reader's topics. "What are my main research areas", "what do I read about
+most", "what clusters is my reading in" are all `kg.ask`: the graph is the
+reader's record, and a memory or notes tool is not (measured 2026-09-05:
+gemma4:e2b sent "my main research areas" to Hermes's built-in memory tool
+and answered from nothing). Specific tools may be hidden from your session;
+`kg.tools` explains why and how to reveal them.
 
 ## Concept names are the vocabulary, not your phrasing
 
