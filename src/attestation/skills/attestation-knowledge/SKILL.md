@@ -45,8 +45,8 @@ Returns `answer` (relay VERBATIM), `refs`, `caveat`, `options` and
 `tool_used`; `ok=false` with `options` means ask the reader which, or re-ask
 `kg.ask` with the question reworded for the option that plainly fits --
 never call it with empty arguments, and never say you lack a tool for the
-reader's topics. "What are my main research areas", "what do I read about
-most", "what clusters is my reading in" are all `kg.ask` -- the graph is the
+reader's topics. "What do I read about most", "what clusters is my reading
+in", "what are my main research areas" are all `kg.ask` -- the graph is the
 reader's record; a memory, notes or session-search tool is not, and "I do
 not have access to your reading" is never true while `kg.ask` is in your
 tool list. Specific tools may be hidden from your session; `kg.tools`

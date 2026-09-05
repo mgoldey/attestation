@@ -7,10 +7,11 @@ asked for `~/agent-loop-optimizer` (agentopt) to be the measurement. Executed
 autonomously overnight; the numbers in §5 are what was measured, rescored
 after review round 1 against agentopt's decline-aware scorer. **Result:
 measured, shipped nothing** (§6).
-**Depends on:** agentopt at `3193e35` (its fixtures for the four
+**Depends on:** agentopt at `1cf0b28` (its fixtures for the four
 `ATTEST_TOOLS` router servers, `--fixture`, `--skill`, `--bank`,
-`--results-dir`, `rescore`), `evals/skill_trigger_cases.json` (upstream case
-format, read unchanged), the two library specs of the same date (the
+`--results-dir`, `rescore`, `run --candidate`), `evals/skill_trigger_cases.json`
+(upstream case format plus an agentopt-only `expect` key on one case), the
+two library specs of the same date (the
 knowledge skill now names `cite.sync` and `cite.related`).
 
 ## Problem
@@ -60,8 +61,10 @@ transcript with model-free predicates, which is the measurement this repo's
   spread. agentopt's acceptance race runs on TRAIN minibatches (k 3..8);
   its pre-registered dev check (paired LCB > 0 at α = 0.2, k ≥ 5) is a
   separate step that never ran here (dev k = 3). The transfer models are
-  `gemma4:e4b` and `qwen3.5:9b`; no rollout on either exists in the banks.
-  A candidate ships only when both hold; none did.
+  `gemma4:e4b` and `qwen3.5:9b`; the only rollouts on either are seven
+  seed-raw rollouts on gemma4:e4b from a transfer run cancelled at 13:33
+  (`bank-knowledge-transfer`). A candidate ships only when both hold; none
+  did.
 
 ## 1. Cases
 
@@ -81,8 +84,15 @@ proteins" both reach `kg.concepts` with no prefix, and "find me the papers
 behind the 'diffusion-models' concept" too; those are `routing.py` gaps a
 perfect rollout would still score 1.0 on. `knowledge-vs-feed-search`
 expected `feed.search` until review round 1, a tool the collapsed knowledge
-surface does not serve: it scored 0 on all seven candidates by construction
-and pinned one sixth of every dev mean below. It now expects `kg.ask`.
+surface does not serve: it scored 0 on the three candidates that ran it (both
+seeds and `826e5e38`) by construction and pinned one sixth of every dev mean
+below. It now expects `kg.ask`, which is not neutral: the seeds' rollouts on
+it called nothing or a browser tool (still 0), while `826e5e38` already
+called `kg.ask` in two of three, so the change raises the candidate's dev
+mean, not the seeds'. A 1.0 on it today is a concept list for a "papers
+behind" question -- satisfiable, honest, weak. `route_kg("what are my main
+research areas")` declines with options, so the knowledge skill now leads
+its example list with "what do I read about most", which routes.
 
 ## 2. The fixture database
 
@@ -142,13 +152,16 @@ written for). Banks and agentopt's dated reports are under
 | skill | candidate | k | cases | mean (CI) | calls gate | notes |
 |---|---|---|---|---|---|---|
 | feed | seed-raw `e3411564` | 1 | 15 | 0.51 [0.37, 0.66] n=15 | 9/15 | 0.56 before rescore; six positives never called `feed.ask` (rate-implicit, explain, capability, digest-lately, rate-dft-noise, add-chemph); `user='user'` on daily-feed |
-| feed | seed `fd6804ce` | 1 | 15 | 0.51 [0.37, 0.64] n=15 | 10/15 | paired vs seed-raw: +0.00 with a ±0.12 interval -- not a number at k = 1; six of fifteen cases move by 0.33 or more between the two |
+| feed | seed `fd6804ce` | 1 | 15 | 0.51 [0.37, 0.64] n=15 | 10/15 | paired vs seed-raw: +0.00 with a ±0.10 interval -- not a number at k = 1; four of fifteen cases move by 0.33 or more between the two |
 | feed | calibrate / optimize | -- | -- | -- | -- | did not run |
 | knowledge | seed-raw `12e08030` | 3 | 10 | 0.51 [0.41, 0.61] n=30 (dev 0.48 n=18) | 7/10 | main-areas 0/3, central-hub 0/3, vs-feed-search 0/3 (tool hidden, see §1) |
 | knowledge | seed `1dbdede5` | 3 (train topped to 8 by races) | 10 | 0.44 [0.37, 0.52] n=50 (dev 0.43 n=18) | 7/10 | paired vs seed-raw: −0.07, LCB −0.18; main-areas 0/8 -- the edit did not move the case it named |
-| knowledge | `826e5e38` (`kg.tools` description 367 -> 3,803 chars) | 3 dev / 8 train | 9 | dev 0.61 n=18; train 0.94 n=24 | 8/9 | accepted by GEPA on a 3-case TRAIN race; dev k = 3 < 5; contains invented statistics ("measured to be correct 26/26 times"); no second model |
+| knowledge | `826e5e38` (`kg.tools` description 367 -> 3,803 chars) | 3 dev / 8 train | 9 | dev 0.61 n=18; train 0.94 n=24 | 8/9 | accepted by GEPA on a 3-case train minibatch (subsample score 0.5625 -> 2.92; every paired race in the log was undecided); dev paired vs seed +0.185, LCB +0.084 at α = 0.2, but k = 3 < 5; its text carries "26/26" and "0% of the time" -- the seed's own `kg.tools` line (1 in 26 vs 26 in 26) garbled into a correctness claim; no second model |
 | knowledge | `9dbc7d8c` (`kg.ask` + `kg.tools` descriptions) | 8 | 3 train | 0.89 n=24 | 3/3 | never scored on dev; race vs `826e` undecided |
-| both | transfer gemma4:e4b, qwen3.5:9b | -- | -- | -- | -- | not run: the candidate cannot ship (below), so the runs were cancelled |
+| both | transfer gemma4:e4b, qwen3.5:9b | 3 | -- | -- | -- | cancelled at 13:33 after seven seed-raw rollouts on gemma4:e4b (`bank-knowledge-transfer`: connect-topics 3/3, main-areas 0/3); nothing on the candidate, nothing on qwen3.5:9b; the candidate cannot ship (below) |
+
+"calls gate" is cases with at least one rollout passing the gate predicate
+(`calls_any` / `calls_none`); strict all-rollouts is 5/10, 3/10 and 6/9.
 
 Budget: 150 live rollouts against `--max-live-rollouts 120` (agentopt
 overshoots to finish a race); knowledge optimize 04:32-07:15, feed baseline
@@ -157,9 +170,11 @@ overshoots to finish a race); knowledge optimize 04:32-07:15, feed baseline
 ## 6. Result: measured, shipped nothing
 
 - **The one accepted candidate changes only `kg.tools`' tool description**
-  -- ten times longer, carrying statistics the reflection model invented
-  and a "Failure Prevention Checklist" -- and its exported `SKILL.md` is
-  byte-identical to the seed. The gain, real or not, lives in a string the
+  -- ten times longer, carrying numbers misattributed from the seed's own
+  measurement line into a correctness claim and a "Failure Prevention
+  Checklist" -- and its exported `SKILL.md` carries the seed's body and
+  trigger unchanged (the export reshapes frontmatter, an agentopt artefact,
+  not a candidate edit). The gain, real or not, lives in a string the
   MCP server serves, not in the skill; a candidate whose gain is in a tool
   description is telling us the shipped description is the weak part, and
   the fix belongs in `mcp/knowledge.py`'s docstring under its own
@@ -186,19 +201,22 @@ overshoots to finish a race); knowledge optimize 04:32-07:15, feed baseline
   model re-asks instead of asking.
 - **The honest one sentence.** On gemma4:e2b through the real path, the
   hand edits were not measured; the feed baseline is 0.51 either way with
-  a ±0.12 paired interval and no calibration; the knowledge seed scored
+  a ±0.10 paired interval and no calibration; the knowledge seed scored
   0.44 against 0.51 for the same text under dotted names (not significant
   at α = 0.2); and GEPA's single accepted candidate is +0.18 on six dev
-  cases at k = 3 (one of them unsatisfiable), below the pre-registered
-  k ≥ 5, on one model, with fabricated text -- so `tagging_eval.gate()`
-  cannot be evaluated from anything on disk and nothing meets the bar.
+  cases at k = 3 (paired LCB +0.08 at α = 0.2 -- a positive signal, blocked
+  by the pre-registered k ≥ 5, with one of the six unsatisfiable), on one
+  model, with a description that misstates the seed's numbers -- so
+  `tagging_eval.gate()` cannot be evaluated from anything on disk and
+  nothing meets the bar, which is not the same as nothing being there.
 
 ## What this spec does not decide
 
-Whether `kg.ask` gets a route to `cite.related`; the three `route_kg` gaps
+Whether `kg.ask` gets a route to `cite.related`; the four `route_kg` gaps
 §1 names (hub -> `kg.central`, "concepts about X" -> `kg.concepts(prefix)`,
 "papers behind a concept" -> `feed.search` or a `kg.ask` answer that names
-it); symbolic's expression parser (a router gap agentopt found:
+it, "my main research areas" -> `kg.central` instead of a decline);
+symbolic's expression parser (a router gap agentopt found:
 `integral(x^2, x, 0, 1)` and `sin^2(x)` fail to parse); provenance's
 `family` argument, which is a case that must keep failing until the
 provenance skill fixes it; a measured rewrite of `kg.tools`' description

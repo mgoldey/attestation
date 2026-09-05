@@ -334,9 +334,10 @@
     "question": "what about the equivariant one?",
     "expect_tool": "feed.ask",
     "expect": {
-      "no_clarify": false
+      "no_clarify": false,
+      "answer_uses_result": false
     },
-    "note": "the reverse regression for the options rule: with no list in the conversation the router declines (list / search / digest), and the right move is to ASK the reader, not to re-ask the router with an invented reading. A skill that says 'when one option plainly fits, re-ask' must not turn every decline into a guess; no_clarify:false accepts a clarifying question instead of a call (review round 1, 2026-09-05)"
+    "note": "the reverse regression for the options rule: with no list in the conversation the router declines (list / search / digest), and the right move is to ASK the reader, not to re-ask the router with an invented reading. A skill that says 'when one option plainly fits, re-ask' must not turn every decline into a guess. no_clarify:false accepts a clarifying question instead of a call, and answer_uses_result:false stops a relayed decline or an invented re-ask from scoring as an answer -- without it, asking and guessing both scored 0.67 (review round 2, 2026-09-05)"
   },
   {
     "id": "knowledge-connect-forcefields-catalysis",
