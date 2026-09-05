@@ -19,6 +19,33 @@ ARXIV_RE = re.compile(r"arXiv:\S+\s+Announce Type:\s*\S+\s*Abstract:\s*", re.IGN
 TAG_RE = re.compile(r"<[^>]+>")
 
 
+_ARXIV_ID = re.compile(
+    r"(?:oai:arXiv\.org:|arxiv\.org/(?:abs|pdf)/)([a-z\-]+/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?",
+    re.IGNORECASE,
+)
+_DOI = re.compile(r"(?:doi\.org/|doi:)?(10\.\d{4,9}/[^\s#?]+)", re.IGNORECASE)
+_NATURE = re.compile(r"nature\.com/articles/([a-z0-9\-]+)", re.IGNORECASE)
+
+
+def extract_ids(guid: str | None, url: str | None) -> tuple[str | None, str | None]:
+    """(doi, arxiv_id) from an entry's guid and url, or Nones.
+
+    Pure and network-free; used by migration 007's backfill and by every new
+    item. Formats are the ones measured on the live database 2026-09-05:
+    arXiv guids `oai:arXiv.org:1003.0563v2`, Nature URLs carrying the DOI
+    suffix under the 10.1038 prefix. Anything else stays NULL.
+    """
+    doi = arxiv = None
+    for text in (guid or "", url or ""):
+        if arxiv is None and (m := _ARXIV_ID.search(text)):
+            arxiv = m.group(1)
+        if doi is None and (m := _DOI.search(text)):
+            doi = m.group(1).lower().rstrip(".")
+        if doi is None and (m := _NATURE.search(text)):
+            doi = f"10.1038/{m.group(1).lower()}"
+    return doi, arxiv
+
+
 def strip_boilerplate(text: str) -> str:
     """Drop HTML tags and arXiv's own "Announce Type / Abstract:" preamble,
     collapsing whitespace -- so a stored summary is the actual abstract, not
