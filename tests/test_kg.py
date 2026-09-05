@@ -305,6 +305,7 @@ def test_an_aliased_concept_is_found_by_the_name_people_write():
     conn.execute("CREATE TABLE item_tags(item_id INTEGER, tag TEXT)")
     # tag_assignments reads both tag tables since references joined the graph.
     conn.execute("CREATE TABLE reference_tags(reference_id INTEGER, tag TEXT)")
+    conn.execute("CREATE TABLE reference_sources(reference_id INTEGER, source TEXT)")
     # Two items sharing both tags: enough for MIN_TAG_USES and MIN_EDGE_WEIGHT.
     for item_id in (1, 2):
         for tag in ("large-language-models", "transformers"):

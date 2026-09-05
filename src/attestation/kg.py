@@ -195,7 +195,14 @@ def tag_assignments(conn: sqlite3.Connection) -> list[tuple[int, str]]:
     joins the graph beside what they read (spec 2026-09-05, library graph).
     """
     items = conn.execute("SELECT item_id, tag FROM item_tags")
-    refs = conn.execute("SELECT reference_id, tag FROM reference_tags")
+    # A reference the feed itself supplied IS an item already in the graph:
+    # counting it twice let one paper clear both the two-uses and two-edges
+    # thresholds on its own (review round 1, 2026-09-05).
+    refs = conn.execute(
+        "SELECT t.reference_id, t.tag FROM reference_tags t WHERE NOT EXISTS"
+        " (SELECT 1 FROM reference_sources s WHERE s.reference_id = t.reference_id"
+        "  AND s.source = 'feed')"
+    )
     return [(r["item_id"], r["tag"]) for r in items] + [
         (-r["reference_id"], r["tag"]) for r in refs
     ]

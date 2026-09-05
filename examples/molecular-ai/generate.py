@@ -11,9 +11,10 @@ a seed that fails to resolve is dropped and reported.
     ATTEST_CITATION_WEB=1 ATTEST_CITATION_SCHOLAR=1 \\
       uv run --with "bibtexparser>=2.0.0b9" python generate.py
 
-Semantic Scholar is paced at one request per second, so expect about a minute
-for the seed list. Regenerating is deliberate; review the diff like any other
-fixture change.
+Semantic Scholar is paced at one request every three seconds and rate-limits
+the shared unauthenticated pool anyway, so expect several resumed passes
+(`--scratch` keeps the cache between them). Regenerating is deliberate; review
+the diff like any other fixture change.
 """
 
 from __future__ import annotations
@@ -32,7 +33,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 # Built from parts so this file does not itself carry the host name the
 # golden-path guard scans for.
-_CODE_URL = re.compile(r"(?:https?://)?(?:www\.)?" + "git" + "hub" + r"[ .]com\S*")
+# `[^\s}]*`, not `\S*`: the first generation's scrub swallowed the `},` that
+# closed three abstracts ending in a code URL, and the committed file was
+# invalid BibTeX its own writer could not re-read (review round 1).
+_CODE_URL = re.compile(r"(?:https?://)?(?:www\.)?" + "git" + "hub" + r"[ .]com[^\s}]*")
 
 
 def _ascii(text: str) -> str:
@@ -155,7 +159,14 @@ def build(scratch: Path, steps: set[str] | None = None) -> tuple[list[dict], dic
             # a committed example, so those edges are left out of the fixture.
             if _CODE_URL.search(cited) or _CODE_URL.search(r["cited_identity"]):
                 continue
-            clean = cited.replace("|", " ").replace(";", ",")
+            # The field's grammar is `identity|title; identity`: an identity
+            # carrying either separator (a `...3.0.CO;2-P` DOI) cannot be
+            # written into it and is left out rather than split.
+            if ";" in r["cited_identity"] or "|" in r["cited_identity"]:
+                continue
+            # Separators are the field's grammar and braces are BibTeX's: a
+            # cited title carrying either would corrupt the entry around it.
+            clean = cited.translate(str.maketrans({"|": " ", ";": ",", "{": "(", "}": ")"}))
             cites.append(f"{r['cited_identity']}|{clean}" if cited else r["cited_identity"])
         if not row["abstract"]:
             misses["abstract"].append(row["bib_key"])

@@ -1083,7 +1083,11 @@ def cmd_library_sync(args: argparse.Namespace) -> int:
 
     sources = [s.strip() for s in args.sources.split(",")] if args.sources else None
     with open_db(args.db) as conn:
-        readers = library_readers.readers_from_env(conn, sources=sources)
+        try:
+            readers = library_readers.readers_from_env(conn, sources=sources)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
         report = library.sync(conn, readers, embedder=_embedder_or_none(), limit=args.limit)
     for name, b in report.sources.items():
         line = f"{name}: +{b['added']} added, {b['merged']} merged, {b['unchanged']} unchanged"
@@ -1092,6 +1096,9 @@ def cmd_library_sync(args: argparse.Namespace) -> int:
         if b["failed"]:
             line += f", {b['failed']} failed"
         print(line)
+    for name in library_readers.unarmed(sources):
+        flag = "ATTEST_CITATION_SCHOLAR" if name == "s2" else "ATTEST_CITATION_WEB"
+        print(f"{name}: not armed ({flag} is unset), nothing fetched")
     tail = f" ({report.embed_error})" if report.embed_error else ""
     print(f"embedded {report.embedded}, {report.unembedded} without a vector{tail}")
     if report.conflicts:

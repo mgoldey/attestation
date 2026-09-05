@@ -207,7 +207,7 @@ def test_sync_is_idempotent(tmp_path):
     assert second["sources"]["bibtex"]["added"] == 0
     assert first["unembedded"] == 2  # no embedder given: reported, not an error
     assert library.status(conn)["references"] == 2
-    assert library.status(conn)["sources"] == {f"bibtex:{FIX / 'sample.bib'}": 2}
+    assert library.status(conn)["sources"] == {"bibtex:sample.bib": 2}
 
 
 def test_sync_commits_after_every_enricher_record(tmp_path):

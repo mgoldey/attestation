@@ -17,7 +17,7 @@ def test_bibtex_records_carry_abstract_venue_and_arxiv_from_eprint():
     assert s.arxiv_id == "1706.08566" and s.year == 2017
     assert s.venue == "Advances in Neural Information Processing Systems"
     assert s.abstract.startswith("Deep learning")
-    assert s.source == f"bibtex:{FIX / 'sample.bib'}" and s.fetched_at is None
+    assert s.source == "bibtex:sample.bib" and s.fetched_at is None
     # "and others" is a truncation marker, not an author. LaTeX escapes are
     # kept verbatim: de-escaping is a rendering concern the citations spec
     # keeps at the presentation edge.
@@ -172,10 +172,13 @@ def test_s2_enricher_yields_cites_and_backs_off_on_429(tmp_path, monkeypatch):
     monkeypatch.setattr(library_readers, "_sleep", slept.append)
     recs = list(library_readers.S2Enricher(cache_dir=tmp_path / "c").records(conn, None))
     assert recs[0].arxiv_id == "2101.03164" and recs[0].source == "s2"
-    # Two traceable references; the one with no ids and no title is dropped.
+    # Two traceable references; no ids and no title, or a journal-abbreviation title, is dropped.
     assert recs[0].cites == [
         ("doi:10.5555/schnet", "SchNet ..."),
-        ("title:untraceable ref:-", "Untraceable ref"),
+        (
+            "title:an untraceable reference with a long title:-",
+            "An untraceable reference with a long title",
+        ),
     ]
     assert slept == [10.0, 3.0]  # Retry-After floored at 10 s, then the per-request pace
 

@@ -147,7 +147,7 @@ export ATTEST_DB="$(mktemp -d)/attest.db"
 export ATTEST_BIB_PATHS=$PWD/references.bib
 uv run attest library sync --sources bibtex
 uv run attest library search "force field" --limit 5
-uv run attest library related batzner2022nequip
+uv run attest library related batzner2022equivariant
 uv run attest kg-report
 ```
 
@@ -185,8 +185,14 @@ Transformer, SphereNet, ANI-1, ANI-2x, AIMNet2, Chemprop / D-MPNN,
 MoleculeNet, Uni-Mol, GROVER, MolCLR, ChemBERTa, SMILES Transformer,
 MolGAN, JT-VAE, GraphAF, DiffDock, EquiBind, TorsionDiff, Open Catalyst 2020,
 OC22, Matbench Discovery, M3GNet, CHGNet, MatterSim, GNoME, AlphaFold 2,
-RoseTTAFold, ESM-2, RFdiffusion, ProteinMPNN, DeePMD, DeepChem. Forty-one
-candidates; the committed file holds whichever resolved.
+RoseTTAFold, ESM-2, RFdiffusion, ProteinMPNN, DeePMD, DeepChem. That was
+the draft list; `seeds.toml` is the record of what was seeded -- 48 papers,
+all of which resolved -- and it differs: AIMNet2, Uni-Mol and DeepChem were
+dropped (no single canonical paper with an id), and SE(3)-Transformers,
+EGNN, MPNN, CGCNN, MEGNet, Behler-Parrinello, GAP, SOAP and MTP were added
+so the interatomic-potential line starts where a chemist would start it.
+Still missing, and named by the file's own `cites` edges: Tensor Field
+Networks, ACE, sGDML, QM9; and nothing after May 2024.
 
 ## 5. Docs and counts
 
@@ -202,27 +208,45 @@ index gains `examples/molecular-ai`; `docs/guides/claims-and-citations.md`
 Taken 2026-09-05 while generating the example (full tables in
 `examples/molecular-ai/README.md`):
 
-- **Semantic vs substring, ten molecular-AI queries, embeddinggemma:**
-  substring returned nothing for 7 of 10; semantic ranked the paper a
-  chemist would name first or second in 9 of 10. "equivariant force fields"
-  found MACE 0.550, TorchMD-NET 0.542, NequIP 0.540 above the relative
-  floor; substring found nothing.
-- **Generation:** 48 of 48 seeds resolved (none dropped). Semantic Scholar's
-  unauthenticated pool answered 429 to three consecutive requests 1.2 s
-  apart; at 3 s pacing with one back-off per row, three resumed passes over
-  ~40 minutes wall brought reference lists to 41 of 48, and 7 remain
-  rate-limited. arXiv answered every id in one batched request; CrossRef
-  enriched 25. Two bugs surfaced and were fixed under test: the arXiv API
-  301s plain http (every arXiv seed read as a miss) and a rate-limited row
-  was being recorded as tried (never retried). A third: a paced enricher
-  held one write transaction across its sleeps and locked out
-  `attest library tag`.
+- **Semantic vs substring, ten molecular-AI queries, embeddinggemma
+  (re-measured after review round 1, with an `expected` paper written down
+  per query):** semantic put the expected paper in its top three for 10 of
+  10 (top two for 8); the word-AND substring fallback found something for
+  10 of 10 but had it in the top three for 7, since it orders by year and
+  cannot rank. The first measurement compared against a whole-phrase
+  substring that found nothing for 7 of 10 -- a strawman; `_substring` is
+  now word-AND and the README table carries both columns and the expected
+  paper. "equivariant force fields": MACE 0.550, TorchMD-NET 0.542, NequIP
+  0.540 above the relative floor.
+- **Generation (second, after review round 1):** 48 of 48 seeds resolved.
+  Semantic Scholar answered 47 of 48 across four resumed passes (DimeNet
+  still rate-limited); 5 entries carry no `cites` (that one, plus four whose
+  record lists no traceable reference). arXiv answered 40 ids (37 seeds plus
+  3 DataCite `10.48550/arxiv.*` DOIs now read as arXiv ids) in one batched
+  request; CrossRef enriched 25. The first generation surfaced and fixed:
+  the arXiv API 301s plain http; a rate-limited row recorded as tried; a
+  paced enricher holding the write lock across its sleeps. The review of
+  that generation surfaced and fixed: a 404 never marking a row tried
+  (re-fetched every sync); an enricher's answer attaching by the ids it
+  carried rather than to the row it was fetched for; the arXiv year kept
+  beside CrossRef's journal (11 wrong citations, now the venue's year wins
+  and the old year is a recorded conflict); a URL scrub eating the `},`
+  that closed three abstracts (invalid BibTeX, now guarded by
+  `test_every_committed_bib_is_valid_bibtex`); and id-less junk in
+  Semantic Scholar's parsed reference lists (`Phys. Rev. B`, checklist
+  questions, equation fragments) counted as citations -- now dropped unless
+  the title has four words of three or more letters and no brace: 2,472
+  edges, 205 in-library, 287 title-only stubs.
 - **Graph with and without references:** the example's scratch database has
   no items, so without references `kg-report` exits 1 ("no items yet"); with
-  the 48 tagged references it reports 14 nodes, 25 edges, 44 distinct tags,
-  one community labelled `molecular-mechanics` at 85.7% of nodes. Forty-odd
-  references from one subfield make one cluster, which is the honest shape.
-- **Tagging cost:** 48 references in one pass, 0 failed, gemma4:e2b.
+  the 48 tagged references it reports 18 nodes, 22 edges, 67 distinct tags,
+  three communities (largest 22.2%). The first generation's single
+  `molecular-mechanics` community at 85.7% was the tagger failing to
+  separate five obvious sub-areas on an EMPTY vocabulary, not the corpus's
+  shape; this generation still shows near-duplicate tags the alias table
+  does not fold. A chemist's vocabulary for this corpus is a tagging-eval
+  case, not a graph finding.
+- **Tagging cost:** 48 references in one pass, 0 failed, gemma4:e2b, twice.
 
 ## 7. What the example changed in the readers
 

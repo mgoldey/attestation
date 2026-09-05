@@ -10,21 +10,33 @@ web's, and keeps `cite.sources`' `offline` answer honest (spec §3.1).
 from __future__ import annotations
 
 import hashlib
+import html
 import json
+import math
 import re
 import sqlite3
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import httpx
 from defusedxml import ElementTree as SafeET
 
 from attestation import citations
-from attestation.library import ReferenceRecord, identity
+from attestation.library import (
+    ReferenceRecord,
+    arxiv_from_doi,
+    identity,
+    normalise_arxiv,
+    normalise_doi,
+)
 
 DEFAULT_CACHE = Path.home() / ".hermes" / "citation-cache"
+# Every reader name `readers_from_env(sources=...)` accepts; a typo RAISES,
+# the ATTEST_TOOLS rule, rather than silently syncing nothing.
+SOURCE_NAMES = ("bibtex", "zotero", "feed", "arxiv", "crossref", "s2")
 _ATOM = "{http://www.w3.org/2005/Atom}"
 _ARXIV_NS = "{http://arxiv.org/schemas/atom}"
 _JATS = re.compile(r"<[^>]+>")
@@ -62,8 +74,9 @@ def _bib_cites(value: str) -> list[tuple[str, str | None]]:
 
     Not a standard BibTeX field: it is what `examples/molecular-ai/generate.py`
     writes so that citation edges fetched from Semantic Scholar survive as a
-    committed file and load offline. Identities are stored as given; they
-    were produced by `library.identity` when written.
+    committed file and load offline. Identities are re-normalised through the
+    same rules as `library.identity`, so a hand-typed `DOI:10.1/X` or
+    `arxiv:2101.03164v2` still lands on the row the store holds.
     """
     out: list[tuple[str, str | None]] = []
     for raw in (value or "").split(";"):
@@ -71,8 +84,23 @@ def _bib_cites(value: str) -> list[tuple[str, str | None]]:
         if not entry:
             continue
         ident, _, title = entry.partition("|")
-        out.append((ident.strip(), title.strip() or None))
+        out.append((_normalise_identity(ident.strip()), title.strip() or None))
     return out
+
+
+def _normalise_identity(ident: str) -> str:
+    """`kind:value` with the value put through the kind's normaliser."""
+    kind, sep, value = ident.partition(":")
+    kind = kind.lower()
+    if kind == "doi" and sep:
+        norm = normalise_doi(value)
+        if norm:
+            return f"doi:{norm}"
+        if a := arxiv_from_doi(value):
+            return f"arxiv:{a}"
+    if kind == "arxiv" and sep and (a := normalise_arxiv(value)):
+        return f"arxiv:{a}"
+    return ident.lower() if kind == "title" else ident
 
 
 class BibtexRecords:
@@ -92,7 +120,9 @@ class BibtexRecords:
             for key, f in citations._parse_bib_entries(path.read_text(errors="replace")):
                 is_arxiv = f.get("archiveprefix", "").lower() == "arxiv"
                 yield ReferenceRecord(
-                    source=f"bibtex:{path}",
+                    # The file name, not its path: the path would put a
+                    # machine-specific string into every tool reply.
+                    source=f"bibtex:{path.name}",
                     source_key=key,
                     title=f["title"],
                     authors=_bib_authors(f.get("author", "")),
@@ -174,6 +204,26 @@ class FeedRecords:
 
 _S2_PACE_SECONDS = 3.0  # unauthenticated S2 rate-limited 1 rps flat (429 x3) on 2026-09-05
 _RETRY_AFTER_DEFAULT = 10.0
+_RETRY_AFTER_MAX = 60.0  # one header must not park attest-mcp for an hour
+_FETCH_ERRORS = (httpx.HTTPError, httpx.InvalidURL, ValueError)  # a bad stored id is an InvalidURL
+
+
+def _retry_after(value: str | None) -> float:
+    """Seconds to wait from a Retry-After header: an integer, an HTTP-date, or
+    junk (`nan`, `1e12`, a typo) -- never a crash, never more than a minute."""
+    if not value:
+        return _RETRY_AFTER_DEFAULT
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(value)
+            seconds = (when - datetime.now(UTC)).total_seconds()
+        except (TypeError, ValueError):
+            return _RETRY_AFTER_DEFAULT
+    if not math.isfinite(seconds):
+        return _RETRY_AFTER_DEFAULT
+    return min(max(seconds, _RETRY_AFTER_DEFAULT), _RETRY_AFTER_MAX)
 
 
 def _client() -> httpx.Client:
@@ -227,7 +277,7 @@ def _fetch_with_backoff(url: str) -> tuple[httpx.Response | None, str | None]:
         try:
             with _client() as client:
                 resp = client.get(url)
-        except httpx.HTTPError as exc:
+        except _FETCH_ERRORS as exc:
             return None, f"{type(exc).__name__}: {exc}"
         if resp.status_code == 200:
             return resp, None
@@ -236,8 +286,16 @@ def _fetch_with_backoff(url: str) -> tuple[httpx.Response | None, str | None]:
             return None, error
         if resp.status_code == 429 and attempt >= 1:
             return None, error
-        _sleep(max(float(resp.headers.get("Retry-After") or 0), _RETRY_AFTER_DEFAULT))
+        _sleep(_retry_after(resp.headers.get("Retry-After")))
     return None, error
+
+
+def _forget(cache_dir: Path, url: str) -> None:
+    """Drop a cached body that did not parse, so the next sync asks the wire
+    again instead of raising from the same file forever."""
+    path = _cache_path(cache_dir, url)
+    if path.is_file():
+        path.unlink()
 
 
 def _write_cache(cache_dir: Path, path: Path, url: str, fetched: str, body: str) -> None:
@@ -315,7 +373,15 @@ class ArxivEnricher(_Enricher):
             ids = ",".join(r["arxiv_id"] for r in batch)
             url = f"https://export.arxiv.org/api/query?id_list={ids}&max_results={len(batch)}"
             body, fetched, error = _cached_get(self.cache_dir, url)
-            found = _parse_arxiv(body, fetched) if body else {}
+            found: dict[str, ReferenceRecord] = {}
+            if body:
+                try:
+                    found = _parse_arxiv(body, fetched)
+                except SafeET.ParseError as exc:
+                    # A 200 that is not the feed it claims: not a miss (the
+                    # row is not tried), not a crash (the sync finishes).
+                    _forget(self.cache_dir, url)
+                    error = f"unparseable body: {exc}"
             for r in batch:
                 if not found and self._transient(r, error):
                     continue
@@ -335,7 +401,9 @@ def _parse_arxiv(body: bytes, fetched: str | None) -> dict[str, ReferenceRecord]
     """
     out: dict[str, ReferenceRecord] = {}
     for entry in SafeET.fromstring(body).iter(f"{_ATOM}entry"):
-        aid = re.sub(r"v\d+$", "", (entry.findtext(f"{_ATOM}id") or "").rsplit("/", 1)[-1])
+        # `http://arxiv.org/abs/cond-mat/0301234v1`: everything after /abs/,
+        # so an old-style id keeps its archive prefix, as `identity` does.
+        aid = normalise_arxiv((entry.findtext(f"{_ATOM}id") or "").partition("/abs/")[2])
         if aid:
             out[aid] = _arxiv_record(entry, aid, fetched)
     return out
@@ -384,21 +452,48 @@ class CrossrefEnricher(_Enricher):
 
 
 def _joined(msg: dict, key: str) -> str | None:
-    """CrossRef lists its title and container-title; one string or None."""
-    return " ".join(msg.get(key) or []) or None
+    """CrossRef lists its title and container-title; one string or None.
+
+    HTML entities are decoded: CrossRef sent `Multiscale Modeling &amp;amp;
+    Simulation` for SIAM's journal in the first molecular-AI generation.
+    """
+    value = msg.get(key)
+    parts = (
+        [html.unescape(p) for p in value if isinstance(p, str)] if isinstance(value, list) else []
+    )
+    return " ".join(parts) or None
 
 
 def _crossref_authors(msg: dict) -> list[str]:
     names = []
-    for a in msg.get("author", []):
-        parts = [p for p in (a.get("family"), a.get("given")) if p]
-        names.append(", ".join(parts))
+    for a in msg.get("author") or []:
+        if not isinstance(a, dict):
+            continue
+        parts = [p for p in (a.get("family"), a.get("given")) if isinstance(p, str) and p]
+        if parts:
+            names.append(", ".join(parts))
     return names
 
 
 def _crossref_year(msg: dict) -> int | None:
-    issued = (msg.get("issued", {}).get("date-parts") or [[None]])[0][0]
-    return int(issued) if issued else None
+    issued = msg.get("issued")
+    parts = issued.get("date-parts") if isinstance(issued, dict) else None
+    first = parts[0] if isinstance(parts, list) and parts else None
+    year = first[0] if isinstance(first, list) and first else None
+    return int(year) if isinstance(year, int | str) and str(year).isdigit() else None
+
+
+_ABSTRACT_HEADING = re.compile(r"^\s*abstract\s*[:.]?\s*", re.IGNORECASE)
+
+
+def _crossref_abstract(msg: dict) -> str | None:
+    """JATS markup stripped, entities decoded, a leading `Abstract` heading
+    (Nature's and Science's habit) dropped so the embedding sees the text."""
+    raw = msg.get("abstract")
+    if not isinstance(raw, str):
+        return None
+    text = html.unescape(_JATS.sub("", raw)).strip()
+    return _ABSTRACT_HEADING.sub("", text, count=1).strip() or None
 
 
 def _crossref_record(msg: dict, source_key: str, fetched: str | None) -> ReferenceRecord:
@@ -409,10 +504,10 @@ def _crossref_record(msg: dict, source_key: str, fetched: str | None) -> Referen
         title=_joined(msg, "title"),
         authors=_crossref_authors(msg),
         year=_crossref_year(msg),
-        doi=msg.get("DOI"),
+        doi=msg.get("DOI") if isinstance(msg.get("DOI"), str) else None,
         venue=_joined(msg, "container-title"),
-        abstract=_JATS.sub("", msg.get("abstract") or "").strip() or None,
-        url=msg.get("URL"),
+        abstract=_crossref_abstract(msg),
+        url=msg.get("URL") if isinstance(msg.get("URL"), str) else None,
         fetched_at=fetched,
     )
 
@@ -431,10 +526,11 @@ def _json_message(body: bytes | None) -> dict | None:
 class S2Enricher(_Enricher):
     """Reference lists from Semantic Scholar: the only source of citation edges.
 
-    One request per second when the wire is actually touched (cache hits are
-    free), honouring Retry-After through `_cached_get`. Each reference with a
-    DOI, an arXiv id, or at least a title becomes a `reference_cites` row; one
-    with none of those is untraceable and dropped.
+    One request every `_S2_PACE_SECONDS` when the wire is actually touched
+    (cache hits are free), honouring Retry-After through `_cached_get`. Each
+    reference with a DOI, an arXiv id, or a title of at least four words
+    becomes a `reference_cites` row; one with none of those is untraceable
+    and dropped -- see `_s2_cites` for what the short-title rule removes.
     """
 
     name = "s2"
@@ -460,16 +556,41 @@ class S2Enricher(_Enricher):
 
 def _s2_record(data: dict, row, fetched: str | None) -> ReferenceRecord:
     """A Semantic Scholar paper as a record: its ids and its reference list."""
-    ext = data.get("externalIds") or {}
+    ext = _ids(data)
+    title = data.get("title")
+    refs = data.get("references")
     return ReferenceRecord(
         source="s2",
         source_key=row["identity"],
-        title=data.get("title") or row["title"],
+        title=title if isinstance(title, str) and title else row["title"],
         doi=ext.get("DOI"),
         arxiv_id=ext.get("ArXiv"),
         fetched_at=fetched,
-        cites=_s2_cites(data.get("references") or []),
+        cites=_s2_cites(refs if isinstance(refs, list) else []),
     )
+
+
+def _ids(paper: dict) -> dict:
+    """A paper's `externalIds` as a dict of strings, whatever shape the wire sent."""
+    ext = paper.get("externalIds")
+    if not isinstance(ext, dict):
+        return {}
+    return {k: v for k, v in ext.items() if isinstance(v, str) and v}
+
+
+_MIN_TITLE_WORDS = 4
+_WORD = re.compile(r"[a-zA-Z]{3,}")
+
+
+def _traceable_title(title) -> bool:
+    """A reference-list entry with no id is kept only when its title could
+    name a paper: at least four words of three or more letters. Semantic Scholar's parsed
+    reference lists carry `Phys. Rev. B`, `Learn`, `AND T`, `AUTHOR
+    CONTRIBUTIONS` and NeurIPS checklist questions as titled references;
+    a third of GAP's 19 edges were such stubs in the first generation."""
+    if not isinstance(title, str) or "{" in title or "}" in title:
+        return False  # a brace is an equation fragment ("Eτ} and Υ and Γ are MLPs"), never a title
+    return len(_WORD.findall(title)) >= _MIN_TITLE_WORDS
 
 
 def _s2_paper(body: bytes | None) -> dict | None:
@@ -485,12 +606,16 @@ def _s2_paper(body: bytes | None) -> dict | None:
 def _s2_cites(references: list) -> list[tuple[str, str | None]]:
     out = []
     for ref in references:
-        ext = ref.get("externalIds") or {}
-        title = ref.get("title")
+        if not isinstance(ref, dict):
+            continue
+        ext = _ids(ref)
+        title = ref.get("title") if isinstance(ref.get("title"), str) else None
+        if not ext.get("DOI") and not ext.get("ArXiv") and not _traceable_title(title):
+            continue  # no id and no title that could name a paper: untraceable
         try:
             ident = identity(ext.get("DOI"), ext.get("ArXiv"), title, None)
         except ValueError:
-            continue  # no id and no title: untraceable
+            continue
         out.append((ident, title))
     return out
 
@@ -512,8 +637,25 @@ def readers_from_env(
     readers = _offline_readers(conn, bib_paths, zotero_path) + _enrichers(cache_dir)
     if sources:
         wanted = set(sources)
+        if unknown := sorted(wanted - set(SOURCE_NAMES)):
+            raise ValueError(
+                f"unknown source(s) {', '.join(unknown)}; the readers are {', '.join(SOURCE_NAMES)}"
+            )
         readers = [r for r in readers if r.name in wanted]
     return readers
+
+
+def unarmed(sources) -> list[str]:
+    """The requested enrichers whose flag is unset -- so `cite.sync(sources=["s2"])`
+    with no flag says "not armed" instead of the "no sources configured" that
+    reads as a sync that happened."""
+    wanted = set(sources or ())
+    out = []
+    if not citations.web_enabled():
+        out += sorted(wanted & {"arxiv", "crossref"})
+    if not citations.s2_enabled():
+        out += sorted(wanted & {"s2"})
+    return out
 
 
 def _offline_readers(conn, bib_paths, zotero_path) -> list:

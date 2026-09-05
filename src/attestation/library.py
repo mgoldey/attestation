@@ -20,35 +20,59 @@ import httpx
 import numpy as np
 
 _DOI_PREFIX = re.compile(r"^(?:https?://(?:dx\.)?doi\.org/|doi:)\s*", re.IGNORECASE)
+# DataCite mints `10.48550/arxiv.<id>` for every arXiv paper: it names the
+# preprint, not a publication, so it is an arXiv id in DOI clothing. Treating
+# it as a DOI split CHGNet, MACE and DiffDock from their journal DOIs in the
+# first generation of examples/molecular-ai.
+_DATACITE_ARXIV = re.compile(r"^10\.48550/arxiv\.(.+)$", re.IGNORECASE)
 _ARXIV_PREFIX = re.compile(r"^(?:arxiv:)\s*", re.IGNORECASE)
 _ARXIV_VERSION = re.compile(r"v\d+$")
+# Zotero's arXiv translator writes `arXiv: 2106.02347 [cs.LG]` in `extra`.
+_ARXIV_CATEGORY = re.compile(r"\s*\[[^\]]*\]\s*$")
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
+# LaTeX accents and commands as a .bib file writes them: `Schr{\"o}dinger`,
+# `Sch{\"u}tt`, `\'e`, `\emph{x}`. Folded for COMPARISON only; the stored
+# title stays verbatim (de-escaping is the presentation edge's job).
+_LATEX_ACCENT = re.compile(r"\\[\"'`^~=.]")
+_LATEX_COMMAND = re.compile(r"\\[a-zA-Z]+")
 
 
 def normalise_doi(doi: str | None) -> str | None:
-    """Lowercase, scheme and doi.org prefix stripped; None for empty."""
+    """Lowercase, scheme and doi.org prefix stripped; None for empty or DataCite-arXiv."""
     if not doi:
         return None
     out = _DOI_PREFIX.sub("", doi.strip()).lower()
+    if _DATACITE_ARXIV.match(out):
+        return None
     return out or None
 
 
+def arxiv_from_doi(doi: str | None) -> str | None:
+    """The arXiv id a DataCite `10.48550/arxiv.<id>` DOI names; None for any other."""
+    if not doi:
+        return None
+    m = _DATACITE_ARXIV.match(_DOI_PREFIX.sub("", doi.strip()))
+    return normalise_arxiv(m.group(1)) if m else None
+
+
 def normalise_arxiv(arxiv_id: str | None) -> str | None:
-    """`arXiv:2106.02347v3` -> `2106.02347`; old-style ids kept whole."""
+    """`arXiv:2106.02347v3 [cs.LG]` -> `2106.02347`; old-style ids kept whole."""
     if not arxiv_id:
         return None
     out = _ARXIV_PREFIX.sub("", arxiv_id.strip())
+    out = _ARXIV_CATEGORY.sub("", out).strip()
     out = _ARXIV_VERSION.sub("", out)
     return out or None
 
 
 def normalise_title(title: str) -> str:
-    """NFKD, combining marks dropped, lowercase, non-alphanumerics collapsed.
+    """LaTeX folded, NFKD, combining marks dropped, lowercase, non-alphanumerics collapsed.
 
     Leading articles are kept on purpose: dropping them merges "A survey"
     with "Survey", which are different papers more often than not.
     """
-    decomposed = unicodedata.normalize("NFKD", title)
+    folded = _LATEX_COMMAND.sub(" ", _LATEX_ACCENT.sub("", title)).replace("{", "").replace("}", "")
+    decomposed = unicodedata.normalize("NFKD", folded)
     ascii_only = "".join(c for c in decomposed if not unicodedata.combining(c))
     return _NON_ALNUM.sub(" ", ascii_only.lower()).strip()
 
@@ -58,11 +82,12 @@ def identity(doi: str | None, arxiv_id: str | None, title: str | None, year: int
 
     DOI beats arXiv because a preprint that is later published gains a DOI
     while keeping its arXiv id; a row carries both columns so a record that
-    knows only the arXiv id still finds it (see `upsert`).
+    knows only the arXiv id still finds it (see `upsert`). A DataCite arXiv
+    DOI counts as the arXiv id it names, ranked below a publisher's DOI.
     """
     if d := normalise_doi(doi):
         return f"doi:{d}"
-    if a := normalise_arxiv(arxiv_id):
+    if a := normalise_arxiv(arxiv_id) or arxiv_from_doi(doi):
         return f"arxiv:{a}"
     if title and (t := normalise_title(title)):
         return f"title:{t}:{year if year is not None else '-'}"
@@ -108,7 +133,22 @@ def merge(existing: dict, incoming: dict) -> tuple[dict, dict]:
         if _same(name, kept, offered):
             continue
         conflicts[name] = {"kept": kept, "offered": offered}
+    _year_follows_venue(existing, incoming, merged, conflicts)
     return merged, conflicts
+
+
+def _year_follows_venue(existing: dict, incoming: dict, merged: dict, conflicts: dict) -> None:
+    """A venue and its year travel together: the source that names the journal
+    names the publication year, and a preprint's year beside a journal name is
+    a wrong citation. Eleven of the first molecular-AI generation's 48 entries
+    read `Nature Communications 2021` for a 2022 paper this way. The one
+    exception to first-wins, and it is recorded as a conflict like any other.
+    """
+    venue_filled = not existing.get("venue") and incoming.get("venue")
+    kept, offered = existing.get("year"), incoming.get("year")
+    if venue_filled and kept and offered and kept != offered:
+        merged["year"] = offered
+        conflicts["year"] = {"kept": offered, "offered": kept, "note": "the venue's year wins"}
 
 
 @dataclass
@@ -141,7 +181,7 @@ class ReferenceRecord:
         """The `references` columns this record can fill (empty ones omitted)."""
         out = {
             "doi": normalise_doi(self.doi),
-            "arxiv_id": normalise_arxiv(self.arxiv_id),
+            "arxiv_id": normalise_arxiv(self.arxiv_id) or arxiv_from_doi(self.doi),
             "title": self.title,
             "authors": list(self.authors),
             "year": self.year,
@@ -164,16 +204,50 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _find(conn: sqlite3.Connection, fields: dict, ident: str):
-    """The row this record belongs to: by identity, then DOI, then arXiv id."""
-    for sql, val in (
-        ('SELECT * FROM "references" WHERE identity = ?', ident),
-        ('SELECT * FROM "references" WHERE doi = ?', fields.get("doi")),
-        ('SELECT * FROM "references" WHERE arxiv_id = ?', fields.get("arxiv_id")),
-    ):
+def _row_by_ids(
+    conn: sqlite3.Connection,
+    *,
+    identity: str | None = None,
+    doi: str | None = None,
+    arxiv_id: str | None = None,
+    title_forms: tuple[str, ...] = (),
+    bib_key: str | None = None,
+) -> sqlite3.Row | None:
+    """The one lookup ladder: identity, DOI column, arXiv column, the title
+    identities a record would have had without its ids, then bib key."""
+    ladder: list[tuple[str, str | None]] = [
+        ('SELECT * FROM "references" WHERE identity = ?', identity),
+        ('SELECT * FROM "references" WHERE doi = ?', doi),
+        ('SELECT * FROM "references" WHERE arxiv_id = ?', arxiv_id),
+        *(('SELECT * FROM "references" WHERE identity = ?', t) for t in title_forms),
+        ('SELECT * FROM "references" WHERE bib_key = ? COLLATE NOCASE', bib_key),
+    ]
+    for sql, val in ladder:
         if val and (row := conn.execute(sql, (val,)).fetchone()):
             return row
     return None
+
+
+def _title_forms(fields: dict) -> tuple[str, ...]:
+    """The title identities a record carrying ids would otherwise have, so a
+    hand-typed .bib row with no DOI still meets the DOI-bearing record for the
+    same paper (dated and undated forms both)."""
+    title = fields.get("title")
+    if not title or not (t := normalise_title(title)):
+        return ()
+    year = fields.get("year")
+    return tuple(dict.fromkeys((f"title:{t}:{year if year is not None else '-'}", f"title:{t}:-")))
+
+
+def _find(conn: sqlite3.Connection, fields: dict, ident: str):
+    """The row this record belongs to: by identity, DOI, arXiv id, then title form."""
+    return _row_by_ids(
+        conn,
+        identity=ident,
+        doi=fields.get("doi"),
+        arxiv_id=fields.get("arxiv_id"),
+        title_forms=_title_forms(fields),
+    )
 
 
 def _insert(conn: sqlite3.Connection, ident: str, fields: dict, now: str) -> int:
@@ -201,6 +275,25 @@ def _insert(conn: sqlite3.Connection, ident: str, fields: dict, now: str) -> int
     return cur.lastrowid
 
 
+def _upgrade_identity(conn, row, new_ident: str, changed: dict, conflicts: dict) -> None:
+    """Move `row` to the identity its merged ids now give it -- unless another
+    row already holds it. Two rows that prove to be one paper are not folded
+    here (sources, tags, edges and a vector would all have to move): the ids
+    are refused, the collision is recorded, and both keep their provenance.
+    """
+    holder = _row_by_ids(conn, identity=new_ident)
+    if holder is None or holder["id"] == row["id"]:
+        changed["identity"] = new_ident
+        return
+    for c in ("doi", "arxiv_id"):
+        changed.pop(c, None)
+    conflicts["identity"] = {
+        "kept": row["identity"],
+        "offered": new_ident,
+        "note": f"already names reference {holder['id']}",
+    }
+
+
 def _update(conn: sqlite3.Connection, row, fields: dict, now: str) -> tuple[str, dict]:
     """Merge `fields` into `row`; returns (merged|unchanged, conflicts)."""
     existing = {c: row[c] for c in _COLUMNS}
@@ -211,7 +304,7 @@ def _update(conn: sqlite3.Connection, row, fields: dict, now: str) -> tuple[str,
         merged.get("doi"), merged.get("arxiv_id"), merged.get("title"), merged.get("year")
     )
     if new_ident != row["identity"]:
-        changed["identity"] = new_ident
+        _upgrade_identity(conn, row, new_ident, changed, conflicts)
     if not changed:
         return "unchanged", conflicts
     sets = ", ".join(f"{c} = ?" for c in changed) + ", updated = ?"
@@ -220,40 +313,54 @@ def _update(conn: sqlite3.Connection, row, fields: dict, now: str) -> tuple[str,
     return "merged", conflicts
 
 
-def upsert(conn: sqlite3.Connection, rec: ReferenceRecord) -> tuple[int, str]:
-    """Merge one record into the store. Returns (id, added|merged|unchanged).
-
-    Lookup order: identity, DOI, arXiv id -- so a record that knows only the
-    arXiv id still finds the row a DOI-bearing record created, and a row
-    created from an arXiv id is upgraded to the DOI identity when one arrives.
-    The source row is written once per (source, key) and carries the fields
-    that source offered plus any conflict merge() refused.
-    """
-    fields = rec.fields()
-    ident = identity(
-        fields.get("doi"), fields.get("arxiv_id"), fields.get("title"), fields.get("year")
-    )
-    now = _now()
-    row = _find(conn, fields, ident)
-    if row is None:
-        rid, how, conflicts = _insert(conn, ident, fields, now), "added", {}
-    else:
-        rid = row["id"]
-        how, conflicts = _update(conn, row, fields, now)
+def _write_source_row(conn, rid: int, rec: ReferenceRecord, fields: dict, conflicts: dict) -> None:
+    """Once per (source, key): what this source offered, minus the abstract, plus
+    what merge() refused. Written for a titleless enricher miss too -- that
+    row is what marks the reference as tried."""
     seen = conn.execute(
         "SELECT 1 FROM reference_sources WHERE reference_id = ? AND source = ? AND source_key = ?",
         (rid, rec.source, rec.source_key),
     ).fetchone()
-    if seen is None:
-        raw = {
-            "fields": {k: v for k, v in fields.items() if k != "abstract"},
-            "conflicts": conflicts,
-        }
-        conn.execute(
-            "INSERT INTO reference_sources(reference_id, source, source_key, fetched_at, raw)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (rid, rec.source, rec.source_key, rec.fetched_at, json.dumps(raw)),
-        )
+    if seen is not None:
+        return
+    raw = {
+        "fields": {k: v for k, v in fields.items() if k != "abstract"},
+        "conflicts": conflicts,
+    }
+    conn.execute(
+        "INSERT INTO reference_sources(reference_id, source, source_key, fetched_at, raw)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (rid, rec.source, rec.source_key, rec.fetched_at, json.dumps(raw)),
+    )
+
+
+def upsert(conn: sqlite3.Connection, rec: ReferenceRecord, *, row=None) -> tuple[int, str]:
+    """Merge one record into the store. Returns (id, added|merged|unchanged).
+
+    Lookup order: identity, DOI, arXiv id, title form -- so a record that
+    knows only the arXiv id still finds the row a DOI-bearing record created,
+    and a row created from an arXiv id is upgraded to the DOI identity when
+    one arrives. An enricher passes `row`, the row it was fetched FOR: its
+    answer attaches there whatever ids it carries, and a titleless answer (a
+    miss) writes only the source row that marks the row as tried. The source
+    row is written once per (source, key) and carries the fields that source
+    offered plus any conflict merge() refused.
+    """
+    fields = rec.fields()
+    now = _now()
+    ident = identity(
+        fields.get("doi"), fields.get("arxiv_id"), fields.get("title"), fields.get("year")
+    )
+    if row is None:
+        row = _find(conn, fields, ident)
+    if row is None:
+        rid, how, conflicts = _insert(conn, ident, fields, now), "added", {}
+    elif "title" not in fields:
+        rid, how, conflicts = row["id"], "unchanged", {}
+    else:
+        rid = row["id"]
+        how, conflicts = _update(conn, row, fields, now)
+    _write_source_row(conn, rid, rec, fields, conflicts)
     if rec.tags:
         # Tags from a file (a .bib `keywords` field) only ever ADD: they never
         # delete what the tagger wrote, and the tagger never deletes them.
@@ -320,24 +427,40 @@ def _conflicts_of(conn: sqlite3.Connection, rec: ReferenceRecord) -> dict:
 def _absorb(conn, reader, rec: ReferenceRecord, bucket: dict, report: SyncReport) -> None:
     """One record into the store, counted into its reader's bucket."""
     bucket["seen"] += 1
-    if rec.title is None:
-        # An offline record with no title cannot be a row; an enricher that
-        # found nothing still marks the row as tried.
+    if not reader.network:
+        if rec.title is None:
+            bucket["failed"] += 1  # an offline record with no title cannot be a row
+            return
+        _, how = upsert(conn, rec)
+        bucket[how] += 1
+        if how == "merged":
+            _note_conflicts(conn, rec, report)
+        return
+    # An enricher's answer belongs to the row it was fetched FOR (its
+    # `source_key` is that row's identity), never to whatever row the ids it
+    # carries would select: merging by the carried ids let a Semantic Scholar
+    # answer INSERT a second row for a Zotero paper, and let a 404 -- a
+    # titleless miss -- write nothing, so the row was fetched again on every
+    # sync (measured 2026-09-05, review round 1).
+    target = _row_for_identity(conn, rec.source_key)
+    if target is None:
         bucket["failed"] += 1
         return
-    _, how = upsert(conn, rec)
-    bucket["enriched" if reader.network else how] += 1
-    if how == "merged" or reader.network:
-        conflicts = _conflicts_of(conn, rec)
-        report.conflicts += len(conflicts)
-        report.conflict_samples.extend((rec.source_key, f) for f in conflicts)
-    if reader.network:
-        # Commit per record, not per reader: an enricher sleeps between
-        # requests (S2 paces at seconds per row), and a write lock held across
-        # those sleeps blocked `attest library tag` on the same database with
-        # "database is locked" -- measured 2026-09-05 while generating
-        # examples/molecular-ai.
-        conn.commit()
+    upsert(conn, rec, row=target)
+    bucket["enriched" if rec.title is not None else "failed"] += 1
+    _note_conflicts(conn, rec, report)
+    # Commit per record, not per reader: an enricher sleeps between
+    # requests (S2 paces at seconds per row), and a write lock held across
+    # those sleeps blocked `attest library tag` on the same database with
+    # "database is locked" -- measured 2026-09-05 while generating
+    # examples/molecular-ai.
+    conn.commit()
+
+
+def _note_conflicts(conn, rec: ReferenceRecord, report: SyncReport) -> None:
+    conflicts = _conflicts_of(conn, rec)
+    report.conflicts += len(conflicts)
+    report.conflict_samples.extend((rec.source_key, f) for f in conflicts)
 
 
 def sync(conn: sqlite3.Connection, readers, *, embedder=None, limit: int | None = None):
@@ -396,6 +519,11 @@ def embed_missing(conn, embedder, limit: int | None) -> tuple[int, int, str | No
             "INSERT INTO reference_vectors(rowid, embedding) VALUES (?, ?)",
             (row["id"], np.asarray(vec, dtype=np.float32).tobytes()),
         )
+        # One write per row, committed before the next embed call: the first
+        # INSERT opens sqlite's implicit transaction, and a single commit at
+        # the end held the write lock across every HTTP call after it -- a
+        # 40-minute full embed would have blocked feed.rate and ingest.
+        conn.commit()
         done += 1
     conn.commit()
     return done, _count(conn, _UNEMBEDDED), error
@@ -405,12 +533,9 @@ def embed_missing(conn, embedder, limit: int | None) -> tuple[int, int, str | No
 # search
 # ---------------------------------------------------------------------------
 
-_ID_QUERY = re.compile(
-    r"^(10\.\d{4,9}/\S+|(?:arxiv:)?\d{4}\.\d{4,5}(?:v\d+)?|(?:arxiv:)?[a-z\-]+/\d{7})$",
-    re.IGNORECASE,
-)
 # A literal match moves a hit up; it never excludes one. Measured on the feed:
-# flooring on a literal made all 711 "llm" matches tie.
+# flooring on a literal made all 711 "llm" matches tie. Whole tokens only:
+# "ion" inside "diffusion" is not a literal hit.
 _LITERAL_BOOST = 0.02
 
 
@@ -531,39 +656,56 @@ def _fielded_where(author, year, year_from, year_to, tag, source) -> tuple[str, 
 def lookup_row(conn: sqlite3.Connection, key: str):
     """A row by identity, DOI, arXiv id, or bib key -- the direct forms."""
     k = key.strip()
-    for sql, val in (
-        ('SELECT * FROM "references" WHERE identity = ?', k.lower()),
-        ('SELECT * FROM "references" WHERE doi = ?', normalise_doi(k)),
-        ('SELECT * FROM "references" WHERE arxiv_id = ?', normalise_arxiv(k)),
-        ('SELECT * FROM "references" WHERE bib_key = ? COLLATE NOCASE', k),
-    ):
-        if val and (row := conn.execute(sql, (val,)).fetchone()):
-            return row
-    return None
+    return _row_by_ids(
+        conn,
+        identity=k.lower(),
+        doi=normalise_doi(k),
+        arxiv_id=normalise_arxiv(k) or arxiv_from_doi(k),
+        bib_key=k,
+    )
+
+
+def _candidates(conn, embedder, q: str, where: str, params: list, limit: int) -> dict[int, float]:
+    """rowid -> similarity for the rows the filters admit, the floor applied
+    AFTER the filter: flooring the global top-k and then filtering returned
+    an empty `semantic: true` answer for any author or year outside the
+    nearest twenty (review round 1, 2026-09-05). With a filter the KNN runs
+    over every vector -- sqlite-vec scans them all either way."""
+    from attestation.rank import apply_relevance_floor, vector_search
+
+    allowed: set[int] | None = None
+    if where != "1=1":
+        allowed = {
+            r["id"] for r in conn.execute(f'SELECT r.id FROM "references" r WHERE {where}', params)
+        }
+        if not allowed:
+            return {}
+    k = 4 * limit if allowed is None else _count(conn, "SELECT count(*) FROM reference_vectors")
+    raw = vector_search(conn, embedder, q, k=k, table="reference_vectors")
+    if allowed is not None:
+        raw = {i: s for i, s in raw.items() if i in allowed}
+        raw = dict(sorted(raw.items(), key=lambda kv: -kv[1])[: 4 * limit])
+    return apply_relevance_floor(raw)
 
 
 def _semantic(conn, embedder, q: str, where: str, params: list, limit: int) -> SearchResult | None:
-    """KNN over reference_vectors, the relative floor, the filters, the boost;
+    """KNN over reference_vectors, the filters, the relative floor, the boost;
     None when the wire could not be reached or nothing cleared the floor."""
-    from attestation.rank import apply_relevance_floor, vector_search
-
     try:
-        raw = vector_search(conn, embedder, q, k=4 * limit, table="reference_vectors")
+        sims = _candidates(conn, embedder, q, where, params, limit)
     except (httpx.HTTPError, OSError):
         return None
-    sims = apply_relevance_floor(raw)
     if not sims:
         return None
     marks = ",".join("?" * len(sims))
     rows = conn.execute(
-        f'SELECT * FROM "references" r WHERE r.id IN ({marks}) AND {where}',
-        (*sims.keys(), *params),
+        f'SELECT * FROM "references" r WHERE r.id IN ({marks})', tuple(sims.keys())
     ).fetchall()
     words = [w for w in normalise_title(q).split() if len(w) > 2]
 
     def _score(r) -> float:
-        text = normalise_title(f"{r['title']} {r['abstract'] or ''}")
-        return sims[r["id"]] + _LITERAL_BOOST * sum(w in text for w in words)
+        tokens = set(normalise_title(f"{r['title']} {r['abstract'] or ''}").split())
+        return sims[r["id"]] + _LITERAL_BOOST * sum(w in tokens for w in words)
 
     rows.sort(key=_score, reverse=True)
     hits = [_hit(conn, r, round(sims[r["id"]], 4)) for r in rows[:limit]]
@@ -575,14 +717,24 @@ def _semantic(conn, embedder, q: str, where: str, params: list, limit: int) -> S
     return SearchResult(hits, semantic=True, caveat=caveat, n_matches=len(rows))
 
 
+_TEXT = (
+    "lower(r.title || ' ' || coalesce(r.abstract, '') || ' ' || r.authors"
+    " || ' ' || coalesce(r.bib_key, ''))"
+)
+
+
 def _substring(conn, q: str, where: str, params: list, limit: int, reason: str) -> SearchResult:
-    like = f"%{q.lower()}%" if q else "%"
+    """Every query word somewhere in title, abstract, authors or key (AND), newest first.
+
+    Word-AND rather than the whole phrase: measured on examples/molecular-ai,
+    the phrase form found nothing for 7 of 10 queries while word-AND found
+    the paper for all 10 -- it just cannot rank them, which is the caveat.
+    """
+    words = [w for w in q.lower().split() if w] or [""]
+    clauses = " AND ".join(f"{_TEXT} LIKE ?" for _ in words)
     rows = conn.execute(
-        f'SELECT * FROM "references" r WHERE {where} AND ('
-        " lower(r.title) LIKE ? OR lower(coalesce(r.abstract, '')) LIKE ?"
-        " OR lower(r.authors) LIKE ? OR lower(coalesce(r.bib_key, '')) LIKE ?)"
-        " ORDER BY r.year DESC, r.title",
-        (*params, like, like, like, like),
+        f'SELECT * FROM "references" r WHERE {where} AND ({clauses}) ORDER BY r.year DESC, r.title',
+        (*params, *(f"%{w}%" for w in words)),
     ).fetchall()
     return SearchResult(
         [_hit(conn, r) for r in rows[:limit]], semantic=False, caveat=reason, n_matches=len(rows)
@@ -718,14 +870,12 @@ def _identity_forms(row) -> list[str]:
 def _row_for_identity(conn: sqlite3.Connection, ident: str):
     """The row an identity names, by identity, DOI or arXiv column."""
     kind, _, value = ident.partition(":")
-    for sql, val in (
-        ('SELECT * FROM "references" WHERE identity = ?', ident),
-        ('SELECT * FROM "references" WHERE doi = ?', value if kind == "doi" else None),
-        ('SELECT * FROM "references" WHERE arxiv_id = ?', value if kind == "arxiv" else None),
-    ):
-        if val and (row := conn.execute(sql, (val,)).fetchone()):
-            return row
-    return None
+    return _row_by_ids(
+        conn,
+        identity=ident,
+        doi=value if kind == "doi" else None,
+        arxiv_id=value if kind == "arxiv" else None,
+    )
 
 
 def _neighbour(conn: sqlite3.Connection, ident: str, title: str | None) -> Neighbour:
@@ -735,8 +885,9 @@ def _neighbour(conn: sqlite3.Connection, ident: str, title: str | None) -> Neigh
     return Neighbour(ident, row["title"], True, row["bib_key"] or row["identity"], row["id"])
 
 
-def _neighbour_order(n: Neighbour) -> tuple[bool, str]:
-    return (not n.in_library, (n.title or "").lower())
+def _neighbour_order(n: Neighbour) -> tuple[bool, bool, str]:
+    """In-library first, then stubs with an id before title-only stubs, then title."""
+    return (not n.in_library, n.identity.startswith("title:"), (n.title or "").lower())
 
 
 def related(conn: sqlite3.Connection, key: str) -> Related | None:

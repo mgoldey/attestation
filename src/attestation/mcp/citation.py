@@ -46,12 +46,20 @@ def _lookup(conn, key: str) -> dict:
                 (row["id"],),
             )
         ]
-        conflicts = {s["source"]: json.loads(s.pop("raw")).get("conflicts", {}) for s in sources}
-        return {
-            "reference": ref.to_row(),
-            "sources": sources,
-            "conflicts": {k: v for k, v in conflicts.items() if v},
-        }
+        # Keyed by source, and by source:key when one source contributed twice
+        # (a cross-listed arXiv paper is two feed rows) so neither row's
+        # conflicts hide the other's.
+        conflicts: dict = {}
+        for s in sources:
+            found = json.loads(s.pop("raw")).get("conflicts", {})
+            if found:
+                key = (
+                    s["source"]
+                    if s["source"] not in conflicts
+                    else f"{s['source']}:{s['source_key']}"
+                )
+                conflicts[key] = found
+        return {"reference": ref.to_row(), "sources": sources, "conflicts": conflicts}
     resolver = _resolver()
     found = resolver.lookup(key)
     if found is None:
@@ -167,7 +175,10 @@ def _sources(conn) -> dict:
 def _sync(conn, sources: list[str] | None = None, limit: int | None = None) -> dict:
     from attestation import library, library_readers
 
-    readers = library_readers.readers_from_env(conn, sources=sources)
+    try:
+        readers = library_readers.readers_from_env(conn, sources=sources)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
     report = library.sync(conn, readers, embedder=_embedder(), limit=limit)
     out = report.to_dict()
     lines = []
@@ -178,6 +189,9 @@ def _sync(conn, sources: list[str] | None = None, limit: int | None = None) -> d
         if b["failed"]:
             line += f", {b['failed']} failed"
         lines.append(line)
+    for name in library_readers.unarmed(sources):
+        flag = "ATTEST_CITATION_SCHOLAR" if name == "s2" else "ATTEST_CITATION_WEB"
+        lines.append(f"{name}: not armed ({flag} is unset), nothing fetched")
     out["message"] = "; ".join(lines) or "no sources configured"
     return out
 
