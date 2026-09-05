@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <title type="html">ArXiv Query: search_query=&amp;id_list=1706.08566&amp;start=0&amp;max_results=1</title>
+  <id>http://arxiv.org/api/query?id_list=1706.08566</id>
+  <totalResults xmlns="http://a9.com/-/spec/opensearch/1.1/">1</totalResults>
+  <entry>
+    <id>http://arxiv.org/abs/1706.08566v5</id>
+    <updated>2017-12-19T15:29:06Z</updated>
+    <published>2017-06-26T17:20:08Z</published>
+    <title>SchNet: A continuous-filter convolutional neural network for modeling
+  quantum interactions</title>
+    <summary>  Deep learning has the potential to revolutionize quantum chemistry as it is
+ideally suited to learn representations for structured data and speed up the
+exploration of chemical space.
+</summary>
+    <author><name>Kristof T. Schütt</name></author>
+    <author><name>Pieter-Jan Kindermans</name></author>
+    <arxiv:doi xmlns:arxiv="http://arxiv.org/schemas/atom">10.5555/schnet</arxiv:doi>
+    <link href="http://arxiv.org/abs/1706.08566v5" rel="alternate" type="text/html"/>
+    <arxiv:primary_category xmlns:arxiv="http://arxiv.org/schemas/atom" term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+</feed>

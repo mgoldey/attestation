@@ -38,6 +38,42 @@ from pathlib import Path
 DEFAULT_ZOTERO = Path.home() / "Zotero" / "zotero.sqlite"
 
 
+def _flag(name: str) -> bool:
+    return os.environ.get(name, "").strip() not in ("", "0", "false")
+
+
+def web_enabled() -> bool:
+    """ATTEST_CITATION_WEB: CrossRef and the arXiv API.
+
+    Read by the caller that BUILDS readers, never by a reader at call time --
+    a disabled reader cannot be coaxed into one request by an unusual path.
+    """
+    return _flag("ATTEST_CITATION_WEB")
+
+
+def s2_enabled() -> bool:
+    """ATTEST_CITATION_S2: Semantic Scholar reference lists.
+
+    A second flag because reference lists are a larger, rate-limited surface
+    than a metadata lookup, and a reader who accepts one need not accept both.
+    """
+    return _flag("ATTEST_CITATION_S2")
+
+
+def bib_paths_from_env() -> list[Path]:
+    """ATTEST_BIB_PATHS (os.pathsep-separated), else every `*.bib` in the cwd."""
+    configured = os.environ.get("ATTEST_BIB_PATHS", "")
+    if configured.strip():
+        return [Path(p).expanduser() for p in configured.split(os.pathsep) if p.strip()]
+    return sorted(Path.cwd().glob("*.bib"))
+
+
+def zotero_path_from_env() -> Path:
+    """ATTEST_ZOTERO_PATH, else Zotero's default location."""
+    configured = os.environ.get("ATTEST_ZOTERO_PATH", "")
+    return Path(configured).expanduser() if configured.strip() else DEFAULT_ZOTERO
+
+
 @dataclass(frozen=True)
 class Reference:
     """One bibliographic record, and where it came from.
@@ -418,17 +454,17 @@ class Resolver:
     def from_env(cls, *, zotero_path=None, bib_paths=None, cache_dir=None) -> Resolver:
         """Build from the environment.
 
-        `ATTEST_CITATION_WEB` is read HERE and nowhere else. Reading it at call
+        `ATTEST_CITATION_WEB` is read HERE (via `web_enabled`) and by the
+        library sync's reader list, both at construction. Reading it at call
         time would mean a resolver built while disabled could still make a
         request if the variable changed under it.
         """
-        readers: list = (
-            [ZoteroReader(zotero_path)] if zotero_path or DEFAULT_ZOTERO.is_file() else []
-        )
-        paths = list(bib_paths) if bib_paths else sorted(Path.cwd().glob("*.bib"))
+        zotero_path = zotero_path or zotero_path_from_env()
+        readers: list = [ZoteroReader(zotero_path)] if zotero_path.is_file() else []
+        paths = list(bib_paths) if bib_paths else bib_paths_from_env()
         if paths:
             readers.append(BibtexReader(paths))
-        if os.environ.get("ATTEST_CITATION_WEB", "").strip() not in ("", "0", "false"):
+        if web_enabled():
             readers.append(WebReader(cache_dir))
         return cls(readers)
 

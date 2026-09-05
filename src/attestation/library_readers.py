@@ -9,12 +9,27 @@ web's, and keeps `cite.sources`' `offline` answer honest (spec §3.1).
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import sqlite3
+import time
+import xml.etree.ElementTree as ET
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
+
 from attestation import citations
-from attestation.library import ReferenceRecord
+from attestation.library import ReferenceRecord, identity
+
+DEFAULT_CACHE = Path.home() / ".hermes" / "citation-cache"
+_ATOM = "{http://www.w3.org/2005/Atom}"
+_ARXIV_NS = "{http://arxiv.org/schemas/atom}"
+_JATS = re.compile(r"<[^>]+>")
+_ARXIV_BATCH = 50
+_S2_FIELDS = "title,externalIds,references.title,references.externalIds"
 
 
 def _bib_authors(value: str) -> list[str]:
@@ -107,3 +122,276 @@ class FeedRecords:
                 abstract=r["summary"] or None,
                 url=r["url"],
             )
+
+
+# ---------------------------------------------------------------------------
+# the network: enrichers, cached content-addressed, armed only by a flag
+# ---------------------------------------------------------------------------
+
+
+def _client() -> httpx.Client:
+    """One place to build the HTTP client, so tests can swap the transport."""
+    return httpx.Client(timeout=15.0, headers={"User-Agent": "attestation/library"})
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def _cache_path(cache_dir: Path, url: str) -> Path:
+    return cache_dir / f"{hashlib.sha256(url.encode()).hexdigest()[:24]}.json"
+
+
+def _cached_get(cache_dir: Path, url: str) -> tuple[bytes | None, str | None, str | None]:
+    """(body, fetched_at, error). A cache hit keeps the ORIGINAL fetched_at.
+
+    Three attempts on 429/5xx, sleeping Retry-After or 2 s. Every other
+    failure is returned as `error`, never raised: a dead network is an absent
+    source, and the sync must finish. The cache is the citations spec's:
+    content-addressed, never expiring, 0700 dir / 0600 file, and it must not
+    launder a wire record into one that looks local.
+    """
+    path = _cache_path(cache_dir, url)
+    if path.is_file():
+        rec = json.loads(path.read_text())
+        return rec["body"].encode(), rec["fetched_at"], None
+    error = None
+    for _attempt in range(3):
+        try:
+            with _client() as client:
+                resp = client.get(url)
+        except httpx.HTTPError as exc:
+            return None, None, f"{type(exc).__name__}: {exc}"
+        if resp.status_code == 429 or resp.status_code >= 500:
+            error = f"HTTP {resp.status_code}"
+            _sleep(float(resp.headers.get("Retry-After") or 2))
+            continue
+        if resp.status_code != 200:
+            return None, None, f"HTTP {resp.status_code}"
+        fetched = datetime.now(UTC).date().isoformat()
+        existed = cache_dir.is_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not existed:
+            citations._chmod(cache_dir, 0o700)
+        path.write_text(json.dumps({"url": url, "fetched_at": fetched, "body": resp.text}))
+        citations._chmod(path, 0o600)
+        return resp.content, fetched, None
+    return None, None, error
+
+
+class _Enricher:
+    """Base: selects the rows it has not yet touched, oldest `updated` first."""
+
+    network = True
+    name = ""
+    where = "1=1"
+
+    def __init__(self, cache_dir: Path | None = None):
+        self.cache_dir = cache_dir or DEFAULT_CACHE
+
+    def _todo(self, conn: sqlite3.Connection, limit: int | None):
+        sql = (
+            'SELECT * FROM "references" r WHERE '
+            + self.where
+            + " AND NOT EXISTS (SELECT 1 FROM reference_sources s"
+            " WHERE s.reference_id = r.id AND s.source = ?) ORDER BY r.updated, r.id"
+        )
+        params: tuple = (self.name,)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params += (limit,)
+        return conn.execute(sql, params).fetchall()
+
+    def _miss(self, row, fetched: str | None) -> ReferenceRecord:
+        """A record for a row the wire had nothing for: marks the row as tried."""
+        return ReferenceRecord(
+            source=self.name,
+            source_key=row["identity"],
+            doi=row["doi"],
+            arxiv_id=row["arxiv_id"],
+            fetched_at=fetched,
+        )
+
+
+class ArxivEnricher(_Enricher):
+    """Abstract, authors, title and DOI from the arXiv API, 50 ids per request."""
+
+    name = "arxiv"
+    where = "r.arxiv_id IS NOT NULL"
+
+    def records(self, conn: sqlite3.Connection, limit: int | None) -> Iterator[ReferenceRecord]:
+        rows = self._todo(conn, limit)
+        for i in range(0, len(rows), _ARXIV_BATCH):
+            batch = rows[i : i + _ARXIV_BATCH]
+            ids = ",".join(r["arxiv_id"] for r in batch)
+            url = f"http://export.arxiv.org/api/query?id_list={ids}&max_results={len(batch)}"
+            body, fetched, _error = _cached_get(self.cache_dir, url)
+            found = _parse_arxiv(body, fetched) if body else {}
+            for r in batch:
+                rec = found.get(r["arxiv_id"])
+                if rec is None:
+                    yield self._miss(r, fetched)
+                else:
+                    rec.source_key = r["identity"]
+                    yield rec
+
+
+def _parse_arxiv(body: bytes, fetched: str | None) -> dict[str, ReferenceRecord]:
+    """arXiv Atom entries keyed by versionless id."""
+    out: dict[str, ReferenceRecord] = {}
+    for entry in ET.fromstring(body).iter(f"{_ATOM}entry"):
+        aid = (entry.findtext(f"{_ATOM}id") or "").rsplit("/", 1)[-1]
+        aid = re.sub(r"v\d+$", "", aid)
+        if not aid:
+            continue
+        doi_el = entry.find(f"{_ARXIV_NS}doi")
+        published = entry.findtext(f"{_ATOM}published") or ""
+        out[aid] = ReferenceRecord(
+            source="arxiv",
+            source_key=aid,
+            title=" ".join((entry.findtext(f"{_ATOM}title") or "").split()) or None,
+            authors=[a.findtext(f"{_ATOM}name") or "" for a in entry.iter(f"{_ATOM}author")],
+            year=int(published[:4]) if published[:4].isdigit() else None,
+            doi=doi_el.text if doi_el is not None else None,
+            arxiv_id=aid,
+            abstract=" ".join((entry.findtext(f"{_ATOM}summary") or "").split()) or None,
+            url=f"https://arxiv.org/abs/{aid}",
+            fetched_at=fetched,
+        )
+    return out
+
+
+class CrossrefEnricher(_Enricher):
+    """Venue, authors, title, year and abstract from CrossRef, one request per DOI."""
+
+    name = "crossref"
+    where = "r.doi IS NOT NULL"
+
+    def records(self, conn: sqlite3.Connection, limit: int | None) -> Iterator[ReferenceRecord]:
+        for r in self._todo(conn, limit):
+            url = f"https://api.crossref.org/works/{r['doi']}"
+            body, fetched, _error = _cached_get(self.cache_dir, url)
+            msg = _json_message(body)
+            if msg is None:
+                yield self._miss(r, fetched)
+                continue
+            issued = (msg.get("issued", {}).get("date-parts") or [[None]])[0][0]
+            yield ReferenceRecord(
+                source=self.name,
+                source_key=r["identity"],
+                title=" ".join(msg.get("title") or []) or None,
+                authors=[
+                    ", ".join(p for p in (a.get("family"), a.get("given")) if p)
+                    for a in msg.get("author", [])
+                ],
+                year=int(issued) if issued else None,
+                doi=msg.get("DOI"),
+                venue=" ".join(msg.get("container-title") or []) or None,
+                abstract=_JATS.sub("", msg.get("abstract") or "").strip() or None,
+                url=msg.get("URL"),
+                fetched_at=fetched,
+            )
+
+
+def _json_message(body: bytes | None) -> dict | None:
+    if not body:
+        return None
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return None
+    msg = data.get("message") if isinstance(data, dict) else None
+    return msg if isinstance(msg, dict) else None
+
+
+class S2Enricher(_Enricher):
+    """Reference lists from Semantic Scholar: the only source of citation edges.
+
+    One request per second when the wire is actually touched (cache hits are
+    free), honouring Retry-After through `_cached_get`. Each reference with a
+    DOI, an arXiv id, or at least a title becomes a `reference_cites` row; one
+    with none of those is untraceable and dropped.
+    """
+
+    name = "s2"
+    where = "(r.doi IS NOT NULL OR r.arxiv_id IS NOT NULL)"
+
+    def records(self, conn: sqlite3.Connection, limit: int | None) -> Iterator[ReferenceRecord]:
+        for r in self._todo(conn, limit):
+            paper = f"DOI:{r['doi']}" if r["doi"] else f"arXiv:{r['arxiv_id']}"
+            url = f"https://api.semanticscholar.org/graph/v1/paper/{paper}?fields={_S2_FIELDS}"
+            on_wire = not _cache_path(self.cache_dir, url).is_file()
+            body, fetched, _error = _cached_get(self.cache_dir, url)
+            if on_wire:
+                _sleep(1.0)
+            data = _s2_paper(body)
+            if data is None:
+                yield self._miss(r, fetched)
+                continue
+            ext = data.get("externalIds") or {}
+            yield ReferenceRecord(
+                source=self.name,
+                source_key=r["identity"],
+                title=data.get("title") or r["title"],
+                doi=ext.get("DOI"),
+                arxiv_id=ext.get("ArXiv"),
+                fetched_at=fetched,
+                cites=_s2_cites(data.get("references") or []),
+            )
+
+
+def _s2_paper(body: bytes | None) -> dict | None:
+    if not body:
+        return None
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) and "paperId" in data else None
+
+
+def _s2_cites(references: list) -> list[tuple[str, str | None]]:
+    out = []
+    for ref in references:
+        ext = ref.get("externalIds") or {}
+        title = ref.get("title")
+        try:
+            ident = identity(ext.get("DOI"), ext.get("ArXiv"), title, None)
+        except ValueError:
+            continue  # no id and no title: untraceable
+        out.append((ident, title))
+    return out
+
+
+def readers_from_env(
+    conn: sqlite3.Connection,
+    *,
+    bib_paths=None,
+    zotero_path=None,
+    cache_dir: Path | None = None,
+    sources=None,
+) -> list:
+    """The reader list, in sync order; the two network flags are read HERE.
+
+    Offline readers first (bibtex, zotero, feed), then the enrichers that
+    `ATTEST_CITATION_WEB` and `ATTEST_CITATION_S2` arm. `sources` filters by
+    reader name so a caller can run one at a time.
+    """
+    zp = Path(zotero_path) if zotero_path else citations.zotero_path_from_env()
+    paths = (
+        [Path(p) for p in bib_paths] if bib_paths is not None else citations.bib_paths_from_env()
+    )
+    readers: list = []
+    if paths:
+        readers.append(BibtexRecords(paths))
+    if zp.is_file():
+        readers.append(ZoteroRecords(zp))
+    readers.append(FeedRecords(conn))
+    if citations.web_enabled():
+        readers += [ArxivEnricher(cache_dir), CrossrefEnricher(cache_dir)]
+    if citations.s2_enabled():
+        readers.append(S2Enricher(cache_dir))
+    if sources:
+        wanted = set(sources)
+        readers = [r for r in readers if r.name in wanted]
+    return readers

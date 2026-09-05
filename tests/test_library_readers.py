@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import httpx
 from test_citations import _add_item, _zotero_db
 
 from attestation import library_readers
@@ -61,3 +62,140 @@ def test_zotero_records_carry_the_key_as_bib_key(tmp_path):
 
 def test_an_absent_zotero_yields_nothing(tmp_path):
     assert list(library_readers.ZoteroRecords(tmp_path / "none.sqlite").records()) == []
+
+
+# ---------------------------------------------------------------------------
+# enrichers: fill-only, cached, armed by flags read at construction
+# ---------------------------------------------------------------------------
+
+
+def _fake_transport(responses: dict):
+    """URL-prefix -> (status, body, headers). Records every request URL."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        for prefix, (status, body, headers) in responses.items():
+            if str(request.url).startswith(prefix):
+                return httpx.Response(status, content=body, headers=headers, request=request)
+        return httpx.Response(404, request=request)
+
+    return httpx.MockTransport(handler), calls
+
+
+def _store_with(conn, **kw):
+    from attestation.library import ReferenceRecord, upsert
+
+    kw.setdefault("source", "bibtex:/a.bib")
+    kw.setdefault("source_key", "k")
+    return upsert(conn, ReferenceRecord(**kw))[0]
+
+
+def test_arxiv_enricher_fills_abstract_authors_and_doi(tmp_path, monkeypatch):
+    conn = get_db(tmp_path / "t.db")
+    _store_with(conn, title="SchNet", arxiv_id="1706.08566")
+    transport, calls = _fake_transport(
+        {"http://export.arxiv.org/api/query": (200, (FIX / "arxiv_query.xml").read_bytes(), {})}
+    )
+    monkeypatch.setattr(library_readers, "_client", lambda: httpx.Client(transport=transport))
+    cache = tmp_path / "cache"
+    recs = list(library_readers.ArxivEnricher(cache_dir=cache).records(conn, None))
+    assert len(recs) == 1
+    assert recs[0].doi == "10.5555/schnet" and recs[0].abstract.startswith("Deep learning")
+    assert recs[0].authors == ["Kristof T. Schütt", "Pieter-Jan Kindermans"]
+    assert recs[0].year == 2017 and recs[0].source == "arxiv"
+    assert recs[0].source_key == "arxiv:1706.08566"  # the row's identity, so upsert finds it
+    assert recs[0].fetched_at is not None
+    # Cached: a second pass makes no request and keeps the ORIGINAL fetched_at.
+    first = recs[0].fetched_at
+    recs2 = list(library_readers.ArxivEnricher(cache_dir=cache).records(conn, None))
+    assert len(calls) == 1 and recs2[0].fetched_at == first
+
+
+def test_crossref_enricher_fills_venue_and_strips_jats(tmp_path, monkeypatch):
+    conn = get_db(tmp_path / "t.db")
+    _store_with(conn, title="NequIP", doi="10.1038/s41467-022-29939-5")
+    transport, _calls = _fake_transport(
+        {"https://api.crossref.org/works/": (200, (FIX / "crossref_work.json").read_bytes(), {})}
+    )
+    monkeypatch.setattr(library_readers, "_client", lambda: httpx.Client(transport=transport))
+    recs = list(library_readers.CrossrefEnricher(cache_dir=tmp_path / "c").records(conn, None))
+    assert recs[0].venue == "Nature Communications" and recs[0].year == 2022
+    assert (
+        recs[0].abstract == "This work presents Neural Equivariant Interatomic Potentials (NequIP)."
+    )
+    assert recs[0].authors == ["Batzner, Simon", "Musaelian, Albert"]
+
+
+def test_s2_enricher_yields_cites_and_backs_off_on_429(tmp_path, monkeypatch):
+    conn = get_db(tmp_path / "t.db")
+    _store_with(conn, title="NequIP", doi="10.1038/s41467-022-29939-5")
+    body = (FIX / "s2_paper.json").read_bytes()
+    seq = iter([(429, b"", {"Retry-After": "0"}), (200, body, {})])
+    slept: list[float] = []
+
+    def handler(request):
+        status, content, headers = next(seq)
+        return httpx.Response(status, content=content, headers=headers, request=request)
+
+    monkeypatch.setattr(
+        library_readers, "_client", lambda: httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    monkeypatch.setattr(library_readers, "_sleep", slept.append)
+    recs = list(library_readers.S2Enricher(cache_dir=tmp_path / "c").records(conn, None))
+    assert recs[0].arxiv_id == "2101.03164" and recs[0].source == "s2"
+    # Two traceable references; the one with no ids and no title is dropped.
+    assert recs[0].cites == [
+        ("doi:10.5555/schnet", "SchNet ..."),
+        ("title:untraceable ref:-", "Untraceable ref"),
+    ]
+    assert slept == [0.0, 1.0]  # Retry-After honoured, then the per-request pace
+
+
+def test_a_dead_network_is_an_absent_source_not_an_error(tmp_path, monkeypatch):
+    conn = get_db(tmp_path / "t.db")
+    _store_with(conn, title="NequIP", doi="10.1038/x")
+
+    def handler(request):
+        raise httpx.ConnectError("no route", request=request)
+
+    monkeypatch.setattr(
+        library_readers, "_client", lambda: httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    recs = list(library_readers.CrossrefEnricher(cache_dir=tmp_path / "c").records(conn, None))
+    assert len(recs) == 1 and recs[0].title is None  # a miss: the row is marked tried
+
+
+def test_no_request_is_made_with_the_flags_unset(tmp_path, monkeypatch):
+    from attestation.library import sync
+
+    conn = get_db(tmp_path / "t.db")
+
+    def explode(*a, **k):
+        raise AssertionError("network touched")
+
+    monkeypatch.setattr(httpx, "Client", explode)
+    monkeypatch.setattr(httpx, "get", explode)
+    monkeypatch.delenv("ATTEST_CITATION_WEB", raising=False)
+    monkeypatch.delenv("ATTEST_CITATION_S2", raising=False)
+    readers = library_readers.readers_from_env(
+        conn, bib_paths=[FIX / "sample.bib"], zotero_path=tmp_path / "none.sqlite"
+    )
+    assert [r.name for r in readers] == ["bibtex", "feed"]
+    sync(conn, readers)
+
+
+def test_flags_arm_the_enrichers_at_construction(tmp_path, monkeypatch):
+    conn = get_db(tmp_path / "t.db")
+    monkeypatch.setenv("ATTEST_CITATION_WEB", "1")
+    monkeypatch.setenv("ATTEST_CITATION_S2", "1")
+    readers = library_readers.readers_from_env(conn, bib_paths=[], zotero_path=tmp_path / "n")
+    assert [r.name for r in readers] == ["feed", "arxiv", "crossref", "s2"]
+    monkeypatch.delenv("ATTEST_CITATION_S2")
+    assert [r.name for r in readers] == ["feed", "arxiv", "crossref", "s2"]  # already built
+    assert [
+        r.name
+        for r in library_readers.readers_from_env(
+            conn, bib_paths=[], zotero_path=tmp_path / "n", sources=["feed"]
+        )
+    ] == ["feed"]

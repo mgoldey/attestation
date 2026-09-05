@@ -1,0 +1,10 @@
+{
+  "paperId": "abc123",
+  "title": "E(3)-equivariant graph neural networks for data-efficient and accurate interatomic potentials",
+  "externalIds": {"DOI": "10.1038/s41467-022-29939-5", "ArXiv": "2101.03164"},
+  "references": [
+    {"title": "SchNet ...", "externalIds": {"ArXiv": "1706.08566", "DOI": "10.5555/schnet"}},
+    {"title": "Untraceable ref", "externalIds": {}},
+    {"title": null, "externalIds": null}
+  ]
+}
