@@ -130,8 +130,8 @@
     "skill": "knowledge",
     "split": "dev",
     "question": "find me the papers behind the 'diffusion-models' concept",
-    "expect_tool": "feed.search",
-    "note": "knowledge surface duplicates feed.search on purpose -- 'what did I read about X' inside the graph reaches items directly, not kg.ask"
+    "expect_tool": "kg.ask",
+    "note": "the collapsed knowledge surface (the deployed one) serves kg.ask and kg.tools only, so feed.search -- which the expanded surface duplicates on purpose -- cannot be the expectation: it scored 0 on every candidate by construction for the whole 2026-09-05 optimize run (review round 1). kg.ask is the reachable answer; that the router beneath it currently sends this to kg.concepts with no prefix is a routing.py gap, recorded in spec 3"
   },
   {
     "id": "knowledge-not-todays-feed",
@@ -326,6 +326,17 @@
     "question": "which arm of my kdsweep sweep won on WER?",
     "expect_tool": null,
     "note": "a ledger question reaching the feed skill: the correct answer is to hand off (attestation-provenance), not to call feed.ask with a search for 'kdsweep'"
+  },
+  {
+    "id": "feed-ambiguous-followup",
+    "skill": "feed",
+    "split": "dev",
+    "question": "what about the equivariant one?",
+    "expect_tool": "feed.ask",
+    "expect": {
+      "no_clarify": false
+    },
+    "note": "the reverse regression for the options rule: with no list in the conversation the router declines (list / search / digest), and the right move is to ASK the reader, not to re-ask the router with an invented reading. A skill that says 'when one option plainly fits, re-ask' must not turn every decline into a guess; no_clarify:false accepts a clarifying question instead of a call (review round 1, 2026-09-05)"
   },
   {
     "id": "knowledge-connect-forcefields-catalysis",
