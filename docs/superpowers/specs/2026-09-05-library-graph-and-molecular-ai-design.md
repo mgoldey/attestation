@@ -199,22 +199,40 @@ index gains `examples/molecular-ai`; `docs/guides/claims-and-citations.md`
 
 ## 6. Measurements
 
-To take when the example exists, with the model server up, recorded in the
-README's *What it demonstrates* as numbers:
+Taken 2026-09-05 while generating the example (full tables in
+`examples/molecular-ai/README.md`):
 
-- For ten molecular-AI queries ("equivariant force fields", "message
-  passing on molecular graphs", "protein structure prediction",
-  "generative models for molecules", "catalyst adsorption energies",
-  "universal interatomic potentials", "docking", "materials stability",
-  "SMILES language models", "atomic environment descriptors"): the top-3
-  semantic hits vs the top-3 substring hits, and how many of the ten
-  substring searches return nothing at all.
-- `generate.py` wall time with S2 at one request per second for N seeds.
-- `kg-report` health with and without the references in the graph, on the
-  example database, to show what 40 tagged references do to a graph that
-  was empty.
+- **Semantic vs substring, ten molecular-AI queries, embeddinggemma:**
+  substring returned nothing for 7 of 10; semantic ranked the paper a
+  chemist would name first or second in 9 of 10. "equivariant force fields"
+  found MACE 0.550, TorchMD-NET 0.542, NequIP 0.540 above the relative
+  floor; substring found nothing.
+- **Generation:** 48 of 48 seeds resolved (none dropped). Semantic Scholar's
+  unauthenticated pool answered 429 to three consecutive requests 1.2 s
+  apart; at 3 s pacing with one back-off per row, three resumed passes over
+  ~40 minutes wall brought reference lists to 41 of 48, and 7 remain
+  rate-limited. arXiv answered every id in one batched request; CrossRef
+  enriched 25. Two bugs surfaced and were fixed under test: the arXiv API
+  301s plain http (every arXiv seed read as a miss) and a rate-limited row
+  was being recorded as tried (never retried). A third: a paced enricher
+  held one write transaction across its sleeps and locked out
+  `attest library tag`.
+- **Graph with and without references:** the example's scratch database has
+  no items, so without references `kg-report` exits 1 ("no items yet"); with
+  the 48 tagged references it reports 14 nodes, 25 edges, 44 distinct tags,
+  one community labelled `molecular-mechanics` at 85.7% of nodes. Forty-odd
+  references from one subfield make one cluster, which is the honest shape.
+- **Tagging cost:** 48 references in one pass, 0 failed, gemma4:e2b.
 
-## 7. Tests
+## 7. What the example changed in the readers
+
+Recorded because the golden path is the first real use of the enrichers:
+`follow_redirects=True` and the https arXiv endpoint; transient failures
+(transport errors, a 429 that outlasts one back-off, a 5xx after two) write
+nothing and are counted as `failed`, so the next sync retries them; S2 paced
+at 3 s per real request; `sync` commits after every enricher record.
+
+## 8. Tests
 
 DB-free: `_bib_tags("A, B; c d")`, `_bib_cites(...)` parsing including a
 bare identity, `tag_assignments` shape over a fake connection is not
