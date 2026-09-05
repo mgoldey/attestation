@@ -85,7 +85,7 @@ one way to use all of them:
 
 **From an agent**
 
-- All of the above are exposed as 47 MCP tools, restricted per session into
+- All of the above are exposed as 48 MCP tools, restricted per session into
   `feed`/`provenance`/`knowledge`/`symbolic` surfaces. See
   [docs/guides/agents.md](docs/guides/agents.md) and the repo's own
   `src/attestation/skills/` (seven skills: one per agent surface plus setup, plus two write-side skills, `attestation-record` and `attestation-annotate`).
@@ -111,7 +111,7 @@ sections, a `run.sh` that runs those README commands verbatim, and its own
 inputs on disk — `tests/test_golden_paths.py` runs every one whose
 prerequisite is `none` and pins a line of its output, so the docs are what
 the suite asserts. `examples/README.md` is the full catalogue, with a runtime
-for each. Thirteen paths, grouped by prerequisite:
+for each. Fourteen paths, grouped by prerequisite:
 
 **None — pure local computation:**
 
@@ -122,6 +122,7 @@ for each. Thirteen paths, grouped by prerequisite:
 - `hydra/` — a real Hydra `--multirun` sweep, four arms ranked
 - `mlflow/` — a real MLflow directory, four arms, one contradicted claim
 - `model-servers/` — `attest ingest`/`tag` against an in-process stub server
+- `molecular-ai/` — a molecular-AI library generated from real papers, synced, searched, walked by citation edge, graphed
 - `ranking/` — twenty hand-built rows, `rank.rank_rows`'s classifier-only AUC beside the blended-order AUC
 - `sacred/` — a real Sacred `FileStorageObserver` directory, four arms ranked
 - `tensorflow/` — a real Keras/CSVLogger run, four learning-rate arms ranked

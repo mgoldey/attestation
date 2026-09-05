@@ -208,11 +208,15 @@ CREATE TABLE IF NOT EXISTS "references"(
   abstract TEXT,
   url TEXT,
   bib_key TEXT,
+  title_key TEXT,
   first_seen TEXT NOT NULL,
   updated TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_references_doi ON "references"(doi);
 CREATE INDEX IF NOT EXISTS idx_references_arxiv ON "references"(arxiv_id);
+-- idx_references_title_key is created by migration 008, which every database
+-- runs (fresh ones too): SCHEMA runs BEFORE the ladder, and an index on a
+-- column a v7 file does not yet have would fail the open.
 CREATE INDEX IF NOT EXISTS idx_references_bib_key ON "references"(bib_key);
 -- Provenance per CONTRIBUTION, not per record: which source offered what,
 -- when (NULL fetched_at = read from disk), and any conflict merge() refused.
@@ -415,6 +419,27 @@ def _migration_007_add_library(conn: sqlite3.Connection) -> None:
             )
 
 
+def _migration_008_add_title_key(conn: sqlite3.Connection) -> None:
+    """`references.title_key`: the normalised title, persisted, so a record that
+    knows only a title still finds the row a DOI-bearing record upgraded --
+    review round 2 found a title-only .bib entry duplicating itself on every
+    second sync once its row had moved to a DOI identity, because a title
+    identity had no column to fall back to the way arXiv ids do.
+    """
+    from attestation.library import normalise_title
+
+    cols = {r["name"] for r in conn.execute('PRAGMA table_info("references")')}
+    if "title_key" not in cols:
+        conn.execute('ALTER TABLE "references" ADD COLUMN title_key TEXT')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_references_title_key ON "references"(title_key)')
+    rows = conn.execute('SELECT id, title FROM "references" WHERE title_key IS NULL').fetchall()
+    for row in rows:
+        conn.execute(
+            'UPDATE "references" SET title_key = ? WHERE id = ?',
+            (normalise_title(row["title"]) or None, row["id"]),
+        )
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -430,6 +455,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (5, _migration_005_add_engagement),
     (6, _migration_006_add_runs_scanned_at),
     (7, _migration_007_add_library),
+    (8, _migration_008_add_title_key),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]

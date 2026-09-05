@@ -59,7 +59,7 @@ of a disagreement, recording the conflict on the source that offered it, so
 Two flags reach off the machine, both off by default and read only when the
 readers are built: `ATTEST_CITATION_WEB` (arXiv and CrossRef: abstracts,
 authors, venues) and `ATTEST_CITATION_SCHOLAR` (Semantic Scholar reference lists,
-one request per second, cached forever). They fill fields on references the
+one request every three seconds, cached forever). They fill fields on references the
 library already holds and never add a paper on their own; `cite.sources` says
 which are live.
 
@@ -77,3 +77,12 @@ output says which — the `cite.search` tool carries the same `semantic` flag
 and `caveat`. `cite.check` and `attest claims` resolve `cite=<key>` through
 the store first, so a key synced from Zotero resolves even when no `.bib` sits
 in the working directory. See `docs/superpowers/specs/2026-09-05-library-store-design.md`.
+
+References join the concept graph through their tags — from `attest library
+tag`, or from a `.bib` `keywords` field — and `attest library related KEY`
+(the `cite.related` tool) walks a paper's citation edges both ways, from
+Semantic Scholar reference lists or a `.bib` `cites` field
+(`identity|title; identity|title`); a cited paper not in the library is
+listed, never fetched. `examples/molecular-ai/` shows both from a committed
+`.bib` that real software generated from real papers. See
+`docs/superpowers/specs/2026-09-05-library-graph-and-molecular-ai-design.md`.

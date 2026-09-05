@@ -131,7 +131,14 @@ def tag_vocabulary(conn: sqlite3.Connection, limit: int = 150) -> list[str]:
     from attestation.kg import canonical
 
     totals: dict[str, int] = {}
-    for row in conn.execute("SELECT tag, COUNT(*) n FROM item_tags GROUP BY tag"):
+    # Items and references count alike: the tagger is steered by what the
+    # reader cites as well as what they read, which is what lets a reference
+    # join the concept graph beside the items (spec 2026-09-05, library graph).
+    # One count per (paper, tag): a reference the feed supplied is the same
+    # paper as its item, and kg.tag_assignments unions the two the same way.
+    from attestation.kg import _PAPER_TAGS
+
+    for row in conn.execute(f"SELECT tag, COUNT(*) n FROM ({_PAPER_TAGS}) GROUP BY tag"):
         name = canonical(row["tag"])
         if name in NON_TOPIC_TAGS:
             continue
@@ -477,8 +484,12 @@ def run_reference_tagging(conn, chat_fn, model: str, limit: int | None = None) -
     lets it join the concept graph beside them.
     """
     sql = (
-        'SELECT r.id, r.title, coalesce(r.abstract, "") AS summary FROM "references" r'
+        "SELECT r.id, r.title, coalesce(r.abstract, '') AS summary FROM \"references\" r"
         " WHERE NOT EXISTS (SELECT 1 FROM reference_tags t WHERE t.reference_id = r.id)"
+        # The feed's own papers were tagged as items: 7,580 more model calls
+        # for tags the graph would then count twice.
+        " AND NOT EXISTS (SELECT 1 FROM reference_sources s"
+        "  WHERE s.reference_id = r.id AND s.source = 'feed')"
         " ORDER BY r.id"
     )
     params: tuple = ()

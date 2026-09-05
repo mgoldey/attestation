@@ -57,7 +57,13 @@ RELEVANCE_ANCHOR = 3
 
 
 def vector_search(
-    conn, embedder, query: str, k: int, table: str = "item_vectors"
+    conn,
+    embedder,
+    query: str,
+    k: int,
+    table: str = "item_vectors",
+    *,
+    restrict: tuple[str, list] | None = None,
 ) -> dict[int, float]:
     """rowid -> similarity, via a sqlite-vec index (`item_vectors` or
     `reference_vectors`). The query half of a semantic search, split from
@@ -69,14 +75,21 @@ def vector_search(
 
     Vectors are L2-normalised by truncate_normalize, so sqlite-vec's L2
     distance d relates to cosine similarity as cos = 1 - d^2/2.
+
+    `restrict` is `(subquery, params)` selecting the rowids the KNN may
+    return -- sqlite-vec's prefilter -- so a fielded filter narrows the
+    candidates BEFORE the k nearest are taken, at any library size (asking
+    for k = every vector fails above 4,096; review round 2).
     """
     if table not in ("item_vectors", "reference_vectors"):
         raise ValueError(f"not a vector table: {table!r}")
     vec = embedder.embed_query(query)
-    rows = conn.execute(
-        f"SELECT rowid, distance FROM {table} WHERE embedding MATCH ? AND k = ? ORDER BY distance",
-        (vec.tobytes(), k),
-    ).fetchall()
+    sql = f"SELECT rowid, distance FROM {table} WHERE embedding MATCH ? AND k = ?"
+    params: list = [vec.tobytes(), k]
+    if restrict is not None:
+        sql += f" AND rowid IN ({restrict[0]})"
+        params += list(restrict[1])
+    rows = conn.execute(sql + " ORDER BY distance", params).fetchall()
     return {r["rowid"]: 1.0 - (r["distance"] ** 2) / 2.0 for r in rows}
 
 

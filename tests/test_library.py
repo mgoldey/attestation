@@ -171,6 +171,22 @@ def test_upsert_records_citation_edges(tmp_path):
     ]
 
 
+def test_upsert_writes_tags_from_the_record_without_deleting_others(tmp_path):
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    rid, _ = library.upsert(conn, _rec(bib_key="k", title="K", tags=["force-fields"]))
+    conn.execute("INSERT INTO reference_tags VALUES (?, 'from-the-tagger')", (rid,))
+    library.upsert(
+        conn, _rec(source="zotero", source_key="Z", bib_key="Z", title="K", tags=["gnn"])
+    )
+    tags = {
+        r["tag"]
+        for r in conn.execute("SELECT tag FROM reference_tags WHERE reference_id = ?", (rid,))
+    }
+    assert tags == {"force-fields", "from-the-tagger", "gnn"}
+
+
 def test_sync_is_idempotent(tmp_path):
     from attestation.db import get_db
     from attestation.library_readers import BibtexRecords
@@ -191,7 +207,41 @@ def test_sync_is_idempotent(tmp_path):
     assert second["sources"]["bibtex"]["added"] == 0
     assert first["unembedded"] == 2  # no embedder given: reported, not an error
     assert library.status(conn)["references"] == 2
-    assert library.status(conn)["sources"] == {f"bibtex:{FIX / 'sample.bib'}": 2}
+    assert library.status(conn)["sources"] == {"bibtex:sample.bib": 2}
+
+
+def test_sync_commits_after_every_enricher_record(tmp_path):
+    """An enricher sleeps between requests; holding a write transaction across
+    those sleeps locked the database for `attest library tag` running beside
+    the sync (measured 2026-09-05). Each network record must be committed
+    before the next one is fetched."""
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    _store_with(conn, bib_key="a", title="A", doi="10.1/a")
+    _store_with(conn, bib_key="b", title="B", doi="10.1/b")
+    conn.commit()
+    seen_open: list[bool] = []
+
+    class Enricher:
+        name = "fake"
+        network = True
+        errors: list[str] = []
+
+        def records(self, conn, limit):
+            for ident in ("doi:10.1/a", "doi:10.1/b"):
+                seen_open.append(conn.in_transaction)  # before fetching the next row
+                yield library.ReferenceRecord(
+                    source="fake",
+                    source_key=ident,
+                    doi=ident[4:],
+                    abstract="x",
+                    title="t",
+                    fetched_at="2026-09-05",
+                )
+
+    library.sync(conn, [Enricher()])
+    assert seen_open == [False, False]
 
 
 # ---------------------------------------------------------------------------
@@ -308,3 +358,49 @@ def test_to_reference_keeps_the_provenance_pair(tmp_path):
     ref = library.to_reference(conn, row)
     assert ref.key == "a" and ref.source == "library:bibtex:/a.bib" and ref.fetched_at is None
     assert ref.to_row()["doi"] == "10.5555/schnet"
+
+
+# ---------------------------------------------------------------------------
+# citation neighbourhood
+# ---------------------------------------------------------------------------
+
+
+def test_related_resolves_edges_both_ways(tmp_path):
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    nequip = _store_with(
+        conn,
+        bib_key="nequip",
+        title="NequIP",
+        doi="10.1038/s41467-022-29939-5",
+        arxiv_id="2101.03164",
+    )
+    schnet = _store_with(conn, bib_key="schnet", title="SchNet", arxiv_id="1706.08566")
+    # An edge recorded by arXiv id must still find SchNet after it gains a DOI.
+    library.upsert(
+        conn,
+        _rec(
+            source="s2",
+            source_key="x",
+            doi="10.1038/s41467-022-29939-5",
+            fetched_at="2026-09-05",
+            cites=[("arxiv:1706.08566", "SchNet"), ("title:elsewhere:-", "Elsewhere")],
+        ),
+    )
+    library.upsert(
+        conn, _rec(bib_key="schnet2", title="SchNet", arxiv_id="1706.08566", doi="10.5555/schnet")
+    )
+    rel = library.related(conn, "nequip")
+    assert rel is not None and rel.reference.id == nequip
+    assert [(n.identity, n.in_library, n.key) for n in rel.cites] == [
+        ("arxiv:1706.08566", True, "schnet"),
+        ("title:elsewhere:-", False, None),
+    ]
+    assert rel.n_cites == 2 and rel.cited_by == [] and rel.n_cited_by == 0
+    back = library.related(conn, "schnet")
+    assert back is not None and back.reference.id == schnet
+    assert [n.key for n in back.cited_by] == ["nequip"]
+    assert library.related(conn, "nope") is None
+    row = rel.to_row()
+    assert row["reference"]["key"] == "nequip" and row["cites"][1]["title"] == "Elsewhere"
