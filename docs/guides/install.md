@@ -61,6 +61,9 @@ Once installed:
 uv run attest serve             # http://127.0.0.1:8899
 ```
 
+To talk to it from Discord instead of the browser, see the README's
+"Chat with it from Discord" and section 8 of the [agents guide](agents.md).
+
 The first screen asks who is reading and what about -- ranking starts from
 that interests text alone, and a new database has no personas until someone
 answers. To compare per-identity ranking before you have clicked anything,
@@ -99,7 +102,7 @@ malformed tag on 40% of items.
 
 ```bash
 export OLLAMA_MAX_LOADED_MODELS=2   # keep chat + embed models co-resident
-uv run attest warmup                # pin both models in VRAM (avoids 10-20s cold loads)
+uv run attest warmup                # pin both models in VRAM for 30 min (a cold load is ~30s)
 uv run attest ingest                # fetch feeds.toml -> hermes.db
 ```
 
@@ -118,6 +121,12 @@ OpenRouter (set `LLM_API_KEY`) to swap backends. See `.env.sample`
 for every variable, including the Ollama daemon settings
 (`OLLAMA_KEEP_ALIVE=30m`, `OLLAMA_CONTEXT_LENGTH=32768`) that replace the
 per-request pinning the native API used to provide.
+
+For a machine that chats through hermes-agent all day, 30 minutes is too
+short: every message after a quiet spell paid the cold load again. The
+[agents guide](agents.md#8-chat-from-discord-or-telegram) has the permanent
+pin (`keep_alive: -1` via a user timer, no sudo) and the per-platform tool
+allowlist that together took a Discord turn from 54-249s to 23-28s.
 
 #### No-checkout alternative (uvx-from-git)
 
