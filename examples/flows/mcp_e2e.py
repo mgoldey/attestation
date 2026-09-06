@@ -111,6 +111,9 @@ CALLS: list[tuple[str, dict, str]] = [
     ("cite.lookup", {"key": "vaswani2017attention"}, "refused"),
     ("cite.search", {"query": "attention is all you need"}, "ok"),
     ("cite.check", {"path": "$FINDINGS"}, "ok"),
+    # cite.sync over the feed only: the corpus items carry no DOI or arXiv id,
+    # so the store stays empty and the report says so in structure (0 seen).
+    ("cite.sync", {"sources": ["feed"]}, "ok"),
     # --- symbolic (no database)
     ("sym.simplify", {"expr": "(x**2 - 1)/(x - 1)"}, "ok"),
     ("sym.solve", {"expr": "x**2 - 4", "symbol": "x"}, "ok"),

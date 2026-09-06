@@ -96,6 +96,12 @@ HELP: dict[str, str] = {
     "runs.record": "write per-arm result/config files the ledger can scan",
     "bootstrap-persona": "write pseudo-clicks for a persona",
     "install": "idempotent setup + --check doctor mode",
+    "library": "the deduplicated reference library (BibTeX, Zotero, feed, opt-in web)",
+    "library.sync": "read every configured source into the store",
+    "library.search": "search the library (semantic when embedded)",
+    "library.tag": "LLM-tag untagged references",
+    "library.embed": "embed references that have no vector",
+    "library.status": "counts per source, vectors, tags, citation edges",
 }
 
 
@@ -260,6 +266,36 @@ def build_parser() -> argparse.ArgumentParser:
         "--scan", action="store_true", help="also run `runs scan` and print `runs compare`"
     )
     rp.set_defaults(func=cmd_runs_record)
+
+    sp = sub.add_parser("library", help=HELP["library"])
+    add_db(sp)
+    lib_sub = sp.add_subparsers(dest="library_command", required=True)
+
+    lp = lib_sub.add_parser("sync", help=HELP["library.sync"])
+    lp.add_argument(
+        "--sources", help="comma-separated subset: bibtex,zotero,feed,arxiv,crossref,s2"
+    )
+    lp.add_argument("--limit", type=int, help="max rows per enricher and per embed pass")
+    lp.set_defaults(func=cmd_library_sync)
+
+    lp = lib_sub.add_parser("search", help=HELP["library.search"])
+    lp.add_argument("query", nargs="?", default="")
+    lp.add_argument("--author", help="surname filter")
+    lp.add_argument("--year", type=int)
+    lp.add_argument("--tag")
+    lp.add_argument("--limit", type=int, default=10)
+    lp.set_defaults(func=cmd_library_search)
+
+    lp = lib_sub.add_parser("tag", help=HELP["library.tag"])
+    lp.add_argument("--limit", type=int)
+    lp.set_defaults(func=cmd_library_tag)
+
+    lp = lib_sub.add_parser("embed", help=HELP["library.embed"])
+    lp.add_argument("--limit", type=int)
+    lp.set_defaults(func=cmd_library_embed)
+
+    lp = lib_sub.add_parser("status", help=HELP["library.status"])
+    lp.set_defaults(func=cmd_library_status)
 
     sp = sub.add_parser("bootstrap-persona", help=HELP["bootstrap-persona"])
     add_db(sp)
@@ -1017,6 +1053,104 @@ def cmd_runs_record(args: argparse.Namespace) -> int:
         print(f"overrode existing {_direction_conflict_detail(overridden)} (--force)")
 
     return _run_record_scan(args, root) if args.scan else 0
+
+
+def _embedder_or_none():
+    """An Embedder when the model server answers, else None (fielded search).
+
+    One cheap probe rather than letting every row's embed call fail: the
+    library's search and sync both degrade cleanly without an embedder, and a
+    dead server should cost one round trip, not one per reference.
+    """
+    from attestation.embed import Embedder
+    from attestation.llm import base_url
+
+    try:
+        httpx.get(f"{base_url().rstrip('/')}/models", timeout=2.0)
+    except httpx.HTTPError:
+        return None
+    return Embedder()
+
+
+@_documented("library.sync")
+def cmd_library_sync(args: argparse.Namespace) -> int:
+    from attestation import library, library_readers
+
+    sources = [s.strip() for s in args.sources.split(",")] if args.sources else None
+    with open_db(args.db) as conn:
+        readers = library_readers.readers_from_env(conn, sources=sources)
+        report = library.sync(conn, readers, embedder=_embedder_or_none(), limit=args.limit)
+    for name, b in report.sources.items():
+        line = f"{name}: +{b['added']} added, {b['merged']} merged, {b['unchanged']} unchanged"
+        if b["enriched"]:
+            line += f", {b['enriched']} enriched"
+        if b["failed"]:
+            line += f", {b['failed']} failed"
+        print(line)
+    tail = f" ({report.embed_error})" if report.embed_error else ""
+    print(f"embedded {report.embedded}, {report.unembedded} without a vector{tail}")
+    if report.conflicts:
+        print(
+            f"{report.conflicts} field conflict(s) recorded; first: {report.conflict_samples[:5]}"
+        )
+    return 0
+
+
+@_documented("library.search")
+def cmd_library_search(args: argparse.Namespace) -> int:
+    from attestation import library
+
+    with open_db(args.db) as conn:
+        res = library.search(
+            conn,
+            args.query,
+            embedder=_embedder_or_none(),
+            author=args.author,
+            year=args.year,
+            tag=args.tag,
+            limit=args.limit,
+        )
+    for h in res.hits:
+        sim = f" {h.similarity:.3f}" if h.similarity is not None else ""
+        print(f"{h.year or '----'}{sim}  {h.title[:90]}  [{h.bib_key or h.identity}]")
+    print(
+        f"{res.n_matches} match(es); " + ("semantic" if res.semantic else res.caveat or "fielded")
+    )
+    return 0
+
+
+@_documented("library.tag")
+def cmd_library_tag(args: argparse.Namespace) -> int:
+    from attestation.features import run_reference_tagging
+    from attestation.llm import base_url, chat_model, default_chat_fn
+
+    with open_db(args.db) as conn:
+        stats = run_reference_tagging(conn, default_chat_fn, chat_model(), limit=args.limit)
+    print(stats)
+    if stats.get("chat_down"):
+        print(f"chat model unreachable at {base_url()} -- is ollama running?", file=sys.stderr)
+        return 1
+    return 1 if (stats["tagged"] == 0 and stats["failed"] > 0) else 0
+
+
+@_documented("library.embed")
+def cmd_library_embed(args: argparse.Namespace) -> int:
+    from attestation import library
+    from attestation.embed import Embedder
+
+    with open_db(args.db) as conn:
+        done, missing, error = library.embed_missing(conn, Embedder(), args.limit)
+    print(f"embedded {done}, {missing} still without a vector" + (f" ({error})" if error else ""))
+    return 1 if error and done == 0 else 0
+
+
+@_documented("library.status")
+def cmd_library_status(args: argparse.Namespace) -> int:
+    from attestation import library
+
+    with open_db(args.db) as conn:
+        print(json.dumps(library.status(conn), indent=2))
+    return 0
 
 
 @_documented("kg-report")

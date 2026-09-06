@@ -318,6 +318,24 @@ def _tag_prompt(item: sqlite3.Row, vocab: list[str], prompt: TagPrompt | None = 
     return tag_messages(item["title"], item["summary"], vocab, prompt)
 
 
+def _ask_tags(chat_fn, messages: list[dict], what: str) -> ItemTags | None:
+    """One tagging call plus one retry; None when both replies failed validation.
+
+    Shared by items and references so the retry policy and the unreachable
+    diagnosis exist once. A dead socket is not the record's fault and retrying
+    it is pointless: it raises BackendUnreachable so the run can stop and say
+    so once.
+    """
+    for _ in range(2):  # one retry, per spec
+        try:
+            return ItemTags.model_validate(chat_fn(messages, ItemTags.model_json_schema()))
+        except Exception as exc:
+            if backend_unreachable(exc):
+                raise BackendUnreachable(str(exc)) from exc
+            log.debug("tagging attempt failed for %s", what, exc_info=True)
+    return None
+
+
 def tag_one_item(
     conn,
     item: sqlite3.Row,
@@ -328,18 +346,7 @@ def tag_one_item(
 ) -> bool:
     """One LLM call (plus one retry) -> item_features + item_tags rows.
     False = skipped."""
-    parsed = None
-    for _ in range(2):  # one retry, per spec
-        try:
-            out = chat_fn(_tag_prompt(item, vocab, prompt), ItemTags.model_json_schema())
-            parsed = ItemTags.model_validate(out)
-            break
-        except Exception as exc:
-            if backend_unreachable(exc):
-                # A dead socket is not this item's fault, and retrying it is
-                # pointless: hand the run the decision to stop.
-                raise BackendUnreachable(str(exc)) from exc
-            log.debug("tagging attempt failed for item %s", item["id"], exc_info=True)
+    parsed = _ask_tags(chat_fn, _tag_prompt(item, vocab, prompt), f"item {item['id']}")
     if parsed is None:
         return False
     conn.execute(
@@ -456,6 +463,54 @@ def run_tagging(conn, chat_fn, model: str, limit: int | None = None) -> dict:
             else:
                 stats["failed"] += 1
             bar.set_postfix(tagged=stats["tagged"], failed=stats["failed"], refresh=False)
+    return stats
+
+
+def run_reference_tagging(conn, chat_fn, model: str, limit: int | None = None) -> dict:
+    """LLM-tag references with no tags yet, through the ONE tagging renderer.
+
+    Same contract as `run_tagging`: `chat_fn` and `model` come from the
+    caller, a failed record stays untagged for the next run, and a dead
+    backend stops the run with `chat_down` set rather than failing every row.
+    The vocabulary is the corpus's (`tag_vocabulary`), so a reference is
+    steered toward the tags the reader's items already use -- which is what
+    lets it join the concept graph beside them.
+    """
+    sql = (
+        'SELECT r.id, r.title, coalesce(r.abstract, "") AS summary FROM "references" r'
+        " WHERE NOT EXISTS (SELECT 1 FROM reference_tags t WHERE t.reference_id = r.id)"
+        " ORDER BY r.id"
+    )
+    params: tuple = ()
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = (limit,)
+    rows = conn.execute(sql, params).fetchall()
+    prompt = tag_prompt_from_env()
+    stats = {
+        "tagged": 0,
+        "failed": 0,
+        "model": model,
+        "prompt": prompt.source if prompt else "default",
+    }
+    vocab = tag_vocabulary(conn)
+    for row in rows:
+        messages = tag_messages(row["title"], row["summary"], vocab, prompt)
+        try:
+            parsed = _ask_tags(chat_fn, messages, f"reference {row['id']}")
+        except BackendUnreachable:
+            stats["chat_down"] = True
+            log.warning("chat model unreachable; stopping -- untagged references wait")
+            break
+        if parsed is None:
+            stats["failed"] += 1
+            continue
+        conn.executemany(
+            "INSERT OR IGNORE INTO reference_tags(reference_id, tag) VALUES (?, ?)",
+            [(row["id"], t) for t in dict.fromkeys(parsed.tags)],
+        )
+        conn.commit()
+        stats["tagged"] += 1
     return stats
 
 

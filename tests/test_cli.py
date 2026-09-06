@@ -1146,3 +1146,40 @@ def test_build_parser_help_strings_come_from_HELP():
         assert help_text == HELP[key], (
             f"attest {' '.join(path)}: add_parser help={help_text!r} != HELP[{key!r}]={HELP[key]!r}"
         )
+
+
+def test_library_sync_search_and_status(tmp_path, monkeypatch, capsys):
+    """The CLI half of the library: sync a .bib, search it, report the counts.
+
+    No embedder in tests, so the search is fielded and the output SAYS so --
+    the caveat is part of the contract, not decoration."""
+    import attestation.cli
+
+    db = tmp_path / "t.db"
+    monkeypatch.setenv("ATTEST_DB", str(db))
+    bib = tmp_path / "refs.bib"
+    bib.write_text(
+        "@article{schnet,\n  title = {SchNet},\n  author = {Schütt, K.},\n  year = {2017},\n"
+        "  doi = {10.5555/schnet},\n}\n"
+    )
+    monkeypatch.setenv("ATTEST_BIB_PATHS", str(bib))
+    monkeypatch.setenv("ATTEST_ZOTERO_PATH", str(tmp_path / "none.sqlite"))
+    monkeypatch.setattr(attestation.cli, "_embedder_or_none", lambda: None)
+
+    assert main(["library", "sync", "--sources", "bibtex"]) == 0
+    out = capsys.readouterr().out
+    assert "bibtex: +1 added" in out and "1 without a vector" in out
+
+    assert main(["library", "search", "schnet"]) == 0  # a bib key: direct lookup
+    out = capsys.readouterr().out
+    assert "SchNet" in out and "[schnet]" in out and "1 match(es)" in out
+
+    assert main(["library", "search", "schn"]) == 0  # not a key: substring, and it says so
+    out = capsys.readouterr().out
+    assert "SchNet" in out and "substring" in out
+
+    assert main(["library", "search", "", "--author", "schütt"]) == 0
+    assert "1 match(es)" in capsys.readouterr().out
+
+    assert main(["library", "status"]) == 0
+    assert '"references": 1' in capsys.readouterr().out

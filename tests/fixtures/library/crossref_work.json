@@ -1,0 +1,16 @@
+{
+  "status": "ok",
+  "message-type": "work",
+  "message": {
+    "DOI": "10.1038/s41467-022-29939-5",
+    "title": ["E(3)-equivariant graph neural networks for data-efficient and accurate interatomic potentials"],
+    "container-title": ["Nature Communications"],
+    "author": [
+      {"family": "Batzner", "given": "Simon"},
+      {"family": "Musaelian", "given": "Albert"}
+    ],
+    "issued": {"date-parts": [[2022, 5, 4]]},
+    "URL": "https://doi.org/10.1038/s41467-022-29939-5",
+    "abstract": "<jats:p>This work presents Neural Equivariant Interatomic Potentials (NequIP).</jats:p>"
+  }
+}

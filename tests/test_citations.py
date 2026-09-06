@@ -174,6 +174,24 @@ def test_the_flag_is_read_at_construction_not_at_call_time(tmp_path, monkeypatch
     assert not any(s["network"] for s in resolver.sources())
 
 
+def test_bib_and_zotero_paths_come_from_the_environment(tmp_path, monkeypatch):
+    """A multi-library reader needs a config surface; cwd-globbing was the
+    citations golden path's top failure mode."""
+    import os
+
+    a = tmp_path / "a.bib"
+    b = tmp_path / "sub" / "b.bib"
+    b.parent.mkdir()
+    a.write_text("@article{one,\n  title = {One},\n  year = {2020},\n}\n")
+    b.write_text("@article{two,\n  title = {Two},\n  year = {2021},\n}\n")
+    monkeypatch.setenv("ATTEST_BIB_PATHS", os.pathsep.join([str(a), str(b)]))
+    monkeypatch.setenv("ATTEST_ZOTERO_PATH", str(tmp_path / "absent.sqlite"))
+    monkeypatch.chdir(tmp_path / "sub")  # a cwd glob would find only b.bib
+    resolver = citations.Resolver.from_env()
+    assert resolver.lookup("one") is not None and resolver.lookup("two") is not None
+    assert [s["name"] for s in resolver.sources()] == ["bibtex"]
+
+
 def test_sources_says_which_readers_can_reach_the_network(tmp_path, monkeypatch):
     """The answer to "did this leave my machine" has to be askable from the
     same surface that did the leaving."""

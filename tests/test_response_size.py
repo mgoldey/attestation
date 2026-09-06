@@ -592,6 +592,7 @@ COMPOSITION_TOOLS = {
     "feed.sources": "one row per subscribed feed",
     "feed.digest": "grouped, and separately bounded at MAX_DIGEST_ITEMS",
     "feed.source_suggest": "a scored shortlist the caller picks from",
+    "cite.sync": "one bucket of counts per configured source; the report is the answer",
 }
 
 

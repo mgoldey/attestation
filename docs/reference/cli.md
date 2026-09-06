@@ -222,6 +222,65 @@ options:
   --scan                also run `runs scan` and print `runs compare`
 ```
 
+## attest library sync
+
+```
+usage: attest library sync [-h] [--sources SOURCES] [--limit LIMIT]
+
+options:
+  -h, --help         show this help message and exit
+  --sources SOURCES  comma-separated subset:
+                     bibtex,zotero,feed,arxiv,crossref,s2
+  --limit LIMIT      max rows per enricher and per embed pass
+```
+
+## attest library search
+
+```
+usage: attest library search [-h] [--author AUTHOR] [--year YEAR] [--tag TAG]
+                             [--limit LIMIT]
+                             [query]
+
+positional arguments:
+  query
+
+options:
+  -h, --help       show this help message and exit
+  --author AUTHOR  surname filter
+  --year YEAR
+  --tag TAG
+  --limit LIMIT
+```
+
+## attest library tag
+
+```
+usage: attest library tag [-h] [--limit LIMIT]
+
+options:
+  -h, --help     show this help message and exit
+  --limit LIMIT
+```
+
+## attest library embed
+
+```
+usage: attest library embed [-h] [--limit LIMIT]
+
+options:
+  -h, --help     show this help message and exit
+  --limit LIMIT
+```
+
+## attest library status
+
+```
+usage: attest library status [-h]
+
+options:
+  -h, --help  show this help message and exit
+```
+
 ## attest bootstrap-persona
 
 ```
