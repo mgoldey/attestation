@@ -192,8 +192,8 @@ fixture-health line). Texts are named by sha256 prefix:
 | installed vs its own repeat (the noise floor) | +0.027 | −0.041 | +0.094 | spread > 0.3 on 1/10 cases (not-todays-feed, exactly 0.30) |
 | worktree − installed ("everything since Sep 3") | −0.005 | −0.067 | +0.057 | undecided; smaller than the floor |
 | worktree − installed's repeat | +0.022 | −0.046 | +0.090 | undecided |
-| main − installed (dotted-names paragraph alone) | | | | pending |
-| worktree − main (References rewrite + the §3 sentences) | | | | pending |
+| main − installed (dotted-names paragraph alone) | -- | -- | -- | not run: the main arm was stopped at the user's call after 34 of 100 rollouts, because the line above is already inside the noise band and splitting it further was not worth the GPU time; the 34 rollouts stay in the bank |
+| worktree − main (References rewrite + the §3 sentences) | -- | -- | -- | not run, same reason |
 
 Per case, worktree / installed at n = 5 / 10: connect-topics 0.40 / 0.33,
 main-areas **0.00 / 0.00**, vs-feed-search 0.00 / 0.00, not-todays-feed
