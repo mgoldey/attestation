@@ -53,9 +53,11 @@ transcript with model-free predicates, which is the measurement this repo's
   `seed` only in tool-name canonicalization (dotted vs registered names);
   both banked seeds contain the edits byte for byte (review round 1). The
   seed-raw/seed gap in §5 is therefore a canonicalization measurement.
-  Measuring the edits needs a run on the pre-edit text, which has not
-  happened; the edits stay because they name concrete values, but they are
-  unmeasured prose.
+  *Measured 2026-09-06 (§5, "hand edit"):* the pre-edit text (the Sep 3
+  install) and this branch's text at k = 5 on the same bank differ by less
+  than the pre-edit text differs from its own repeat, and the main-areas
+  sentence moved its case 0/5 -> 0/5. The edits stay because they name
+  concrete values a reader can check, not because they moved a number.
 - **Acceptance is unchanged, and was not met.** `tagging_eval.gate()`: not
   worse on the primary, better on at least two other models, no wider
   spread. agentopt's acceptance race runs on TRAIN minibatches (k 3..8);
@@ -166,6 +168,43 @@ written for). Banks and agentopt's dated reports are under
 Budget: 150 live rollouts against `--max-live-rollouts 120` (agentopt
 overshoots to finish a race); knowledge optimize 04:32-07:15, feed baseline
 07:15-07:38.
+
+### The hand edit, measured (2026-09-06)
+
+agentopt's noise-floor step (its spec §11) on the knowledge skill, run by its
+session: three texts of `attestation-knowledge/SKILL.md` at k = 5 over the
+same 10 cases in one bank (`knowledge-proof2`), this worktree's `attest-mcp`
+(schema 8) on a seeded copy of the database, model unloaded before each arm,
+fixture health 0 errored calls and 0 rollouts lost before the agent answered
+(a first attempt served the copy from main's schema-6 server, failed inside
+every graph call, and scored 0.67 on the partial predicates -- retracted,
+quarantined, and the reason every agentopt report now carries a
+fixture-health line). Texts are named by sha256 prefix:
+
+| text | sha256 | what it is |
+|---|---|---|
+| installed | `63460cea` | the Sep 3 `attest install` copy: pre-edit |
+| main | `aab7da3d` | adds the "dotted names are for you to read" paragraph |
+| worktree | `a5a16e0c` | adds the References rewrite (library specs) and the two §3 sentences |
+
+| pair | paired mean | LCB | UCB | verdict |
+|---|---|---|---|---|
+| installed vs its own repeat (the noise floor) | +0.027 | −0.041 | +0.094 | spread > 0.3 on 1/10 cases (not-todays-feed, exactly 0.30) |
+| worktree − installed ("everything since Sep 3") | −0.005 | −0.067 | +0.057 | undecided; smaller than the floor |
+| worktree − installed's repeat | +0.022 | −0.046 | +0.090 | undecided |
+| main − installed (dotted-names paragraph alone) | | | | pending |
+| worktree − main (References rewrite + the §3 sentences) | | | | pending |
+
+Per case, worktree / installed at n = 5 / 10: connect-topics 0.40 / 0.33,
+main-areas **0.00 / 0.00**, vs-feed-search 0.00 / 0.00, not-todays-feed
+0.70 / 1.00, connect-forcefields-catalysis 0.80 / 0.75, between-md-drug
+0.73 / 0.67, concepts-protein 0.87 / 0.80, clusters 0.80 / 0.80, central-hub
+**0.00 / 0.00**, not-summarise 1.00 / 1.00 (`calls_none` alone; a
+`mentions_any` check follows in the next rescore). The row the §3 edit
+exists for, main-areas, is 0/5 under the edited text: the sentence did not
+move gemma4:e2b off the built-in memory tool at all. Two cases are
+deterministic zeros on every text (main-areas, central-hub) -- failures to
+fix in the router or the description, not noise to optimize through.
 
 ## 6. Result: measured, shipped nothing
 
