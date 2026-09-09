@@ -206,6 +206,49 @@ move gemma4:e2b off the built-in memory tool at all. Two cases are
 deterministic zeros on every text (main-areas, central-hub) -- failures to
 fix in the router or the description, not noise to optimize through.
 
+### Feed, two proposers, two students (2026-09-08)
+
+Run by the agentopt session after its scorer, fixture and proposer fixes
+(a relayed decline is not an answer; the fixture names a persona; a
+proposal carrying a number absent from the reflective data scores 0 and
+spends no rollouts): the installed feed `SKILL.md` as seed, the
+`attestation-feed` fixture with the `demo-reader` persona, this branch's
+16 feed cases (8 train / 8 dev) on the schema-8 seeded copy, `qwen3.5:4b`
+as the reflection model for both proposers, every proposal raced against
+the seed over all 8 train cases at 5+5 rollouts (paired LCB, α = 0.2),
+then scored on dev. Reports: agentopt `results/2026-09-08-feed-gepa-vs-
+skillopt.md` and `results/2026-09-08-feed-qwen9b-train-wins-dev-losses.md`.
+
+| student | seed dev (n=40) | proposal | size | train vs seed | dev vs seed |
+|---|---|---|---|---|---|
+| gemma4:e2b | 0.39 [0.30, 0.47] | GEPA trigger rewrite | 264 -> 2,665 chars | −0.167 [−0.322, −0.011], **rejected** | -- |
+| gemma4:e2b | | GEPA body rewrite (shorter by 45%) | 11,678 -> 6,472 | +0.042 [−0.005, +0.089], undecided | -- (digest-lately 0.60 -> 0.87, nothing else) |
+| gemma4:e2b | | GEPA examples | 0 -> 2,444 | −0.015, undecided | -- |
+| gemma4:e2b | | SkillOpt examples edit | 0 -> 808 | +0.015 [−0.031, +0.061], undecided | -- (explain 0.00 -> 0.13, search-topic 1.00 -> 0.87) |
+| qwen3.5:9b | 0.41 [0.33, 0.49] | GEPA trigger rewrite | 264 -> 3,335 | +0.26, LCB +0.17, accepted | 0.00 [−0.07, +0.07] |
+| qwen3.5:9b | | GEPA body rewrite | 11,678 -> 5,714 | +0.13, LCB +0.03, accepted | −0.09, UCB −0.01, **worse** |
+| qwen3.5:9b | | SkillOpt trigger, three appended rules | 264 -> 1,460 | +0.22, LCB +0.13, accepted | −0.13 [−0.27, +0.01]; not-provenance 0.80 -> 0.20 |
+
+Fixture health clean on both (0 errored fixture calls); on the 9B, 39 of
+358 rollouts timed out at 300 s and score 0, unevenly across candidates,
+and excluding them changes no verdict. The persona fixture fixed the
+placeholder-user failure (persona-name 0.80 with `user="demo-reader"` on
+every call, against 0/9 unprompted in this repo's own measurement). Five
+of sixteen cases are 0.00 on every gemma rollout (capability,
+rate-implicit, ambiguous-followup, explain, rate-dft-noise); two of them
+(capability, rate-implicit) moved for no candidate on either student.
+
+What the two students say together: on gemma4:e2b nothing is decided in
+either direction except that a tenfold-longer trigger is worse, and the
+only near-win *shortened* the body; on qwen3.5:9b every accepted
+candidate wins the eight train questions with a closed interval and is
+flat or worse on the eight it never saw, and the one whose text can be
+read ("feed content queries always require tool use") breaks the hand-off
+case by construction. That is overfitting to eight questions, not a lack
+of search power, and it is the train/dev gap the pre-registered dev bar
+exists to catch. The pre-registered bar (dev k ≥ 5, paired LCB > 0) is
+unmet by every candidate on both students.
+
 ## 6. Result: measured, shipped nothing
 
 - **The one accepted candidate changes only `kg.tools`' tool description**
@@ -238,16 +281,30 @@ fix in the router or the description, not noise to optimize through.
   and `feed-ambiguous-followup` exists so the options rule ("when one
   option plainly fits, re-ask the router") has a case that fails when the
   model re-asks instead of asking.
-- **The honest one sentence.** On gemma4:e2b through the real path, the
-  hand edits were not measured; the feed baseline is 0.51 either way with
-  a ±0.10 paired interval and no calibration; the knowledge seed scored
-  0.44 against 0.51 for the same text under dotted names (not significant
-  at α = 0.2); and GEPA's single accepted candidate is +0.18 on six dev
-  cases at k = 3 (paired LCB +0.08 at α = 0.2 -- a positive signal, blocked
-  by the pre-registered k ≥ 5, with one of the six unsatisfiable), on one
-  model, with a description that misstates the seed's numbers -- so
-  `tagging_eval.gate()` cannot be evaluated from anything on disk and
-  nothing meets the bar, which is not the same as nothing being there.
+- **The honest one sentence, after the overnight runs (2026-09-05).** On
+  gemma4:e2b through the real path, the hand edits were not measured; the
+  feed baseline is 0.51 either way with a ±0.10 paired interval and no
+  calibration; the knowledge seed scored 0.44 against 0.51 for the same
+  text under dotted names (not significant at α = 0.2); and GEPA's single
+  accepted candidate is +0.18 on six dev cases at k = 3 (paired LCB +0.08
+  at α = 0.2 -- a positive signal, blocked by the pre-registered k ≥ 5,
+  with one of the six unsatisfiable), on one model, with a description
+  that misstates the seed's numbers -- so `tagging_eval.gate()` cannot be
+  evaluated from anything on disk and nothing meets the bar, which is not
+  the same as nothing being there.
+- **The honest one sentence, after the proof runs (2026-09-06 to 08).**
+  With the scorer, the fixture and the proposer fixed and the model
+  unloaded between arms: the knowledge hand edit sits inside the noise
+  band and left its target case at 0/5; on feed, gemma4:e2b decides
+  nothing except that a tenfold-longer trigger is worse, and qwen3.5:9b
+  accepts three candidates on the train questions that are flat or worse
+  on the held-out ones -- so what the skill text can move on these
+  students, at this case count, is smaller than the noise floor or does
+  not transfer, and the cases that stay at zero on every text (capability,
+  rate-implicit, main-areas, central-hub) need a router phrase, a
+  description or a persona line, not a skill rewrite. Nothing ships; the
+  optimizer, the harness and the fixture-health line are what this spec
+  produced.
 
 ## What this spec does not decide
 
