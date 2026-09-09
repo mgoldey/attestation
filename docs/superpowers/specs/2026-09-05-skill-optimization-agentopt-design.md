@@ -249,6 +249,20 @@ of search power, and it is the train/dev gap the pre-registered dev bar
 exists to catch. The pre-registered bar (dev k ≥ 5, paired LCB > 0) is
 unmet by every candidate on both students.
 
+**Caveat on every number above (found 2026-09-09).** All of these rollouts
+ran Hermes with its full local toolset -- terminal, file read/write, code
+execution, outbound curl -- and the fixture's `cwd` was the checkout's
+`examples/workspace`. On the qwen3.5:9b feed run that was 215 terminal,
+162 search, 87 read, 12 write and 9 execute calls plus 16 curls over 358
+rollouts, with writes into this worktree (a staged edit to
+`feed_candidates.toml`) and nine files in the user's home. The scores are
+what they are, but "called `feed.ask`" was measured on an agent that could
+also grep the source and curl arXiv, which the deployed Discord gateway
+cannot. agentopt now disables every toolset except `skills` and `clarify`,
+copies the workspace fresh per rollout, and reports WORKSPACE WRITES on
+the fixture-health line; anything cited from these banks as a decision
+input should be rerun under that guard.
+
 ## 6. Result: measured, shipped nothing
 
 - **The one accepted candidate changes only `kg.tools`' tool description**
