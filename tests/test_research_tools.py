@@ -92,3 +92,22 @@ def test_research_payload_fits_at_the_cap(tmp_path, monkeypatch):
     out = tool_mod._research("x", sources="arxiv", limit=16, store=False)
     assert len(out["papers"]) == tool_mod.MAX_RESEARCH_LIMIT
     assert len(json.dumps(out, indent=2)) < HARD_RESPONSE_CEILING
+
+
+def test_feed_ask_executes_research_and_track(tmp_path, monkeypatch):
+    from conftest import seeded_db
+
+    from attestation.mcp import ask
+
+    db = _db(tmp_path, monkeypatch)
+    seeded_db(db).close()
+    monkeypatch.setattr(tool_mod, "CLIENTS", _clients([_paper(1)]))
+    out = ask._feed_ask("researcher", "search arxiv for equivariant force fields")
+    assert out["ok"] and out["tool_used"] == "feed.research" and "1 paper" in out["answer"]
+    out = ask._feed_ask("researcher", "track equivariant interatomic potentials for me")
+    assert out["ok"] and out["tool_used"] == "feed.source_add"
+    row = (
+        get_db(db).execute("SELECT url, added_by FROM feeds WHERE url LIKE 'research:%'").fetchone()
+    )
+    assert row["url"] == "research:arxiv,pubmed?q=equivariant+interatomic+potentials"
+    assert row["added_by"] is not None

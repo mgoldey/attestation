@@ -42,6 +42,14 @@ FEED_CASES = [
     ("add arxiv cs.CL to my feeds", "feed.source_add"),
     ("how well trained is my persona?", "feed.persona_status"),
     ("who are the personas?", "feed.persona_status"),
+    # Going and looking, not searching what arrived: a named source or venue.
+    ("what has been published on protein language models on pubmed?", "feed.research"),
+    ("search arxiv for equivariant force fields", "feed.research"),
+    ("look up recent papers in Nature Methods on cryo-EM", "feed.research"),
+    ("research diffusion models for molecules", "feed.research"),
+    # A standing topic, registered as a feed.
+    ("track equivariant interatomic potentials for me", "feed.source_add"),
+    ("follow graph neural networks for chemistry", "feed.source_add"),
 ]
 RUNS_CASES = [
     ("which arm of my sweep won?", "runs.compare"),
@@ -122,6 +130,23 @@ def test_arguments_are_extracted_not_guessed():
     helped."""
     assert route_feed("anything new on retrieval augmented generation?").kwargs["query"]
     assert route_sym("solve x**2 - 4").kwargs.get("expr")
+
+
+def test_research_and_track_decisions_carry_their_arguments():
+    """The exact kwargs feed.research and feed.source_add(research:) need."""
+    d = route_feed("search arxiv for equivariant force fields")
+    assert d.kwargs == {"query": "equivariant force fields", "sources": "arxiv"}
+    d = route_feed("what has been published on protein language models on pubmed?")
+    assert d.kwargs["query"] == "protein language models" and d.kwargs["sources"] == "pubmed"
+    d = route_feed("research diffusion models for molecules")
+    assert d.kwargs == {"query": "diffusion models for molecules", "sources": "arxiv,pubmed"}
+    d = route_feed("track equivariant interatomic potentials for me")
+    assert d.tool == "feed.source_add"
+    assert d.kwargs == {"url": "research:arxiv,pubmed?q=equivariant+interatomic+potentials"}
+    # a URL keeps the old behaviour: no research kwargs, the caller supplies the url
+    assert route_feed("follow https://example.com/rss").kwargs == {}
+    # "papers on X" is still the local archive
+    assert route_feed("anything new on retrieval augmented generation?").tool == "feed.search"
 
 
 # --- the tools themselves -------------------------------------------------

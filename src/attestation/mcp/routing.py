@@ -19,6 +19,7 @@ alternatives, never a default.
 
 import re
 from dataclasses import dataclass, field
+from urllib.parse import quote_plus
 
 
 @dataclass(frozen=True)
@@ -177,6 +178,67 @@ _SEARCH_PHRASES = (
     "look for",
 )
 
+# Going and looking is a different act from searching what arrived. These
+# name a PLACE to look or say so outright; "papers on X" alone stays local,
+# because the feed surface promises that question is answered without a
+# network call and the archive is the right first answer.
+_RESEARCH_SOURCES = (
+    ("pubmed", "pubmed"),
+    ("arxiv", "arxiv"),
+    ("crossref", "crossref"),
+)
+_RESEARCH_PHRASES = (
+    "on arxiv",
+    "on pubmed",
+    "from arxiv",
+    "from pubmed",
+    "search arxiv",
+    "search pubmed",
+    "crossref",
+    "in the literature",
+    "published on",
+    "published about",
+    "published in",
+    "been published",
+    "research ",
+    "look up",
+    " journal",
+    "outside my feed",
+    "beyond my feed",
+)
+_TRACK_PHRASES = ("track ", "follow ", "watch ", "monitor ", "keep an eye on ", "add a topic")
+_RESEARCH_NOISE = re.compile(
+    r"\b(on|from|in|via|search|the)\s+(arxiv|pubmed|crossref|the literature)\b"
+    r"|\b(recent|new)\s+papers?\b|\bpapers?\s+(on|about|in)\b|\bfor me\b|\bwhat has been\b"
+    r"|\bpublished\s+(on|about|in)\b|\blook up\b|\bresearch\b"
+    r"|^(search|track|follow|watch|monitor)\b",
+    re.IGNORECASE,
+)
+
+
+def _research_query(question: str) -> str:
+    """The topic with the going-and-looking words removed."""
+    q = _RESEARCH_NOISE.sub(" ", question.strip().rstrip("?"))
+    q = re.sub(r"\b(in|on)\s+[A-Z][\w-]*(\s+[A-Z][\w-]*)*\s*$", " ", q)  # trailing venue name
+    return " ".join(_strip_topic(q).split())
+
+
+def _route_research(q: str, question: str) -> Decision | None:
+    """feed.research for a named source/venue; feed.source_add(research:) for 'track X'."""
+    if "http" in q:
+        return None
+    if _has(q, *_TRACK_PHRASES) and not _has(q, *_SUGGEST_PHRASES):
+        topic = _research_query(question)
+        if len(topic.split()) >= 2:
+            url = f"research:arxiv,pubmed?q={quote_plus(topic)}"
+            return Decision("feed.source_add", {"url": url})
+    if _has(q, *_RESEARCH_PHRASES):
+        topic = _research_query(question)
+        if len(topic.split()) >= 2:
+            sources = ",".join(s for word, s in _RESEARCH_SOURCES if word in q) or "arxiv,pubmed"
+            return Decision("feed.research", {"query": topic, "sources": sources})
+    return None
+
 
 def route_feed(question: str) -> Decision:
     """Route a question about the reader's feed or persona."""
@@ -190,6 +252,9 @@ def route_feed(question: str) -> Decision:
 
     if "http" not in q and _has(q, *_SUGGEST_PHRASES):
         return Decision("feed.source_suggest", {})
+
+    if (research := _route_research(q, question)) is not None:
+        return research
 
     for tool_name, phrases in _FEED_RULES:
         if _has(q, *phrases):
