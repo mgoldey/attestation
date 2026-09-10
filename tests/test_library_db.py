@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from attestation import db as dbmod
+from attestation.library import ReferenceRecord, upsert
 
 
 def _v6_database(path):
@@ -87,15 +88,15 @@ def test_reference_vectors_follow_their_reference(tmp_path):
 
 
 def test_a_fresh_database_has_the_counts_claude_md_states(tmp_path):
-    """16 application tables; 27 rows in sqlite_master with the two vec0 tables,
+    """17 application tables; 28 rows in sqlite_master with the two vec0 tables,
     their four shadow tables each, and sqlite_sequence. CLAUDE.md's Storage
     line quotes these numbers and was found stale at 12/17 (review round 1)."""
     conn = dbmod.get_db(tmp_path / "fresh.db")
     names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
     app = [n for n in names if not n.startswith(("item_vectors", "reference_vectors", "sqlite_"))]
-    assert (len(names), len(app)) == (27, 16)
+    assert (len(names), len(app)) == (28, 17)
     claude_md = (Path(__file__).resolve().parents[1] / "CLAUDE.md").read_text()
-    assert "16 APPLICATION tables" in claude_md and "a fresh file has 27" in claude_md
+    assert "17 APPLICATION tables" in claude_md and "a fresh file has 28" in claude_md
 
 
 def test_a_fresh_database_has_the_library_tables(tmp_path):
@@ -128,3 +129,41 @@ def test_a_vec_dims_mismatch_is_refused_for_either_table(tmp_path, monkeypatch):
         assert "item_vectors" in str(exc)
     else:  # pragma: no cover - the assertion above is the test
         raise AssertionError("mismatched dims were accepted")
+
+
+def test_migration_009_adds_fulltext_added_by_and_pmcid(tmp_path):
+    """A v8 file gains the three research additions; a fresh file already has them;
+    re-opening is a no-op."""
+    db = tmp_path / "v8.db"
+    conn = dbmod.get_db(db)
+    conn.execute("DROP TABLE reference_fulltext")
+    conn.execute('ALTER TABLE "references" DROP COLUMN pmcid')
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("DROP TABLE feeds")
+    conn.execute(
+        "CREATE TABLE feeds(id INTEGER PRIMARY KEY, url TEXT UNIQUE NOT NULL,"
+        " title TEXT, last_fetched TEXT)"
+    )
+    conn.execute("PRAGMA user_version = 8")
+    conn.commit()
+    conn.close()
+    conn = dbmod.get_db(db)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == dbmod.SCHEMA_VERSION
+    assert "added_by" in {r["name"] for r in conn.execute("PRAGMA table_info(feeds)")}
+    assert "pmcid" in {r["name"] for r in conn.execute('PRAGMA table_info("references")')}
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(reference_fulltext)")}
+    assert cols == {"reference_id", "text", "source", "fetched_at"}
+    conn.close()
+    dbmod.get_db(db).close()  # idempotent
+
+
+def test_upsert_persists_pmcid(tmp_path):
+    conn = dbmod.get_db(tmp_path / "t.db")
+    rid, how = upsert(
+        conn,
+        ReferenceRecord(source="research:pubmed", source_key="1", title="T", pmcid="PMC12"),
+    )
+    assert how == "added"
+    assert (
+        conn.execute('SELECT pmcid FROM "references" WHERE id = ?', (rid,)).fetchone()[0] == "PMC12"
+    )

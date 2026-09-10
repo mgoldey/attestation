@@ -193,6 +193,7 @@ class ReferenceRecord:
     abstract: str | None = None
     url: str | None = None
     bib_key: str | None = None
+    pmcid: str | None = None
     fetched_at: str | None = None
     tags: list[str] = field(default_factory=list)
     cites: list[tuple[str, str | None]] = field(default_factory=list)
@@ -209,6 +210,7 @@ class ReferenceRecord:
             "abstract": self.abstract,
             "url": self.url,
             "bib_key": self.bib_key,
+            "pmcid": self.pmcid,
         }
         return {k: v for k, v in out.items() if v not in (None, "", [])}
 
@@ -217,7 +219,18 @@ class ReferenceRecord:
 # upsert and sync
 # ---------------------------------------------------------------------------
 
-_COLUMNS = ("doi", "arxiv_id", "title", "authors", "year", "venue", "abstract", "url", "bib_key")
+_COLUMNS = (
+    "doi",
+    "arxiv_id",
+    "title",
+    "authors",
+    "year",
+    "venue",
+    "abstract",
+    "url",
+    "bib_key",
+    "pmcid",
+)
 
 
 def _now() -> str:
@@ -286,8 +299,8 @@ def _row_this_source_made(conn: sqlite3.Connection, rec: ReferenceRecord):
 def _insert(conn: sqlite3.Connection, ident: str, fields: dict, now: str) -> int:
     cur = conn.execute(
         'INSERT INTO "references"(identity, doi, arxiv_id, title, authors, year, venue,'
-        " abstract, url, bib_key, title_key, first_seen, updated)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " abstract, url, bib_key, pmcid, title_key, first_seen, updated)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             ident,
             fields.get("doi"),
@@ -299,6 +312,7 @@ def _insert(conn: sqlite3.Connection, ident: str, fields: dict, now: str) -> int
             fields.get("abstract"),
             fields.get("url"),
             fields.get("bib_key"),
+            fields.get("pmcid"),
             normalise_title(fields["title"]) or None,
             now,
             now,
