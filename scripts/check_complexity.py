@@ -35,6 +35,11 @@ BASELINE = {
     "src/attestation/rank.py": 12,  # _ranking_quality -- lowered 2026-08-29:
     # the onion-seams split moved rank_items's blend into the pure rank_rows,
     # so rank_items is no longer the worst function here.
+    "src/attestation/research.py": 13,  # parse_topic: four independent ways
+    # a research: URL can be malformed (not the scheme, unknown client,
+    # empty query, journal on arxiv), each its own guard clause naming what
+    # to fix. Pre-existing from Task 2 (research.py's topic core); Task 3
+    # only added clients and parsers below it and left parse_topic alone.
     # route_feed is a rule table: each intent is one branch, and flattening it
     # into data would hide the ordering that the tests pin (a mutation like
     # "add X to my feeds" must be tested before the listing it mentions).

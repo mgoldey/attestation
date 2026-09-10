@@ -140,7 +140,11 @@ tests never touch the network.
 |---|---|---|---|---|
 | `arxiv` | `export.arxiv.org/api/query?search_query=all:<q> AND submittedDate:[<since> TO *]&sortBy=submittedDate` | refused by `parse_topic` (arXiv has categories, not journals) | in the query | 3 s between requests, as arXiv asks |
 | `pubmed` | `eutils …/esearch.fcgi?db=pubmed&term=<q>[ AND "<journal>"[Journal]]&datetype=edat&mindate=<since>` then `efetch.fcgi?db=pubmed&rettype=abstract&retmode=xml` | `[Journal]` field | `mindate` | 3 requests/s, 10 with `NCBI_API_KEY` set |
-| `crossref` | `api.crossref.org/works?query=<q>&query.container-title=<journal>&filter=from-index-date:<since>` | `query.container-title` | `from-index-date` | the polite-pool header the CrossRef enricher already sends |
+| `crossref` | `api.crossref.org/works?query=<q>&query.container-title=<journal>&filter=from-pub-date:<since>` | `query.container-title` | `from-pub-date` | the polite-pool header the CrossRef enricher already sends |
+
+`from-pub-date`, not `from-index-date`: a topic asks for papers *published*
+since the last run, and index date would resurface old papers CrossRef only
+recently indexed.
 
 Search results are **not** cached: they change, and one request per client
 per topic per hour is the whole load. (The enrichers' content-addressed

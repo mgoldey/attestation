@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <title type="html">ArXiv Query: search_query=all:equivariant AND all:force AND all:fields</title>
+  <entry>
+    <id>http://arxiv.org/abs/2101.03164v3</id>
+    <published>2021-01-08T18:56:11Z</published>
+    <title>E(3)-Equivariant Graph Neural Networks for Data-Efficient and Accurate
+  Interatomic Potentials</title>
+    <summary>  This work presents Neural Equivariant Interatomic Potentials (NequIP).
+</summary>
+    <author><name>Simon Batzner</name></author>
+    <author><name>Albert Musaelian</name></author>
+    <arxiv:doi xmlns:arxiv="http://arxiv.org/schemas/atom">10.1038/s41467-022-29939-5</arxiv:doi>
+    <link href="http://arxiv.org/abs/2101.03164v3" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/2101.03164v3" rel="related" type="application/pdf"/>
+    <arxiv:primary_category xmlns:arxiv="http://arxiv.org/schemas/atom" term="physics.comp-ph"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2206.07697v2</id>
+    <published>2022-06-15T17:59:59Z</published>
+    <title>MACE: Higher Order Equivariant Message Passing Neural Networks</title>
+    <summary>  We introduce MACE.
+</summary>
+    <author><name>Ilyes Batatia</name></author>
+    <link href="http://arxiv.org/abs/2206.07697v2" rel="alternate" type="text/html"/>
+  </entry>
+</feed>
