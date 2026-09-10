@@ -1366,10 +1366,7 @@ def test_domain_reaches_models_only_through_ports():
 
 
 _SQL = re.compile(r"""["'](SELECT|INSERT|UPDATE|DELETE|WITH) """)
-MCP_SQL_BASELINE = 22  # +1 2026-09-10: _add_feed resolves an optional `user`
-# name to added_by via a tolerant SELECT (unknown name -> None, not a refusal)
-# -- needs_user's strict lookup (refuse/autocreate) is the wrong fit, since
-# added_by is provenance on a shared feed, not scoping a per-user resource.
+MCP_SQL_BASELINE = 21  # measured after the Wave-1 seams: feed 15, personas 5, _tool 1
 
 
 def test_mcp_layer_sql_only_ratchets_down():

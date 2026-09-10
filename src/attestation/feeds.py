@@ -132,8 +132,13 @@ def _register(
 
 
 def list_sources(conn: sqlite3.Connection) -> list[dict]:
-    """Every registered feed with its item count -- the DB is the source of
-    truth (see the module docstring): feeds.toml only seeds the first ingest."""
+    """Every registered feed and research topic, with its kind, who added it,
+    and its item count -- the DB is the source of truth (see the module
+    docstring): feeds.toml only seeds the first ingest.
+
+    Each row's `kind` is "research" for a `research:` topic URL or "rss"
+    otherwise; `added_by` is the registering persona's name, or None.
+    """
     rows = conn.execute(
         "SELECT f.id, f.title, f.url, f.last_fetched, u.name AS added_by,"
         " COUNT(i.id) AS item_count"

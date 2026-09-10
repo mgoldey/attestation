@@ -15,7 +15,7 @@ it between namespaces.
 """
 
 from attestation.mcp._shared import MAX_LIST_LIMIT, ItemId, Limit
-from attestation.mcp._tool import ToolError, tool
+from attestation.mcp._tool import ToolError, _get_user, tool
 
 
 def register(mcp) -> None:
@@ -67,10 +67,8 @@ def register(mcp) -> None:
 def _add_feed(conn, url: str, title: str | None = None, user: str | None = None) -> dict:
     from attestation import feeds as feeds_mod
 
-    added_by = None
-    if user:
-        row = conn.execute("SELECT id FROM users WHERE name = ?", (user,)).fetchone()
-        added_by = row["id"] if row else None
+    row = _get_user(conn, user) if user else None
+    added_by = row["id"] if row else None
     try:
         feed_id, message = feeds_mod.add_source(conn, url, title, added_by=added_by)
     except feeds_mod.FeedError as exc:
