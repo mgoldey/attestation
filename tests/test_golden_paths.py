@@ -189,6 +189,30 @@ def _skip_ambient_username(user: str) -> bool:
     )
 
 
+def _bib_entries_with_unbalanced_braces(text: str) -> list[str]:
+    """Entry keys whose `{` and `}` do not balance -- what a strict BibTeX
+    parser (bibtexparser v2, JabRef, `bibtex` itself) refuses."""
+    bad = []
+    for chunk in re.split(r"\n(?=@\w+\s*\{)", text):
+        m = re.match(r"@\w+\s*\{\s*([^,\s]+)\s*,", chunk)
+        if m and chunk.count("{") != chunk.count("}"):
+            bad.append(m.group(1))
+    return bad
+
+
+@pytest.mark.parametrize("bib", sorted(EXAMPLES.rglob("*.bib")), ids=lambda p: p.parent.name)
+def test_every_committed_bib_is_valid_bibtex(bib):
+    """The lenient regex reader in citations.py tolerated three entries whose
+    closing brace the generator's URL scrub had eaten, so the golden path
+    printed `+48 added` over a file Zotero would refuse (review round 1)."""
+    text = bib.read_text()
+    assert _bib_entries_with_unbalanced_braces(text) == []
+    from attestation.citations import _parse_bib_entries
+
+    n_entries = len(re.findall(r"^@\w+\s*\{", text, re.MULTILINE))
+    assert len(list(_parse_bib_entries(text))) == n_entries
+
+
 def test_no_committed_example_carries_attribution_or_machine_paths():
     user = os.environ.get("USER", "")
     check_user = not _skip_ambient_username(user)

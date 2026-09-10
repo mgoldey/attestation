@@ -156,3 +156,38 @@ def test_cite_check_resolves_through_the_store(tmp_path, monkeypatch):
     out = citation._check(str(draft))
     assert out["ok"] is True
     assert [u["key"] for u in out["uncited"]] == ["ghost"]
+
+
+def test_cite_related_walks_edges_and_refuses_an_unknown_key(tmp_path, monkeypatch):
+    db = _db(tmp_path, monkeypatch)
+    conn = get_db(db)
+    upsert(
+        conn,
+        ReferenceRecord(
+            source="bibtex:/a.bib",
+            source_key="nequip",
+            bib_key="nequip",
+            title="NequIP",
+            doi="10.1/nequip",
+            cites=[("doi:10.5555/schnet", "SchNet"), ("title:elsewhere:-", "Elsewhere")],
+        ),
+    )
+    upsert(
+        conn,
+        ReferenceRecord(
+            source="bibtex:/a.bib",
+            source_key="schnet",
+            bib_key="schnet",
+            title="SchNet",
+            doi="10.5555/schnet",
+        ),
+    )
+    conn.commit()
+    conn.close()
+    out = citation._related("nequip")
+    assert out["ok"] is True and out["n_cites"] == 2 and out["n_cited_by"] == 0
+    assert [(c["key"], c["in_library"]) for c in out["cites"]] == [("schnet", True), (None, False)]
+    back = citation._related("10.5555/schnet")
+    assert [c["key"] for c in back["cited_by"]] == ["nequip"]
+    missing = citation._related("ghost")
+    assert missing["ok"] is False and "2 references" in missing["message"]

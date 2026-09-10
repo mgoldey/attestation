@@ -36,6 +36,9 @@ fallback are in `attestation-setup`.
 - "How do these two topics connect" or "what have I been reading about" --
   that is the knowledge agent (`attestation-knowledge`), which sees the
   concept graph. If your session also has it, use it; if not, say so.
+- Experiment arms, sweeps, or the numbers in a draft ("which arm of my
+  kdsweep sweep won") -- the provenance agent (`attestation-provenance`).
+  Hand off; do not search the feed for a sweep name.
 
 ## Ask the router first
 
@@ -78,8 +81,12 @@ It returns `answer` (relay it VERBATIM), `refs` (item ids for your next
 call), `caveat` (ranking honesty, unabridged), `options` and `tool_used`.
 **A router never guesses.** When it does not claim a question confidently it
 returns `ok=false` with a question in `answer` and the alternatives in
-`options` -- ask the reader that question; do not pick from `options`
-yourself. Fall through to a specific tool only when the router declined and
+`options` -- ask the reader that question, or, when one option plainly fits
+what they asked ("my ranked feed today" is the list), call `feed.ask` again
+with the question reworded for it. Never call it with empty arguments, and
+never tell the reader you have no tool for their feed: a 2026-09-04 session
+did both and reported "I do not have a tool" with `feed.ask` in its own tool
+list. Fall through to a specific tool only when the router declined and
 the reader has now said which, or when the call needs an argument the
 question does not carry (an `item_id` to rate, a URL to add) -- the router
 says so and names the tool. Specific tools may be hidden from your session;

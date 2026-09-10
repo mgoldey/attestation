@@ -74,6 +74,19 @@ def test_run_reference_tagging_stops_when_the_backend_is_down(tmp_path):
     assert stats["chat_down"] is True and stats["tagged"] == 0
 
 
+def test_tag_vocabulary_counts_reference_tags(tmp_path):
+    from attestation.library import ReferenceRecord, upsert
+
+    conn = seeded_db(tmp_path / "t.db")
+    upsert(
+        conn,
+        ReferenceRecord(
+            source="bibtex:/x", source_key="a", bib_key="a", title="A", tags=["only-in-references"]
+        ),
+    )
+    assert "only-in-references" in tag_vocabulary(conn)
+
+
 def test_itemtags_validates_good_output():
     parsed = ItemTags.model_validate({"content_type": "paper", "tags": ["a-tag", "b2"]})
     assert parsed.content_type == "paper"

@@ -41,8 +41,11 @@ identity rule that lets three sources fill one row.
   table.
 - **The concept graph stays co-occurrence only.** `kg.build_graph` takes
   `(id, tag)` pairs and does not care what an id names, so references join
-  the graph in spec 2 by supplying `ref:<id>` pairs. Citation edges live in
-  their own table and are never mixed into concept adjacency.
+  the graph in spec 2 by supplying their own ids. *Superseded 2026-09-05 by
+  spec 2:* they join as NEGATIVE ids, `(-reference_id, tag)`, not `ref:<id>`
+  strings -- the id type stays `int` and the sign cannot collide with an
+  item id. Citation edges live in their own table and are never mixed into
+  concept adjacency.
 - **Identity is a pure function.** DOI, else arXiv id, else normalised title
   and year. Tested without a database.
 - **Network stays opt-in and construction-time.** `ATTEST_CITATION_WEB`
@@ -185,9 +188,9 @@ emit; `library.to_reference(row)` converts.
 | `bibtex:<path>` | no | one record per `@entry` | reuses `citations._parse_bib`; adds `abstract`, `journal`/`booktitle` → venue, `eprint` with `archiveprefix = arXiv` → `arxiv_id` |
 | `zotero` | no | one per non-deleted item with a title | adds `abstractNote`, `publicationTitle`, `extra` parsed for `arXiv:` lines |
 | `feed` | no | one per item with `doi` or `arxiv_id` | `source_key = items.id`; title, summary → abstract, published → year, url |
-| `arxiv` | yes | metadata for ids the store already has | `http://export.arxiv.org/api/query?id_list=` in batches of 50, Atom parsed with `xml.etree`; fills abstract, authors, title, DOI when arXiv knows it |
+| `arxiv` | yes | metadata for ids the store already has | `http://export.arxiv.org/api/query?id_list=` in batches of 50, Atom parsed with `defusedxml` (not `xml.etree` as first written: the body came off the wire, and an entity-expansion payload would otherwise be parsed with no limit); fills abstract, authors, title, DOI when arXiv knows it |
 | `crossref` | yes | metadata for DOIs the store already has | the existing `WebReader` cache and endpoint; adds venue (`container-title`), authors |
-| `s2` | yes | reference lists for rows with a DOI or arXiv id | `api.semanticscholar.org/graph/v1/paper/<DOI:|arXiv:>id?fields=externalIds,title,references.externalIds,references.title`; one request per second, unauthenticated, honouring `Retry-After`; each reference becomes a `reference_cites` row with identity computed from its external ids or title |
+| `s2` | yes | reference lists for rows with a DOI or arXiv id | `api.semanticscholar.org/graph/v1/paper/<DOI:|arXiv:>id?fields=externalIds,title,references.externalIds,references.title`; one request every three seconds (the pace measured 2026-09-05, spec 2 §7), unauthenticated, honouring `Retry-After` (parsed defensively, floor 10 s, cap 60 s); each reference with an id, or a title of at least four words, becomes a `reference_cites` row with identity computed from its external ids or title |
 
 The three network readers are **enrichers**: they never introduce a
 reference on their own. A row exists because a disk source or the feed had
@@ -385,20 +388,26 @@ Taken 2026-09-05 against a scratch copy of the live database (9,407 items,
   Willison, Ars Technica and Quanta yield none, and Hacker News 6 of 559 --
   the posts that link straight to arXiv or a DOI. As predicted, with HN the
   only surprise.
-- **Dedup is real on the feed alone: 7,787 source rows collapsed to 7,580
-  references.** The 207 merges are the same arXiv paper announced in two
-  feeds (cs.LG and chem-ph cross-lists), which is exactly the case the
-  identity rule exists for.
+- **Cross-list dedup is real on the feed alone: 7,787 source rows collapsed
+  to 7,580 references.** The 207 merges are the same arXiv paper announced
+  in two feeds (cs.LG and chem-ph cross-lists), which is exactly the case
+  the identity rule exists for. 7,580 is an upper bound on distinct papers:
+  a journal item (DOI only) and its preprint (arXiv id only) share no column
+  and stay two rows until an enricher supplies the missing id -- and when
+  it does, the rows are not folded (review round 1): the collision is
+  recorded on the source row and both keep their provenance. Folding is a
+  later spec.
 - **Embedding: 100 references in 33.9 s wall through the CLI (≈0.32 s each,
   including process start), so the full feed-derived library is a ~40-minute
   one-off `attest library embed`.** `sync --limit N` bounds the embed pass;
   the default is unbounded because a partial index says `semantic: true`
   with a caveat, which is the honest state either way.
 
-Still to take, in spec 2: semantic vs substring on ten molecular-AI queries
-against the example library, so "finds SchNet for 'equivariant force
-fields'" is a number; and S2 wall time for a 40-paper library at one request
-per second.
+Taken, in spec 2 §6 and `examples/molecular-ai/README.md`: semantic vs
+substring on ten molecular-AI queries against the example library, with an
+expected paper written down per query; and Semantic Scholar wall time for a
+48-paper library -- five resumed passes at three seconds per request under
+the shared unauthenticated rate limit, not the minute first estimated.
 
 ## What this spec does not decide
 

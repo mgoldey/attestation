@@ -102,6 +102,7 @@ HELP: dict[str, str] = {
     "library.tag": "LLM-tag untagged references",
     "library.embed": "embed references that have no vector",
     "library.status": "counts per source, vectors, tags, citation edges",
+    "library.related": "what a reference cites and what cites it, from real reference lists",
 }
 
 
@@ -296,6 +297,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     lp = lib_sub.add_parser("status", help=HELP["library.status"])
     lp.set_defaults(func=cmd_library_status)
+
+    lp = lib_sub.add_parser("related", help=HELP["library.related"])
+    lp.add_argument("key", help="citation key, DOI, arXiv id, or library identity")
+    lp.set_defaults(func=cmd_library_related)
 
     sp = sub.add_parser("bootstrap-persona", help=HELP["bootstrap-persona"])
     add_db(sp)
@@ -1078,7 +1083,11 @@ def cmd_library_sync(args: argparse.Namespace) -> int:
 
     sources = [s.strip() for s in args.sources.split(",")] if args.sources else None
     with open_db(args.db) as conn:
-        readers = library_readers.readers_from_env(conn, sources=sources)
+        try:
+            readers = library_readers.readers_from_env(conn, sources=sources)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
         report = library.sync(conn, readers, embedder=_embedder_or_none(), limit=args.limit)
     for name, b in report.sources.items():
         line = f"{name}: +{b['added']} added, {b['merged']} merged, {b['unchanged']} unchanged"
@@ -1087,6 +1096,9 @@ def cmd_library_sync(args: argparse.Namespace) -> int:
         if b["failed"]:
             line += f", {b['failed']} failed"
         print(line)
+    for name in library_readers.unarmed(sources):
+        flag = "ATTEST_CITATION_SCHOLAR" if name == "s2" else "ATTEST_CITATION_WEB"
+        print(f"{name}: not armed ({flag} is unset), nothing fetched")
     tail = f" ({report.embed_error})" if report.embed_error else ""
     print(f"embedded {report.embedded}, {report.unembedded} without a vector{tail}")
     if report.conflicts:
@@ -1142,6 +1154,28 @@ def cmd_library_embed(args: argparse.Namespace) -> int:
         done, missing, error = library.embed_missing(conn, Embedder(), args.limit)
     print(f"embedded {done}, {missing} still without a vector" + (f" ({error})" if error else ""))
     return 1 if error and done == 0 else 0
+
+
+@_documented("library.related")
+def cmd_library_related(args: argparse.Namespace) -> int:
+    from attestation import library
+
+    with open_db(args.db) as conn:
+        rel = library.related(conn, args.key)
+        if rel is None:
+            n = library.status(conn)["references"]
+            return fail(f"no library reference matches {args.key!r} ({n} references in the store)")
+    h = rel.reference
+    print(f"{h.year or '----'}  {h.title[:90]}  [{h.bib_key or h.identity}]")
+    for label, rows, n in (
+        ("cites", rel.cites, rel.n_cites),
+        ("cited_by", rel.cited_by, rel.n_cited_by),
+    ):
+        print(f"{label} {n}")
+        for nb in rows:
+            where = "in library" if nb.in_library else "not in library"
+            print(f"  [{where}] {nb.key or nb.identity}  {(nb.title or '')[:80]}")
+    return 0
 
 
 @_documented("library.status")

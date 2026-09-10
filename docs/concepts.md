@@ -68,7 +68,7 @@ tautological). See the [feed guide](guides/feed.md).
 **surface** — a restricted view of the MCP tool set for one kind of agent
 session: `feed`, `provenance`, `knowledge`, or `symbolic`, selected with
 `ATTEST_TOOLS` and defined in `AGENT_SURFACES`
-(`src/attestation/mcp/__init__.py`). Unset serves all 47 tools; a typo
+(`src/attestation/mcp/__init__.py`). Unset serves all 48 tools; a typo
 raises rather than silently serving everything. See the
 [agents guide](guides/agents.md).
 

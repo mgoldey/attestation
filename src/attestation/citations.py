@@ -150,6 +150,7 @@ def _year(value: str | None) -> int | None:
 # ---------------------------------------------------------------------------
 
 _ENTRY = re.compile(r"@(\w+)\s*\{\s*([^,\s]+)\s*,(.*?)\n\}", re.DOTALL)
+_ENTRY_BOUNDARY = re.compile(r"\n(?=@\w+\s*\{)")
 _FIELD = re.compile(r"(\w+)\s*=\s*[{\"](.*?)[}\"]\s*,?\s*$", re.MULTILINE | re.DOTALL)
 
 
@@ -160,10 +161,15 @@ def _parse_bib_entries(text: str) -> Iterator[tuple[str, dict]]:
     `library_readers.BibtexRecords` (the library sync) both read through it,
     so a grammar fix lands in both.
     """
-    for _kind, key, body in _ENTRY.findall(text):
-        fields = {k.lower(): " ".join(v.split()) for k, v in _FIELD.findall(body)}
-        if fields.get("title"):
-            yield key, fields
+    # Split at entry boundaries before matching: `_ENTRY`'s lazy body would
+    # otherwise rescan to end-of-file for every entry whose closing brace is
+    # not alone on a line -- quadratic, 3.6 s for 3,000 such entries
+    # (review round 1). Per chunk, a bad entry costs only its own length.
+    for chunk in _ENTRY_BOUNDARY.split(text):
+        for _kind, key, body in _ENTRY.findall(chunk):
+            fields = {k.lower(): " ".join(v.split()) for k, v in _FIELD.findall(body)}
+            if fields.get("title"):
+                yield key, fields
 
 
 class BibtexReader:
@@ -367,8 +373,10 @@ def _write_cached(cache_dir: Path, cached: Path, ref) -> None:
 class WebReader:
     """Metadata by DOI or arXiv id, from CrossRef and arXiv.
 
-    **This is the only thing in the project that leaves the machine**, and it
-    exists only when `ATTEST_CITATION_WEB` was set at construction. Records are
+    **One of the four things in the project that leave the machine** (the
+    others are library_readers' three enrichers, behind the same flag and
+    `ATTEST_CITATION_SCHOLAR`), and it exists only when `ATTEST_CITATION_WEB`
+    was set at construction. Records are
     cached content-addressed and never expire: a published paper's metadata
     does not change, and an expiring cache turns one network call into a
     recurring one, which is the opposite of the guarantee.

@@ -1,6 +1,7 @@
 """Migration 007: the library tables, the second vec table, items.doi/arxiv_id."""
 
 import sqlite3
+from pathlib import Path
 
 from attestation import db as dbmod
 
@@ -83,6 +84,18 @@ def test_reference_vectors_follow_their_reference(tmp_path):
     )
     conn.execute('DELETE FROM "references" WHERE id = 7')
     assert conn.execute("SELECT count(*) FROM reference_vectors").fetchone()[0] == 0
+
+
+def test_a_fresh_database_has_the_counts_claude_md_states(tmp_path):
+    """16 application tables; 27 rows in sqlite_master with the two vec0 tables,
+    their four shadow tables each, and sqlite_sequence. CLAUDE.md's Storage
+    line quotes these numbers and was found stale at 12/17 (review round 1)."""
+    conn = dbmod.get_db(tmp_path / "fresh.db")
+    names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+    app = [n for n in names if not n.startswith(("item_vectors", "reference_vectors", "sqlite_"))]
+    assert (len(names), len(app)) == (27, 16)
+    claude_md = (Path(__file__).resolve().parents[1] / "CLAUDE.md").read_text()
+    assert "16 APPLICATION tables" in claude_md and "a fresh file has 27" in claude_md
 
 
 def test_a_fresh_database_has_the_library_tables(tmp_path):

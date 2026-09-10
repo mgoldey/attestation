@@ -42,9 +42,15 @@ shows for the same arguments, and never retry a plausible-looking variant
 of the dotted name.
 
 Returns `answer` (relay VERBATIM), `refs`, `caveat`, `options` and
-`tool_used`; `ok=false` with `options` means ask the reader, never pick for
-them. Specific tools may be hidden from your session; `kg.tools` explains
-why and how to reveal them.
+`tool_used`; `ok=false` with `options` means ask the reader which, or re-ask
+`kg.ask` with the question reworded for the option that plainly fits --
+never call it with empty arguments, and never say you lack a tool for the
+reader's topics. "What do I read about most", "what clusters is my reading
+in", "what are my main research areas" are all `kg.ask` -- the graph is the
+reader's record; a memory, notes or session-search tool is not, and "I do
+not have access to your reading" is never true while `kg.ask` is in your
+tool list. Specific tools may be hidden from your session; `kg.tools`
+explains why and how to reveal them.
 
 ## Concept names are the vocabulary, not your phrasing
 
@@ -99,6 +105,16 @@ from disk). `cite.search(query, limit)` finds references by what they are
 about when the library is embedded and by substring otherwise -- read
 `semantic` and `caveat` in the reply before describing the result -- and
 **never touches the network**, even when a web reader is configured.
+
+`cite.related(key)` walks a paper's citation neighbourhood: what it cites
+and what in the library cites it, from reference lists Semantic Scholar
+supplied at sync time or a `.bib` `cites` field. A cited paper that is not
+in the library comes back with `in_library: false` and is never fetched;
+`n_cites` and `n_cited_by` are the true counts behind the capped lists.
+References tagged with `attest library tag` (or carrying `keywords` in the
+`.bib`) sit in the concept graph beside the items, so `kg.*` answers cover
+what the reader cites as well as what they read; `cite.search(query="",
+tag=...)` lists the references behind a concept.
 
 `cite.check(path)` lints a Markdown draft's `cite=<key>` annotations for
 keys no configured source resolves. It is a lint -- the key is unknown

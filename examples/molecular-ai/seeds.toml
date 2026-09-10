@@ -1,0 +1,248 @@
+# Seeds for examples/molecular-ai/generate.py: identifiers and working titles.
+#
+# This is the only hand-typed file in the example. Everything in
+# references.bib -- authors, years, venues, abstracts, keywords, citation
+# edges -- was fetched or computed by generate.py from these identifiers. A
+# seed that fails to resolve at generation time is dropped and reported, not
+# patched by hand. Titles here are working titles the sync needs to create a
+# row; the export prefers the title the wire returned.
+
+[[seeds]]
+key = "schnet"
+title = "SchNet: A continuous-filter convolutional neural network for modeling quantum interactions"
+arxiv = "1706.08566"
+
+[[seeds]]
+key = "physnet"
+title = "PhysNet: A Neural Network for Predicting Energies, Forces, Dipole Moments and Partial Charges"
+arxiv = "1902.08408"
+
+[[seeds]]
+key = "dimenet"
+title = "Directional Message Passing for Molecular Graphs"
+arxiv = "2003.03123"
+
+[[seeds]]
+key = "dimenetpp"
+title = "Fast and Uncertainty-Aware Directional Message Passing for Non-Equilibrium Molecules"
+arxiv = "2011.14115"
+
+[[seeds]]
+key = "gemnet"
+title = "GemNet: Universal Directional Graph Neural Networks for Molecules"
+arxiv = "2106.08903"
+
+[[seeds]]
+key = "nequip"
+title = "E(3)-equivariant graph neural networks for data-efficient and accurate interatomic potentials"
+arxiv = "2101.03164"
+
+[[seeds]]
+key = "mace"
+title = "MACE: Higher Order Equivariant Message Passing Neural Networks for Fast and Accurate Force Fields"
+arxiv = "2206.07697"
+
+[[seeds]]
+key = "allegro"
+title = "Learning Local Equivariant Representations for Large-Scale Atomistic Dynamics"
+arxiv = "2204.05249"
+
+[[seeds]]
+key = "painn"
+title = "Equivariant message passing for the prediction of tensorial properties and molecular spectra"
+arxiv = "2102.03150"
+
+[[seeds]]
+key = "torchmdnet"
+title = "TorchMD-NET: Equivariant Transformers for Neural Network based Molecular Potentials"
+arxiv = "2202.02541"
+
+[[seeds]]
+key = "spherenet"
+title = "Spherical Message Passing for 3D Graph Networks"
+arxiv = "2102.05013"
+
+[[seeds]]
+key = "ani1"
+title = "ANI-1: an extensible neural network potential with DFT accuracy at force field computational cost"
+arxiv = "1610.08935"
+
+[[seeds]]
+key = "ani2x"
+title = "Extending the Applicability of the ANI Deep Learning Molecular Potential to Sulfur and Halogens"
+doi = "10.1021/acs.jctc.0c00121"
+
+[[seeds]]
+key = "chemprop"
+title = "Analyzing Learned Molecular Representations for Property Prediction"
+arxiv = "1904.01561"
+
+[[seeds]]
+key = "moleculenet"
+title = "MoleculeNet: A Benchmark for Molecular Machine Learning"
+arxiv = "1703.00564"
+
+[[seeds]]
+key = "grover"
+title = "Self-Supervised Graph Transformer on Large-Scale Molecular Data"
+arxiv = "2007.02835"
+
+[[seeds]]
+key = "molclr"
+title = "Molecular Contrastive Learning of Representations via Graph Neural Networks"
+arxiv = "2102.10056"
+
+[[seeds]]
+key = "chemberta"
+title = "ChemBERTa: Large-Scale Self-Supervised Pretraining for Molecular Property Prediction"
+arxiv = "2010.09885"
+
+[[seeds]]
+key = "smilestransformer"
+title = "SMILES Transformer: Pre-trained Molecular Fingerprint for Low Data Drug Discovery"
+arxiv = "1911.04738"
+
+[[seeds]]
+key = "molgan"
+title = "MolGAN: An implicit generative model for small molecular graphs"
+arxiv = "1805.11973"
+
+[[seeds]]
+key = "jtvae"
+title = "Junction Tree Variational Autoencoder for Molecular Graph Generation"
+arxiv = "1802.04364"
+
+[[seeds]]
+key = "graphaf"
+title = "GraphAF: a Flow-based Autoregressive Model for Molecular Graph Generation"
+arxiv = "2001.09382"
+
+[[seeds]]
+key = "chemvae"
+title = "Automatic chemical design using a data-driven continuous representation of molecules"
+arxiv = "1610.02415"
+
+[[seeds]]
+key = "diffdock"
+title = "DiffDock: Diffusion Steps, Twists, and Turns for Molecular Docking"
+arxiv = "2210.01776"
+
+[[seeds]]
+key = "equibind"
+title = "EquiBind: Geometric Deep Learning for Drug Binding Structure Prediction"
+arxiv = "2202.05146"
+
+[[seeds]]
+key = "torsionaldiffusion"
+title = "Torsional Diffusion for Molecular Conformer Generation"
+arxiv = "2206.01729"
+
+[[seeds]]
+key = "oc20"
+title = "The Open Catalyst 2020 (OC20) Dataset and Community Challenges"
+arxiv = "2010.09990"
+
+[[seeds]]
+key = "oc22"
+title = "The Open Catalyst 2022 (OC22) Dataset and Challenges for Oxide Electrocatalysts"
+arxiv = "2206.08917"
+
+[[seeds]]
+key = "matbenchdiscovery"
+title = "Matbench Discovery -- A framework to evaluate machine learning crystal stability predictions"
+arxiv = "2308.14920"
+
+[[seeds]]
+key = "m3gnet"
+title = "A universal graph deep learning interatomic potential for the periodic table"
+arxiv = "2202.02450"
+
+[[seeds]]
+key = "chgnet"
+title = "CHGNet: Pretrained universal neural network potential for charge-informed atomistic modeling"
+arxiv = "2302.14231"
+
+[[seeds]]
+key = "mattersim"
+title = "MatterSim: A Deep Learning Atomistic Model Across Elements, Temperatures and Pressures"
+arxiv = "2405.04967"
+
+[[seeds]]
+key = "gnome"
+title = "Scaling deep learning for materials discovery"
+doi = "10.1038/s41586-023-06735-9"
+
+[[seeds]]
+key = "alphafold2"
+title = "Highly accurate protein structure prediction with AlphaFold"
+doi = "10.1038/s41586-021-03819-2"
+
+[[seeds]]
+key = "rosettafold"
+title = "Accurate prediction of protein structures and interactions using a three-track neural network"
+doi = "10.1126/science.abj8754"
+
+[[seeds]]
+key = "esm2"
+title = "Evolutionary-scale prediction of atomic-level protein structure with a language model"
+doi = "10.1126/science.ade2574"
+
+[[seeds]]
+key = "rfdiffusion"
+title = "De novo design of protein structure and function with RFdiffusion"
+doi = "10.1038/s41586-023-06415-8"
+
+[[seeds]]
+key = "proteinmpnn"
+title = "Robust deep learning-based protein sequence design using ProteinMPNN"
+doi = "10.1126/science.add2187"
+
+[[seeds]]
+key = "deepmd"
+title = "Deep Potential Molecular Dynamics: a scalable model with the accuracy of quantum mechanics"
+arxiv = "1707.09571"
+
+[[seeds]]
+key = "se3transformer"
+title = "SE(3)-Transformers: 3D Roto-Translation Equivariant Attention Networks"
+arxiv = "2006.10503"
+
+[[seeds]]
+key = "egnn"
+title = "E(n) Equivariant Graph Neural Networks"
+arxiv = "2102.09844"
+
+[[seeds]]
+key = "mpnn"
+title = "Neural Message Passing for Quantum Chemistry"
+arxiv = "1704.01212"
+
+[[seeds]]
+key = "cgcnn"
+title = "Crystal Graph Convolutional Neural Networks for an Accurate and Interpretable Prediction of Material Properties"
+arxiv = "1710.10324"
+
+[[seeds]]
+key = "megnet"
+title = "Graph Networks as a Universal Machine Learning Framework for Molecules and Crystals"
+arxiv = "1812.05055"
+
+[[seeds]]
+key = "behlerparrinello"
+title = "Generalized Neural-Network Representation of High-Dimensional Potential-Energy Surfaces"
+doi = "10.1103/PhysRevLett.98.146401"
+
+[[seeds]]
+key = "gap"
+title = "Gaussian Approximation Potentials: The Accuracy of Quantum Mechanics, without the Electrons"
+doi = "10.1103/PhysRevLett.104.136403"
+
+[[seeds]]
+key = "soap"
+title = "On representing chemical environments"
+doi = "10.1103/PhysRevB.87.184115"
+
+[[seeds]]
+key = "mtp"
+title = "Moment Tensor Potentials: A Class of Systematically Improvable Interatomic Potentials"
+doi = "10.1137/15M1054183"

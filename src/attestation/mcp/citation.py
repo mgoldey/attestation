@@ -46,12 +46,20 @@ def _lookup(conn, key: str) -> dict:
                 (row["id"],),
             )
         ]
-        conflicts = {s["source"]: json.loads(s.pop("raw")).get("conflicts", {}) for s in sources}
-        return {
-            "reference": ref.to_row(),
-            "sources": sources,
-            "conflicts": {k: v for k, v in conflicts.items() if v},
-        }
+        # Keyed by source, and by source:key when one source contributed twice
+        # (a cross-listed arXiv paper is two feed rows) so neither row's
+        # conflicts hide the other's.
+        conflicts: dict = {}
+        for s in sources:
+            found = json.loads(s.pop("raw")).get("conflicts", {})
+            if found:
+                key = (
+                    s["source"]
+                    if s["source"] not in conflicts
+                    else f"{s['source']}:{s['source_key']}"
+                )
+                conflicts[key] = found
+        return {"reference": ref.to_row(), "sources": sources, "conflicts": conflicts}
     resolver = _resolver()
     found = resolver.lookup(key)
     if found is None:
@@ -167,7 +175,10 @@ def _sources(conn) -> dict:
 def _sync(conn, sources: list[str] | None = None, limit: int | None = None) -> dict:
     from attestation import library, library_readers
 
-    readers = library_readers.readers_from_env(conn, sources=sources)
+    try:
+        readers = library_readers.readers_from_env(conn, sources=sources)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
     report = library.sync(conn, readers, embedder=_embedder(), limit=limit)
     out = report.to_dict()
     lines = []
@@ -178,8 +189,27 @@ def _sync(conn, sources: list[str] | None = None, limit: int | None = None) -> d
         if b["failed"]:
             line += f", {b['failed']} failed"
         lines.append(line)
+    for name in library_readers.unarmed(sources):
+        flag = "ATTEST_CITATION_SCHOLAR" if name == "s2" else "ATTEST_CITATION_WEB"
+        lines.append(f"{name}: not armed ({flag} is unset), nothing fetched")
     out["message"] = "; ".join(lines) or "no sources configured"
     return out
+
+
+@tool(
+    empty={"reference": None, "cites": [], "cited_by": [], "n_cites": 0, "n_cited_by": 0},
+    label="cite_related",
+)
+def _related(conn, key: str) -> dict:
+    from attestation import library
+
+    rel = library.related(conn, key)
+    if rel is None:
+        stored = library.status(conn)["references"]
+        raise ToolError(
+            f"no library reference matches {key!r} (store: {stored} references; cite.sync fills it)"
+        )
+    return rel.to_row()
 
 
 def register(mcp) -> None:
@@ -275,3 +305,17 @@ def register(mcp) -> None:
         Idempotent: re-running with unchanged sources changes nothing.
         """
         return _sync(sources, limit)
+
+    @mcp.tool(name="cite.related")
+    def cite_related(
+        key: Annotated[str, Field(description="citation key, DOI, arXiv id, or library identity")],
+    ) -> dict:
+        """What a paper cites, and what in the library cites it.
+
+        Edges come from Semantic Scholar reference lists (ATTEST_CITATION_SCHOLAR
+        at sync time) or a .bib `cites` field. A cited paper that is not in
+        the library is listed with `in_library: false` and is never fetched.
+        Deterministic; no model. `n_cites` / `n_cited_by` are the true counts
+        behind the capped lists.
+        """
+        return _related(key)
