@@ -47,52 +47,98 @@ def add_source(
     url: str,
     title: str | None = None,
     parse=feedparser.parse,
+    *,
+    added_by: int | None = None,
 ) -> tuple[int, str]:
     """Register a feed after checking it parses. Does NOT ingest its items.
+
+    A `research:` URL (a standing topic, see research.parse_topic) is
+    validated by parsing the URL itself -- no network at registration -- and
+    stored in its canonical spelling so two spellings are one row. `added_by`
+    is the registering persona's id: provenance, not scoping.
 
     Returns (feed_id, message). Raises FeedError if the URL does not parse
     as a feed -- a caller-fixable refusal, not a bug.
     """
-    existing = conn.execute("SELECT id FROM feeds WHERE url = ?", (url,)).fetchone()
-    if existing is not None:
-        return existing["id"], f"already subscribed to {url}"
+    from attestation import research
+
+    if research.is_topic_url(url):
+        return _register_topic(conn, url, title, added_by)
 
     parsed = parse(url)
     if not _looks_like_feed(parsed):
         raise FeedError(f"{url} did not parse as an RSS/Atom feed; nothing was added")
-
     resolved_title = title or (getattr(parsed, "feed", None) or {}).get("title") or url
-    try:
-        cur = conn.execute("INSERT INTO feeds(url, title) VALUES (?, ?)", (url, resolved_title))
-        conn.commit()
-        feed_id = cur.lastrowid
-    except sqlite3.IntegrityError:
-        # Someone subscribed between the check above and this write -- and the
-        # window is a whole network round trip, since parse() sits inside it.
-        # The subscription the caller asked for exists, which is the outcome
-        # the serial path already calls success.
-        conn.rollback()
-        raced = conn.execute("SELECT id FROM feeds WHERE url = ?", (url,)).fetchone()
-        if raced is None:
-            raise
-        return raced["id"], f"already subscribed to {url}"
-    if feed_id is None:
-        # cur.lastrowid is None only when the statement was not an INSERT, or
-        # the table has no rowid -- neither is possible here, so this is a
-        # real failure worth surfacing rather than asserting past.
-        raise FeedError(f"insert for {url} did not return a row id")
+    feed_id, existed = _register(conn, url, resolved_title, added_by)
+    if existed:
+        return feed_id, f"already subscribed to {url}"
     return feed_id, (
         f"subscribed to {resolved_title!r}. Items appear after the next ingest "
         "(run `attest ingest`, or wait for the hourly refresh)."
     )
 
 
+def _register_topic(
+    conn: sqlite3.Connection, url: str, title: str | None, added_by: int | None
+) -> tuple[int, str]:
+    """Validate and register a `research:` URL. Raises FeedError for a bad topic."""
+    from attestation import research
+
+    try:
+        topic = research.parse_topic(url)
+    except research.TopicError as exc:
+        raise FeedError(str(exc)) from exc
+    feed_id, existed = _register(conn, topic.url, title or topic.title, added_by)
+    if existed:
+        return feed_id, f"already tracking {topic.url}"
+    return feed_id, (
+        f"tracking {title or topic.title!r}. Papers appear after the next ingest "
+        "(run `attest ingest`, or wait for the hourly refresh)."
+    )
+
+
+def _register(
+    conn: sqlite3.Connection, url: str, title: str, added_by: int | None
+) -> tuple[int, bool]:
+    """Insert the row; returns (feed_id, already_existed).
+
+    Owns the race the old add_source handled inline: someone subscribing
+    between the caller's check and this write -- and the window is a whole
+    network round trip, since parse() sits inside it for an RSS URL -- means
+    the subscription the caller asked for already exists, which is the
+    outcome the serial path already calls success, not an error.
+    """
+    existing = conn.execute("SELECT id FROM feeds WHERE url = ?", (url,)).fetchone()
+    if existing is not None:
+        return existing["id"], True
+    try:
+        cur = conn.execute(
+            "INSERT INTO feeds(url, title, added_by) VALUES (?, ?, ?)", (url, title, added_by)
+        )
+        conn.commit()
+        feed_id = cur.lastrowid
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        raced = conn.execute("SELECT id FROM feeds WHERE url = ?", (url,)).fetchone()
+        if raced is None:
+            raise
+        return raced["id"], True
+    if feed_id is None:
+        # cur.lastrowid is None only when the statement was not an INSERT, or
+        # the table has no rowid -- neither is possible here, so this is a
+        # real failure worth surfacing rather than asserting past.
+        raise FeedError(f"insert for {url} did not return a row id")
+    return feed_id, False
+
+
 def list_sources(conn: sqlite3.Connection) -> list[dict]:
     """Every registered feed with its item count -- the DB is the source of
     truth (see the module docstring): feeds.toml only seeds the first ingest."""
     rows = conn.execute(
-        "SELECT f.id, f.title, f.url, f.last_fetched, COUNT(i.id) AS item_count"
+        "SELECT f.id, f.title, f.url, f.last_fetched, u.name AS added_by,"
+        " COUNT(i.id) AS item_count"
         " FROM feeds f LEFT JOIN items i ON i.feed_id = f.id"
+        " LEFT JOIN users u ON u.id = f.added_by"
         " GROUP BY f.id ORDER BY f.title"
     ).fetchall()
     return [
@@ -100,6 +146,8 @@ def list_sources(conn: sqlite3.Connection) -> list[dict]:
             "feed_id": r["id"],
             "title": r["title"],
             "url": r["url"],
+            "kind": "research" if r["url"].startswith("research:") else "rss",
+            "added_by": r["added_by"],
             "item_count": r["item_count"],
             "last_fetched": r["last_fetched"],
         }

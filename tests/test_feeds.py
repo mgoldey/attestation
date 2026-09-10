@@ -190,3 +190,42 @@ def test_feeds_module_names_match_the_source_tool_vocabulary():
     ambiguous with the ranked-item product in mcp/feed.py, "source" is not."""
     public = {n for n in dir(feeds) if not n.startswith("_") and callable(getattr(feeds, n))}
     assert not [n for n in public if n.endswith(("feed", "feeds"))], public
+
+
+def _no_network(url):
+    raise AssertionError(f"parse() must not be called for {url}")
+
+
+def test_add_research_topic_registers_without_network_and_canonicalises(conn):
+    feed_id, message = feeds.add_source(
+        conn, "research:arxiv,pubmed?q=graph  neural+networks", parse=_no_network
+    )
+    row = conn.execute("SELECT url, title FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+    assert row["url"] == "research:arxiv,pubmed?q=graph+neural+networks"
+    assert row["title"] == "arxiv,pubmed: graph neural networks"
+    assert "next ingest" in message
+    again, msg2 = feeds.add_source(
+        conn, "research:arxiv,pubmed?q=graph+neural+networks", parse=_no_network
+    )
+    assert again == feed_id and "already" in msg2
+
+
+def test_add_research_topic_refuses_bad_urls_as_feed_errors(conn):
+    with pytest.raises(feeds.FeedError, match="unknown research client"):
+        feeds.add_source(conn, "research:scholar?q=x", parse=_no_network)
+    assert (
+        conn.execute("SELECT COUNT(*) n FROM feeds WHERE url LIKE 'research:%'").fetchone()["n"]
+        == 0
+    )
+
+
+def test_added_by_and_kind_are_listed(conn):
+    uid = conn.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()["id"]
+    name = conn.execute("SELECT name FROM users WHERE id = ?", (uid,)).fetchone()["name"]
+    feeds.add_source(conn, "research:arxiv?q=x", parse=_no_network, added_by=uid)
+    feeds.add_source(conn, "http://example.com/rss", parse=_parse_ok)
+    by_url = {s["url"]: s for s in feeds.list_sources(conn)}
+    assert by_url["research:arxiv?q=x"]["kind"] == "research"
+    assert by_url["research:arxiv?q=x"]["added_by"] == name
+    assert by_url["http://example.com/rss"]["kind"] == "rss"
+    assert by_url["http://example.com/rss"]["added_by"] is None
