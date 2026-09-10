@@ -87,15 +87,44 @@ def _published_iso(entry) -> str | None:
     return time.strftime("%Y-%m-%dT%H:%M:%S", parsed) if parsed else None
 
 
-def _exists(conn, feed_id: int, guid: str | None, chash: str) -> bool:
+def _entry_ids(entry) -> tuple[str | None, str | None]:
+    """(doi, arxiv_id): what the entry states (a research hit carries both keys),
+    else what its guid/url imply."""
+    doi, arxiv_id = extract_ids(entry.get("id"), entry.get("link"))
+    return entry.get("doi") or doi, entry.get("arxiv_id") or arxiv_id
+
+
+def _exists(conn, feed_id: int, guid: str | None, chash: str, doi=None, arxiv_id=None) -> bool:
+    """True if this item is already stored: same feed+guid, same content hash,
+    or -- across ANY feed -- the same DOI/arXiv id (a cross-list or a topic hit
+    the RSS already carried; see the comment on the identifier loop below)."""
     if guid is not None:
         row = conn.execute(
             "SELECT 1 FROM items WHERE feed_id = ? AND guid = ?", (feed_id, guid)
         ).fetchone()
         if row:
             return True
-    row = conn.execute("SELECT 1 FROM items WHERE content_hash = ?", (chash,)).fetchone()
-    return row is not None
+    if conn.execute("SELECT 1 FROM items WHERE content_hash = ?", (chash,)).fetchone():
+        return True
+    # Same paper under ANY feed: a cs.LG/chem-ph cross-list (207 of 7,787
+    # identified items, measured 2026-09-05) or a topic hit the RSS already
+    # carried with a slightly different abstract. The library merges these
+    # into one reference; this stops feed.list showing one paper twice.
+    for column, value in (("doi", doi), ("arxiv_id", arxiv_id)):
+        if value and conn.execute(f"SELECT 1 FROM items WHERE {column} = ?", (value,)).fetchone():
+            return True
+    return False
+
+
+def _duplicate_in_batch(seen_guids, seen_hashes, seen_ids, guid, chash, doi, arxiv_id) -> bool:
+    """True if this entry repeats one already accepted earlier in the same
+    batch -- by guid, content hash, or DOI/arXiv id -- split out of
+    `_new_entries` to keep that function's own branching down."""
+    return (
+        chash in seen_hashes
+        or (guid is not None and guid in seen_guids)
+        or any(v in seen_ids for v in (doi, arxiv_id) if v)
+    )
 
 
 def _new_entries(conn, feed_id: int, entries) -> tuple[list, int]:
@@ -114,11 +143,13 @@ def _new_entries(conn, feed_id: int, entries) -> tuple[list, int]:
     new_entries: list = []
     seen_guids: set[str] = set()
     seen_hashes: set[str] = set()
+    seen_ids: set[str] = set()
     skipped = 0
     for entry in entries:
         title = (entry.get("title") or "").strip()
         summary = strip_boilerplate(entry.get("summary", ""))
         guid = entry.get("id")
+        doi, arxiv_id = _entry_ids(entry)
         try:
             chash = content_hash(title, summary)
         except UnicodeEncodeError:
@@ -131,15 +162,70 @@ def _new_entries(conn, feed_id: int, entries) -> tuple[list, int]:
             log.warning("skipping an entry with unencodable text: %s", (title or guid)[:60])
             skipped += 1
             continue
-        duplicate_in_batch = chash in seen_hashes or (guid is not None and guid in seen_guids)
-        if duplicate_in_batch or _exists(conn, feed_id, guid, chash):
+        duplicate_in_batch = _duplicate_in_batch(
+            seen_guids, seen_hashes, seen_ids, guid, chash, doi, arxiv_id
+        )
+        if duplicate_in_batch or _exists(conn, feed_id, guid, chash, doi, arxiv_id):
             skipped += 1
             continue
         if guid is not None:
             seen_guids.add(guid)
         seen_hashes.add(chash)
+        seen_ids.update(v for v in (doi, arxiv_id) if v)
         new_entries.append((entry, title, summary, guid, chash))
     return new_entries, skipped
+
+
+def _fetch_feed(feed, parse, clients):
+    """One feed's parsed payload: feedparser for an RSS URL, the research
+    clients for a `research:` one (entries feedparser-shaped, plus `.papers`
+    for the library). Returns None when research is disabled for this run."""
+    from datetime import date
+
+    from attestation import research
+
+    if not research.is_topic_url(feed["url"]):
+        return parse(feed["url"])
+    topic = research.parse_topic(feed["url"])
+    if all(clients[n].offline for n in topic.clients):
+        return None
+    since = date.fromisoformat(feed["last_fetched"][:10]) if feed["last_fetched"] else None
+    fetched = research.fetch_topic(topic, clients, since=since)
+    if fetched.errors and not fetched.papers:
+        raise RuntimeError("; ".join(fetched.errors))
+    for err in fetched.errors:
+        log.warning("research client failed: %s -- %s", feed["url"], err)
+    return fetched
+
+
+def _store_references(conn, parsed) -> None:
+    """After a topic's items are committed, the same hits enter the library
+    under `research:<client>` with the authors and venue the payload had --
+    the spec's stated exception to 'the wire never introduces a reference'."""
+    from datetime import UTC, datetime
+
+    from attestation import library, research
+
+    papers = getattr(parsed, "papers", None)
+    if not papers:
+        return
+    today = datetime.now(UTC).date().isoformat()
+    for rec in research.as_records(papers, today):
+        library.upsert(conn, rec)
+    conn.commit()
+
+
+def _disabled_outcome(url: str) -> dict:
+    """The per-feed outcome for a research topic skipped this run because
+    ATTEST_RESEARCH_WEB (or --no-research) is off -- counted, never a failure."""
+    return {
+        "feed": url,
+        "new": 0,
+        "skipped": 0,
+        "error": None,
+        "embedder_down": False,
+        "research_disabled": True,
+    }
 
 
 def _ingest_outcome(outcomes: list[dict]) -> dict:
@@ -155,7 +241,9 @@ def _ingest_outcome(outcomes: list[dict]) -> dict:
     dead backend outlasts whichever feed first discovered it -- and, matching
     the shape `run_ingest` returned before this split, the key is present only
     when true, so a normal run's dict is exactly `{added, skipped,
-    failed_feeds}`.
+    failed_feeds}`. `research_disabled` counts topics skipped because
+    `ATTEST_RESEARCH_WEB` is off (or `--no-research`); present only when
+    nonzero, and never a failure.
 
     Pure: no I/O, no logging -- just the list and this dict. Logging which
     feed failed and why stays in `run_ingest`, next to the exception it is
@@ -168,10 +256,15 @@ def _ingest_outcome(outcomes: list[dict]) -> dict:
     }
     if any(o["embedder_down"] for o in outcomes):
         stats["embedder_down"] = True
+    disabled = sum(1 for o in outcomes if o.get("research_disabled"))
+    if disabled:
+        stats["research_disabled"] = disabled
     return stats
 
 
-def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -> dict:
+def run_ingest(
+    conn, embedder, feeds_path: str | Path, parse=feedparser.parse, *, clients=None
+) -> dict:
     """Fetch every registered feed, dedup, embed, and store -- deterministic
     throughout, per the module docstring; no LLM runs here.
 
@@ -181,13 +274,23 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
     block every other reader and writer for that long. One feed's failure is
     counted and does not stop the others -- `_ingest_outcome` makes that call
     over the outcomes this loop collects.
+
+    A `research:` feed is searched through `clients` (built once here from the
+    flag) instead of parsed, and its hits also enter the reference library.
     """
     sync_feeds(conn, feeds_path)
+    if clients is None:
+        from attestation import research
+
+        clients = research.clients_from_env()  # the flag is read here, once per run
     outcomes: list[dict] = []
     already_down = False
     for feed in conn.execute("SELECT * FROM feeds").fetchall():
         try:
-            parsed = parse(feed["url"])
+            parsed = _fetch_feed(feed, parse, clients)
+            if parsed is None:
+                outcomes.append(_disabled_outcome(feed["url"]))
+                continue
 
             new_entries, skipped = _new_entries(conn, feed["id"], parsed.entries)
 
@@ -204,7 +307,7 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
             # rows, so counting as we go reported items that no longer exist.
             added_here = 0
             for entry, title, summary, guid, chash, vec in embedded:
-                doi, arxiv_id = extract_ids(guid, entry.get("link"))
+                doi, arxiv_id = _entry_ids(entry)
                 cur = conn.execute(
                     "INSERT INTO items(feed_id, guid, title, url, summary, published,"
                     " content_hash, doi, arxiv_id)"
@@ -230,6 +333,7 @@ def run_ingest(conn, embedder, feeds_path: str | Path, parse=feedparser.parse) -
                 "UPDATE feeds SET last_fetched = datetime('now') WHERE id = ?", (feed["id"],)
             )
             conn.commit()
+            _store_references(conn, parsed)
             outcomes.append(
                 {
                     "feed": feed["url"],

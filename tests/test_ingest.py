@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import feedparser
 import pytest
 
+from attestation import research
 from attestation.db import get_db
 from attestation.ingest import (
     _ingest_outcome,
@@ -488,3 +489,101 @@ def test_ingest_stores_doi_and_arxiv_id(tmp_path, fake_embedder):
     rows = {r["title"]: (r["doi"], r["arxiv_id"]) for r in conn.execute("SELECT * FROM items")}
     assert rows["NequIP"] == (None, "2106.02347")
     assert rows["N"] == ("10.1038/s41557-026-02200-y", None)
+
+
+def _topic_clients(papers):
+    class Fixed:
+        name, offline = "arxiv", False
+
+        def __init__(self):
+            self.calls = []
+
+        def search(self, query, *, journal=None, since=None, limit=50):
+            self.calls.append((query, since))
+            return list(papers)
+
+    fixed = Fixed()
+    return {
+        "arxiv": fixed,
+        "pubmed": research.NullClient("pubmed"),
+        "crossref": research.NullClient("crossref"),
+    }, fixed
+
+
+def _paper(aid="2101.03164", title="NequIP", doi=None):
+    return research.Paper(
+        client="arxiv",
+        external_id=aid,
+        title=title,
+        abstract="Equivariant potentials.",
+        authors=("Batzner, Simon",),
+        published="2021-01-08",
+        doi=doi,
+        arxiv_id=aid,
+        url=f"https://arxiv.org/abs/{aid}",
+    )
+
+
+def test_research_feed_dispatches_to_the_client_not_parse(tmp_path, fake_embedder):
+    conn = get_db(tmp_path / "t.db")
+    feeds = write_feeds_toml(tmp_path, ["research:arxiv?q=equivariant+force+fields"])
+    clients, fixed = _topic_clients([_paper()])
+
+    def parse_never(url):
+        raise AssertionError("feedparser must not see a research: URL")
+
+    stats = run_ingest(conn, fake_embedder, feeds, parse=parse_never, clients=clients)
+    assert stats == {"added": 1, "skipped": 0, "failed_feeds": 0}
+    assert fixed.calls[0] == ("equivariant force fields", None)  # first run: no since
+    row = conn.execute("SELECT guid, published, doi, arxiv_id, summary FROM items").fetchone()
+    assert row["guid"] == "arxiv:2101.03164" and row["published"].startswith("2021-01-08")
+    assert row["arxiv_id"] == "2101.03164" and row["summary"] == "Equivariant potentials."
+    # the same run left one reference with a research source row carrying the authors
+    ref = conn.execute('SELECT id, authors FROM "references"').fetchone()
+    assert '"Batzner, Simon"' in ref["authors"]
+    src = conn.execute("SELECT source, source_key FROM reference_sources").fetchone()
+    assert (src["source"], src["source_key"]) == ("research:arxiv", "2101.03164")
+    # hourly idempotency, and since = last_fetched on the second run
+    stats2 = run_ingest(conn, fake_embedder, feeds, parse=parse_never, clients=clients)
+    assert stats2 == {"added": 0, "skipped": 1, "failed_feeds": 0}
+    assert fixed.calls[1][1] is not None
+    assert conn.execute("SELECT COUNT(*) c FROM reference_sources").fetchone()["c"] == 1
+
+
+def test_identifier_dedup_skips_a_cross_list_and_a_topic_twin(tmp_path, fake_embedder):
+    conn = get_db(tmp_path / "t.db")
+    feeds = write_feeds_toml(tmp_path, ["https://arxiv.example/rss", "research:arxiv?q=x"])
+    # the RSS fixture's first item is oai:arXiv.org:2608.00001v1 -> arxiv_id 2608.00001
+    clients, _ = _topic_clients(
+        [_paper(aid="2608.00001", title="Paper One (API abstract differs)")]
+    )
+    stats = run_ingest(conn, fake_embedder, feeds, parse=fake_parse, clients=clients)
+    n = conn.execute("SELECT COUNT(*) c FROM items WHERE arxiv_id = '2608.00001'").fetchone()["c"]
+    assert n == 1 and stats["skipped"] >= 1
+
+
+def test_disabled_research_is_counted_not_failed(tmp_path, fake_embedder, monkeypatch):
+    conn = get_db(tmp_path / "t.db")
+    feeds = write_feeds_toml(tmp_path, ["research:arxiv?q=x", "https://blog.example/rss"])
+    monkeypatch.setenv("ATTEST_RESEARCH_WEB", "0")
+    stats = run_ingest(conn, fake_embedder, feeds, parse=fake_parse)
+    assert stats["failed_feeds"] == 0 and stats["research_disabled"] == 1 and stats["added"] >= 1
+
+
+def test_a_failing_client_is_one_feed_error_and_rss_still_ingests(tmp_path, fake_embedder):
+    conn = get_db(tmp_path / "t.db")
+    feeds = write_feeds_toml(tmp_path, ["research:arxiv?q=x", "https://blog.example/rss"])
+
+    class Boom:
+        name, offline = "arxiv", False
+
+        def search(self, *a, **k):
+            raise research.httpx.ConnectError("down")
+
+    clients = {
+        "arxiv": Boom(),
+        "pubmed": research.NullClient("pubmed"),
+        "crossref": research.NullClient("crossref"),
+    }
+    stats = run_ingest(conn, fake_embedder, feeds, parse=fake_parse, clients=clients)
+    assert stats["failed_feeds"] == 1 and stats["added"] >= 1
