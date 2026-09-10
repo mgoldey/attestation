@@ -210,10 +210,18 @@ def test_mcp_domain_modules_stay_small():
         # files the CLI already merges, refusing only on a DIFFERING value
         # with no --force escape hatch. Raised again (fix round 2) for
         # `corpus` joining `_validate_record_names`'s path-safety check.
-        # Raised 2026-09-10 for Task 7: `_route_research` plus its phrase
-        # tables (_RESEARCH_SOURCES, _RESEARCH_PHRASES, _TRACK_PHRASES,
-        # _RESEARCH_NOISE) and `_research_query`, hooked into `route_feed`.
-        "routing.py": 344,
+        # Task 7 review moved the research/track phrase tables and
+        # `_research_query` out to routing_research.py (one cohesive new
+        # concern, its own module now) and reverted this file to holding
+        # only the four routers plus the `route_research` hook -- but the
+        # hook's ruling required splitting `_FEED_RULES` into `_CONTENT_RULES`
+        # and `_SOURCE_RULES` with the hook between them (a loose " journal"
+        # research phrase must not steal "summarize the journal article" from
+        # feed.read), which is a second loop, an import and a comment
+        # explaining the split that the single-table version did not carry.
+        # 285 no longer fits; 304 is the measured size with that split plus
+        # the `_match_rules` helper the complexity cap on `route_feed` forced.
+        "routing.py": 304,
         "provenance.py": 415,
     }
     # Anything not named above still gets a cap. `if name not in limits:

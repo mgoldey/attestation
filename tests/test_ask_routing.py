@@ -50,6 +50,10 @@ FEED_CASES = [
     # A standing topic, registered as a feed.
     ("track equivariant interatomic potentials for me", "feed.source_add"),
     ("follow graph neural networks for chemistry", "feed.source_add"),
+    # Content and feedback rules beat the research router: a loose " journal"
+    # phrase must not steal a question about an item already in hand.
+    ("summarize the journal article", "feed.read"),
+    ("why is this ranked so high in the journal", "feed.explain"),
 ]
 RUNS_CASES = [
     ("which arm of my sweep won?", "runs.compare"),
@@ -147,6 +151,23 @@ def test_research_and_track_decisions_carry_their_arguments():
     assert route_feed("follow https://example.com/rss").kwargs == {}
     # "papers on X" is still the local archive
     assert route_feed("anything new on retrieval augmented generation?").tool == "feed.search"
+
+
+def test_track_phrases_refuse_idiom_debris_as_a_topic():
+    """A track phrase mid-sentence, or one whose 'topic' is idiom debris,
+    must not register a research: feed with a garbage query."""
+    # "follow" is not at the start -- not an instruction, falls through to
+    # feed.source_add's old ask-for-a-URL path, non-mutating.
+    d = route_feed("follow up on that paper")
+    assert d.tool == "feed.source_add" and d.kwargs == {}
+    # "watch" opens the sentence but is not a track instruction here.
+    assert route_feed("what should I watch out for").tool is None
+    # "monitor" opens the sentence; the extracted topic is stoplisted, so the
+    # question falls through to the ordinary feed.list rule ("my feed").
+    assert route_feed("monitor my feed").tool == "feed.list"
+    # "watch" opens the sentence; the topic is stoplisted, and nothing else
+    # claims it either.
+    assert route_feed("watch this space").tool is None
 
 
 # --- the tools themselves -------------------------------------------------

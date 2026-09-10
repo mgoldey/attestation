@@ -19,7 +19,6 @@ alternatives, never a default.
 
 import re
 from dataclasses import dataclass, field
-from urllib.parse import quote_plus
 
 
 @dataclass(frozen=True)
@@ -55,14 +54,18 @@ def _strip_topic(text: str) -> str:
     return cleaned.strip() or text.strip().rstrip("?")
 
 
-# The feed rule table, in order. First match wins, and the ORDER is the
+# The feed rule tables, in order. First match wins, and the ORDER is the
 # design: "add arxiv cs.CL to my feeds" contains "my feeds" but is not a
 # request to see them, and "what feeds should I subscribe to" contains
 # "subscribe" but is a question rather than an instruction.
 #
 # Data rather than a chain of ifs because the chain reached 17 branches and
 # the ordering -- the part that actually matters -- was invisible in it.
-_FEED_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+#
+# Split into content and source tables with the research/track hook checked
+# BETWEEN them in `route_feed` -- see `routing_research`'s module docstring
+# for why that ordering is load-bearing.
+_CONTENT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Content before ranking: "what is that paper about" asks what it SAYS,
     # "why is it here" asks why it RANKED.
     (
@@ -109,6 +112,8 @@ _FEED_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "feed.source_preview",
         ("preview", "what's in that feed", "whats in that feed", "what it publishes"),
     ),
+)
+_SOURCE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("feed.source_add", ("add ", "subscribe", "follow ")),
     (
         "feed.sources",
@@ -178,70 +183,25 @@ _SEARCH_PHRASES = (
     "look for",
 )
 
-# Going and looking is a different act from searching what arrived. These
-# name a PLACE to look or say so outright; "papers on X" alone stays local,
-# because the feed surface promises that question is answered without a
-# network call and the archive is the right first answer.
-_RESEARCH_SOURCES = (
-    ("pubmed", "pubmed"),
-    ("arxiv", "arxiv"),
-    ("crossref", "crossref"),
-)
-_RESEARCH_PHRASES = (
-    "on arxiv",
-    "on pubmed",
-    "from arxiv",
-    "from pubmed",
-    "search arxiv",
-    "search pubmed",
-    "crossref",
-    "in the literature",
-    "published on",
-    "published about",
-    "published in",
-    "been published",
-    "research ",
-    "look up",
-    " journal",
-    "outside my feed",
-    "beyond my feed",
-)
-_TRACK_PHRASES = ("track ", "follow ", "watch ", "monitor ", "keep an eye on ", "add a topic")
-_RESEARCH_NOISE = re.compile(
-    r"\b(on|from|in|via|search|the)\s+(arxiv|pubmed|crossref|the literature)\b"
-    r"|\b(recent|new)\s+papers?\b|\bpapers?\s+(on|about|in)\b|\bfor me\b|\bwhat has been\b"
-    r"|\bpublished\s+(on|about|in)\b|\blook up\b|\bresearch\b"
-    r"|^(search|track|follow|watch|monitor)\b",
-    re.IGNORECASE,
-)
 
-
-def _research_query(question: str) -> str:
-    """The topic with the going-and-looking words removed."""
-    q = _RESEARCH_NOISE.sub(" ", question.strip().rstrip("?"))
-    q = re.sub(r"\b(in|on)\s+[A-Z][\w-]*(\s+[A-Z][\w-]*)*\s*$", " ", q)  # trailing venue name
-    return " ".join(_strip_topic(q).split())
-
-
-def _route_research(q: str, question: str) -> Decision | None:
-    """feed.research for a named source/venue; feed.source_add(research:) for 'track X'."""
-    if "http" in q:
-        return None
-    if _has(q, *_TRACK_PHRASES) and not _has(q, *_SUGGEST_PHRASES):
-        topic = _research_query(question)
-        if len(topic.split()) >= 2:
-            url = f"research:arxiv,pubmed?q={quote_plus(topic)}"
-            return Decision("feed.source_add", {"url": url})
-    if _has(q, *_RESEARCH_PHRASES):
-        topic = _research_query(question)
-        if len(topic.split()) >= 2:
-            sources = ",".join(s for word, s in _RESEARCH_SOURCES if word in q) or "arxiv,pubmed"
-            return Decision("feed.research", {"query": topic, "sources": sources})
+def _match_rules(q: str, rules: tuple[tuple[str, tuple[str, ...]], ...]) -> Decision | None:
+    """The first rule table entry whose phrases appear in `q`, or None."""
+    for tool_name, phrases in rules:
+        if _has(q, *phrases):
+            return Decision(tool_name, {})
     return None
 
 
 def route_feed(question: str) -> Decision:
-    """Route a question about the reader's feed or persona."""
+    """Route a question about the reader's feed or persona.
+
+    Content and feedback rules run first, the going-and-looking router
+    (`routing_research.route_research`) runs between the two feed-rule
+    tables, and source rules run last -- see `routing_research`'s docstring
+    for why that order is load-bearing rather than arbitrary.
+    """
+    from attestation.mcp.routing_research import route_research
+
     q = question.lower().strip()
     if not q:
         return Decision(
@@ -253,12 +213,14 @@ def route_feed(question: str) -> Decision:
     if "http" not in q and _has(q, *_SUGGEST_PHRASES):
         return Decision("feed.source_suggest", {})
 
-    if (research := _route_research(q, question)) is not None:
+    if (content := _match_rules(q, _CONTENT_RULES)) is not None:
+        return content
+
+    if (research := route_research(q, question)) is not None:
         return research
 
-    for tool_name, phrases in _FEED_RULES:
-        if _has(q, *phrases):
-            return Decision(tool_name, {})
+    if (source := _match_rules(q, _SOURCE_RULES)) is not None:
+        return source
 
     if _has(q, *_SEARCH_PHRASES):
         topic = _strip_topic(question)
