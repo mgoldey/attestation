@@ -336,7 +336,7 @@ your recommendations for me today?") through the gateway before and after:
 | Discord, allowlisted (below) | 2 | ~5k | 23s-28s |
 
 The 131 were 61 hermes built-ins (browser, terminal, kanban, home assistant,
-computer use...), the full `attestation` server (46 tools plus hermes's 4
+computer use...), the full `attestation` server (46 at the time of that measurement, 48 today, plus hermes's 4
 resource/prompt meta tools), and 20 from the filament plugin. The first turn also paid a 30s cold model load, and
 "list what skills you have" made the model dump 76 SKILL.md entries and hit
 its output cap four times in a row.
