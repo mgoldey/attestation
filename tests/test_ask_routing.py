@@ -24,6 +24,16 @@ from attestation.mcp.ask import route_feed, route_kg, route_runs, route_sym
 # (turn, expected tool). Verbatim from the spike.
 FEED_CASES = [
     ("what should I read today?", "feed.list"),
+    # MEASURED 2026-09-04 over Discord on gemma4:e2b: each of these came back
+    # as the "current feed or archive?" ambiguity, the model then called
+    # feed.ask with no arguments and told the reader it had no tool for it.
+    # "my feed" matched, "my ranked feed" did not -- the adjective broke the
+    # phrase -- and nothing named the feed by day at all.
+    ("What's in my ranked feed today?", "feed.list"),
+    ("Give me my daily ranked feed", "feed.list"),
+    ("Give me my daily feed review", "feed.list"),
+    ("show me today's feed", "feed.list"),
+    ("top papers for me today", "feed.list"),
     ("anything new on retrieval augmented generation?", "feed.search"),
     ("that first one isn't relevant", "feed.rate"),
     ("why did that rank so high?", "feed.explain"),

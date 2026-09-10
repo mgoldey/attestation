@@ -104,6 +104,35 @@ uv run attest install --check  # diagnose only, exits 1 on gaps
 See [docs/guides/install.md](docs/guides/install.md) for prerequisites and
 the manual steps `attest install` automates.
 
+## Chat with it from Discord
+
+Once `attest install` has run and [hermes-agent](https://github.com/NousResearch/hermes-agent)
+is installed, the feed answers from a phone. Four steps, all outside this repo:
+
+1. In the Discord Developer Portal create an application and a Bot, enable
+   the **Server Members** and **Message Content** intents on the Bot page,
+   and copy the token. Then `hermes gateway setup`, pick Discord, and paste
+   the token plus your own Discord user ID (not the bot's).
+2. Allowlist the feed surface for chat in `~/.hermes/config.yaml`, so each
+   turn carries 2 tool schemas instead of 131:
+
+   ```yaml
+   mcp_servers:
+     attestation-feed: {enabled: true}   # attest install wrote the entry, disabled
+   platform_toolsets:
+     discord: [attestation-feed]         # an MCP server here is an allowlist
+   ```
+
+3. `systemctl --user restart hermes-gateway`, then invite the bot with
+   `https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot&permissions=274878286912`
+   and DM it *"What are your recommendations today?"*
+
+Measured on gemma4:e2b over a GTX 1080: a turn dropped from 54-249s at
+15-29k prompt tokens to 23-28s at ~5k. The other half of that saving is
+keeping the model resident, since a cold load alone was 30s. Full recipe,
+Telegram variant, and the keep-alive timer in
+[docs/guides/agents.md](docs/guides/agents.md#8-chat-from-discord-or-telegram).
+
 ## Golden paths
 
 A golden path is a directory under `examples/` with a README in seven fixed
