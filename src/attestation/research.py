@@ -110,6 +110,25 @@ class Paper:
     venue: str | None = None
     pdf_url: str | None = None
 
+    def to_row(self, *, stored: bool) -> dict:
+        """The wire projection `feed.research` returns: the feed's own
+        clipping budgets (`RankedItem.to_row`, `SearchHit.to_row`), 3 authors
+        with the true count beside them, and whether this hit was upserted
+        into the library on this call."""
+        from attestation.rank import MAX_SOURCE_CHARS, MAX_URL_CHARS, _clip_field, _clip_title
+
+        return {
+            "title": _clip_title(self.title),
+            "authors": list(self.authors[:3]),
+            "n_authors": len(self.authors),
+            "venue": _clip_field(self.venue, MAX_SOURCE_CHARS) if self.venue else None,
+            "published": self.published,
+            "doi": self.doi,
+            "arxiv_id": self.arxiv_id,
+            "url": _clip_field(self.url, MAX_URL_CHARS) if self.url else None,
+            "stored": stored,
+        }
+
 
 def as_entries(papers) -> list[dict]:
     """Papers as the entry dicts `ingest._new_entries` and the insert read.
@@ -418,9 +437,10 @@ class PubmedSearch(_Client):
 def _crossref_date(item: dict) -> str | None:
     """`issued.date-parts` as an ISO date; missing month/day default to the 1st."""
     parts = ((item.get("issued") or {}).get("date-parts") or [[None]])[0]
-    if not parts or not parts[0]:
+    y = parts[0] if parts else None
+    if not y:
         return None
-    y, m, d = (list(parts) + [1, 1])[:3]
+    _, m, d = (list(parts) + [1, 1])[:3]
     return f"{int(y):04d}-{int(m or 1):02d}-{int(d or 1):02d}"
 
 

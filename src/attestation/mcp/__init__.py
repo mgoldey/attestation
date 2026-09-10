@@ -25,11 +25,12 @@ from attestation.mcp import (
     feed,
     knowledge,
     provenance,
+    research,
     subscriptions,
     symbolic,
 )
 
-DOMAINS = (ask, citation, feed, knowledge, provenance, subscriptions, symbolic)
+DOMAINS = (ask, citation, feed, knowledge, provenance, research, subscriptions, symbolic)
 
 # Which namespaces (or individual tools) each agent may see.
 #
@@ -91,7 +92,10 @@ AGENT_SURFACES: dict[str, Surface] = {
             ' Reports, Hugging Face and HN -- so questions like "find me'
             ' recent papers on X", "what should I read this week" and'
             ' "what\'s new in Y" are YOURS to answer, locally, without any'
-            " network call. Reach for feed.ask when the question is in plain"
+            " network call. When they want papers the feed has NOT seen --"
+            " on arXiv, PubMed or a named journal -- feed.research goes and"
+            " looks, and feed.source_add with a research: URL follows a topic"
+            " every hour. Reach for feed.ask when the question is in plain"
             " words. Reading an item is itself feedback: it trains the ranker,"
             " so open what looks relevant rather than only listing titles."
         ),

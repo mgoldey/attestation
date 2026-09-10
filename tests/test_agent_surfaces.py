@@ -61,6 +61,7 @@ def test_a_provenance_tool_is_absent_from_the_feed_agent(monkeypatch, tmp_path):
     assert "runs.compare" not in names
     assert "sym.solve" not in names
     assert "feed.list" in names
+    assert "feed.research" in names
 
 
 def test_the_knowledge_agent_can_still_reach_items(monkeypatch, tmp_path):
@@ -71,6 +72,7 @@ def test_the_knowledge_agent_can_still_reach_items(monkeypatch, tmp_path):
     assert "kg.path" in names
     assert "feed.search" in names
     assert "feed.rate" not in names, "the knowledge agent is read-only"
+    assert "feed.research" not in names, "research is a feed-surface action"
 
 
 def test_claims_live_with_runs_not_with_the_graph(monkeypatch, tmp_path):

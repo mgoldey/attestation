@@ -159,13 +159,15 @@ def _check(conn, path: str) -> dict:
 
 @tool(empty={"sources": [], "store": {}}, label="cite_sources")
 def _sources(conn) -> dict:
-    from attestation import citations, library
+    from attestation import citations, library, research
 
     sources = _resolver().sources()
-    network = any(s["network"] for s in sources) or citations.s2_enabled()
-    if citations.s2_enabled():
+    s2, researching = citations.s2_enabled(), research.research_enabled()
+    network = any(s["network"] for s in sources) or s2 or researching
+    if s2:
         sources = [*sources, {"name": "s2", "network": True}]
-    return {"sources": sources, "store": library.status(conn), "offline": not network}
+    store = library.status(conn)
+    return {"sources": sources, "store": store, "offline": not network, "research": researching}
 
 
 @tool(
@@ -272,8 +274,10 @@ def register(mcp) -> None:
         from disk or online, plus what the library store holds. `offline: true`
         means nothing can leave this machine. The feed, ranking, graph, ledger
         and symbolic tools are always local; the only possible network readers
-        are CrossRef and arXiv (ATTEST_CITATION_WEB) and Semantic Scholar
-        (ATTEST_CITATION_SCHOLAR) for citations, and this says whether they are on.
+        are CrossRef and arXiv (ATTEST_CITATION_WEB), Semantic Scholar
+        (ATTEST_CITATION_SCHOLAR) for citations, and
+        ATTEST_RESEARCH_WEB (feed.research, research: feeds, full text; on by
+        default), and this says whether they are on.
 
         Both gemma4:e2b and hermes3:8b skipped this tool when asked "does
         anything I do here send data over the internet" -- one declined, and

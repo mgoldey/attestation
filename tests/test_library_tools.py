@@ -115,11 +115,25 @@ def test_cite_sources_reports_the_store_and_the_s2_flag(tmp_path, monkeypatch):
     monkeypatch.setenv("ATTEST_ZOTERO_PATH", str(tmp_path / "none.sqlite"))
     monkeypatch.delenv("ATTEST_CITATION_WEB", raising=False)
     monkeypatch.delenv("ATTEST_CITATION_SCHOLAR", raising=False)
+    monkeypatch.setenv("ATTEST_RESEARCH_WEB", "0")
     out = citation._sources()
     assert out["offline"] is True and out["store"]["references"] == 0
     monkeypatch.setenv("ATTEST_CITATION_SCHOLAR", "1")
     armed = citation._sources()
     assert armed["offline"] is False and {"name": "s2", "network": True} in armed["sources"]
+
+
+def test_cite_sources_offline_reflects_the_research_flag(tmp_path, monkeypatch):
+    _db(tmp_path, monkeypatch)
+    monkeypatch.setenv("ATTEST_BIB_PATHS", str(tmp_path / "absent.bib"))
+    monkeypatch.setenv("ATTEST_ZOTERO_PATH", str(tmp_path / "none.sqlite"))
+    monkeypatch.delenv("ATTEST_CITATION_WEB", raising=False)
+    monkeypatch.delenv("ATTEST_CITATION_SCHOLAR", raising=False)
+    monkeypatch.setenv("ATTEST_RESEARCH_WEB", "0")
+    assert citation._sources()["offline"] is True
+    monkeypatch.delenv("ATTEST_RESEARCH_WEB")
+    out = citation._sources()
+    assert out["offline"] is False and out["research"] is True
 
 
 def test_cite_sync_reads_a_bib_and_reports_structure(tmp_path, monkeypatch):
