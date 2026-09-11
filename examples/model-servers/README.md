@@ -33,7 +33,7 @@ then runs `uv run attest ingest --feeds <that file>` and
 ## What it prints
 
 ```
-{'added': 40, 'skipped': 0, 'failed_feeds': 0}
+{'added': 40, 'skipped': 0, 'failed_feeds': 0, 'fulltext': {'fetched': 0, 'none': 0, 'failed': 0}}
 ```
 
 The second line, `attest tag`'s own stats dict, follows:

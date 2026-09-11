@@ -162,8 +162,9 @@ title, `authors[:6]` + `n_authors`, venue, published, doi, arxiv_id, url,
 `research:<client>` exactly as a topic hit is; with `store=False` it
 previews. Hits never become items: the feed is what arrives on a schedule,
 the library is what the reader keeps, and an ad hoc question is the second
-kind. `limit` caps at 13, the `feed.list` ceiling, because the caller is a
-model.
+kind. `limit` caps at 8 (`MAX_RESEARCH_LIMIT`), measured in
+`test_research_tools.py`: a research row carries authors and a venue a feed
+row does not.
 
 It lives in the `feed` namespace, not `cite`, because the chat surfaces run
 with `ATTEST_TOOLS=feed` and a feed-only session must be able to reach it.
@@ -173,7 +174,7 @@ stale-count guard is what catches a missed one (it caught PR #6's merge
 on 2026-09-10). `feed.research` belongs to the `feed` surface;
 `feed.tools` lists it.
 
-`feed.ask` routes: "find/search papers on X", "what has been published on
+`feed.ask` routes: "search arxiv/pubmed for X", "what has been published on
 X", "in <journal>", "research X" go to `feed.research`; "track/follow/watch/
 monitor X", "add a topic" go to `feed.source_add` with
 `url="research:arxiv,pubmed?q=<X>"`; "my topics / what am I tracking" go to
@@ -181,6 +182,11 @@ monitor X", "add a topic" go to `feed.source_add` with
 `feed.search`: the router keys on going-and-looking verbs and the words
 "papers", "published", "journal", "research", never on "search" alone, and
 the existing `test_ask_routing.py` cases for `feed.search` must still pass.
+"Papers on X" alone stays on `feed.search`: the feed surface's goal promises
+that question is answered locally, and the archive is the right first
+answer (decided in the plan, Task 7). The research/track router runs after
+the content rules (read/explain/rate/digest/preview) and before the source
+rules, and lives in `mcp/routing_research.py`.
 
 ### Full text is a capped, separate pass, served in windows
 
@@ -210,9 +216,13 @@ disables) and on demand as `attest library fulltext [--limit N]`.
 Full text is never embedded (the vector is for ranking beside RSS items,
 and a 30-page body would swamp the abstract's signal) and never returned
 whole. `cite.lookup` gains `text_offset: int = 0` and `text_chars: int =
-3000` and returns `full_text: {text, offset, chars, total, source}` or
+2000` and returns `full_text: {text, offset, chars, total, source}` or
 `null`, so a model pages through a body. The window plus the record must
 stay under the read budget `tests/test_response_size.py` defines.
+
+**Amendment (implementation, Task 8/9):** the window default is 2000, not
+3000 — the same one-abstract budget `FULL_SUMMARY_CHARS` uses elsewhere,
+chosen so a record plus a window stays well under the 7000-char ceiling.
 
 ### BibTeX is rendered deterministically from the row
 
@@ -293,7 +303,7 @@ registers one.
 | `feed.source_add(url, title=None, user=None)` | accepts `research:` URLs, validated by `parse_topic`, no network; fills `added_by` when `user` names a persona |
 | `feed.sources()` | rows carry `kind: rss|research` and `added_by` |
 | `feed.source_remove` | unchanged; works on a topic like any feed |
-| `cite.lookup(key, text_offset=0, text_chars=3000)` | adds `bibtex` and the `full_text` window |
+| `cite.lookup(key, text_offset=0, text_chars=2000)` | adds `bibtex` and the `full_text` window |
 | `cite.sources()` | `offline` also reflects `ATTEST_RESEARCH_WEB`; counts `research:*` source rows and `reference_fulltext` |
 | `feed.ask` | the routes above |
 
@@ -372,8 +382,8 @@ Patterns gets one `|Research:` entry and the counts it asserts are updated.
   count.
 - `tests/test_architecture.py`: 49 tools, namespace rules, the stale-count
   guard over the docs.
-- `tests/test_response_size.py`: `feed.research` at limit 13 and
-  `cite.lookup` with a 3000-char window stay under their budgets.
+- `tests/test_response_size.py`: `feed.research` at limit 8 and
+  `cite.lookup` with a 2000-char window stay under their budgets.
 - Offline guarantee: with `ATTEST_RESEARCH_WEB=0` and both citation flags
   unset, a full `attest ingest` over RSS fixtures plus a registered topic,
   a `feed.research` call, and a `cite.sync` issue zero HTTP requests
@@ -390,7 +400,7 @@ Recorded in this file's §Measured when taken, as the library spec did:
   the RSS-only baseline;
 - `pypdf` seconds per arXiv PDF and characters extracted, over the first
   ten, so the default cap is a number not a guess;
-- `feed.research` payload size at limit 13 and `cite.lookup` with a window,
+- `feed.research` payload size at limit 8 and `cite.lookup` with a window,
   against the budgets.
 
 ## Out of scope

@@ -116,6 +116,13 @@ References tagged with `attest library tag` (or carrying `keywords` in the
 what the reader cites as well as what they read; `cite.search(query="",
 tag=...)` lists the references behind a concept.
 
+`cite.lookup` also returns `bibtex` (rendered from the library row: `@article`
+for a journal, `@misc` with eprint fields for a preprint) and, when a body
+has been fetched, `full_text` as a window (`text`, `offset`, `chars`,
+`total`); page with `text_offset` rather than asking for the whole thing,
+which is never returned. Papers found by the feed's research tools sit in
+the same library under `research:<client>` sources.
+
 `cite.check(path)` lints a Markdown draft's `cite=<key>` annotations for
 keys no configured source resolves. It is a lint -- the key is unknown
 here -- never "the cited work does not support this".

@@ -182,6 +182,33 @@ named a topic rather than described one. Do not guess a tag: an unknown one
 is refused with the nearest real names, so pass what the reader said and
 read the refusal.
 
+## "Search arXiv for X" / "track X for me"
+
+Two different acts, and the reader's words tell them apart. `feed.search`
+looks through what has already arrived. When they name a place -- arXiv,
+PubMed, CrossRef, a journal, "the literature", "what has been published" --
+they want you to go and look:
+
+```
+feed.ask(user="<name>", question="search arxiv for equivariant force fields")
+```
+
+routes to `feed.research(query, sources, journal, since_days, limit, store)`,
+which searches the network and stores the hits in the reference library, NOT
+the feed: the knowledge agent's citation tools find them afterwards,
+`feed.list` does not. Show every `url`. `offline: true` means the research
+clients are switched off (`ATTEST_RESEARCH_WEB=0`), not that nothing
+matched -- say so. `store=false` previews. Ask for a journal only with
+pubmed or crossref; arXiv has categories, not journals, and the tool refuses
+the pair.
+
+"Track / follow / watch X" is a standing topic: `feed.ask` registers a
+`research:` feed through `feed.source_add(url="research:arxiv,pubmed?q=<X>",
+user=<name>)`, and every hourly ingest searches it. Its hits ARE feed items
+-- ranked, digested, readable -- and `feed.sources` lists it with
+`kind: research` and who added it. Nothing is fetched at registration; say
+"papers appear after the next ingest", which is what the tool's message says.
+
 ## The digest
 
 `feed.digest(user, days, per_topic, limit)` is the weekly review: the ranked
