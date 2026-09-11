@@ -103,6 +103,11 @@ HELP: dict[str, str] = {
     "library.embed": "embed references that have no vector",
     "library.status": "counts per source, vectors, tags, citation edges",
     "library.related": "what a reference cites and what cites it, from real reference lists",
+    "research": "search arXiv/PubMed/CrossRef for papers and keep them in the library",
+    "sources": "manage feed sources (RSS URLs and research: topics)",
+    "sources.add": "register an RSS feed or a research: topic (no fetch; next ingest)",
+    "library.fulltext": "fetch bodies (arXiv PDF / PMC XML) for references that lack one",
+    "library.export": "write a filtered set of references as one .bib (new files only)",
 }
 
 
@@ -150,7 +155,32 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("ingest", help=HELP["ingest"])
     add_db(sp)
     sp.add_argument("--feeds", default=_default_feeds_path())
+    sp.add_argument("--no-research", action="store_true", help="skip research: feeds this run")
+    sp.add_argument(
+        "--fulltext-limit", type=int, default=10, help="bodies to fetch after ingest (0 = none)"
+    )
     sp.set_defaults(func=cmd_ingest)
+
+    sp = sub.add_parser("research", help=HELP["research"])
+    add_db(sp)
+    sp.add_argument("query")
+    sp.add_argument(
+        "--sources", default="arxiv,pubmed", help="comma-separated: arxiv,pubmed,crossref"
+    )
+    sp.add_argument("--journal", help="pubmed/crossref only")
+    sp.add_argument("--since-days", type=int, default=365)
+    sp.add_argument("--limit", type=int, default=10)
+    sp.add_argument("--no-store", action="store_true", help="preview; do not write the library")
+    sp.set_defaults(func=cmd_research)
+
+    sp = sub.add_parser("sources", help=HELP["sources"])
+    add_db(sp)
+    src_sub = sp.add_subparsers(dest="sources_command", required=True)
+    ap = src_sub.add_parser("add", help=HELP["sources.add"])
+    ap.add_argument("url", help="an RSS/Atom URL or research:<clients>?q=<query>[&journal=...]")
+    ap.add_argument("--title")
+    ap.add_argument("--user", help="persona to record as the one who added it")
+    ap.set_defaults(func=cmd_sources_add)
 
     sp = sub.add_parser("tag", help=HELP["tag"])
     add_db(sp)
@@ -301,6 +331,21 @@ def build_parser() -> argparse.ArgumentParser:
     lp = lib_sub.add_parser("related", help=HELP["library.related"])
     lp.add_argument("key", help="citation key, DOI, arXiv id, or library identity")
     lp.set_defaults(func=cmd_library_related)
+
+    lp = lib_sub.add_parser("fulltext", help=HELP["library.fulltext"])
+    lp.add_argument("--limit", type=int, default=10)
+    lp.set_defaults(func=cmd_library_fulltext)
+
+    lp = lib_sub.add_parser("export", help=HELP["library.export"])
+    lp.add_argument(
+        "--bib", required=True, help="output path; refuses to overwrite without --force"
+    )
+    lp.add_argument("--author")
+    lp.add_argument("--year", type=int)
+    lp.add_argument("--tag")
+    lp.add_argument("--source", help="reference_sources.source prefix, e.g. zotero, research:arxiv")
+    lp.add_argument("--force", action="store_true")
+    lp.set_defaults(func=cmd_library_export)
 
     sp = sub.add_parser("bootstrap-persona", help=HELP["bootstrap-persona"])
     add_db(sp)
@@ -1187,6 +1232,38 @@ def cmd_library_status(args: argparse.Namespace) -> int:
     return 0
 
 
+@_documented("library.fulltext")
+def cmd_library_fulltext(args: argparse.Namespace) -> int:
+    from attestation import research
+
+    with open_db(args.db) as conn:
+        counts = research.fetch_fulltext(conn, limit=args.limit)
+    print(f"fetched {counts['fetched']}, none {counts['none']}, failed {counts['failed']}")
+    return 0
+
+
+@_documented("library.export")
+def cmd_library_export(args: argparse.Namespace) -> int:
+    """`attest library export --bib`: writes a NEW file only, never
+    overwriting silently -- pass `--force` to replace one that exists."""
+    from pathlib import Path
+
+    from attestation import library
+
+    target = Path(args.bib)
+    if target.exists() and not args.force:
+        return fail(f"{target} exists; pass --force to overwrite")
+    with open_db(args.db) as conn:
+        rows = library.select_rows(
+            conn, author=args.author, year=args.year, tag=args.tag, source=args.source
+        )
+    if not rows:
+        return fail("no references match; nothing written")
+    target.write_text(library.export_bib(rows))
+    print(f"wrote {len(rows)} entr{'y' if len(rows) == 1 else 'ies'} to {target}")
+    return 0
+
+
 @_documented("kg-report")
 def cmd_kg_report(args: argparse.Namespace) -> int:
     from attestation import kg
@@ -1225,12 +1302,79 @@ def cmd_kg_report(args: argparse.Namespace) -> int:
 
 @_documented("ingest")
 def cmd_ingest(args: argparse.Namespace) -> int:
+    from attestation import research
     from attestation.embed import Embedder
     from attestation.ingest import run_ingest
 
+    clients = research.null_clients() if args.no_research else research.clients_from_env()
     with open_db(args.db) as conn:
-        stats = run_ingest(conn, Embedder(), args.feeds)
+        stats = run_ingest(conn, Embedder(), args.feeds, clients=clients)
+        if args.fulltext_limit > 0:
+            stats["fulltext"] = research.fetch_fulltext(
+                conn, limit=args.fulltext_limit, clients=clients
+            )
     print(stats)
+    return 0
+
+
+@_documented("research")
+def cmd_research(args: argparse.Namespace) -> int:
+    """`attest research <query>`: ad hoc search over the configured clients,
+    upserted into the library unless `--no-store` -- a manual complement to
+    the standing `research:` feeds `sources add` registers."""
+    from datetime import UTC, date, datetime, timedelta
+
+    from attestation import library, research
+
+    names = tuple(s.strip() for s in args.sources.split(",") if s.strip())
+    try:
+        topic = research.parse_topic(research.topic_url(names, args.query, args.journal))
+    except research.TopicError as exc:
+        return fail(str(exc))
+    since = date.today() - timedelta(days=args.since_days) if args.since_days else None
+    fetched = research.fetch_topic(
+        topic, research.clients_from_env(), since=since, limit=args.limit
+    )
+    if fetched.offline:
+        return fail("research clients are off (ATTEST_RESEARCH_WEB=0); nothing searched")
+    for err in fetched.errors:
+        print(f"warning: {err}", file=sys.stderr)
+    for p in fetched.papers:
+        ident = p.doi or p.arxiv_id or p.external_id
+        print(f"{p.published or '----'}  {ident:32s}  {p.title[:70]}")
+    if args.no_store:
+        print(f"{len(fetched.papers)} paper(s); not stored")
+        return 0
+    stored = 0
+    with open_db(args.db) as conn:
+        today = datetime.now(UTC).date().isoformat()
+        for rec in research.as_records(fetched.papers, today):
+            _rid, how = library.upsert(conn, rec)
+            stored += how != "unchanged"
+        conn.commit()
+    print(f"{len(fetched.papers)} paper(s); {stored} new in the library")
+    return 0
+
+
+@_documented("sources.add")
+def cmd_sources_add(args: argparse.Namespace) -> int:
+    """`attest sources add`: register an RSS feed or a `research:` topic --
+    validated up front, but items and papers only appear after the next
+    ingest (see `feeds.add_source`)."""
+    from attestation import feeds
+
+    with open_db(args.db) as conn:
+        added_by = None
+        if args.user:
+            row = conn.execute("SELECT id FROM users WHERE name = ?", (args.user,)).fetchone()
+            if row is None:
+                return fail(f"unknown user: {args.user!r}")
+            added_by = row["id"]
+        try:
+            _feed_id, message = feeds.add_source(conn, args.url, args.title, added_by=added_by)
+        except feeds.FeedError as exc:
+            return fail(str(exc))
+    print(message)
     return 0
 
 
