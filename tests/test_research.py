@@ -285,3 +285,23 @@ def test_fetch_fulltext_caps_marks_none_and_retries_only_transient(tmp_path):
         "none": 0,
         "failed": 0,
     }
+
+
+def test_fetch_fulltext_marks_malformed_pmc_body_none_not_failed(tmp_path):
+    """A garbled PMC response (HTML error page, truncated XML) is an unreadable body, not a
+    transport failure: it writes source='none' and is never retried, same as an unreadable PDF."""
+    conn = get_db(tmp_path / "t.db")
+    pm, _ = upsert(
+        conn, ReferenceRecord(source="research:pubmed", source_key="9", title="PM", pmcid="PMC9")
+    )
+    conn.commit()
+
+    def fetch(url):
+        return b"<html>not xml"
+
+    out = research.fetch_fulltext(conn, limit=10, fetch=fetch)
+    assert out == {"fetched": 0, "none": 1, "failed": 0}
+    row = conn.execute(
+        "SELECT source, text FROM reference_fulltext WHERE reference_id = ?", (pm,)
+    ).fetchone()
+    assert row["source"] == "none" and row["text"] is None

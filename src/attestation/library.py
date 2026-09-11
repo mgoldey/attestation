@@ -1116,7 +1116,7 @@ def status(conn: sqlite3.Connection) -> dict:
 
 def fulltext_window(
     conn: sqlite3.Connection, reference_id: int, offset: int = 0, chars: int = 2000
-):
+) -> dict | None:
     """A slice of a reference's stored body, with the total so a caller can page. None if absent."""
     row = conn.execute(
         "SELECT text, source FROM reference_fulltext WHERE reference_id = ?", (reference_id,)

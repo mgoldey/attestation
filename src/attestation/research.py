@@ -24,6 +24,7 @@ from datetime import UTC, date, datetime
 from urllib.parse import parse_qs, quote_plus, urlencode
 
 import httpx
+from defusedxml import DefusedXmlException
 from defusedxml import ElementTree as SafeET
 
 from attestation.library import ReferenceRecord, normalise_arxiv
@@ -547,8 +548,16 @@ def pdf_text(body: bytes) -> str | None:
 
 
 def parse_pmc(body: bytes) -> str | None:
-    """Section titles and paragraphs of a PMC <body>, one per line; None when there is no body."""
-    root = SafeET.fromstring(body)
+    """Section titles and paragraphs of a PMC <body>, one per line; None when there is no body.
+
+    Malformed XML (an HTML error page, a truncated response) also returns
+    None here rather than raising, so `fetch_fulltext` settles it to
+    `source='none'` -- an unreadable body, not a transport failure to retry.
+    """
+    try:
+        root = SafeET.fromstring(body)
+    except (SafeET.ParseError, DefusedXmlException):
+        return None
     body_el = root.find(".//body")
     if body_el is None:
         return None
