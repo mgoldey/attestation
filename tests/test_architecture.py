@@ -223,6 +223,13 @@ def test_mcp_domain_modules_stay_small():
         # the `_match_rules` helper the complexity cap on `route_feed` forced.
         "routing.py": 304,
         "provenance.py": 415,
+        # Raised 2026-09-10 for Task 8 (BibTeX from a library row): `_lookup`
+        # gained a `bibtex` field on both return branches and its `empty`,
+        # plus the `cite.lookup` docstring sentence naming it. The rendering
+        # itself lives in library.py (bibtex/bibtex_key/select_rows/
+        # export_bib) -- this module only wires the one new field through,
+        # so a split has no seam to land on yet.
+        "citation.py": 263,
     }
     # Anything not named above still gets a cap. `if name not in limits:
     # continue` meant a module was exempt until someone remembered to enrol it
