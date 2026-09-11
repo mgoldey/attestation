@@ -229,7 +229,11 @@ def test_mcp_domain_modules_stay_small():
         # itself lives in library.py (bibtex/bibtex_key/select_rows/
         # export_bib) -- this module only wires the one new field through,
         # so a split has no seam to land on yet.
-        "citation.py": 263,
+        # Raised again 2026-09-10 for Task 9 (full text): `_lookup` and
+        # `cite.lookup` gained `text_offset`/`text_chars` parameters, the
+        # `full_text` window call, and the MAX_TEXT_CHARS constant/docstring
+        # sentence -- the actual windowing lives in library.fulltext_window.
+        "citation.py": 272,
     }
     # Anything not named above still gets a cap. `if name not in limits:
     # continue` meant a module was exempt until someone remembered to enrol it

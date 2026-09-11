@@ -216,3 +216,34 @@ def test_cite_related_walks_edges_and_refuses_an_unknown_key(tmp_path, monkeypat
     assert [c["key"] for c in back["cited_by"]] == ["nequip"]
     missing = citation._related("ghost")
     assert missing["ok"] is False and "2 references" in missing["message"]
+
+
+def test_cite_lookup_serves_full_text_in_windows_under_budget(tmp_path, monkeypatch):
+    """`full_text` pages a stored body in MAX_TEXT_CHARS windows, never the whole thing."""
+    db = _db(tmp_path, monkeypatch)
+    conn = get_db(db)
+    rid, _ = upsert(
+        conn,
+        ReferenceRecord(source="research:arxiv", source_key="1", title="T", arxiv_id="2101.00001"),
+    )
+    conn.execute(
+        "INSERT INTO reference_fulltext(reference_id, text, source, fetched_at)"
+        " VALUES (?, ?, ?, ?)",
+        (rid, "x" * 10000, "arxiv-pdf", "2026-09-10"),
+    )
+    conn.commit()
+    conn.close()
+    out = citation._lookup("2101.00001")
+    ft = out["full_text"]
+    assert (
+        ft["total"] == 10000
+        and ft["offset"] == 0
+        and ft["chars"] == 2000
+        and len(ft["text"]) == 2000
+    )
+    assert ft["source"] == "arxiv-pdf"
+    assert len(json.dumps(out, indent=2)) < HARD_RESPONSE_CEILING
+    out = citation._lookup("2101.00001", 9500, 3000)
+    assert out["full_text"]["chars"] == 500 and out["full_text"]["offset"] == 9500
+    out = citation._lookup("2101.00001", 0, 99999)
+    assert out["full_text"]["chars"] == citation.MAX_TEXT_CHARS

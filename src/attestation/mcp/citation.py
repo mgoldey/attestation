@@ -17,6 +17,11 @@ from pydantic import Field
 from attestation.mcp._shared import Limit, clamp_limit
 from attestation.mcp._tool import ToolError, tool
 
+# Same one-abstract budget FULL_SUMMARY_CHARS uses in mcp/feed.py: a window
+# this size plus the rest of cite.lookup's payload stays well under the
+# response ceiling a small model can render.
+MAX_TEXT_CHARS = 2000
+
 
 def _resolver():
     from attestation import citations
@@ -35,7 +40,7 @@ def _embedder():
     empty={"reference": None, "sources": [], "conflicts": {}, "bibtex": None, "full_text": None},
     label="cite_lookup",
 )
-def _lookup(conn, key: str) -> dict:
+def _lookup(conn, key: str, text_offset: int = 0, text_chars: int = MAX_TEXT_CHARS) -> dict:
     from attestation import library
 
     row = library.lookup_row(conn, key)
@@ -67,7 +72,9 @@ def _lookup(conn, key: str) -> dict:
             "sources": sources,
             "conflicts": conflicts,
             "bibtex": library.bibtex(row),
-            "full_text": None,
+            "full_text": library.fulltext_window(
+                conn, row["id"], max(text_offset, 0), min(max(text_chars, 1), MAX_TEXT_CHARS)
+            ),
         }
     resolver = _resolver()
     found = resolver.lookup(key)
@@ -235,6 +242,8 @@ def register(mcp) -> None:
     @mcp.tool(name="cite.lookup")
     def cite_lookup(
         key: Annotated[str, Field(description="citation key, DOI, arXiv id, or library identity")],
+        text_offset: Annotated[int, Field(ge=0, description="full-text window start")] = 0,
+        text_chars: Annotated[int, Field(ge=1, le=MAX_TEXT_CHARS)] = MAX_TEXT_CHARS,
     ) -> dict:
         """One bibliographic record, with every source that contributed to it.
 
@@ -243,8 +252,11 @@ def register(mcp) -> None:
         any .bib files. Reaches CrossRef only when the operator enabled the
         network reader; the returned `source` says which one answered.
         `bibtex` is rendered from the library row (null for a disk-reader answer).
+        `full_text` is a window of the stored body (`attest library fulltext`
+        fills it from arXiv PDFs and PMC): `text`, `offset`, `chars`, `total`;
+        page with `text_offset`. Never the whole body.
         """
-        return _lookup(key)
+        return _lookup(key, text_offset, text_chars)
 
     @mcp.tool(name="cite.search")
     def cite_search(

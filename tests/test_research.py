@@ -7,8 +7,21 @@ from pathlib import Path
 import pytest
 
 from attestation import research
+from attestation.db import get_db
+from attestation.library import ReferenceRecord, upsert
 
 FIX = Path(__file__).parent / "fixtures" / "research"
+
+
+def _pdf_bytes(text: str = "Hello full text") -> bytes:
+    """The committed one-page PDF fixture; `text` must be its literal contents.
+
+    pypdf's own writer API is fragile to poke at directly for a one-off test
+    PDF (see tests/fixtures/research/make_one_page_pdf.py's docstring), so the
+    fixture is generated once and read here instead of built per-call.
+    """
+    assert text == "Hello full text", "the committed fixture only carries this text"
+    return (FIX / "one_page.pdf").read_bytes()
 
 
 def test_parse_topic_two_forms():
@@ -191,3 +204,84 @@ def test_fetch_topic_collects_across_clients_and_records_failures():
     assert out.errors == ["pubmed: ConnectError: down"]
     null = research.fetch_topic(research.Topic(("arxiv",), "x"), research.null_clients())
     assert null.offline and null.papers == []
+
+
+def test_pdf_text_extracts_and_tolerates_garbage():
+    """pypdf reads the fixture's text; garbage bytes return None, never raise."""
+    assert "Hello full text" in (research.pdf_text(_pdf_bytes("Hello full text")) or "")
+    assert research.pdf_text(b"not a pdf") is None
+
+
+def test_parse_pmc_joins_body_paragraphs_and_none_without_body():
+    """PMC XML's <body> paragraphs and section titles join into one text; no body -> None."""
+    xml = (
+        b"<pmc-articleset><article><front><article-meta/></front>"
+        b"<body><sec><title>Intro</title><p>First para.</p>"
+        b"<p>Second <italic>para</italic>.</p></sec></body>"
+        b"</article></pmc-articleset>"
+    )
+    assert research.parse_pmc(xml) == "Intro\nFirst para.\nSecond para."
+    assert (
+        research.parse_pmc(b"<pmc-articleset><article><front/></article></pmc-articleset>") is None
+    )
+
+
+def test_fetch_fulltext_caps_marks_none_and_retries_only_transient(tmp_path):
+    """A capped pass: PMC/arXiv bodies fetched, an unreadable PDF marked 'none', a transient
+    transport failure left unrecorded so the next run retries it, and the flag off is a no-op."""
+    conn = get_db(tmp_path / "t.db")
+    ids = []
+    for i in range(3):
+        rid, _ = upsert(
+            conn,
+            ReferenceRecord(
+                source="research:arxiv",
+                source_key=f"2101.0000{i}",
+                title=f"P{i}",
+                arxiv_id=f"2101.0000{i}",
+            ),
+        )
+        ids.append(rid)
+    pm, _ = upsert(
+        conn, ReferenceRecord(source="research:pubmed", source_key="9", title="PM", pmcid="PMC9")
+    )
+    none_id, _ = upsert(conn, ReferenceRecord(source="zotero", source_key="Z", title="no ids"))
+    conn.commit()
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        if "2101.00002" in url:
+            raise research.httpx.ConnectError("down")
+        if "2101.00001" in url:
+            return b"garbage"
+        if "pmc" in url:
+            return (
+                b"<pmc-articleset><article><body><p>PMC body.</p></body></article></pmc-articleset>"
+            )
+        return _pdf_bytes("Hello full text")
+
+    out = research.fetch_fulltext(conn, limit=2, fetch=fetch)
+    assert out == {"fetched": 1, "none": 0, "failed": 1} or out == {
+        "fetched": 1,
+        "none": 1,
+        "failed": 0,
+    }
+    out2 = research.fetch_fulltext(conn, limit=10, fetch=fetch)
+    rows = {r["reference_id"]: r for r in conn.execute("SELECT * FROM reference_fulltext")}
+    assert none_id not in rows  # nothing to fetch, never selected
+    assert rows[pm]["source"] == "pmc-xml" and rows[pm]["text"] == "PMC body."
+    assert (
+        rows[ids[1]]["source"] == "none" and rows[ids[1]]["text"] is None
+    )  # unreadable pdf: tried
+    assert ids[2] not in rows  # transient failure: no row, retried next run
+    assert any("2101.00002" in u for u in calls[-3:])
+    assert out2["failed"] == 1
+    # the flag off does nothing
+    assert research.fetch_fulltext(
+        conn, limit=10, fetch=fetch, clients=research.null_clients()
+    ) == {
+        "fetched": 0,
+        "none": 0,
+        "failed": 0,
+    }

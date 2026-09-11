@@ -14,11 +14,13 @@ never per call -- the offline guarantee's construction-time rule.
 
 from __future__ import annotations
 
+import io
 import json
 import os
+import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from urllib.parse import parse_qs, quote_plus, urlencode
 
 import httpx
@@ -518,3 +520,82 @@ def fetch_topic(
             errors.append(f"{name}: {type(exc).__name__}: {exc}")
     offline = all(clients[n].offline for n in topic.clients)
     return Fetched(as_entries(papers), papers, errors, offline)
+
+
+# ---------------------------------------------------------------------------
+# full text: a capped pass, arXiv PDF or PMC open-access XML, never embedded
+# ---------------------------------------------------------------------------
+
+_PMC_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&retmode=xml&id="
+
+
+def pdf_text(body: bytes) -> str | None:
+    """The text of every page, or None when pypdf cannot read the bytes.
+
+    pypdf raises a zoo of exception types on malformed input (its own
+    PdfReadError, but also KeyError/TypeError/RecursionError from deep inside
+    the parser), and one unreadable PDF must cost itself, not the pass.
+    """
+    from pypdf import PdfReader
+
+    try:
+        reader = PdfReader(io.BytesIO(body))
+        text = "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception:  # noqa: BLE001 -- see the docstring: pypdf's failure modes are open-ended
+        return None
+    return text.strip() or None
+
+
+def parse_pmc(body: bytes) -> str | None:
+    """Section titles and paragraphs of a PMC <body>, one per line; None when there is no body."""
+    root = SafeET.fromstring(body)
+    body_el = root.find(".//body")
+    if body_el is None:
+        return None
+    lines = ["".join(el.itertext()).strip() for el in body_el.iter() if el.tag in ("title", "p")]
+    text = "\n".join(_collapse(line) for line in lines if line.strip())
+    return text or None
+
+
+def _fulltext_todo(conn: sqlite3.Connection, limit: int):
+    """Up to `limit` references with an arXiv id or PMCID and no fulltext row yet, newest first."""
+    return conn.execute(
+        'SELECT r.id, r.arxiv_id, r.pmcid FROM "references" r'
+        " WHERE (r.arxiv_id IS NOT NULL OR r.pmcid IS NOT NULL)"
+        " AND NOT EXISTS (SELECT 1 FROM reference_fulltext f WHERE f.reference_id = r.id)"
+        " ORDER BY r.first_seen DESC, r.id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+
+
+def fetch_fulltext(conn: sqlite3.Connection, *, limit: int = 10, fetch=None, clients=None) -> dict:
+    """Pull bodies for up to `limit` references that have none yet, newest first.
+
+    arXiv PDF through pypdf, else PMC open-access XML by PMCID. A body that
+    cannot be read writes `source='none'` so the row is not retried hourly;
+    a transport failure writes NOTHING, so the next run tries again. With the
+    research flag off (all clients offline) this does nothing.
+    """
+    clients = clients or clients_from_env()
+    counts = {"fetched": 0, "none": 0, "failed": 0}
+    if all(c.offline for c in clients.values()):
+        return counts
+    fetch = fetch or _default_fetch
+    for row in _fulltext_todo(conn, limit):
+        if row["arxiv_id"]:
+            url, source, parse = f"https://arxiv.org/pdf/{row['arxiv_id']}", "arxiv-pdf", pdf_text
+        else:
+            url, source, parse = _PMC_BASE + row["pmcid"].removeprefix("PMC"), "pmc-xml", parse_pmc
+        try:
+            text = parse(fetch(url))
+        except FETCH_ERRORS:
+            counts["failed"] += 1
+            continue
+        conn.execute(
+            "INSERT INTO reference_fulltext(reference_id, text, source, fetched_at)"
+            " VALUES (?, ?, ?, ?)",
+            (row["id"], text, source if text else "none", datetime.now(UTC).date().isoformat()),
+        )
+        conn.commit()
+        counts["fetched" if text else "none"] += 1
+    return counts
