@@ -418,6 +418,43 @@ Recorded in this file's §Measured when taken, as the library spec did:
   it is ever wanted, it is a ranker-side filter on `added_by`, not a
   second store.
 
+## Measured
+
+Taken 2026-09-11 05:00 against a scratch copy of the live database (9,835
+items, 13 feeds, migrated 6 -> 9 on open; Ollama warm, models pinned), never
+the live file. Two topics registered under the first persona:
+`research:arxiv?q=equivariant+interatomic+potentials` and
+`research:pubmed?q=protein+language+models`.
+
+- **First-run overlap with the RSS.** Fetched directly with `since` = 365
+  days: arXiv returned 50 hits of which 5 already existed as items (the
+  cs.LG / chem-ph feeds), PubMed 49 of which 0 did. The identifier dedup
+  skipped exactly those 5 on ingest: the first run with topics added 94
+  items (45 + 49) and the library gained 99 references (all 50 arXiv hits
+  upserted, the 5 twins as a `research:arxiv` source row on the RSS
+  item's existing reference), 51 with an arXiv id and 32 with a PMCID.
+- **Hourly cost.** RSS-only steady state 4.9 s wall (1 new item); with the
+  two topics registered, steady state 6.7 s (0 new): about 0.9 s per topic
+  per hour, dominated by the two search requests. The first run with topics
+  took 44.4 s, all of it embedding 94 new items; the RSS-only run on a
+  14-hour-stale copy took 117.6 s for 281 new items, which is the same ~0.4
+  s per embedded item.
+- **Full text.** PMC open-access XML: 27 bodies at ~0.5 s each (25 in 12.7 s),
+  mean 47,600 chars (18k -- 129k). arXiv PDF through pypdf: 13 bodies, a
+  batch of 10 in 17.4 s, so ~1.7 s per PDF including extraction, mean
+  53,900 chars (16k -- 77k). 4 of 44 marked `none` (no open-access body or
+  unreadable PDF), 1 transient failure on the first pass, retried and
+  fetched on the next. The default `--fulltext-limit 10` therefore costs 5
+  to 17 s per hourly run while a backlog drains. `fetch_fulltext` does not
+  pace consecutive arXiv PDF requests (10 in 17 s is faster than the 3 s
+  arXiv asks for between requests); the search clients do. Follow-up: give
+  the PDF path the same `pace_seconds`.
+- **Payloads.** `feed.research(limit=8, store=False)` on the arXiv topic:
+  3,425 chars emitted (indent=2), 8 rows, under the 7,000 ceiling with
+  room; `cite.lookup` on the largest body (117k chars) with the default
+  2,000-char window: 3,288 chars. Both well under the ceiling, which is
+  why the window default is 2,000 and not the 3,000 first written.
+
 ## What this spec does not decide
 
 Whether `kg.ask` gets a route to `feed.research` (the knowledge surface
