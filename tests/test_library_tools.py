@@ -50,6 +50,17 @@ def test_cite_lookup_shows_every_source_and_the_conflicts(tmp_path, monkeypatch)
     )
     assert [s["source"] for s in out["sources"]] == ["bibtex:/a.bib", "zotero"]
     assert out["conflicts"]["zotero"]["year"] == {"kept": 2017, "offered": 2018}
+    assert out["bibtex"].startswith("@")
+
+
+def test_cite_lookup_from_disk_reader_has_no_bibtex_or_text(tmp_path, monkeypatch):
+    _db(tmp_path, monkeypatch)
+    (tmp_path / "refs.bib").write_text(
+        "@article{k1,\n  title = {T},\n  author = {A B},\n  year = {2020},\n}\n"
+    )
+    monkeypatch.setenv("ATTEST_BIB_PATHS", str(tmp_path / "refs.bib"))
+    out = citation._lookup("k1")
+    assert out["ok"] and out["bibtex"] is None and out["full_text"] is None
 
 
 def test_cite_lookup_falls_back_to_the_disk_readers(tmp_path, monkeypatch):

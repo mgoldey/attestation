@@ -31,7 +31,10 @@ def _embedder():
     return Embedder()
 
 
-@tool(empty={"reference": None, "sources": [], "conflicts": {}}, label="cite_lookup")
+@tool(
+    empty={"reference": None, "sources": [], "conflicts": {}, "bibtex": None, "full_text": None},
+    label="cite_lookup",
+)
 def _lookup(conn, key: str) -> dict:
     from attestation import library
 
@@ -59,7 +62,13 @@ def _lookup(conn, key: str) -> dict:
                     else f"{s['source']}:{s['source_key']}"
                 )
                 conflicts[key] = found
-        return {"reference": ref.to_row(), "sources": sources, "conflicts": conflicts}
+        return {
+            "reference": ref.to_row(),
+            "sources": sources,
+            "conflicts": conflicts,
+            "bibtex": library.bibtex(row),
+            "full_text": None,
+        }
     resolver = _resolver()
     found = resolver.lookup(key)
     if found is None:
@@ -69,7 +78,13 @@ def _lookup(conn, key: str) -> dict:
             f"no source has {key!r} (disk readers: {configured};"
             f" library store: {stored} references)"
         )
-    return {"reference": found.to_row(), "sources": [], "conflicts": {}}
+    return {
+        "reference": found.to_row(),
+        "sources": [],
+        "conflicts": {},
+        "bibtex": None,
+        "full_text": None,
+    }
 
 
 @tool(
@@ -227,6 +242,7 @@ def register(mcp) -> None:
         Looks in the reference library first, then a local Zotero library and
         any .bib files. Reaches CrossRef only when the operator enabled the
         network reader; the returned `source` says which one answered.
+        `bibtex` is rendered from the library row (null for a disk-reader answer).
         """
         return _lookup(key)
 

@@ -404,3 +404,78 @@ def test_related_resolves_edges_both_ways(tmp_path):
     assert library.related(conn, "nope") is None
     row = rel.to_row()
     assert row["reference"]["key"] == "nequip" and row["cites"][1]["title"] == "Elsewhere"
+
+
+def _row(conn, rid):
+    """The full "references" row for `rid`, as bibtex()/bibtex_key() expect it."""
+    return conn.execute('SELECT * FROM "references" WHERE id = ?', (rid,)).fetchone()
+
+
+def test_bibtex_article_for_a_journal_row(tmp_path):
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    rid, _ = library.upsert(
+        conn,
+        library.ReferenceRecord(
+            source="research:crossref",
+            source_key="10.1038/s41592-022-01760-3",
+            title="Protein language models & structure",
+            authors=["Lin, Zeming", "Rives, Alexander"],
+            year=2023,
+            venue="Nature Methods",
+            doi="10.1038/s41592-022-01760-3",
+            url="https://doi.org/10.1038/s41592-022-01760-3",
+        ),
+    )
+    out = library.bibtex(_row(conn, rid))
+    assert out.startswith("@article{lin2023protein,\n")
+    assert "  author = {Lin, Zeming and Rives, Alexander},\n" in out
+    assert "  title = {Protein language models \\& structure},\n" in out
+    assert "  journal = {Nature Methods},\n" in out and "  year = {2023},\n" in out
+    assert "  doi = {10.1038/s41592-022-01760-3},\n" in out and out.rstrip().endswith("}")
+    assert library.bibtex(_row(conn, rid)) == out  # deterministic
+
+
+def test_bibtex_misc_for_a_preprint_and_bib_key_wins(tmp_path):
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    rid, _ = library.upsert(
+        conn,
+        library.ReferenceRecord(
+            source="bibtex:/a.bib",
+            source_key="nequip",
+            bib_key="nequip",
+            title="E(3)-equivariant graph neural networks",
+            authors=["Batzner, Simon"],
+            year=2021,
+            arxiv_id="2101.03164",
+        ),
+    )
+    out = library.bibtex(_row(conn, rid))
+    assert out.startswith("@misc{nequip,\n")
+    assert "  eprint = {2101.03164},\n  archivePrefix = {arXiv},\n" in out and "journal" not in out
+
+
+def test_bibtex_key_is_ascii_and_export_suffixes_collisions(tmp_path):
+    from attestation.db import get_db
+
+    conn = get_db(tmp_path / "t.db")
+    for i, title in enumerate(("Über Graphen I", "Über Graphen II")):
+        library.upsert(
+            conn,
+            library.ReferenceRecord(
+                source="zotero",
+                source_key=f"Z{i}",
+                title=title,
+                authors=["Müller, Anna"],
+                year=2020,
+                doi=f"10.5555/{i}",
+            ),
+        )
+    rows = library.select_rows(conn, author="müller")
+    assert [library.bibtex_key(r) for r in rows] == ["muller2020uber", "muller2020uber"]
+    bib = library.export_bib(rows)
+    assert "@misc{muller2020uber,\n" in bib and "@misc{muller2020uberb,\n" in bib
+    assert library.select_rows(conn, year=1999) == []

@@ -894,6 +894,80 @@ def to_reference(conn: sqlite3.Connection, row):
 
 
 # ---------------------------------------------------------------------------
+# BibTeX: rendered from the row, deterministic, no network
+# ---------------------------------------------------------------------------
+
+_BIB_ESCAPE = str.maketrans({c: f"\\{c}" for c in "&%$#_"})
+
+
+def _ascii_word(text: str) -> str:
+    """Letters and digits of the NFKD-folded text, lowercase -- what a BibTeX key may hold."""
+    return re.sub(r"[^a-z0-9]", "", normalise_title(text))
+
+
+def bibtex_key(row) -> str:
+    """`bib_key` when a .bib or Zotero supplied one, else <family><year><first title word>."""
+    if row["bib_key"]:
+        return row["bib_key"]
+    authors = json.loads(row["authors"])
+    family = _ascii_word(authors[0].split(",")[0]) if authors else "anon"
+    words = [w for w in normalise_title(row["title"]).split() if w not in ("a", "an", "the")]
+    first = _ascii_word(words[0]) if words else "untitled"
+    return f"{family}{row['year'] or ''}{first}"
+
+
+def _bib_fields(row, preprint: bool) -> list[tuple[str, str | None]]:
+    """The (name, value) pairs `bibtex` may render, in BibTeX field order."""
+    venue = row["venue"]
+    return [
+        ("author", " and ".join(json.loads(row["authors"])) or None),
+        ("title", row["title"]),
+        ("journal", None if preprint else venue),
+        ("year", str(row["year"]) if row["year"] else None),
+        ("doi", row["doi"]),
+        ("url", row["url"]),
+        ("eprint", row["arxiv_id"] if preprint else None),
+        ("archivePrefix", "arXiv" if preprint and row["arxiv_id"] else None),
+    ]
+
+
+def bibtex(row, *, key: str | None = None) -> str:
+    """One BibTeX entry for a library row: @article when the venue is a journal,
+    @misc with arXiv eprint fields for a preprint. Pure; the same row always
+    renders the same text, so an exported file is stable."""
+    venue = row["venue"]
+    preprint = not venue or bool(_PREPRINT_VENUE.match(venue))
+    fields = _bib_fields(row, preprint)
+    escaped = {"author", "title", "journal"}
+    body = "".join(
+        f"  {name} = {{{value.translate(_BIB_ESCAPE) if name in escaped else value}}},\n"
+        for name, value in fields
+        if value
+    )
+    return f"@{'misc' if preprint else 'article'}{{{key or bibtex_key(row)},\n{body}}}\n"
+
+
+def select_rows(conn: sqlite3.Connection, *, author=None, year=None, tag=None, source=None) -> list:
+    """Rows matching the fielded filters, id order -- the export's input."""
+    where, params = _fielded_where(author, year, None, None, tag, source)
+    return conn.execute(
+        f'SELECT * FROM "references" r WHERE {where} ORDER BY r.id', params
+    ).fetchall()
+
+
+def export_bib(rows) -> str:
+    """Every row as BibTeX; a repeated key takes a letter suffix in row order (b, c, ...)."""
+    seen: dict[str, int] = {}
+    out = []
+    for row in rows:
+        base = bibtex_key(row)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        out.append(bibtex(row, key=base if n == 0 else f"{base}{chr(ord('a') + n)}"))
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
 # citation neighbourhood
 # ---------------------------------------------------------------------------
 
