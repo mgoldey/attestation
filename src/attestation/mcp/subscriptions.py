@@ -15,25 +15,32 @@ it between namespaces.
 """
 
 from attestation.mcp._shared import MAX_LIST_LIMIT, ItemId, Limit
-from attestation.mcp._tool import ToolError, tool
+from attestation.mcp._tool import ToolError, _get_user, tool
 
 
 def register(mcp) -> None:
     """Attach the feed.source_* tools."""
 
     @mcp.tool(name="feed.source_add")
-    def add_feed(url: str, title: str | None = None) -> dict:
-        """Subscribe to an RSS/Atom feed.
+    def add_feed(url: str, title: str | None = None, user: str | None = None) -> dict:
+        """Subscribe to an RSS/Atom feed, or register a standing research topic.
 
-        Validates that the URL parses as a feed, then registers it. Does NOT fetch
-        its articles: items appear after the next ingest (hourly cron, or
-        `attest ingest`). Use `feed.source_preview` first to check a feed's content.
+        An RSS URL is validated by parsing it, then registered. A topic is a
+        `research:` URL -- `research:arxiv,pubmed?q=graph+neural+networks`, or
+        `research:crossref?q=...&journal=Nature+Methods` -- validated without any
+        network call; every hourly ingest then searches arXiv, PubMed and/or
+        CrossRef for it and the hits enter the feed like any item. Does NOT fetch
+        anything now: items appear after the next ingest. `user` records who
+        asked (feed.sources shows it); the feed itself is shared by every reader.
         """
-        return _add_feed(url, title)
+        return _add_feed(url, title, user)
 
     @mcp.tool(name="feed.sources")
     def list_feeds() -> dict:
-        """List subscribed feeds with item counts and when each was last fetched."""
+        """List subscribed feeds and research topics (`kind`), with item counts.
+
+        Also reports who added each and when each was last fetched.
+        """
         return _list_feeds()
 
     @mcp.tool(name="feed.source_remove")
@@ -57,11 +64,13 @@ def register(mcp) -> None:
 
 
 @tool(empty={"feed_id": None}, label="add_feed")
-def _add_feed(conn, url: str, title: str | None = None) -> dict:
+def _add_feed(conn, url: str, title: str | None = None, user: str | None = None) -> dict:
     from attestation import feeds as feeds_mod
 
+    row = _get_user(conn, user) if user else None
+    added_by = row["id"] if row else None
     try:
-        feed_id, message = feeds_mod.add_source(conn, url, title)
+        feed_id, message = feeds_mod.add_source(conn, url, title, added_by=added_by)
     except feeds_mod.FeedError as exc:
         raise ToolError(str(exc)) from exc
     return {"message": message, "feed_id": feed_id}

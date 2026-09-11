@@ -25,7 +25,10 @@ CREATE TABLE IF NOT EXISTS feeds(
   id INTEGER PRIMARY KEY,
   url TEXT UNIQUE NOT NULL,
   title TEXT,
-  last_fetched TEXT
+  last_fetched TEXT,
+  -- Who registered it (migration 009). Provenance, not scoping: the candidate
+  -- pool stays global and the ranker sorts per reader.
+  added_by INTEGER REFERENCES users(id)
 );
 CREATE TABLE IF NOT EXISTS items(
   id INTEGER PRIMARY KEY,
@@ -201,6 +204,7 @@ CREATE TABLE IF NOT EXISTS "references"(
   identity TEXT NOT NULL UNIQUE,
   doi TEXT,
   arxiv_id TEXT,
+  pmcid TEXT,
   title TEXT NOT NULL,
   authors TEXT NOT NULL DEFAULT '[]',
   year INTEGER,
@@ -242,6 +246,15 @@ CREATE TABLE IF NOT EXISTS reference_cites(
   source TEXT NOT NULL,
   fetched_at TEXT NOT NULL,
   PRIMARY KEY (citing_id, cited_identity)
+);
+-- Full text is a side table, never embedded and never returned whole:
+-- cite.lookup serves it in windows. source: arxiv-pdf | pmc-xml | none
+-- ('none' = tried, nothing to fetch, do not retry hourly).
+CREATE TABLE IF NOT EXISTS reference_fulltext(
+  reference_id INTEGER PRIMARY KEY REFERENCES "references"(id) ON DELETE CASCADE,
+  text TEXT,
+  source TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
 );
 """
 
@@ -440,6 +453,23 @@ def _migration_008_add_title_key(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migration_009_add_research(conn: sqlite3.Connection) -> None:
+    """Paper research (spec 2026-09-10): `feeds.added_by`, `references.pmcid`,
+    and the `reference_fulltext` side table. All guarded, so a fresh SCHEMA
+    file runs this as a no-op."""
+    feed_cols = {r["name"] for r in conn.execute("PRAGMA table_info(feeds)")}
+    if "added_by" not in feed_cols:
+        conn.execute("ALTER TABLE feeds ADD COLUMN added_by INTEGER REFERENCES users(id)")
+    ref_cols = {r["name"] for r in conn.execute('PRAGMA table_info("references")')}
+    if "pmcid" not in ref_cols:
+        conn.execute('ALTER TABLE "references" ADD COLUMN pmcid TEXT')
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS reference_fulltext("
+        ' reference_id INTEGER PRIMARY KEY REFERENCES "references"(id) ON DELETE CASCADE,'
+        " text TEXT, source TEXT NOT NULL, fetched_at TEXT NOT NULL)"
+    )
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -456,6 +486,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (6, _migration_006_add_runs_scanned_at),
     (7, _migration_007_add_library),
     (8, _migration_008_add_title_key),
+    (9, _migration_009_add_research),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]

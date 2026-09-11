@@ -195,7 +195,12 @@ def test_mcp_domain_modules_stay_small():
         # before `_metric_in_question` ever saw it. `runs.ask` gained an
         # explicit `metric` parameter so a caller does not depend on its own
         # paraphrase carrying it.
-        "ask.py": 355,
+        # Raised 2026-09-10 for Task 7 (feed.research/track routing):
+        # `_feed_ask` gained two new dispatch branches (feed.research,
+        # feed.source_add via a research: url) and a `_feed_ask_needs_argument`
+        # helper split out to keep `_feed_ask` itself under the complexity cap
+        # -- the same seam `_route_research` used on the routing side.
+        "ask.py": 379,
         # Raised for runs.record (2026-09-01): a new tool plus its Arm
         # pydantic model in provenance.py, one new routing rule (with its
         # own ordering comment) in routing.py. Raised again the same day
@@ -205,8 +210,30 @@ def test_mcp_domain_modules_stay_small():
         # files the CLI already merges, refusing only on a DIFFERING value
         # with no --force escape hatch. Raised again (fix round 2) for
         # `corpus` joining `_validate_record_names`'s path-safety check.
-        "routing.py": 285,
+        # Task 7 review moved the research/track phrase tables and
+        # `_research_query` out to routing_research.py (one cohesive new
+        # concern, its own module now) and reverted this file to holding
+        # only the four routers plus the `route_research` hook -- but the
+        # hook's ruling required splitting `_FEED_RULES` into `_CONTENT_RULES`
+        # and `_SOURCE_RULES` with the hook between them (a loose " journal"
+        # research phrase must not steal "summarize the journal article" from
+        # feed.read), which is a second loop, an import and a comment
+        # explaining the split that the single-table version did not carry.
+        # 285 no longer fits; 304 is the measured size with that split plus
+        # the `_match_rules` helper the complexity cap on `route_feed` forced.
+        "routing.py": 304,
         "provenance.py": 415,
+        # Raised 2026-09-10 for Task 8 (BibTeX from a library row): `_lookup`
+        # gained a `bibtex` field on both return branches and its `empty`,
+        # plus the `cite.lookup` docstring sentence naming it. The rendering
+        # itself lives in library.py (bibtex/bibtex_key/select_rows/
+        # export_bib) -- this module only wires the one new field through,
+        # so a split has no seam to land on yet.
+        # Raised again 2026-09-10 for Task 9 (full text): `_lookup` and
+        # `cite.lookup` gained `text_offset`/`text_chars` parameters, the
+        # `full_text` window call, and the MAX_TEXT_CHARS constant/docstring
+        # sentence -- the actual windowing lives in library.fulltext_window.
+        "citation.py": 272,
     }
     # Anything not named above still gets a cap. `if name not in limits:
     # continue` meant a module was exempt until someone remembered to enrol it

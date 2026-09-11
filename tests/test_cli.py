@@ -1219,3 +1219,125 @@ def test_library_related_prints_both_directions(tmp_path, monkeypatch, capsys):
     assert "cited_by 1" in capsys.readouterr().out
     assert main(["library", "related", "ghost"]) == 1
     assert "no library reference matches" in capsys.readouterr().err
+
+
+class FakeEmbedderForCli:
+    """A no-op Embedder stand-in: `ingest --no-research` with an empty
+    feeds.toml never actually calls this, but the command still constructs
+    one, so a real `Embedder()` would try to reach a model server."""
+
+    def embed_document(self, title, text):
+        raise AssertionError("no feed should be embedded in this test")
+
+    def embed_query(self, text):
+        raise AssertionError("no feed should be embedded in this test")
+
+
+def test_sources_add_research_topic_and_ingest_no_research(tmp_path, capsys, monkeypatch):
+    db = str(tmp_path / "t.db")
+    from conftest import seeded_db
+
+    seeded_db(tmp_path / "t.db").close()
+    rc = main(
+        [
+            "sources",
+            "--db",
+            db,
+            "add",
+            "research:arxiv?q=graph+neural+networks",
+            "--user",
+            "researcher",
+        ]
+    )
+    assert rc == 0 and "tracking" in capsys.readouterr().out
+    rc = main(["sources", "--db", db, "add", "research:nope?q=x"])
+    assert rc == 1 and "unknown research client" in capsys.readouterr().err
+    feeds = tmp_path / "feeds.toml"
+    feeds.write_text("feeds = []\n")
+    monkeypatch.setattr("attestation.cli.Embedder", FakeEmbedderForCli, raising=False)
+    rc = main(
+        ["ingest", "--db", db, "--feeds", str(feeds), "--no-research", "--fulltext-limit", "0"]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0 and "'research_disabled': 1" in out
+
+
+def test_research_command_prints_rows_and_no_store(tmp_path, capsys, monkeypatch):
+    from attestation import research
+
+    class Fixed:
+        name, offline = "arxiv", False
+
+        def search(self, *a, **k):
+            return [
+                research.Paper(
+                    client="arxiv", external_id="1", title="Hit", arxiv_id="2101.00001", url="u"
+                )
+            ]
+
+    monkeypatch.setattr(
+        research,
+        "clients_from_env",
+        lambda **k: {
+            "arxiv": Fixed(),
+            "pubmed": research.NullClient("pubmed"),
+            "crossref": research.NullClient("crossref"),
+        },
+    )
+    db = str(tmp_path / "t.db")
+    rc = main(["research", "--db", db, "equivariant", "--sources", "arxiv", "--no-store"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "Hit" in out and "not stored" in out
+    from attestation.db import get_db
+
+    assert get_db(tmp_path / "t.db").execute('SELECT COUNT(*) FROM "references"').fetchone()[0] == 0
+    rc = main(["research", "--db", db, "equivariant", "--sources", "arxiv"])
+    assert rc == 0
+    assert get_db(tmp_path / "t.db").execute('SELECT COUNT(*) FROM "references"').fetchone()[0] == 1
+
+
+def test_library_export_writes_new_files_only(tmp_path, capsys):
+    from attestation.db import get_db
+    from attestation.library import ReferenceRecord, upsert
+
+    db = tmp_path / "t.db"
+    conn = get_db(db)
+    upsert(
+        conn,
+        ReferenceRecord(
+            source="zotero", source_key="Z", title="T", authors=["A, B"], year=2020, doi="10.5555/t"
+        ),
+    )
+    conn.commit()
+    conn.close()
+    target = tmp_path / "out.bib"
+    assert main(["library", "--db", str(db), "export", "--bib", str(target)]) == 0
+    assert target.read_text().startswith("@misc{a2020t,")
+    assert main(["library", "--db", str(db), "export", "--bib", str(target)]) == 1
+    assert "exists" in capsys.readouterr().err
+    assert main(["library", "--db", str(db), "export", "--bib", str(target), "--force"]) == 0
+    assert (
+        main(
+            [
+                "library",
+                "--db",
+                str(db),
+                "export",
+                "--bib",
+                str(tmp_path / "none.bib"),
+                "--year",
+                "1999",
+            ]
+        )
+        == 1
+    )
+
+
+def test_library_fulltext_command_reports_counts(tmp_path, capsys, monkeypatch):
+    from attestation import research
+
+    monkeypatch.setattr(
+        research, "fetch_fulltext", lambda conn, limit, **k: {"fetched": 0, "none": 0, "failed": 0}
+    )
+    assert main(["library", "--db", str(tmp_path / "t.db"), "fulltext", "--limit", "3"]) == 0
+    assert "fetched 0" in capsys.readouterr().out

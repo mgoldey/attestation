@@ -5,14 +5,56 @@ Generated from `attestation.cli.build_parser()` by `scripts/render_cli_reference
 ## attest ingest
 
 ```
-usage: attest ingest [-h] [--db DB] [--feeds FEEDS]
+usage: attest ingest [-h] [--db DB] [--feeds FEEDS] [--no-research]
+                     [--fulltext-limit FULLTEXT_LIMIT]
+
+options:
+  -h, --help            show this help message and exit
+  --db DB               DB path. Resolution order if omitted: ATTEST_DB (or
+                        RSS_DB) env var > ~/.hermes/skills/science-
+                        recommendations/data/hermes.db (if it exists) >
+                        ./hermes.db
+  --feeds FEEDS
+  --no-research         skip research: feeds this run
+  --fulltext-limit FULLTEXT_LIMIT
+                        bodies to fetch after ingest (0 = none)
+```
+
+## attest research
+
+```
+usage: attest research [-h] [--db DB] [--sources SOURCES] [--journal JOURNAL]
+                       [--since-days SINCE_DAYS] [--limit LIMIT] [--no-store]
+                       query
+
+positional arguments:
+  query
+
+options:
+  -h, --help            show this help message and exit
+  --db DB               DB path. Resolution order if omitted: ATTEST_DB (or
+                        RSS_DB) env var > ~/.hermes/skills/science-
+                        recommendations/data/hermes.db (if it exists) >
+                        ./hermes.db
+  --sources SOURCES     comma-separated: arxiv,pubmed,crossref
+  --journal JOURNAL     pubmed/crossref only
+  --since-days SINCE_DAYS
+  --limit LIMIT
+  --no-store            preview; do not write the library
+```
+
+## attest sources add
+
+```
+usage: attest sources add [-h] [--title TITLE] [--user USER] url
+
+positional arguments:
+  url            an RSS/Atom URL or research:<clients>?q=<query>[&journal=...]
 
 options:
   -h, --help     show this help message and exit
-  --db DB        DB path. Resolution order if omitted: ATTEST_DB (or RSS_DB)
-                 env var > ~/.hermes/skills/science-
-                 recommendations/data/hermes.db (if it exists) > ./hermes.db
-  --feeds FEEDS
+  --title TITLE
+  --user USER    persona to record as the one who added it
 ```
 
 ## attest tag
@@ -291,6 +333,33 @@ positional arguments:
 
 options:
   -h, --help  show this help message and exit
+```
+
+## attest library fulltext
+
+```
+usage: attest library fulltext [-h] [--limit LIMIT]
+
+options:
+  -h, --help     show this help message and exit
+  --limit LIMIT
+```
+
+## attest library export
+
+```
+usage: attest library export [-h] --bib BIB [--author AUTHOR] [--year YEAR]
+                             [--tag TAG] [--source SOURCE] [--force]
+
+options:
+  -h, --help       show this help message and exit
+  --bib BIB        output path; refuses to overwrite without --force
+  --author AUTHOR
+  --year YEAR
+  --tag TAG
+  --source SOURCE  reference_sources.source prefix, e.g. zotero,
+                   research:arxiv
+  --force
 ```
 
 ## attest bootstrap-persona

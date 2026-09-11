@@ -65,12 +65,57 @@ def _declined(decision: Decision) -> dict:
     }
 
 
+def _feed_ask_needs_argument(decision: Decision) -> dict | None:
+    """The reply for a decision the question cannot carry an argument for.
+
+    `feed.read` and `feed.source_preview` each need an id or url the question
+    does not name; the rate/explain/source_add/source_remove fallback is the
+    same shape for the rest. Split out of `_feed_ask` to keep its own
+    branching flat -- these never call another tool, they just name one.
+    """
+    if decision.tool == "feed.read":
+        return {
+            "ok": False,
+            "answer": "Which item? Pass the item_id and I will read it in full.",
+            "refs": [],
+            "caveat": None,
+            "options": ["feed.read"],
+            "tool_used": None,
+        }
+    if decision.tool == "feed.source_preview":
+        return {
+            "ok": False,
+            "answer": "Which feed? Give me its URL and I will show recent entries.",
+            "refs": [],
+            "caveat": None,
+            "options": ["feed.source_preview", "feed.source_suggest"],
+            "tool_used": None,
+        }
+    needs_item = decision.tool in {"feed.rate", "feed.explain", "feed.source_remove"}
+    needs_url = decision.tool == "feed.source_add" and "url" not in decision.kwargs
+    if needs_item or needs_url:
+        # These need an item or a url the question does not carry. Naming the
+        # tool is the answer: the caller supplies the argument it already has.
+        return {
+            "ok": False,
+            "answer": f"Tell me which item, then I will call {decision.tool}.",
+            "refs": [],
+            "caveat": None,
+            "options": [decision.tool],
+            "tool_used": None,
+        }
+    return None
+
+
 def _feed_ask(user: str, question: str) -> dict:
     from attestation.mcp import feed as feed_mod
 
     decision = route_feed(question)
     if decision.tool is None:
         return _declined(decision)
+
+    if (needs_argument := _feed_ask_needs_argument(decision)) is not None:
+        return needs_argument
 
     if decision.tool == "feed.search":
         out = feed_mod._search_feed(user, decision.kwargs.get("query", question))
@@ -86,35 +131,16 @@ def _feed_ask(user: str, question: str) -> dict:
         )
     elif decision.tool == "feed.persona_status":
         out = feed_mod._profile_status(user)
-    elif decision.tool == "feed.read":
-        return {
-            "ok": False,
-            "answer": "Which item? Pass the item_id and I will read it in full.",
-            "refs": [],
-            "caveat": None,
-            "options": ["feed.read"],
-            "tool_used": None,
-        }
-    elif decision.tool == "feed.source_preview":
-        return {
-            "ok": False,
-            "answer": "Which feed? Give me its URL and I will show recent entries.",
-            "refs": [],
-            "caveat": None,
-            "options": ["feed.source_preview", "feed.source_suggest"],
-            "tool_used": None,
-        }
-    elif decision.tool in {"feed.rate", "feed.explain", "feed.source_add", "feed.source_remove"}:
-        # These need an item or a url the question does not carry. Naming the
-        # tool is the answer: the caller supplies the argument it already has.
-        return {
-            "ok": False,
-            "answer": f"Tell me which item, then I will call {decision.tool}.",
-            "refs": [],
-            "caveat": None,
-            "options": [decision.tool],
-            "tool_used": None,
-        }
+    elif decision.tool == "feed.research":
+        from attestation.mcp import research as research_mod
+
+        out = research_mod._research(
+            decision.kwargs["query"], sources=decision.kwargs.get("sources", "arxiv,pubmed")
+        )
+    elif decision.tool == "feed.source_add":
+        from attestation.mcp import subscriptions as subs
+
+        out = subs._add_feed(decision.kwargs["url"], None, user)
     else:
         out = feed_mod._list_feed(user)
     return _compose(out, decision.tool)

@@ -41,6 +41,15 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- Paper research (`2026-09-10`, spec `2026-09-10-paper-research-design.md`):
+  standing topics as `research:` feeds (`attest sources add`,
+  `feed.source_add`), searched every ingest through arXiv, PubMed and
+  CrossRef; the `feed.research` tool and `attest research` for ad hoc search
+  into the library; `reference_fulltext` filled by `attest library fulltext`
+  and served by `cite.lookup` in windows; BibTeX rendered from library rows
+  (`cite.lookup`, `attest library export`); items dedup by DOI/arXiv id
+  across feeds; migration 009; `ATTEST_RESEARCH_WEB` on by default. 49 tools.
+  Supersedes the unmerged 2026-09-04 design.
 - `demos/hermes/` (`2026-09-03`): a fifth demo, and the only one driving a
   real agent rather than calling the tools directly — an asciinema
   recording of `hermes chat` asking a real question against the

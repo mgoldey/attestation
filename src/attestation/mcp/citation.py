@@ -17,6 +17,11 @@ from pydantic import Field
 from attestation.mcp._shared import Limit, clamp_limit
 from attestation.mcp._tool import ToolError, tool
 
+# Same one-abstract budget FULL_SUMMARY_CHARS uses in mcp/feed.py: a window
+# this size plus the rest of cite.lookup's payload stays well under the
+# response ceiling a small model can render.
+MAX_TEXT_CHARS = 2000
+
 
 def _resolver():
     from attestation import citations
@@ -31,8 +36,11 @@ def _embedder():
     return Embedder()
 
 
-@tool(empty={"reference": None, "sources": [], "conflicts": {}}, label="cite_lookup")
-def _lookup(conn, key: str) -> dict:
+@tool(
+    empty={"reference": None, "sources": [], "conflicts": {}, "bibtex": None, "full_text": None},
+    label="cite_lookup",
+)
+def _lookup(conn, key: str, text_offset: int = 0, text_chars: int = MAX_TEXT_CHARS) -> dict:
     from attestation import library
 
     row = library.lookup_row(conn, key)
@@ -59,7 +67,15 @@ def _lookup(conn, key: str) -> dict:
                     else f"{s['source']}:{s['source_key']}"
                 )
                 conflicts[key] = found
-        return {"reference": ref.to_row(), "sources": sources, "conflicts": conflicts}
+        return {
+            "reference": ref.to_row(),
+            "sources": sources,
+            "conflicts": conflicts,
+            "bibtex": library.bibtex(row),
+            "full_text": library.fulltext_window(
+                conn, row["id"], max(text_offset, 0), min(max(text_chars, 1), MAX_TEXT_CHARS)
+            ),
+        }
     resolver = _resolver()
     found = resolver.lookup(key)
     if found is None:
@@ -69,7 +85,13 @@ def _lookup(conn, key: str) -> dict:
             f"no source has {key!r} (disk readers: {configured};"
             f" library store: {stored} references)"
         )
-    return {"reference": found.to_row(), "sources": [], "conflicts": {}}
+    return {
+        "reference": found.to_row(),
+        "sources": [],
+        "conflicts": {},
+        "bibtex": None,
+        "full_text": None,
+    }
 
 
 @tool(
@@ -159,13 +181,15 @@ def _check(conn, path: str) -> dict:
 
 @tool(empty={"sources": [], "store": {}}, label="cite_sources")
 def _sources(conn) -> dict:
-    from attestation import citations, library
+    from attestation import citations, library, research
 
     sources = _resolver().sources()
-    network = any(s["network"] for s in sources) or citations.s2_enabled()
-    if citations.s2_enabled():
+    s2, researching = citations.s2_enabled(), research.research_enabled()
+    network = any(s["network"] for s in sources) or s2 or researching
+    if s2:
         sources = [*sources, {"name": "s2", "network": True}]
-    return {"sources": sources, "store": library.status(conn), "offline": not network}
+    store = library.status(conn)
+    return {"sources": sources, "store": store, "offline": not network, "research": researching}
 
 
 @tool(
@@ -218,6 +242,8 @@ def register(mcp) -> None:
     @mcp.tool(name="cite.lookup")
     def cite_lookup(
         key: Annotated[str, Field(description="citation key, DOI, arXiv id, or library identity")],
+        text_offset: Annotated[int, Field(ge=0, description="full-text window start")] = 0,
+        text_chars: Annotated[int, Field(ge=1, le=MAX_TEXT_CHARS)] = MAX_TEXT_CHARS,
     ) -> dict:
         """One bibliographic record, with every source that contributed to it.
 
@@ -225,8 +251,12 @@ def register(mcp) -> None:
         Looks in the reference library first, then a local Zotero library and
         any .bib files. Reaches CrossRef only when the operator enabled the
         network reader; the returned `source` says which one answered.
+        `bibtex` is rendered from the library row (null for a disk-reader answer).
+        `full_text` is a window of the stored body (`attest library fulltext`
+        fills it from arXiv PDFs and PMC): `text`, `offset`, `chars`, `total`;
+        page with `text_offset`. Never the whole body.
         """
-        return _lookup(key)
+        return _lookup(key, text_offset, text_chars)
 
     @mcp.tool(name="cite.search")
     def cite_search(
@@ -272,8 +302,10 @@ def register(mcp) -> None:
         from disk or online, plus what the library store holds. `offline: true`
         means nothing can leave this machine. The feed, ranking, graph, ledger
         and symbolic tools are always local; the only possible network readers
-        are CrossRef and arXiv (ATTEST_CITATION_WEB) and Semantic Scholar
-        (ATTEST_CITATION_SCHOLAR) for citations, and this says whether they are on.
+        are CrossRef and arXiv (ATTEST_CITATION_WEB), Semantic Scholar
+        (ATTEST_CITATION_SCHOLAR) for citations, and
+        ATTEST_RESEARCH_WEB (feed.research, research: feeds, full text; on by
+        default), and this says whether they are on.
 
         Both gemma4:e2b and hermes3:8b skipped this tool when asked "does
         anything I do here send data over the internet" -- one declined, and

@@ -1,0 +1,22 @@
+<?xml version="1.0" ?>
+<PubmedArticleSet>
+<PubmedArticle><MedlineCitation Status="MEDLINE"><PMID Version="1">36702928</PMID>
+<Article PubModel="Print-Electronic"><Journal><Title>Nature methods</Title></Journal>
+<ArticleTitle>Protein language models for structure prediction.</ArticleTitle>
+<Abstract><AbstractText Label="BACKGROUND">Language models learn.</AbstractText>
+<AbstractText Label="RESULTS">They predict structure.</AbstractText></Abstract>
+<AuthorList><Author><LastName>Lin</LastName><ForeName>Zeming</ForeName></Author>
+<Author><LastName>Rives</LastName><ForeName>Alexander</ForeName></Author></AuthorList>
+</Article></MedlineCitation>
+<PubmedData><History><PubMedPubDate PubStatus="pubmed"><Year>2023</Year><Month>01</Month><Day>27</Day></PubMedPubDate></History>
+<ArticleIdList><ArticleId IdType="pubmed">36702928</ArticleId>
+<ArticleId IdType="doi">10.1038/s41592-022-01760-3</ArticleId>
+<ArticleId IdType="pmc">PMC9912345</ArticleId></ArticleIdList></PubmedData></PubmedArticle>
+<PubmedArticle><MedlineCitation Status="MEDLINE"><PMID Version="1">34961817</PMID>
+<Article PubModel="Print"><Journal><Title>Science</Title></Journal>
+<ArticleTitle>A second paper.</ArticleTitle>
+<AuthorList><Author><CollectiveName>The Consortium</CollectiveName></Author></AuthorList>
+</Article></MedlineCitation>
+<PubmedData><History><PubMedPubDate PubStatus="pubmed"><Year>2021</Year><Month>Dec</Month></PubMedPubDate></History>
+<ArticleIdList><ArticleId IdType="pubmed">34961817</ArticleId></ArticleIdList></PubmedData></PubmedArticle>
+</PubmedArticleSet>

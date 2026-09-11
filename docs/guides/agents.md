@@ -61,7 +61,7 @@ mcp_servers:
 
 Verify with `hermes mcp list` — you should see `attestation ... ✓ enabled`.
 
-The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 48 tools.
+The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 49 tools.
 These counts move: re-measure rather than quoting this paragraph.
 
 ```bash
@@ -86,7 +86,8 @@ m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
 | `feed.persona_reset(name, confirm)` | Clear a persona's clicks, keep the persona (needs `confirm=true`) | instant |
 | `feed.harvest_engagement(user)` | Turn past "why is this here?" questions into weak positive feedback | fast |
 | `feed.simulate_ratings(user, limit, confirm)` | Generate simulated reader reactions to train ranking (needs `confirm=true`) | **slow** (local LLM per item) |
-| `feed.source_add(url, title)` | Subscribe to a feed (register-only; items arrive at the next ingest) | fast |
+| `feed.source_add(url, title)` | Subscribe to a feed or register a research: topic (register-only; items arrive at the next ingest) | fast |
+| `feed.research(query, sources, journal, since_days, limit, store)` | Search arXiv/PubMed/CrossRef and store hits in the library (network) | slow |
 | `feed.sources()` | Subscribed feeds with item counts and last-fetched times | instant |
 | `feed.source_preview(url, limit)` | Show a feed's recent entries without subscribing | fast |
 | `feed.source_remove(feed_id, confirm)` | Unsubscribe; keeps existing items and feedback (needs `confirm=true`) | instant |
@@ -413,7 +414,7 @@ restart. This holds ~4.4 GB of GPU memory permanently; `attest warmup`
 ## Restricted surfaces and generated agent configs
 
 A model that can see a tool will eventually call it wrong, so a Claude Code
-session does not need all 48: `ATTEST_TOOLS=feed|provenance|knowledge|symbolic`
+session does not need all 49: `ATTEST_TOOLS=feed|provenance|knowledge|symbolic`
 restricts what an `attest-mcp` process registers to one namespace (`feed.*`,
 `runs.*` + `cite.check`, `kg.*` + `feed.search`, or `sym.*`), and
 `ATTEST_EXPAND=1` reveals the specific tools underneath a surface's `.ask`

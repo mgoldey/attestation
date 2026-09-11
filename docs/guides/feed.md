@@ -39,6 +39,31 @@ It runs two ways, and they share one database:
     every item carrying that tag on the next render.
 - Visible movement by click 3-4; tag-level demotion is visible immediately.
 
+## Standing topics and research
+
+A topic is a feed whose URL has the `research:` scheme:
+
+```bash
+uv run attest sources add "research:arxiv,pubmed?q=equivariant+force+fields" --user researcher
+uv run attest sources add "research:crossref?q=protein+language+models&journal=Nature+Methods"
+uv run attest research "diffusion models for molecules" --sources arxiv --no-store
+```
+
+Every `attest ingest` (the hourly refresh) searches each topic through arXiv,
+PubMed and/or CrossRef for papers since its last run; hits enter the feed as
+items -- ranked, digested, readable -- and the reference library under a
+`research:<client>` source with the authors and venue the payload carried.
+`attest research` (the `feed.research` tool) is the ad hoc form: it stores
+hits in the library only. An item already present under any feed with the
+same DOI or arXiv id is skipped, so a cross-listed arXiv paper or a topic hit
+the RSS already carried is one item.
+
+`ATTEST_RESEARCH_WEB` is on unless set to `0`: ingest already fetches RSS
+over the network and a topic query is the same class of call in the same
+command. Off, topics are counted as `research_disabled` in the ingest stats
+and `feed.research` says `offline`. See
+`docs/superpowers/specs/2026-09-10-paper-research-design.md`.
+
 ## Click provenance
 
 Every recorded click stores its provenance, and provenance decides what a row

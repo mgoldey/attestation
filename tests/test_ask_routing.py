@@ -42,6 +42,18 @@ FEED_CASES = [
     ("add arxiv cs.CL to my feeds", "feed.source_add"),
     ("how well trained is my persona?", "feed.persona_status"),
     ("who are the personas?", "feed.persona_status"),
+    # Going and looking, not searching what arrived: a named source or venue.
+    ("what has been published on protein language models on pubmed?", "feed.research"),
+    ("search arxiv for equivariant force fields", "feed.research"),
+    ("look up recent papers in Nature Methods on cryo-EM", "feed.research"),
+    ("research diffusion models for molecules", "feed.research"),
+    # A standing topic, registered as a feed.
+    ("track equivariant interatomic potentials for me", "feed.source_add"),
+    ("follow graph neural networks for chemistry", "feed.source_add"),
+    # Content and feedback rules beat the research router: a loose " journal"
+    # phrase must not steal a question about an item already in hand.
+    ("summarize the journal article", "feed.read"),
+    ("why is this ranked so high in the journal", "feed.explain"),
 ]
 RUNS_CASES = [
     ("which arm of my sweep won?", "runs.compare"),
@@ -122,6 +134,40 @@ def test_arguments_are_extracted_not_guessed():
     helped."""
     assert route_feed("anything new on retrieval augmented generation?").kwargs["query"]
     assert route_sym("solve x**2 - 4").kwargs.get("expr")
+
+
+def test_research_and_track_decisions_carry_their_arguments():
+    """The exact kwargs feed.research and feed.source_add(research:) need."""
+    d = route_feed("search arxiv for equivariant force fields")
+    assert d.kwargs == {"query": "equivariant force fields", "sources": "arxiv"}
+    d = route_feed("what has been published on protein language models on pubmed?")
+    assert d.kwargs["query"] == "protein language models" and d.kwargs["sources"] == "pubmed"
+    d = route_feed("research diffusion models for molecules")
+    assert d.kwargs == {"query": "diffusion models for molecules", "sources": "arxiv,pubmed"}
+    d = route_feed("track equivariant interatomic potentials for me")
+    assert d.tool == "feed.source_add"
+    assert d.kwargs == {"url": "research:arxiv,pubmed?q=equivariant+interatomic+potentials"}
+    # a URL keeps the old behaviour: no research kwargs, the caller supplies the url
+    assert route_feed("follow https://example.com/rss").kwargs == {}
+    # "papers on X" is still the local archive
+    assert route_feed("anything new on retrieval augmented generation?").tool == "feed.search"
+
+
+def test_track_phrases_refuse_idiom_debris_as_a_topic():
+    """A track phrase mid-sentence, or one whose 'topic' is idiom debris,
+    must not register a research: feed with a garbage query."""
+    # "follow" is not at the start -- not an instruction, falls through to
+    # feed.source_add's old ask-for-a-URL path, non-mutating.
+    d = route_feed("follow up on that paper")
+    assert d.tool == "feed.source_add" and d.kwargs == {}
+    # "watch" opens the sentence but is not a track instruction here.
+    assert route_feed("what should I watch out for").tool is None
+    # "monitor" opens the sentence; the extracted topic is stoplisted, so the
+    # question falls through to the ordinary feed.list rule ("my feed").
+    assert route_feed("monitor my feed").tool == "feed.list"
+    # "watch" opens the sentence; the topic is stoplisted, and nothing else
+    # claims it either.
+    assert route_feed("watch this space").tool is None
 
 
 # --- the tools themselves -------------------------------------------------

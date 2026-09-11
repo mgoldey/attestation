@@ -74,6 +74,9 @@ CALLS: list[tuple[str, dict, str]] = [
     ("feed.source_add", {"url": "$CORPUS_XML", "title": "flows fixture again"}, "ok"),
     ("feed.source_suggest", {"user": "ml-engineer", "limit": 3}, "ok"),
     ("feed.source_remove", {"feed_id": "$FEED_ID", "confirm": True}, "ok"),
+    # ATTEST_RESEARCH_WEB=0 in this flow's spawn env (see main()): "ok" with
+    # offline: true, never a real arXiv/PubMed/CrossRef call.
+    ("feed.research", {"query": "graph neural networks", "sources": "arxiv"}, "ok"),
     # --- provenance
     ("runs.scan", {"root": "$WORKSPACE", "confirm": True}, "ok"),
     # Preview only (no confirm): writing into the committed workspace fixture
@@ -380,6 +383,11 @@ def main(argv: list[str] | None = None) -> int:
             "LLM_BASE_URL": url,
             "CHAT_MODEL": chat,
             "EMBED_MODEL": embed,
+            # feed.research's clients default ON (unlike ATTEST_CITATION_WEB,
+            # off by default) -- this flow is the offline guarantee's own
+            # regression test, so it must not be the one call that reaches
+            # arXiv/PubMed/CrossRef for real.
+            "ATTEST_RESEARCH_WEB": "0",
         }
         surfaces = [args.surface if args.surface != "full" else None] if args.surface else SURFACES
         for surface in surfaces:

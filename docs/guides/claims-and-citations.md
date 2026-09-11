@@ -56,12 +56,15 @@ normalised title and year. Merging fills empty fields and keeps the first value
 of a disagreement, recording the conflict on the source that offered it, so
 `cite.lookup` can show a disagreement rather than lose it.
 
-Two flags reach off the machine, both off by default and read only when the
-readers are built: `ATTEST_CITATION_WEB` (arXiv and CrossRef: abstracts,
-authors, venues) and `ATTEST_CITATION_SCHOLAR` (Semantic Scholar reference lists,
-one request every three seconds, cached forever). They fill fields on references the
-library already holds and never add a paper on their own; `cite.sources` says
-which are live.
+Three flags reach off the machine. `ATTEST_CITATION_WEB` (arXiv and CrossRef:
+abstracts, authors, venues) and `ATTEST_CITATION_SCHOLAR` (Semantic Scholar
+reference lists, one request every three seconds, cached forever) are both
+off by default and read only when the readers are built; they fill fields on
+references the library already holds and never add a paper on their own.
+`ATTEST_RESEARCH_WEB` is the opposite default -- on unless set to `0` -- and
+governs `feed.research`, `research:` topic feeds, and `attest library
+fulltext`: the one path that introduces a reference from the wire rather
+than filling one that is already there. `cite.sources` says which are live.
 
 ```bash
 uv run attest library sync                  # read every source; embed what it can
@@ -77,6 +80,16 @@ output says which — the `cite.search` tool carries the same `semantic` flag
 and `caveat`. `cite.check` and `attest claims` resolve `cite=<key>` through
 the store first, so a key synced from Zotero resolves even when no `.bib` sits
 in the working directory. See `docs/superpowers/specs/2026-09-05-library-store-design.md`.
+
+`attest library fulltext` pulls bodies (arXiv PDF, or PMC open-access XML by
+PMCID) for references that have none, ten per run by default and also at the
+end of `attest ingest`; `cite.lookup` serves them in 2000-character windows,
+never whole, and never embeds them. `attest library export --bib refs.bib
+[--author A] [--year Y] [--tag T] [--source S]` writes a filtered set as
+BibTeX rendered from the rows -- `@article` for a journal, `@misc` with
+`eprint`/`archivePrefix` for a preprint, the `.bib` key when one supplied it,
+else `<family><year><word>` -- refusing to overwrite without `--force`.
+`cite.lookup` returns the same `bibtex` for one record.
 
 References join the concept graph through their tags — from `attest library
 tag`, or from a `.bib` `keywords` field — and `attest library related KEY`

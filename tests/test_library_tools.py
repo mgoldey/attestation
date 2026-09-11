@@ -50,6 +50,17 @@ def test_cite_lookup_shows_every_source_and_the_conflicts(tmp_path, monkeypatch)
     )
     assert [s["source"] for s in out["sources"]] == ["bibtex:/a.bib", "zotero"]
     assert out["conflicts"]["zotero"]["year"] == {"kept": 2017, "offered": 2018}
+    assert out["bibtex"].startswith("@")
+
+
+def test_cite_lookup_from_disk_reader_has_no_bibtex_or_text(tmp_path, monkeypatch):
+    _db(tmp_path, monkeypatch)
+    (tmp_path / "refs.bib").write_text(
+        "@article{k1,\n  title = {T},\n  author = {A B},\n  year = {2020},\n}\n"
+    )
+    monkeypatch.setenv("ATTEST_BIB_PATHS", str(tmp_path / "refs.bib"))
+    out = citation._lookup("k1")
+    assert out["ok"] and out["bibtex"] is None and out["full_text"] is None
 
 
 def test_cite_lookup_falls_back_to_the_disk_readers(tmp_path, monkeypatch):
@@ -115,11 +126,25 @@ def test_cite_sources_reports_the_store_and_the_s2_flag(tmp_path, monkeypatch):
     monkeypatch.setenv("ATTEST_ZOTERO_PATH", str(tmp_path / "none.sqlite"))
     monkeypatch.delenv("ATTEST_CITATION_WEB", raising=False)
     monkeypatch.delenv("ATTEST_CITATION_SCHOLAR", raising=False)
+    monkeypatch.setenv("ATTEST_RESEARCH_WEB", "0")
     out = citation._sources()
     assert out["offline"] is True and out["store"]["references"] == 0
     monkeypatch.setenv("ATTEST_CITATION_SCHOLAR", "1")
     armed = citation._sources()
     assert armed["offline"] is False and {"name": "s2", "network": True} in armed["sources"]
+
+
+def test_cite_sources_offline_reflects_the_research_flag(tmp_path, monkeypatch):
+    _db(tmp_path, monkeypatch)
+    monkeypatch.setenv("ATTEST_BIB_PATHS", str(tmp_path / "absent.bib"))
+    monkeypatch.setenv("ATTEST_ZOTERO_PATH", str(tmp_path / "none.sqlite"))
+    monkeypatch.delenv("ATTEST_CITATION_WEB", raising=False)
+    monkeypatch.delenv("ATTEST_CITATION_SCHOLAR", raising=False)
+    monkeypatch.setenv("ATTEST_RESEARCH_WEB", "0")
+    assert citation._sources()["offline"] is True
+    monkeypatch.delenv("ATTEST_RESEARCH_WEB")
+    out = citation._sources()
+    assert out["offline"] is False and out["research"] is True
 
 
 def test_cite_sync_reads_a_bib_and_reports_structure(tmp_path, monkeypatch):
@@ -191,3 +216,34 @@ def test_cite_related_walks_edges_and_refuses_an_unknown_key(tmp_path, monkeypat
     assert [c["key"] for c in back["cited_by"]] == ["nequip"]
     missing = citation._related("ghost")
     assert missing["ok"] is False and "2 references" in missing["message"]
+
+
+def test_cite_lookup_serves_full_text_in_windows_under_budget(tmp_path, monkeypatch):
+    """`full_text` pages a stored body in MAX_TEXT_CHARS windows, never the whole thing."""
+    db = _db(tmp_path, monkeypatch)
+    conn = get_db(db)
+    rid, _ = upsert(
+        conn,
+        ReferenceRecord(source="research:arxiv", source_key="1", title="T", arxiv_id="2101.00001"),
+    )
+    conn.execute(
+        "INSERT INTO reference_fulltext(reference_id, text, source, fetched_at)"
+        " VALUES (?, ?, ?, ?)",
+        (rid, "x" * 10000, "arxiv-pdf", "2026-09-10"),
+    )
+    conn.commit()
+    conn.close()
+    out = citation._lookup("2101.00001")
+    ft = out["full_text"]
+    assert (
+        ft["total"] == 10000
+        and ft["offset"] == 0
+        and ft["chars"] == 2000
+        and len(ft["text"]) == 2000
+    )
+    assert ft["source"] == "arxiv-pdf"
+    assert len(json.dumps(out, indent=2)) < HARD_RESPONSE_CEILING
+    out = citation._lookup("2101.00001", 9500, 3000)
+    assert out["full_text"]["chars"] == 500 and out["full_text"]["offset"] == 9500
+    out = citation._lookup("2101.00001", 0, 99999)
+    assert out["full_text"]["chars"] == citation.MAX_TEXT_CHARS

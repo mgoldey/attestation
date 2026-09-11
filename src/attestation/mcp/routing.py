@@ -54,14 +54,18 @@ def _strip_topic(text: str) -> str:
     return cleaned.strip() or text.strip().rstrip("?")
 
 
-# The feed rule table, in order. First match wins, and the ORDER is the
+# The feed rule tables, in order. First match wins, and the ORDER is the
 # design: "add arxiv cs.CL to my feeds" contains "my feeds" but is not a
 # request to see them, and "what feeds should I subscribe to" contains
 # "subscribe" but is a question rather than an instruction.
 #
 # Data rather than a chain of ifs because the chain reached 17 branches and
 # the ordering -- the part that actually matters -- was invisible in it.
-_FEED_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+#
+# Split into content and source tables with the research/track hook checked
+# BETWEEN them in `route_feed` -- see `routing_research`'s module docstring
+# for why that ordering is load-bearing.
+_CONTENT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Content before ranking: "what is that paper about" asks what it SAYS,
     # "why is it here" asks why it RANKED.
     (
@@ -108,6 +112,8 @@ _FEED_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "feed.source_preview",
         ("preview", "what's in that feed", "whats in that feed", "what it publishes"),
     ),
+)
+_SOURCE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("feed.source_add", ("add ", "subscribe", "follow ")),
     (
         "feed.sources",
@@ -178,8 +184,24 @@ _SEARCH_PHRASES = (
 )
 
 
+def _match_rules(q: str, rules: tuple[tuple[str, tuple[str, ...]], ...]) -> Decision | None:
+    """The first rule table entry whose phrases appear in `q`, or None."""
+    for tool_name, phrases in rules:
+        if _has(q, *phrases):
+            return Decision(tool_name, {})
+    return None
+
+
 def route_feed(question: str) -> Decision:
-    """Route a question about the reader's feed or persona."""
+    """Route a question about the reader's feed or persona.
+
+    Content and feedback rules run first, the going-and-looking router
+    (`routing_research.route_research`) runs between the two feed-rule
+    tables, and source rules run last -- see `routing_research`'s docstring
+    for why that order is load-bearing rather than arbitrary.
+    """
+    from attestation.mcp.routing_research import route_research
+
     q = question.lower().strip()
     if not q:
         return Decision(
@@ -191,9 +213,14 @@ def route_feed(question: str) -> Decision:
     if "http" not in q and _has(q, *_SUGGEST_PHRASES):
         return Decision("feed.source_suggest", {})
 
-    for tool_name, phrases in _FEED_RULES:
-        if _has(q, *phrases):
-            return Decision(tool_name, {})
+    if (content := _match_rules(q, _CONTENT_RULES)) is not None:
+        return content
+
+    if (research := route_research(q, question)) is not None:
+        return research
+
+    if (source := _match_rules(q, _SOURCE_RULES)) is not None:
+        return source
 
     if _has(q, *_SEARCH_PHRASES):
         topic = _strip_topic(question)

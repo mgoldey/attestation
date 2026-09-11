@@ -1,0 +1,7 @@
+{"status":"ok","message-type":"work-list","message":{"items":[
+ {"DOI":"10.1038/s41592-022-01760-3","title":["Protein language models for structure prediction"],
+  "container-title":["Nature Methods"],"author":[{"given":"Zeming","family":"Lin"},{"given":"Alexander","family":"Rives"}],
+  "issued":{"date-parts":[[2023,1,27]]},"URL":"https://doi.org/10.1038/s41592-022-01760-3",
+  "abstract":"<jats:p>Language models learn.</jats:p>"},
+ {"DOI":"10.5555/no-title","container-title":[],"author":[],"issued":{"date-parts":[[2022]]}}
+]}}

@@ -193,6 +193,7 @@ class ReferenceRecord:
     abstract: str | None = None
     url: str | None = None
     bib_key: str | None = None
+    pmcid: str | None = None
     fetched_at: str | None = None
     tags: list[str] = field(default_factory=list)
     cites: list[tuple[str, str | None]] = field(default_factory=list)
@@ -209,6 +210,7 @@ class ReferenceRecord:
             "abstract": self.abstract,
             "url": self.url,
             "bib_key": self.bib_key,
+            "pmcid": self.pmcid,
         }
         return {k: v for k, v in out.items() if v not in (None, "", [])}
 
@@ -217,7 +219,18 @@ class ReferenceRecord:
 # upsert and sync
 # ---------------------------------------------------------------------------
 
-_COLUMNS = ("doi", "arxiv_id", "title", "authors", "year", "venue", "abstract", "url", "bib_key")
+_COLUMNS = (
+    "doi",
+    "arxiv_id",
+    "title",
+    "authors",
+    "year",
+    "venue",
+    "abstract",
+    "url",
+    "bib_key",
+    "pmcid",
+)
 
 
 def _now() -> str:
@@ -286,8 +299,8 @@ def _row_this_source_made(conn: sqlite3.Connection, rec: ReferenceRecord):
 def _insert(conn: sqlite3.Connection, ident: str, fields: dict, now: str) -> int:
     cur = conn.execute(
         'INSERT INTO "references"(identity, doi, arxiv_id, title, authors, year, venue,'
-        " abstract, url, bib_key, title_key, first_seen, updated)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " abstract, url, bib_key, pmcid, title_key, first_seen, updated)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             ident,
             fields.get("doi"),
@@ -299,6 +312,7 @@ def _insert(conn: sqlite3.Connection, ident: str, fields: dict, now: str) -> int
             fields.get("abstract"),
             fields.get("url"),
             fields.get("bib_key"),
+            fields.get("pmcid"),
             normalise_title(fields["title"]) or None,
             now,
             now,
@@ -880,6 +894,80 @@ def to_reference(conn: sqlite3.Connection, row):
 
 
 # ---------------------------------------------------------------------------
+# BibTeX: rendered from the row, deterministic, no network
+# ---------------------------------------------------------------------------
+
+_BIB_ESCAPE = str.maketrans({c: f"\\{c}" for c in "&%$#_"})
+
+
+def _ascii_word(text: str) -> str:
+    """Letters and digits of the NFKD-folded text, lowercase -- what a BibTeX key may hold."""
+    return re.sub(r"[^a-z0-9]", "", normalise_title(text))
+
+
+def bibtex_key(row) -> str:
+    """`bib_key` when a .bib or Zotero supplied one, else <family><year><first title word>."""
+    if row["bib_key"]:
+        return row["bib_key"]
+    authors = json.loads(row["authors"])
+    family = _ascii_word(authors[0].split(",")[0]) if authors else "anon"
+    words = [w for w in normalise_title(row["title"]).split() if w not in ("a", "an", "the")]
+    first = _ascii_word(words[0]) if words else "untitled"
+    return f"{family}{row['year'] or ''}{first}"
+
+
+def _bib_fields(row, preprint: bool) -> list[tuple[str, str | None]]:
+    """The (name, value) pairs `bibtex` may render, in BibTeX field order."""
+    venue = row["venue"]
+    return [
+        ("author", " and ".join(json.loads(row["authors"])) or None),
+        ("title", row["title"]),
+        ("journal", None if preprint else venue),
+        ("year", str(row["year"]) if row["year"] else None),
+        ("doi", row["doi"]),
+        ("url", row["url"]),
+        ("eprint", row["arxiv_id"] if preprint else None),
+        ("archivePrefix", "arXiv" if preprint and row["arxiv_id"] else None),
+    ]
+
+
+def bibtex(row, *, key: str | None = None) -> str:
+    """One BibTeX entry for a library row: @article when the venue is a journal,
+    @misc with arXiv eprint fields for a preprint. Pure; the same row always
+    renders the same text, so an exported file is stable."""
+    venue = row["venue"]
+    preprint = not venue or bool(_PREPRINT_VENUE.match(venue))
+    fields = _bib_fields(row, preprint)
+    escaped = {"author", "title", "journal"}
+    body = "".join(
+        f"  {name} = {{{value.translate(_BIB_ESCAPE) if name in escaped else value}}},\n"
+        for name, value in fields
+        if value
+    )
+    return f"@{'misc' if preprint else 'article'}{{{key or bibtex_key(row)},\n{body}}}\n"
+
+
+def select_rows(conn: sqlite3.Connection, *, author=None, year=None, tag=None, source=None) -> list:
+    """Rows matching the fielded filters, id order -- the export's input."""
+    where, params = _fielded_where(author, year, None, None, tag, source)
+    return conn.execute(
+        f'SELECT * FROM "references" r WHERE {where} ORDER BY r.id', params
+    ).fetchall()
+
+
+def export_bib(rows) -> str:
+    """Every row as BibTeX; a repeated key takes a letter suffix in row order (b, c, ...)."""
+    seen: dict[str, int] = {}
+    out = []
+    for row in rows:
+        base = bibtex_key(row)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        out.append(bibtex(row, key=base if n == 0 else f"{base}{chr(ord('a') + n)}"))
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
 # citation neighbourhood
 # ---------------------------------------------------------------------------
 
@@ -1023,4 +1111,24 @@ def status(conn: sqlite3.Connection) -> dict:
                 "SELECT source, count(*) n FROM reference_sources GROUP BY source ORDER BY source"
             )
         },
+    }
+
+
+def fulltext_window(
+    conn: sqlite3.Connection, reference_id: int, offset: int = 0, chars: int = 2000
+) -> dict | None:
+    """A slice of a reference's stored body, with the total so a caller can page. None if absent."""
+    row = conn.execute(
+        "SELECT text, source FROM reference_fulltext WHERE reference_id = ?", (reference_id,)
+    ).fetchone()
+    if row is None or not row["text"]:
+        return None
+    text = row["text"]
+    piece = text[offset : offset + chars]
+    return {
+        "text": piece,
+        "offset": offset,
+        "chars": len(piece),
+        "total": len(text),
+        "source": row["source"],
     }

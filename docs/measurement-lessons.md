@@ -68,8 +68,8 @@ placeholder. Because `@tool(autocreate_user=True)` creates unknown names rather
 than refusing, every such call risked an empty persona that ranks badly
 forever. Naming the persona in the prompt: 9/9 correct.
 
-**Restricting the tool surface is not automatically a win.** `ATTEST_TOOLS=feed`
-(21 tools) scored *worse* than the full 46-tool surface of the time (7/12 vs 9/12) before the system
+**Restricting the tool surface is not automatically a win.** The feed surface
+(21 tools at the time) scored *worse* than the full 46-tool surface of the time (7/12 vs 9/12) before the system
 prompt was fixed. The failures were the model declining to call anything, not
 choosing wrongly — a framing problem, not a surface-size problem.
 
