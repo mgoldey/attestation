@@ -11,7 +11,7 @@ The clients are built ONCE, when `register` runs, so ATTEST_RESEARCH_WEB is
 read at construction like every other network flag here.
 """
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Annotated
 
 from pydantic import Field
@@ -48,16 +48,14 @@ def paper_row(paper, stored: bool) -> dict:
 
 
 def _store_papers(conn, papers) -> int:
-    """Upsert every paper into the library; return how many were new-or-changed."""
-    from attestation import library, research
+    """Upsert every paper into the library; return how many were new-or-changed.
 
-    today = datetime.now(UTC).date().isoformat()
-    stored = 0
-    for rec in research.as_records(papers, today):
-        _rid, how = library.upsert(conn, rec)
-        stored += how != "unchanged"
-    conn.commit()
-    return stored
+    Delegates to `research.store_papers` -- the domain module, not this tool
+    layer, owns the upsert-and-commit policy `attest research` shares it with.
+    """
+    from attestation import research
+
+    return research.store_papers(conn, papers)
 
 
 def _research_message(fetched, topic, journal: str | None, store: bool, stored: int) -> str:

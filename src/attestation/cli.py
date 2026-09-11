@@ -1322,9 +1322,9 @@ def cmd_research(args: argparse.Namespace) -> int:
     """`attest research <query>`: ad hoc search over the configured clients,
     upserted into the library unless `--no-store` -- a manual complement to
     the standing `research:` feeds `sources add` registers."""
-    from datetime import UTC, date, datetime, timedelta
+    from datetime import date, timedelta
 
-    from attestation import library, research
+    from attestation import research
 
     names = tuple(s.strip() for s in args.sources.split(",") if s.strip())
     try:
@@ -1345,13 +1345,8 @@ def cmd_research(args: argparse.Namespace) -> int:
     if args.no_store:
         print(f"{len(fetched.papers)} paper(s); not stored")
         return 0
-    stored = 0
     with open_db(args.db) as conn:
-        today = datetime.now(UTC).date().isoformat()
-        for rec in research.as_records(fetched.papers, today):
-            _rid, how = library.upsert(conn, rec)
-            stored += how != "unchanged"
-        conn.commit()
+        stored = research.store_papers(conn, fetched.papers)
     print(f"{len(fetched.papers)} paper(s); {stored} new in the library")
     return 0
 

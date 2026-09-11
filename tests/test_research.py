@@ -85,6 +85,23 @@ def test_as_records_carries_what_the_payload_had():
     assert r.doi == "10.1/x" and r.pmcid == "PMC1" and r.fetched_at == "2026-09-10"
 
 
+def test_store_papers_upserts_once_and_is_idempotent(tmp_path):
+    """The shared home for `attest research` and `feed.research`: two distinct
+    hits store as two new rows the first time, and re-storing the same two
+    changes nothing the second time (an unchanged row counts 0)."""
+    conn = get_db(tmp_path / "t.db")
+    papers = [
+        _paper(external_id="2106.02347", arxiv_id="2106.02347", doi=None),
+        _paper(external_id="2106.99999", arxiv_id="2106.99999", doi=None, title="A second paper"),
+    ]
+
+    assert research.store_papers(conn, papers) == 2
+    assert research.store_papers(conn, papers) == 0
+
+    n = conn.execute("SELECT COUNT(*) FROM reference_sources").fetchone()[0]
+    assert n == len(papers)
+
+
 def test_flag_default_on_and_off(monkeypatch):
     monkeypatch.delenv("ATTEST_RESEARCH_WEB", raising=False)
     assert research.research_enabled()

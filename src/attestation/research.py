@@ -27,7 +27,7 @@ import httpx
 from defusedxml import DefusedXmlException
 from defusedxml import ElementTree as SafeET
 
-from attestation.library import ReferenceRecord, normalise_arxiv
+from attestation.library import ReferenceRecord, normalise_arxiv, upsert
 from attestation.library_readers import _client, _crossref_abstract, _crossref_authors
 
 CLIENT_NAMES = ("arxiv", "pubmed", "crossref")
@@ -180,6 +180,23 @@ def as_records(papers, fetched_at: str) -> list[ReferenceRecord]:
         )
         for p in papers
     ]
+
+
+def store_papers(conn: sqlite3.Connection, papers, *, fetched_at: str | None = None) -> int:
+    """Upsert search hits into the library under research:<client>; returns how many
+    were new or merged (an unchanged row counts 0). Commits once.
+
+    The shared home for what `attest research` and the `feed.research` MCP
+    tool both do with a search result -- one store, one commit, one place to
+    change if the upsert policy ever needs to.
+    """
+    today = fetched_at or datetime.now(UTC).date().isoformat()
+    stored = 0
+    for rec in as_records(papers, today):
+        _rid, how = upsert(conn, rec)
+        stored += how != "unchanged"
+    conn.commit()
+    return stored
 
 
 def research_enabled() -> bool:
