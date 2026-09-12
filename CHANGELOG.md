@@ -11,6 +11,16 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Fixed
 
+- `feed.research` / `attest research` with `--journal` on CrossRef
+  (`2026-09-11`): the journal was passed as `query.container-title`, which
+  CrossRef treats as a ranking hint, so a search scoped to the Journal of
+  Chemical Physics returned Chemical Engineering Science 12 of 12 times. The
+  client now resolves the journal name to an ISSN through `/journals` (title
+  equality after normalisation, one cached request per name) and filters
+  with `issn:`; an unresolved abbreviation falls back to the boost plus a
+  client-side container-title match, which returns nothing rather than the
+  wrong journal. PubMed's `[Journal]` term was already a filter and is
+  unchanged.
 - `runs.ask` (`2026-09-03`): comparing arms by a metric the question named
   silently fell back to whichever metric most arms shared instead, because
   `_runs_ask` called `_compare(family)` with no metric argument at all —

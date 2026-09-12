@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -480,11 +481,47 @@ def _crossref_paper(item: dict, doi: str, title: str) -> Paper:
     )
 
 
-def parse_crossref(body: bytes) -> list[Paper]:
-    """`/works` items as Papers; an item with no title cannot name a paper and is skipped."""
+_VENUE_NOISE = re.compile(r"[^a-z0-9]+")
+
+
+def _venue_key(name: str | list | None) -> str:
+    """A journal name reduced to what two spellings of it share: lowercase, no
+    punctuation, one space, no leading article -- so "J. Chem. Phys." and
+    "J Chem Phys" agree, and "Journal of Chemical Physics" agrees with the
+    registered "The Journal of Chemical Physics"."""
+    if isinstance(name, list):  # `/works` carries titles as lists; `/journals` as strings
+        name = name[0] if name else ""
+    key = _VENUE_NOISE.sub(" ", (name or "").lower()).strip()
+    return key[4:] if key.startswith("the ") else key
+
+
+def venue_matches(item: dict, journal: str) -> bool:
+    """Whether a `/works` item is FROM `journal`, by its long or short container title.
+
+    Equality after `_venue_key`, not containment: "Nature" must not claim
+    Nature Methods. MEASURED 2026-09-11: `query.container-title` is a boost
+    (a search scoped to the Journal of Chemical Physics returned Chemical
+    Engineering Science), and CrossRef's own `container-title` filter is
+    exact-match (0 hits without the leading "The"), so the venue decision
+    has to be made here, on the payload.
+    """
+    wanted = _venue_key(journal)
+    if not wanted:
+        return True
+    titles = list(item.get("container-title") or []) + list(item.get("short-container-title") or [])
+    return any(_venue_key(t) == wanted for t in titles)
+
+
+def parse_crossref(body: bytes, *, journal: str | None = None) -> list[Paper]:
+    """`/works` items as Papers; an item with no title cannot name a paper and is skipped.
+
+    With `journal`, items from any other venue are skipped too (`venue_matches`).
+    """
     items = ((json.loads(body) or {}).get("message") or {}).get("items") or []
     out = []
     for item in items:
+        if journal and not venue_matches(item, journal):
+            continue
         doi = (item.get("DOI") or "").lower()
         title = _collapse((item.get("title") or [""])[0])
         if doi and title:
@@ -492,20 +529,75 @@ def parse_crossref(body: bytes) -> list[Paper]:
     return out
 
 
+# How many boosted rows to fetch per wanted row when a journal is named: the
+# venue boost puts the journal's own papers first, so a small multiple is
+# enough to fill `limit` when the journal has anything on the topic at all.
+JOURNAL_OVERFETCH = 4
+CROSSREF_MAX_ROWS = 100  # CrossRef's per-page ceiling
+
+
 class CrossrefSearch(_Client):
     """CrossRef `/works`: the only way to search a journal on neither arXiv nor PubMed."""
 
     name = "crossref"
 
+    def __init__(self, fetch=None):
+        """As `_Client`, plus an ISSN cache keyed by `_venue_key(journal)`."""
+        super().__init__(fetch)
+        self._issn_cache: dict[str, str | None] = {}
+
     def search(self, query, *, journal=None, since: date | None = None, limit: int = 50):
-        """Papers matching `query`, optionally within `journal`, published since `since`."""
-        params: dict = {"query": query, "rows": limit, "sort": "published", "order": "desc"}
-        if journal:
+        """Papers matching `query`, optionally within `journal`, published since `since`.
+
+        `query.container-title` only RANKS by venue, so with a journal the page
+        is over-fetched (`JOURNAL_OVERFETCH` x `limit`, capped at CrossRef's
+        page size) and `parse_crossref` keeps the items actually from that
+        journal before the cut to `limit`. See `venue_matches` for why the
+        server-side filter is not used instead.
+        """
+        issn = self.resolve_journal(journal) if journal else None
+        # Resolved: the ISSN filter is exact, so no over-fetch and no venue check.
+        # Unresolved (an abbreviation, a misspelling): best effort -- boost by
+        # name, over-fetch, and keep only items whose container title matches.
+        best_effort = journal is not None and issn is None
+        rows = min(limit * JOURNAL_OVERFETCH, CROSSREF_MAX_ROWS) if best_effort else limit
+        params: dict = {"query": query, "rows": rows, "sort": "published", "order": "desc"}
+        filters = []
+        if issn:
+            filters.append(f"issn:{issn}")
+        elif journal:
             params["query.container-title"] = journal
         if since:
-            params["filter"] = f"from-pub-date:{since.isoformat()}"
+            filters.append(f"from-pub-date:{since.isoformat()}")
+        if filters:
+            params["filter"] = ",".join(filters)
         url = "https://api.crossref.org/works?" + urlencode(params, quote_via=quote_plus)
-        return parse_crossref(self._get(url))
+        return parse_crossref(self._get(url), journal=journal if best_effort else None)[:limit]
+
+    def resolve_journal(self, journal: str) -> str | None:
+        """The ISSN CrossRef registers for `journal`, or None when no registered
+        title is the same name (`_venue_key` equality -- "Journal of Chemical
+        Physics" resolves to The Journal of Chemical Physics; "J Chem Phys"
+        returns nothing from `/journals` and stays unresolved).
+
+        One request per distinct name per client instance; the answer is cached
+        because a standing topic asks for the same journal every hour. MEASURED
+        2026-09-11: `filter=issn:0021-9606` returned 218 hits, all from the
+        journal, where the name boost had returned 0 of 12.
+        """
+        key = _venue_key(journal)
+        if key in self._issn_cache:
+            return self._issn_cache[key]
+        params = {"query": journal, "rows": 5}
+        url = "https://api.crossref.org/journals?" + urlencode(params, quote_via=quote_plus)
+        items = ((json.loads(self._get(url)) or {}).get("message") or {}).get("items") or []
+        found = None
+        for item in items:
+            if _venue_key(item.get("title")) == key and item.get("ISSN"):
+                found = item["ISSN"][0]
+                break
+        self._issn_cache[key] = found
+        return found
 
 
 @dataclass

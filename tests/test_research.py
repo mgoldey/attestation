@@ -198,13 +198,19 @@ def test_pubmed_search_with_no_ids_makes_one_call():
 
 
 def test_crossref_search_filters():
-    fetch, asked = _fetcher({"api.crossref.org": "crossref_works.json"})
+    fetch, asked = _fetcher(
+        {
+            "crossref.org/journals": "crossref_journals_empty.json",
+            "crossref.org/works": "crossref_works.json",
+        }
+    )
     papers = research.CrossrefSearch(fetch=fetch).search(
         "x", journal="Nature Methods", since=date(2023, 1, 1)
     )
     assert len(papers) == 1
-    assert "query.container-title=Nature+Methods" in asked[0]
-    assert "filter=from-pub-date%3A2023-01-01" in asked[0]
+    # unresolved journal: the name boost plus the date filter, venue checked on the payload
+    assert "query.container-title=Nature+Methods" in asked[1]
+    assert "filter=from-pub-date%3A2023-01-01" in asked[1]
 
 
 def test_fetch_topic_collects_across_clients_and_records_failures():
@@ -322,3 +328,52 @@ def test_fetch_fulltext_marks_malformed_pmc_body_none_not_failed(tmp_path):
         "SELECT source, text FROM reference_fulltext WHERE reference_id = ?", (pm,)
     ).fetchone()
     assert row["source"] == "none" and row["text"] is None
+
+
+def test_crossref_journal_resolves_to_an_issn_filter():
+    """MEASURED 2026-09-11: `query.container-title` only RANKS by venue -- a search
+    scoped to the Journal of Chemical Physics returned Chemical Engineering
+    Science 12 times out of 12 under date order and 0 of 12 of its own papers
+    under relevance order, while CrossRef's server-side `container-title`
+    filter is exact-match (0 hits without the leading "The"). `/journals`
+    resolves the name to an ISSN and `filter=issn:` is exact."""
+    fetch, asked = _fetcher(
+        {
+            "crossref.org/journals": "crossref_journals.json",
+            "crossref.org/works": "crossref_works_mixed.json",
+        }
+    )
+    client = research.CrossrefSearch(fetch=fetch)
+
+    papers = client.search(
+        "force fields", journal="Journal of Chemical Physics", limit=2, since=date(2025, 1, 1)
+    )
+    assert "journals?query=Journal+of+Chemical+Physics" in asked[0]
+    assert "filter=issn%3A0021-9606%2Cfrom-pub-date%3A2025-01-01" in asked[1]
+    assert "rows=2" in asked[1] and "container-title" not in asked[1]
+    assert len(papers) == 2, "the ISSN filter is exact: the payload is trusted as-is"
+
+    client.search("other", journal="the journal of chemical physics", limit=1)
+    assert len(asked) == 3 and "works" in asked[2], "resolution cached per name, spelling aside"
+
+
+def test_crossref_unresolved_journal_falls_back_to_venue_match():
+    """An abbreviation `/journals` does not know ("J Chem Phys" -> no items): boost
+    by name, over-fetch, keep items whose long or short container title is the
+    same name after normalisation -- equality, so "Nature" never claims Nature
+    Methods -- then cut to `limit`."""
+    fetch, asked = _fetcher(
+        {
+            "crossref.org/journals": "crossref_journals_empty.json",
+            "crossref.org/works": "crossref_works_mixed.json",
+        }
+    )
+    client = research.CrossrefSearch(fetch=fetch)
+
+    papers = client.search("force fields", journal="J Chem Phys", limit=2)
+    assert [p.doi for p in papers] == ["10.1063/5.0000001", "10.1063/5.0000002"]
+    assert "rows=8" in asked[1] and "query.container-title=J+Chem+Phys" in asked[1]
+
+    assert client.search("force fields", journal="Nature", limit=5) == []
+    assert len(client.search("force fields", limit=5)) == 4, "no journal: nothing dropped"
+    assert "rows=5" in asked[-1] and "journals" not in asked[-1]
