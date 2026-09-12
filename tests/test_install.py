@@ -352,6 +352,13 @@ def test_non_ollama_backend_skips_model_ollama_warmup(monkeypatch, tmp_path, cap
 
     monkeypatch.setattr("attestation.cli.warmup", fake_warmup)
     _presync_skill(monkeypatch, tmp_path)
+    # The hosted-models probe would make two real requests to the URL above;
+    # stand it in as OK here, its own tests drive it through a mock transport.
+    monkeypatch.setattr(
+        install,
+        "_hosted_probe",
+        lambda transport=None: install.StepResult("hosted_models", install.Status.OK, "stub"),
+    )
 
     rc = install.run_install(check=True)
 
@@ -1551,3 +1558,106 @@ def test_the_doctor_does_not_inventory_models_it_cannot_reach(monkeypatch):
         f"models reported {result.status} against an unreachable backend: {result.detail}"
     )
     assert "present" not in (result.detail or "")
+
+
+# --------------------------------------------------------------------------
+# hosted models (a non-Ollama LLM_BASE_URL)
+# --------------------------------------------------------------------------
+
+
+def _hosted_transport(embed_status=200, chat_status=200, dims=2048, body=None):
+    """An httpx.MockTransport answering /embeddings and /chat/completions."""
+    import httpx
+
+    calls: list[str] = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path.endswith("/embeddings"):
+            if embed_status != 200:
+                return httpx.Response(embed_status, json=body or {"title": "Gone", "detail": "eol"})
+            return httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.1] * dims}]})
+        if chat_status != 200:
+            return httpx.Response(chat_status, json=body or {"title": "Not Found", "detail": "x"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    return httpx.MockTransport(handler), calls
+
+
+def test_hosted_models_skipped_for_ollama(monkeypatch):
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    r = install.step_hosted_models()
+    assert r.status is install.Status.SKIPPED and r.name == "hosted_models"
+
+
+def test_hosted_models_401_names_the_key(monkeypatch):
+    """No precondition on the key (a LAN vLLM needs none): a 401 is what says
+    the key is missing or wrong, and the detail says which."""
+    monkeypatch.setenv("LLM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    transport, _ = _hosted_transport(embed_status=401, body={"title": "Unauthorized"})
+    r = install._hosted_probe(transport=transport)
+    assert r.status is install.Status.BROKEN
+    assert "HTTP 401 Unauthorized" in r.detail and "LLM_API_KEY is unset" in r.detail
+
+
+def test_hosted_models_ok_makes_one_embed_and_one_chat_call(monkeypatch):
+    monkeypatch.setenv("LLM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("EMBED_MODEL", "nvidia/nemotron-3-embed-1b")
+    monkeypatch.setenv("CHAT_MODEL", "google/gemma-4-31b-it")
+    transport, calls = _hosted_transport()
+    r = install._hosted_probe(transport=transport)
+    assert r.status is install.Status.OK, r.detail
+    assert calls == ["/v1/embeddings", "/v1/chat/completions"]
+    assert "nemotron-3-embed-1b ok (2048 dims)" in r.detail and "gemma-4-31b-it ok" in r.detail
+
+
+def test_hosted_models_reports_the_servers_reason(monkeypatch):
+    """MEASURED 2026-09-11 on NIM: listed models answered 410 Gone (end of life)
+    and 404 (not enabled for the account). The server's title is the part a
+    person can act on, so it is kept verbatim."""
+    monkeypatch.setenv("LLM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("CHAT_MODEL", "meta/llama-3.1-8b-instruct")
+    transport, calls = _hosted_transport(
+        chat_status=410, body={"title": "Gone", "detail": "reached its end of life on 2026-08-25"}
+    )
+    r = install._hosted_probe(transport=transport)
+    assert r.status is install.Status.BROKEN
+    assert "meta/llama-3.1-8b-instruct: HTTP 410 Gone -- reached its end of life" in r.detail
+    assert calls == ["/v1/embeddings", "/v1/chat/completions"], "embed passed, chat failed"
+
+
+def test_hosted_models_rejects_a_model_narrower_than_embed_dims(monkeypatch):
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.example/v1")
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("EMBED_DIMS", "512")
+    transport, calls = _hosted_transport(dims=384)
+    r = install._hosted_probe(transport=transport)
+    assert (
+        r.status is install.Status.BROKEN
+        and "384 dims" in r.detail
+        and "EMBED_DIMS=512" in r.detail
+    )
+    assert calls == ["/v1/embeddings"], "no chat call after the embedding check failed"
+
+
+def test_hosted_models_step_runs_in_the_sequence(monkeypatch, tmp_path, capsys):
+    """A failing probe fails the run: a hosted tier whose models do not answer
+    is exactly what --check exists to catch, and it must exit 1."""
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.example/v1")
+    monkeypatch.setenv("RSS_DB", str(_db_with_items(tmp_path, n_items=1)))
+    _patch_run(monkeypatch)
+    _presync_skill(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        install,
+        "_hosted_probe",
+        lambda transport=None: install.StepResult(
+            "hosted_models", install.Status.BROKEN, "m: HTTP 410 Gone -- eol"
+        ),
+    )
+    rc = install.run_install(check=True)
+    out = capsys.readouterr().out
+    assert "[BROKEN] hosted_models: m: HTTP 410 Gone -- eol" in out
+    assert rc == 1

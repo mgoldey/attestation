@@ -1,6 +1,6 @@
 [project]
 name = "attestation"
-version = "0.1.0"
+version = "0.2.0"
 description = "Auditable research provenance: experiment runs, verifiable claims, a reading graph, and symbolic derivations — fully local"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -52,6 +52,9 @@ Changelog = "https://github.com/mgoldey/attestation/blob/main/CHANGELOG.md"
 
 [project.scripts]
 attest = "attestation.cli:main"
+# Same entry point under the package name, so `uvx attestation install` works
+# without `--from attestation attest`.
+attestation = "attestation.cli:main"
 attest-mcp = "attestation.mcp_server:main"
 
 [dependency-groups]

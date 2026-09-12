@@ -284,6 +284,106 @@ def step_models(check: bool = False, yes: bool = False) -> StepResult:
     return _step_models_pull(missing, yes)
 
 
+def _server_reason(response) -> tuple[str, str]:
+    """(title, detail) from a JSON error body, or two empty strings.
+
+    NIM answers RFC 7807 problem details (`title`, `detail`); OpenAI-style
+    servers answer `{"error": {"message": ...}}`. Either is more useful than
+    the status code alone.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return "", ""
+    title = body.get("title") or (body.get("error") or {}).get("message") or ""
+    return str(title), str(body.get("detail") or "")
+
+
+def _hosted_error(exc: Exception, model: str) -> str:
+    """One line a person can act on, out of whatever a hosted endpoint raised.
+
+    Hosted catalogues churn: MEASURED 2026-09-11 against NVIDIA NIM, 82
+    models listed at /v1/models and most of those tried returned 410 (end
+    of life) or 404 (not enabled for the account), so the server's own
+    `title`/`detail` is the useful part and is kept when the body is JSON.
+    A 401/403 additionally says whether LLM_API_KEY is set at all.
+    """
+    import httpx
+
+    if not isinstance(exc, httpx.HTTPStatusError):
+        if isinstance(exc, httpx.HTTPError):
+            return f"{model}: {base_url()} unreachable ({exc.__class__.__name__})"
+        return f"{model}: {exc.__class__.__name__}: {exc}"
+    status = exc.response.status_code
+    title, detail = _server_reason(exc.response)
+    if status in (401, 403):
+        key_state = "set" if os.environ.get("LLM_API_KEY") else "unset"
+        detail = f"LLM_API_KEY is {key_state}; {base_url()} rejected it. {detail}".strip()
+    head = f"{model}: HTTP {status}" + (f" {title}" if title else "")
+    return f"{head} -- {detail[:200]}" if detail else head
+
+
+def step_hosted_models(check: bool = False) -> StepResult:
+    """For a non-Ollama LLM_BASE_URL: do the configured chat and embedding
+    models actually answer?
+
+    Two tiny real requests (one embedding, one chat completion capped at one
+    token) rather than a look at /v1/models: a hosted catalogue lists models
+    an account cannot call (404) and models that have reached end of life
+    (410), and only a request tells those apart from a working one. The
+    embedding reply's width is checked against EMBED_DIMS too, since a
+    model narrower than the stored width cannot be truncated to it.
+
+    No precondition on LLM_API_KEY: a LAN vLLM needs none, and a 401 from a
+    hosted endpoint says so in the detail. `check` changes nothing here --
+    both requests are read-only -- but is accepted so the step fits the
+    sequence. Sequence tests replace `_hosted_probe`; behaviour tests pass
+    it a transport.
+    """
+    if _is_ollama_backend():
+        return StepResult("hosted_models", Status.SKIPPED, "Ollama backend (see models)")
+    return _hosted_probe()
+
+
+def _hosted_probe(transport=None) -> StepResult:
+    """The two requests behind `step_hosted_models`; `transport` is for tests."""
+    from attestation.db import embed_dims
+    from attestation.llm import ChatClient, EmbeddingClient
+
+    parts: list[str] = []
+    try:
+        vec = EmbeddingClient(transport=transport).embed("attest install check")
+    except Exception as exc:  # noqa: BLE001 -- every failure of a hosted
+        # embedding call (auth, EOL model, network) is reported through the
+        # same one-line detail; nothing here is a bug in this code.
+        return StepResult("hosted_models", Status.BROKEN, _hosted_error(exc, embed_model()))
+    want = embed_dims()
+    if len(vec) < want:
+        return StepResult(
+            "hosted_models",
+            Status.BROKEN,
+            f"{embed_model()} returns {len(vec)} dims, narrower than EMBED_DIMS={want};"
+            " pick a wider model or lower EMBED_DIMS on a fresh database",
+        )
+    parts.append(f"embed {embed_model()} ok ({len(vec)} dims)")
+    try:
+        chat = ChatClient(transport=transport)
+        resp = chat.client.post(
+            "/chat/completions",
+            json={
+                "model": chat.model,
+                "messages": [{"role": "user", "content": "ok"}],
+                "max_tokens": 1,
+            },
+        )
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001 -- same policy as the embedding
+        # call above: one actionable line, never a traceback.
+        return StepResult("hosted_models", Status.BROKEN, _hosted_error(exc, chat_model()))
+    parts.append(f"chat {chat_model()} ok")
+    return StepResult("hosted_models", Status.OK, "; ".join(parts))
+
+
 def step_env_file(check: bool = False) -> StepResult:
     """Does `.env` exist; create it from `.env.sample` if not (skipped
     entirely outside a checkout, where there is no sample to copy)."""
@@ -951,6 +1051,7 @@ def _run_steps(check: bool, yes: bool, now: bool) -> list[StepResult]:
     agent = _find_agent_binary()
     results = [step_uv(), step_ollama_reachable()]
     results.append(step_models(check=check, yes=yes))
+    results.append(step_hosted_models(check=check))
     results.append(step_env_file(check=check))
     results.append(step_first_data(check=check, yes=yes, now=now))
     results.append(step_warmup(check=check))

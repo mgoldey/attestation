@@ -97,9 +97,12 @@ the ledger and claim checker; add [Ollama](https://ollama.com) for the feed,
 tagging, and knowledge graph. Models are optional and pulled for you.
 
 ```bash
-uv run attest install          # idempotent setup: .env, models, first ingest
-uv run attest install --check  # diagnose only, exits 1 on gaps
+uvx attestation install          # from PyPI, nothing cloned
+uvx attestation install --check  # diagnose only, exits 1 on gaps
 ```
+
+No GPU? Point `LLM_BASE_URL` at any OpenAI-compatible endpoint with `LLM_API_KEY`;
+`--check` confirms the models answer ([install guide](docs/guides/install.md#hosted-models-instead-of-ollama)).
 
 See [docs/guides/install.md](docs/guides/install.md) for prerequisites and
 the manual steps `attest install` automates.

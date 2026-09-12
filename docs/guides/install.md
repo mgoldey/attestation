@@ -23,6 +23,15 @@ tagging that same 1000 items is a ~40-minute unattended job.
 
 ## One-liner
 
+From PyPI, with nothing cloned (the package ships a console script under its
+own name, so `uvx attestation ...` is the whole command):
+
+```bash
+uvx attestation install          # idempotent setup, see below
+uvx attestation install --check  # diagnose only
+uvx attestation serve            # http://127.0.0.1:8899
+```
+
 `attest install` is an idempotent setup command: it creates `.env`, pulls
 missing Ollama models, runs the first ingest, and — if a local
 [hermes-agent](https://github.com/NousResearch/hermes-agent) install is
@@ -77,6 +86,41 @@ that the **database is the source of truth**: use the `feed.source_add` /
 `feed.source_remove` MCP tools (or edit the database directly) to change which feeds
 are tracked, then run `uv run attest ingest` to fetch from any newly added
 feed. Editing `feeds.toml` after the first ingest has no effect.
+
+## Hosted models instead of Ollama
+
+The feed tier's model calls speak the OpenAI-compatible API, so any hosted
+endpoint replaces Ollama: no GPU, no 7.8 GB download. Set four variables
+(`.env.sample` has the block) and run the check:
+
+```bash
+LLM_BASE_URL=https://integrate.api.nvidia.com/v1   # NVIDIA NIM, for example
+LLM_API_KEY=nvapi-...
+CHAT_MODEL=<a chat model your account can call>
+EMBED_MODEL=nvidia/nemotron-3-embed-1b
+uvx attestation install --check
+```
+
+With a non-local `LLM_BASE_URL` the Ollama steps are skipped and one step,
+`hosted_models`, makes two tiny real requests -- one embedding and a
+one-token chat completion -- and reports the server's own reason when either
+fails. That is deliberate: a hosted catalogue lists models an account cannot
+call. Measured on 2026-09-11 against NIM, 82 models were listed;
+`nvidia/nemotron-3-embed-1b` answered (2048 dims, truncated client-side to
+`EMBED_DIMS`), and every chat model tried returned `410 Gone` (end of life)
+or `404` (not enabled for the account). The check prints exactly that:
+
+```
+[BROKEN] hosted_models: meta/llama-3.1-8b-instruct: HTTP 410 Gone -- The model
+'meta/llama-3.1-8b-instruct' has reached its end of life on 2026-08-26 ...
+```
+
+Three things change when you leave Ollama. Titles, abstracts and a
+persona's interests text are sent to the endpoint -- the run ledger and
+claim checker never touch a model and stay local either way. The stored
+embedding model is pinned per database, so switching means a fresh database.
+And the tagging, explanation and reaction prompts were measured on
+`gemma4:e2b`; `evals/` re-measures them on a different model.
 
 ## What `attest install` does (manual-setup reference)
 
@@ -145,3 +189,18 @@ takes the *package*, the trailing word is the *executable*, so
 `_find_agent_binary()` need a `sys.prefix` guard to avoid calling itself.
 
 </details>
+
+## Publishing a release (maintainers)
+
+`.github/workflows/release.yml` builds and publishes to PyPI on a `v*` tag
+through trusted publishing, so no token lives in the repo. One-time setup on
+pypi.org: project `attestation`, Publishing, add a GitHub publisher with
+owner `mgoldey`, repository `attestation`, workflow `release.yml`,
+environment `pypi`. Then bump `version` in `pyproject.toml`, move the
+changelog's Unreleased entries under the version, and:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The build job refuses a tag that does not match the pyproject version.
