@@ -1,0 +1,27 @@
+{
+ "status": "ok",
+ "message": {
+  "items": [
+   {
+    "title": "The Journal of Chemical Physics",
+    "ISSN": [
+     "0021-9606",
+     "1089-7690"
+    ]
+   },
+   {
+    "title": "Chinese Journal of Chemical Physics",
+    "ISSN": [
+     "1003-7713",
+     "1674-0068"
+    ]
+   },
+   {
+    "title": "International Journal of Chemical Physics",
+    "ISSN": [
+     "2356-6973"
+    ]
+   }
+  ]
+ }
+}
