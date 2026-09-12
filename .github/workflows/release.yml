@@ -1,0 +1,64 @@
+name: Release
+
+# Tag-triggered PyPI publish through trusted publishing (OIDC): no API token
+# lives in this repo. One-time setup on pypi.org -> project "attestation" ->
+# Publishing -> add a GitHub publisher with owner mgoldey, repository
+# attestation, workflow release.yml, environment pypi. Then:
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# The build job refuses a tag that does not match pyproject's version, so a
+# release cannot ship under a number the package does not carry.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    name: build + smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tag matches pyproject version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          test "$tag" = "$version" || { echo "tag v$tag != pyproject version $version" >&2; exit 1; }
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Wheel installs and both console scripts answer
+        run: |
+          python3 -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/pip install --quiet dist/*.whl
+          /tmp/wheel-venv/bin/attest --help >/dev/null
+          /tmp/wheel-venv/bin/attestation --help >/dev/null
+          /tmp/wheel-venv/bin/attest-mcp --help >/dev/null 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

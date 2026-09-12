@@ -9,6 +9,22 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Added
+
+- PyPI release path (`2026-09-11`): `.github/workflows/release.yml` builds
+  and publishes on a `v*` tag through trusted publishing, refusing a tag that
+  does not match `pyproject.toml`; a second console script named
+  `attestation` makes `uvx attestation install` the whole install command.
+  Version bumped to 0.2.0 for the first release.
+- `attest install` hosted-models step (`2026-09-11`): with a non-Ollama
+  `LLM_BASE_URL` the Ollama steps skip and `hosted_models` makes one
+  embedding and one one-token chat request, reporting the server's own
+  reason on failure (measured on NVIDIA NIM: 82 models listed, most chat
+  models tried answered 410 end-of-life or 404 not-enabled, so a catalogue
+  lookup would have passed a configuration that cannot run) and refusing an
+  embedding model narrower than `EMBED_DIMS`. `.env.sample` and the install
+  guide gain the hosted tier.
+
 ### Fixed
 
 - `runs.ask` (`2026-09-03`): comparing arms by a metric the question named
