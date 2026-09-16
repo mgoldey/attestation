@@ -559,3 +559,59 @@ def test_a_fresh_database_opens_on_the_onboarding_form(tmp_path, fake_embedder):
     assert resp.status_code == 200
     assert 'action="/personas"' in resp.text
     assert _users(db_path) == []
+
+
+def test_onboarding_offers_archetype_templates(client):
+    """The blank textarea IS the product on first run (day-one ranking is pure
+    cosine similarity against the interests string, per CLAUDE.md). Offer the
+    same rich, ready-made strings db.SEED_USERS already carries rather than
+    asking a stranger to write a profile-embedding-quality paragraph cold.
+
+    Clicking a template must PREFILL the textarea, not bypass it or submit on
+    click -- the user still refines it, and no persona may be created by the
+    act of rendering the form.
+    """
+    from attestation.db import SEED_USERS
+
+    before = _users(client.db_path)
+    html = client.get("/onboard").text
+    for name, interests in SEED_USERS.items():
+        assert name in html, f"archetype {name!r} missing from onboarding form"
+        # The full, un-tidied SEED_USERS string must reach the page verbatim --
+        # CLAUDE.md: redundant, repetitive interests text scores BETTER, so this
+        # is not free to shorten for display.
+        assert interests in html, f"archetype {name!r} interests text was tidied or missing"
+    # Prefill must target the textarea by writing its value, not by
+    # autosubmitting a form -- no second form/action appears.
+    assert html.count('action="/personas"') == 1
+    assert _users(client.db_path) == before, "rendering templates must not create a persona"
+
+
+def test_a_fresh_database_offers_archetypes_but_creates_no_persona(tmp_path, fake_embedder):
+    """The stronger anti-autoseed property: even on a genuinely EMPTY database
+    (no demo seeds, no prior personas at all), the onboarding form offers the
+    archetype templates while creating nothing. Templates must be OFFERED and
+    explicitly chosen, never silently inserted -- CLAUDE.md's history here is
+    an earlier version that planted the author's own persona in a stranger's
+    database.
+    """
+    from attestation.db import SEED_USERS
+
+    db_path = tmp_path / "fresh.db"
+    get_db(db_path).close()
+    app = create_app(db_path, embedder=fake_embedder, chat_fn=lambda m, s: {"text": "w"})
+    resp = TestClient(app).get("/")
+    assert resp.status_code == 200
+    for name in SEED_USERS:
+        assert name in resp.text
+    assert _users(db_path) == [], "offering archetypes on a fresh DB must not create any persona"
+
+
+def test_choosing_an_archetype_template_does_not_bypass_the_textarea(client):
+    """A template button prefills; it must still be a textarea submit, not a
+    direct link to /personas that skips editing entirely."""
+    html = client.get("/onboard").text
+    # Every archetype option must set the textarea's value client-side (a
+    # plain onclick is enough here -- no JS framework, no external asset) and
+    # must not itself be a submit control wired to a different action.
+    assert "interests.value" in html or "getElementById('interests')" in html
