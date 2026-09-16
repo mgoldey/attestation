@@ -77,6 +77,56 @@ class TestListFeed:
         # and it asks the one question only the reader can answer
         assert "monitor" in out["message"].lower() or "topics" in out["message"].lower()
 
+    def test_empty_database_says_so_and_names_ingest(self, _patch_env_db):
+        """feed.digest already tells "no items at all" apart from "nothing in
+        the window" (ToolError("no unread items to digest")); list_feed
+        returned `[]` with `ok: true` for BOTH cases, indistinguishable to an
+        agent -- and the documented worst-case first-run experience. With no
+        items in the database at all, the response must name the next action
+        (running ingest) so an agent can tell the reader why the feed is
+        empty instead of reporting a silent, unexplained zero.
+        """
+        seeded_db(_patch_env_db).close()  # personas only, zero items -- no seeded_conn
+
+        out = mcp_server._list_feed_impl("researcher", limit=5)
+
+        assert out["ok"] is True, out["message"]
+        assert out["items"] == []
+        assert "ingest" in out["message"].lower()
+
+    def test_items_exist_but_none_in_window_names_the_window(
+        self, _patch_env_db, fake_embedder, monkeypatch
+    ):
+        """Items exist in the database but were all published outside the
+        requested window -- the response must say the items exist but missed
+        the window, not just "0 items" indistinguishable from an empty
+        database (the case above).
+        """
+        conn = seeded_db(_patch_env_db)
+        cur = conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash, published)"
+            " VALUES (NULL, 'old item', 'http://x', 'old summary', 'hash-old',"
+            " datetime('now', '-30 days'))"
+        )
+        vec = fake_embedder.embed_document("old item", "old summary")
+        conn.execute(
+            "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+            (cur.lastrowid, vec.tobytes()),
+        )
+        conn.commit()
+        conn.close()
+        monkeypatch.setattr(_shared, "_embedder", fake_embedder)
+        monkeypatch.setattr(_shared, "get_embedder", lambda: fake_embedder)
+
+        out = mcp_server._list_feed_impl("researcher", limit=5, since_days=1)
+
+        assert out["ok"] is True, out["message"]
+        assert out["items"] == []
+        assert "window" in out["message"].lower() or "since_days" in out["message"].lower()
+        assert "1" in out["message"]
+        # must NOT tell a reader with a populated database to go run ingest
+        assert "ingest" not in out["message"].lower()
+
 
 def test_record_feedback_records_agent_source(seeded_conn):
     from attestation.db import resolve_db_path

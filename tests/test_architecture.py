@@ -1394,6 +1394,12 @@ def test_domain_reaches_models_only_through_ports():
 
 _SQL = re.compile(r"""["'](SELECT|INSERT|UPDATE|DELETE|WITH) """)
 MCP_SQL_BASELINE = 21  # measured after the Wave-1 seams: feed 15, personas 5, _tool 1
+# feed.list's empty-result branch needs "does the database have ANY item at
+# all" to tell "empty database, run ingest" apart from "items exist, none in
+# this window" -- that existence check is rank.item_count(), a domain reader,
+# not a raw SELECT here: the exact pattern this baseline exists to push back
+# on (see cbac191, which reverted an earlier +1 for the same reason on a
+# different query).
 
 
 def test_mcp_layer_sql_only_ratchets_down():
