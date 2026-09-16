@@ -609,15 +609,26 @@ def _legacy_skill_dirs() -> list[Path]:
     ]
 
 
-def step_skill_copy(check: bool = False) -> StepResult:
+def step_skill_copy(agent: str | None = None, check: bool = False) -> StepResult:
     """Sync every bundled skill into every skills tree Hermes reads,
     byte-for-byte, skipping unchanged files -- and disable the superseded
     `research-provenance` monolith wherever it is still enabled.
+
+    Skipped when no hermes-agent binary is found, the same as the other
+    three agent-wiring steps (mcp_wiring, reasoning_override, schedule): a
+    fresh, agent-less home used to report BROKEN here on every `--check`
+    run, which alone forced exit 1 for a self-hoster who only wants the
+    local feed/ledger and never asked for hermes-agent wiring. These skill
+    files exist to be read by a hermes-agent session, so `agent=None`
+    (the default) now means "nothing to sync" rather than "sync, then
+    report broken forever." Pass a real agent path to actually sync.
 
     Skipped -- not broken -- when the skills are not bundled with this
     install (see the comment below): this is a fallback lane, and an odd
     packaging mode losing it should not fail the rest of the run.
     """
+    if agent is None:
+        return StepResult("skill_copy", Status.SKIPPED, "no hermes-agent binary found")
     # The skills ship inside the package, so this normally exists in every
     # install mode. Kept as a guard for odd packaging (e.g. a zipimport or a
     # stripped install): the skill is the optional fallback lane, so skip
@@ -955,7 +966,7 @@ def _run_steps(check: bool, yes: bool, now: bool) -> list[StepResult]:
     results.append(step_first_data(check=check, yes=yes, now=now))
     results.append(step_warmup(check=check))
     results.append(step_mcp_wiring(agent, check=check))
-    results.append(step_skill_copy(check=check))
+    results.append(step_skill_copy(agent, check=check))
     results.append(step_reasoning_override(agent, check=check))
     results.append(step_schedule(agent, check=check))
     return results

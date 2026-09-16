@@ -64,8 +64,9 @@ def _default_env(monkeypatch, tmp_path):
     # The shipped skills, already synced into the fake home, so the default
     # fixture represents an all-OK state. The real package files rather than
     # a one-line stand-in: a stand-in never matched the source and the
-    # "already synced" fixture was quietly one step from OK.
-    install.step_skill_copy(check=False)
+    # "already synced" fixture was quietly one step from OK. A stub agent
+    # string drives the sync -- step_skill_copy is SKIPPED with agent=None.
+    install.step_skill_copy("agenthermes", check=False)
     # No agent binary on PATH by default (real _find_agent_binary still runs);
     # agent-wiring tests put a stub executable on this empty PATH themselves.
     monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
@@ -107,7 +108,7 @@ def _presync_skill(monkeypatch, tmp_path):
     fake_home = tmp_path / "synced-home"
     fake_home.mkdir(exist_ok=True)
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
-    install.step_skill_copy(check=False)
+    install.step_skill_copy("agenthermes", check=False)
     return fake_home
 
 
@@ -585,7 +586,7 @@ def test_skill_copy_creates_files(monkeypatch, tmp_path):
     fake_home.mkdir()
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
 
-    result = install.step_skill_copy(check=False)
+    result = install.step_skill_copy("agenthermes", check=False)
 
     dest = fake_home / ".hermes" / "skills" / "attestation-setup"
     assert (dest / "SKILL.md").exists()
@@ -598,8 +599,8 @@ def test_skill_copy_second_run_is_ok(monkeypatch, tmp_path):
     fake_home.mkdir()
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
 
-    install.step_skill_copy(check=False)
-    result = install.step_skill_copy(check=False)
+    install.step_skill_copy("agenthermes", check=False)
+    result = install.step_skill_copy("agenthermes", check=False)
 
     assert result.status == "OK"
 
@@ -615,8 +616,8 @@ def test_skill_copy_never_touches_planted_data_dir(monkeypatch, tmp_path):
     blob = b"\x00\x01binary-db-blob\xff"
     (data_dir / "hermes.db").write_bytes(blob)
 
-    install.step_skill_copy(check=False)
-    install.step_skill_copy(check=False)
+    install.step_skill_copy("agenthermes", check=False)
+    install.step_skill_copy("agenthermes", check=False)
 
     assert (data_dir / "hermes.db").read_bytes() == blob
 
@@ -626,11 +627,28 @@ def test_skill_copy_check_mode_missing_is_broken(monkeypatch, tmp_path):
     fake_home.mkdir()
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
 
-    result = install.step_skill_copy(check=True)
+    result = install.step_skill_copy("agenthermes", check=True)
 
     dest = fake_home / ".hermes" / "skills" / "attestation-setup"
     assert result.status == "BROKEN"
     assert not (dest / "SKILL.md").exists()
+
+
+def test_skill_copy_no_agent_binary_skipped(monkeypatch, tmp_path):
+    """Same treatment as mcp_wiring/reasoning_override/schedule: these skill
+    files exist to be read by a hermes-agent session, so a self-hoster with
+    no agent binary sees this step SKIPPED, not BROKEN -- it never wrote
+    anything for `--check` to complain is missing."""
+    fake_home = tmp_path / "fresh-home"
+    fake_home.mkdir()
+    monkeypatch.setattr(install.Path, "home", lambda: fake_home)
+
+    check_result = install.step_skill_copy(None, check=True)
+    yes_result = install.step_skill_copy(None, check=False)
+
+    assert check_result.status == "SKIPPED"
+    assert yes_result.status == "SKIPPED"
+    assert not (fake_home / ".hermes").exists()
 
 
 def test_skill_source_ships_inside_the_package():
@@ -657,7 +675,7 @@ def test_skill_copy_skips_when_source_missing(monkeypatch, tmp_path, check):
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
     monkeypatch.setattr(install, "_skill_source_dir", lambda name: tmp_path / "absent")
 
-    result = install.step_skill_copy(check=check)
+    result = install.step_skill_copy("agenthermes", check=check)
 
     assert result.status == "SKIPPED"
     assert not (fake_home / ".hermes" / "skills").exists()
@@ -1199,9 +1217,39 @@ def test_no_agent_binary_all_wiring_steps_skipped_exit_zero(monkeypatch, tmp_pat
 
     out = capsys.readouterr().out
     assert rc == 0
-    for step in ("mcp_wiring", "reasoning_override", "schedule"):
+    for step in ("mcp_wiring", "skill_copy", "reasoning_override", "schedule"):
         line = next(line_ for line_ in out.splitlines() if step in line_)
         assert "skipped" in line.lower()
+
+
+def test_check_on_a_never_wired_home_with_no_agent_exits_zero_when_only_local_data_is_missing(
+    monkeypatch, tmp_path, capsys
+):
+    """A self-hoster with no hermes-agent binary and an empty (but present)
+    database wants `--check` to exit 0: nothing about the parts they use (the
+    local feed) is broken, and the four hermes-agent wiring steps -- mcp_wiring,
+    skill_copy, reasoning_override, schedule -- are all things they never asked
+    for. Before the fix, skill_copy ran unconditionally and reported BROKEN
+    against a fresh, agent-less home, which alone forced exit 1."""
+    db_path = _db_with_items(tmp_path, n_items=1)
+    monkeypatch.setenv("RSS_DB", str(db_path))
+    _patch_run(monkeypatch, responses={("ollama", "list"): _ollama_list_ok()})
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
+    monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
+    # A genuinely fresh home: NOT pre-synced by the autouse fixture's own
+    # step_skill_copy call, which runs against the tmp_path-derived fake_home
+    # set up before this test body -- point Path.home() at an untouched dir.
+    never_wired_home = tmp_path / "never-wired-home"
+    never_wired_home.mkdir()
+    monkeypatch.setattr(install.Path, "home", lambda: never_wired_home)
+
+    rc = install.run_install(check=True)
+
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    for step in ("mcp_wiring", "skill_copy", "reasoning_override", "schedule"):
+        line = next(line_ for line_ in out.splitlines() if step in line_)
+        assert "skipped" in line.lower(), line
 
 
 # --------------------------------------------------------------------------

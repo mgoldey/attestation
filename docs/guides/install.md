@@ -11,15 +11,42 @@ Two tiers, because half this tool needs no model at all:
 **For the run ledger and claim checker** — Python 3.12+ and
 [`uv`](https://docs.astral.sh/uv/). That is the whole list. `ledger.py` and
 `claims.py` import no LLM or embedding module, and the quickstart above is
-verified against an unreachable backend.
+verified against an unreachable backend. If that's all you want, stop here —
+nothing below this tier is required, and nothing gets downloaded.
 
 **Additionally, for the feed, tagging, and knowledge graph** —
-[Ollama](https://ollama.com) running locally. `attest install` pulls the
-required models (`embeddinggemma` for embeddings, `gemma4:e2b` for
-explanations and tagging by default) — no manual `ollama pull` needed.
-gemma4:e2b needs ollama >= 0.32.9. Budget for it: a first `ingest` of ~1000
-items takes about 6 minutes, and `attest tag` runs at roughly 2.3s/item, so
-tagging that same 1000 items is a ~40-minute unattended job.
+[Ollama](https://ollama.com/download) installed and running locally
+(`ollama serve`, or the desktop app). This is a separate download from
+attestation itself and is not something `attest install` can do for you.
+
+Once Ollama is running, `attest install` pulls the required models — no
+manual `ollama pull` needed — but budget for the download before you run it:
+
+| Model | Size | Role |
+|-------|------|------|
+| `gemma4:e2b-it-q4_K_M` | 7.2 GB | chat: explanations + tagging |
+| `embeddinggemma` | 621 MB | embeddings |
+| **Total** | **~7.8 GB** | |
+
+While warm, the two models together hold roughly 5.4 GB resident in
+RAM/VRAM for `OLLAMA_KEEP_ALIVE` (default 30 minutes) — see the `.env.sample`
+warning about `keep_alive=-1` before changing that default; a permanent pin
+OOM-killed a 23 GB box in this project's own history. Check free disk space
+and RAM/VRAM against these numbers before you start; on a metered or
+capped connection, budget for a 7.8 GB download.
+
+`gemma4:e2b` is documented as needing `ollama >= 0.32.9` (earlier builds
+abort with a `GGML_ASSERT` in the graph scheduler). Nothing in this repo
+checks the daemon's version — `attest install`/`--check` verify model
+*presence*, not the Ollama version — so treat this as a manual requirement:
+run `ollama --version` yourself and upgrade if it's older.
+
+Budget for the rest of setup too: first `ingest` takes several minutes
+(depends on feed count and size), and `attest tag` runs at roughly
+2.3s/item, so tagging is the slower, backgroundable step. Tagging is also
+deferrable — ranking only joins items/item_vectors/feeds, so untagged items
+still rank fine; tags just aren't there yet for tag chips, digest
+clustering, and source suggestions.
 
 ## One-liner
 
@@ -90,8 +117,8 @@ under the hood, or if you'd rather configure a piece yourself.
 #### Models
 
 ```bash
-ollama pull embeddinggemma        # 256-dim embeddings (required)
-ollama pull gemma4:e2b-it-q4_K_M  # chat model for explanations + tagging
+ollama pull embeddinggemma        # 621 MB, 256-dim embeddings (required)
+ollama pull gemma4:e2b-it-q4_K_M  # 7.2 GB, chat model for explanations + tagging
 ```
 
 The default chat model is `gemma4:e2b-it-q4_K_M`; set `CHAT_MODEL` to
