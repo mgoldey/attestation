@@ -18,13 +18,30 @@ log = logging.getLogger(__name__)
 ARXIV_RE = re.compile(r"arXiv:\S+\s+Announce Type:\s*\S+\s*Abstract:\s*", re.IGNORECASE)
 TAG_RE = re.compile(r"<[^>]+>")
 
-# Chunk size for the batched embedding pass (see run_ingest). Measured against
-# live Ollama/embeddinggemma: one request of 16 texts took 0.71s total (45ms/
-# item effective) vs 321ms/item serial -- a 7.2x speedup. A module-level
-# constant, not a magic number, so one huge feed does not become one giant
-# request: a chunk still fails/succeeds together, so this also bounds how
-# much of a feed a single flaky batch call can take down with it.
-EMBED_BATCH_SIZE = 16
+# Chunk size for the batched embedding pass (see run_ingest). Batching at all
+# is the big win: MEASURED against live Ollama/embeddinggemma on 96 real corpus
+# items, 416.2ms/item serial vs 42.1ms/item batched, a 9.9x speedup that takes
+# a ~3000-item first ingest from 20.8 min to 2.1 min.
+#
+# The chunk WIDTH is a much smaller effect, and it is a tradeoff rather than a
+# maximum. Swept on the same 96 items, best of three runs each:
+#
+#     16 -> 57.6 ms/item   (6 requests)   the original choice
+#     32 -> 47.5 ms/item   (3 requests)   +21.4%
+#     48 -> 43.5 ms/item   (2 requests)   +32.6%
+#     64 -> 45.5 ms/item   (2 requests)   +26.6%
+#     96 -> 42.3 ms/item   (1 request)    +36.1%
+#
+# Per-item time flattens after ~32 -- 48 and 96 differ by about as much as two
+# runs of the same width do -- while the cost of a failure grows linearly with
+# the chunk, because a chunk fails or succeeds together and `_embed_entries`
+# raises out of the loop, abandoning that feed's whole embedding pass. The
+# endpoint itself imposes no ceiling worth designing around (256 texts in one
+# request returned 256 vectors at 40.7 ms/item), so the bound here is about
+# blast radius, not the server.
+#
+# 32 takes the bulk of the remaining gain while keeping the unit of loss small.
+EMBED_BATCH_SIZE = 32
 
 
 _ARXIV_ID = re.compile(
