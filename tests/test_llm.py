@@ -135,6 +135,57 @@ def test_embedding_client_request_and_parse(monkeypatch):
     assert len(vec) == 768 and vec[0] == 1.0
 
 
+def embed_many_transport(captured, vectors_by_index):
+    """A /v1/embeddings stub returning `data` in a caller-chosen order, each
+    element carrying the `index` the OpenAI contract requires -- used to prove
+    embed_many sorts by it rather than trusting response order."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        captured.append(body)
+        data = [{"embedding": vec, "index": idx} for idx, vec in vectors_by_index]
+        return httpx.Response(200, json={"data": data})
+
+    return httpx.MockTransport(handler)
+
+
+def test_embed_many_sends_one_request_with_a_list_input():
+    captured = []
+    client = EmbeddingClient(
+        base_url="http://test/v1",
+        model="m",
+        transport=embed_many_transport(captured, [(0, [1.0, 2.0]), (1, [3.0, 4.0])]),
+    )
+    vecs = client.embed_many(["a", "b"])
+    assert len(captured) == 1, "must be exactly one HTTP request for the whole batch"
+    assert captured[0] == {"model": "m", "input": ["a", "b"]}
+    assert vecs == [[1.0, 2.0], [3.0, 4.0]]
+
+
+def test_embed_many_sorts_by_index_when_response_is_out_of_order():
+    """The OpenAI /embeddings contract does NOT guarantee `data` comes back in
+    request order -- only that each element carries the `index` it belongs at.
+    Trusting response order would silently mismatch vectors to items."""
+    captured = []
+    # Response order: index 2, 0, 1 -- deliberately scrambled.
+    client = EmbeddingClient(
+        base_url="http://test/v1",
+        model="m",
+        transport=embed_many_transport(captured, [(2, [30.0]), (0, [10.0]), (1, [20.0])]),
+    )
+    vecs = client.embed_many(["x", "y", "z"])
+    assert vecs == [[10.0], [20.0], [30.0]]
+
+
+def test_embed_many_empty_input_returns_empty_without_a_request():
+    captured = []
+    client = EmbeddingClient(
+        base_url="http://test/v1", model="m", transport=embed_many_transport(captured, [])
+    )
+    assert client.embed_many([]) == []
+    assert captured == []
+
+
 def test_env_helper_defaults(monkeypatch):
     for var in ("LLM_BASE_URL", "CHAT_MODEL", "EMBED_MODEL"):
         monkeypatch.delenv(var, raising=False)
