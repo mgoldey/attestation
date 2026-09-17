@@ -20,6 +20,24 @@ def make_embedder(captured):
     return Embedder(client=client)
 
 
+def make_batch_embedder(captured, dims=768):
+    """Embedder wired to a mock /v1 transport that answers a batch `input`
+    list with one distinct vector per item, each carrying its response
+    `index` -- lets tests assert order survives an out-of-order reply."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        captured.append(body)
+        texts = body["input"]
+        data = [{"embedding": [float(i + 1)] * dims, "index": i} for i in range(len(texts))]
+        return httpx.Response(200, json={"data": data})
+
+    client = EmbeddingClient(
+        base_url="http://test/v1", model="embeddinggemma", transport=httpx.MockTransport(handler)
+    )
+    return Embedder(client=client)
+
+
 def test_truncate_normalize_renormalizes():
     vec = np.ones(768, dtype=np.float32)
     out = truncate_normalize(vec, dims=256)
@@ -65,3 +83,75 @@ def test_truncate_normalize_default_dims_follows_env(monkeypatch):
     monkeypatch.setenv("EMBED_DIMS", "64")
     out = truncate_normalize(np.ones(768, dtype=np.float32))
     assert out.shape == (64,)
+
+
+def test_embed_documents_sends_one_batch_request_with_doc_prompt_per_item():
+    captured = []
+    emb = make_batch_embedder(captured)
+    vecs = emb.embed_documents([("Title A", "body a"), ("Title B", "body b")])
+    assert len(captured) == 1, "must be exactly one HTTP request for the whole batch"
+    assert captured[0]["input"] == [
+        "title: Title A | text: body a",
+        "title: Title B | text: body b",
+    ]
+    assert len(vecs) == 2
+    assert all(v.shape == (256,) and v.dtype == np.float32 for v in vecs)
+
+
+def test_embed_documents_missing_title_uses_none():
+    captured = []
+    emb = make_batch_embedder(captured)
+    emb.embed_documents([("", "body")])
+    assert captured[0]["input"] == ["title: none | text: body"]
+
+
+def test_embed_documents_preserves_order_against_an_out_of_order_response():
+    """Same order-safety guarantee as EmbeddingClient.embed_many, exercised
+    through the Embedder layer: a scrambled `index` in the response must not
+    mismatch a normalized vector to the wrong (title, text) pair.
+
+    Each stub vector is a distinct one-hot-ish pattern so normalization
+    cannot make two different indices' outputs indistinguishable.
+    """
+    captured = []
+
+    def one_hot(pos: int) -> list[float]:
+        v = [0.1] * 768
+        v[pos] = 10.0
+        return v
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        captured.append(body)
+        # Scrambled response order: index 2, 0, 1 -- each with a distinct
+        # one-hot marker at position `index` so downstream identity is provable.
+        data = [
+            {"embedding": one_hot(2), "index": 2},
+            {"embedding": one_hot(0), "index": 0},
+            {"embedding": one_hot(1), "index": 1},
+        ]
+        return httpx.Response(200, json={"data": data})
+
+    client = EmbeddingClient(
+        base_url="http://test/v1", model="embeddinggemma", transport=httpx.MockTransport(handler)
+    )
+    emb = Embedder(client=client)
+    vecs = emb.embed_documents([("t0", "x"), ("t1", "y"), ("t2", "z")])
+    assert len(vecs) == 3
+    # vecs[i] must carry the marker at position i -- proves the item at
+    # request position i got the response element whose `index` was i, not
+    # whichever element happened to arrive at that position.
+    for i, v in enumerate(vecs):
+        assert np.argmax(v) == i, f"vecs[{i}] does not carry the index-{i} marker"
+    assert captured[0]["input"] == [
+        "title: t0 | text: x",
+        "title: t1 | text: y",
+        "title: t2 | text: z",
+    ]
+
+
+def test_embed_documents_empty_list_returns_empty():
+    captured = []
+    emb = make_batch_embedder(captured)
+    assert emb.embed_documents([]) == []
+    assert captured == []

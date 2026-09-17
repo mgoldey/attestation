@@ -1,8 +1,10 @@
 import json
+import sqlite3
 from argparse import Namespace
 
 import pytest
 from conftest import seeded_db
+from test_db import _NoLoadExtensionConnection
 
 from attestation.cli import HELP, build_parser, cmd_bootstrap_persona, cmd_eval, main
 from attestation.db import get_db
@@ -191,6 +193,79 @@ def test_runs_scan_without_a_root_explains_rather_than_crashing(tmp_path, monkey
 
     assert rc == 1
     assert "RESEARCH_ROOT" in capsys.readouterr().out
+
+
+@pytest.fixture
+def no_load_extension(monkeypatch):
+    """Same simulation as test_db.py's fixture of the same name, reproduced
+    here (rather than imported) so this module's fixture list is self
+    contained; the wrapper class itself IS shared, via the import above."""
+    real_connect = sqlite3.connect
+
+    def fake_connect(*args, **kwargs):
+        return _NoLoadExtensionConnection(real_connect(*args, **kwargs))
+
+    monkeypatch.setattr(sqlite3, "connect", fake_connect)
+
+
+def test_runs_scan_works_without_the_sqlite_vec_extension(tmp_path, no_load_extension, capsys):
+    """Task 12: the two-tier promise ("the ledger and claim checker need no
+    model, no extension") must hold even on a Python built without
+    --enable-loadable-sqlite-extensions. Before the fix, get_db() raised
+    AttributeError from conn.enable_load_extension before `runs scan` ever
+    got to run, and cli.py's `except (OSError, sqlite3.Error)` in open_db did
+    not catch it -- so this crashed with a bare traceback, not exit 1.
+    """
+    db = tmp_path / "t.db"
+    seeded_db(db).close()
+    results = tmp_path / "proj" / "results"
+    results.mkdir(parents=True)
+    (results / "lm_a.json").write_text(json.dumps({"dataset": "d", "best_val_loss": 1.0}))
+
+    rc = main(["runs", "--db", str(db), "scan", "--root", str(tmp_path)])
+
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "run(s)" in out
+
+
+def test_claims_work_without_the_sqlite_vec_extension(tmp_path, no_load_extension, capsys):
+    """Same guarantee, for `attest claims` -- the other half of the
+    two-tier promise."""
+    db = tmp_path / "t.db"
+    seeded_db(db).close()
+    doc = tmp_path / "paper.md"
+    doc.write_text("plain prose, no claim markers here.\n")
+
+    rc = main(["claims", "--db", str(db), str(doc)])
+
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "no claims found" in out
+
+
+def test_ingest_without_the_extension_refuses_clearly_not_obscurely(
+    tmp_path, no_load_extension, capsys
+):
+    """Ingest writes to item_vectors -- a genuine vector need. Without the
+    extension it must name the real cause and the remedy, not surface a bare
+    AttributeError traceback (the original failure mode) or an obscure
+    "no such table: item_vectors" (the failure mode of just skipping table
+    creation with no guard at the call site).
+    """
+    db = tmp_path / "t.db"
+    seeded_db(db).close()
+    feeds = tmp_path / "feeds.toml"
+    feeds.write_text("")
+
+    rc = main(["ingest", "--db", str(db), "--feeds", str(feeds)])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "extension" in err.lower()
+    assert "vector" in err.lower() or "search" in err.lower()
+    assert "AttributeError" not in err
+    assert "Traceback" not in err
 
 
 def test_runs_list_before_scan_directs_the_user(tmp_path, capsys):
@@ -1061,6 +1136,75 @@ def test_tag_command_names_the_cause_when_the_chat_backend_is_down(tmp_path, cap
     text = streams.out + streams.err
     assert "unreachable" in text
     assert "install --check" in text
+
+
+def test_ingest_command_exits_zero_on_a_clean_run(tmp_path, capsys, monkeypatch):
+    import attestation.ingest
+
+    db = tmp_path / "t.db"
+    seeded_db(db).close()
+    monkeypatch.setattr(
+        attestation.ingest,
+        "run_ingest",
+        lambda conn, embedder, feeds_path, clients=None: {
+            "added": 3,
+            "skipped": 1,
+            "failed_feeds": 0,
+        },
+    )
+    rc = main(["ingest", "--db", str(db)])
+    assert rc == 0
+    assert "added" in capsys.readouterr().out
+
+
+def test_ingest_command_exits_nonzero_when_the_embedder_is_down(tmp_path, monkeypatch):
+    """Reproduces the P0 bug: cmd_ingest read `stats` but never
+    `stats["embedder_down"]`, so a dead embedding backend still exited 0 --
+    install.py's step_first_data and the generated hourly cron script
+    (`if uv run attest ingest`) both believe that exit code, so a user whose
+    Ollama is down got an empty feed and a cron loop logging success forever.
+    """
+    import attestation.ingest
+
+    db = tmp_path / "t.db"
+    seeded_db(db).close()
+    monkeypatch.setattr(
+        attestation.ingest,
+        "run_ingest",
+        lambda conn, embedder, feeds_path, clients=None: {
+            "added": 0,
+            "skipped": 0,
+            "failed_feeds": 1,
+            "embedder_down": True,
+        },
+    )
+    assert main(["ingest", "--db", str(db)]) == 1
+
+
+def test_ingest_command_exits_nonzero_on_partial_success_if_the_embedder_went_down(
+    tmp_path, monkeypatch
+):
+    """`_ingest_outcome`'s `embedder_down` LATCHES true if any feed hit it, even
+    when earlier feeds in the same run added items -- the run stopped early
+    (see ingest.py's `break` on `down`) and the rest of feeds.toml was never
+    attempted. That is a degraded run, not a clean one: exit 1 matches the
+    latch semantics rather than hiding it behind a nonzero `added`.
+    """
+    import attestation.ingest
+
+    db = tmp_path / "t.db"
+    seeded_db(db).close()
+    monkeypatch.setattr(
+        attestation.ingest,
+        "run_ingest",
+        lambda conn, embedder, feeds_path, clients=None: {
+            "added": 5,
+            "skipped": 2,
+            "failed_feeds": 1,
+            "embedder_down": True,
+        },
+    )
+    assert main(["ingest", "--db", str(db)]) == 1
 
 
 def test_version_flag_reports_the_installed_version(capsys):

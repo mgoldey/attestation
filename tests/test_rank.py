@@ -513,6 +513,91 @@ def test_updating_interests_evicts_the_cached_profile_vector(tmp_path, fake_embe
     conn.close()
 
 
+def test_profile_vector_cold_start_names_the_condition_and_the_remedy(tmp_path, monkeypatch):
+    """EmbedderUnavailable's message is the one string the MCP path and the web
+    UI both have to work with (mcp/_tool.py maps it to a ToolError verbatim;
+    server.py builds EMBEDDER_DOWN around the same condition). It must name
+    what's wrong (embedding model unreachable) and the remedy (`attest install
+    --check`), matching the wording ingest.py already uses for the same
+    condition -- not a bespoke phrasing invented here.
+
+    rank.py is a domain module (test_domain_reaches_models_only_through_ports)
+    and may not import attestation.llm to call base_url(), so -- like
+    ingest.py -- it names the env var rather than resolving the URL.
+    """
+    from attestation import rank
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = seeded_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO users(name, interests) VALUES ('cold', 'x')")
+    conn.commit()
+    user_id = conn.execute("SELECT id FROM users WHERE name='cold'").fetchone()["id"]
+
+    class DeadEmbedder:
+        dims = 256
+
+        def embed_query(self, text):
+            raise RuntimeError("ollama is down")
+
+        def embed_document(self, title, text):
+            raise RuntimeError("ollama is down")
+
+    rank._PROFILE_VEC_CACHE.clear()
+    with pytest.raises(rank.EmbedderUnavailable) as excinfo:
+        rank._profile_vector(conn, DeadEmbedder(), user_id, "quantum chemistry")
+
+    message = str(excinfo.value)
+    assert "unreachable" in message
+    assert "attest install --check" in message
+    conn.close()
+
+
+def test_search_feed_raises_embedder_unavailable_not_a_raw_transport_error(monkeypatch):
+    """vector_search (the embedding half of feed.search) must convert a
+    connection-refused error from embed_query into EmbedderUnavailable, the
+    same way _profile_vector already does -- not let httpx.ConnectError (or
+    any other transport failure) escape raw. Before this, feed.search's
+    failure never reached the handling that exists for a down embedder at
+    all: the MCP path had nothing named to catch."""
+    import httpx
+
+    from attestation import rank
+
+    class DeadEmbedder:
+        dims = 256
+
+        def embed_query(self, text):
+            raise httpx.ConnectError("connection refused")
+
+    conn = seeded_db(":memory:")
+    with pytest.raises(rank.EmbedderUnavailable) as excinfo:
+        rank.vector_search(conn, DeadEmbedder(), "quantum chemistry", k=5)
+
+    message = str(excinfo.value)
+    assert "unreachable" in message
+    assert "attest install --check" in message
+    conn.close()
+
+
+def test_search_feed_still_raises_a_non_connection_embedder_error_as_is():
+    """Only a genuinely unreachable backend is remapped. A different failure
+    inside embed_query (a bug, a malformed response) must not be laundered
+    into the reassuring "unreachable, is ollama running" message -- that would
+    misdiagnose a real bug as a cold-start condition."""
+    from attestation import rank
+
+    class BrokenEmbedder:
+        dims = 256
+
+        def embed_query(self, text):
+            raise ValueError("malformed embedding response")
+
+    conn = seeded_db(":memory:")
+    with pytest.raises(ValueError, match="malformed embedding response"):
+        rank.vector_search(conn, BrokenEmbedder(), "quantum chemistry", k=5)
+    conn.close()
+
+
 def test_one_click_does_not_reorder_the_whole_feed(tmp_path, fake_embedder):
     """A single click must not move items by hundreds of positions.
 

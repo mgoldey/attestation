@@ -53,8 +53,9 @@ def _update_persona(conn, user_row, interests: str) -> dict:
     return {"message": f"updated interests for {name!r}; ranking re-embeds on next use{note}"}
 
 
-@tool(empty={"prevalent_tags": []}, label="propose_interests")
+@tool(empty={"prevalent_tags": [], "archetypes": []}, label="propose_interests")
 def _propose_interests(conn, limit: int = 12) -> dict:
+    from attestation.db import SEED_USERS
     from attestation.features import tag_vocabulary
 
     # tag_vocabulary, not a raw GROUP BY. This grouped item_tags directly, so
@@ -67,11 +68,27 @@ def _propose_interests(conn, limit: int = 12) -> dict:
     # Two tools answering "what should a new reader follow" must not disagree,
     # least of all with the one an agent is told to call being the wrong one.
     tags = tag_vocabulary(conn, limit=limit)
+    # db.SEED_USERS, not new text: three ready-made, rich interests strings
+    # already used to seed the demo personas. On a FRESH database item_tags is
+    # empty until the tagging pass runs (attest ingest, then a worker), so
+    # tag_vocabulary above returns nothing useful exactly when a new persona
+    # needs a starting point most. These are offered, never auto-applied --
+    # this tool creates no persona, same as before.
+    #
+    # Passed through verbatim, not tidied: CLAUDE.md records that this
+    # redundant, repetitive phrasing measurably scores BETTER (0.588 vs 0.568
+    # mean similarity) than hand-tightened text, because the interests string
+    # IS the profile embedding and repetition weights it toward what a reader
+    # like that archetype actually clicks.
+    archetypes = [{"name": name, "interests": text} for name, text in SEED_USERS.items()]
     return {
         "prevalent_tags": tags,
+        "archetypes": archetypes,
         "message": (
-            "most common tags in the current feed; combine the relevant ones into "
-            "an interests string and pass it to create_persona"
+            "most common tags in the current feed, plus ready-made archetype "
+            "personas (db.SEED_USERS) that work even on a corpus with no tags yet -- "
+            "combine relevant tags into an interests string, or start from an "
+            "archetype and refine it, then pass it to create_persona"
         ),
     }
 

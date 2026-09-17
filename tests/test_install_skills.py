@@ -41,7 +41,7 @@ def test_skill_copy_installs_every_bundled_skill(monkeypatch, tmp_path):
     not the first."""
     fake_home = _fresh_home(monkeypatch, tmp_path)
 
-    result = install.step_skill_copy(check=False)
+    result = install.step_skill_copy("agenthermes", check=False)
 
     assert result.status == "FIXED"
     dest = fake_home / ".hermes" / "skills"
@@ -65,7 +65,7 @@ def test_skill_copy_syncs_a_profile_skill_tree(monkeypatch, tmp_path):
     fake_home = _fresh_home(monkeypatch, tmp_path)
     profile_skills = _profile_skills(fake_home)
 
-    install.step_skill_copy(check=False)
+    install.step_skill_copy("agenthermes", check=False)
 
     for name in install.SKILL_NAMES:
         assert (profile_skills / name / "SKILL.md").is_file(), name
@@ -80,7 +80,7 @@ def test_skill_copy_ignores_a_profile_without_a_skills_dir(monkeypatch, tmp_path
     fake_home = _fresh_home(monkeypatch, tmp_path)
     (fake_home / ".hermes" / "profiles" / "bare").mkdir(parents=True)
 
-    install.step_skill_copy(check=False)
+    install.step_skill_copy("agenthermes", check=False)
 
     assert not (fake_home / ".hermes" / "profiles" / "bare" / "skills").exists()
 
@@ -96,7 +96,7 @@ def test_skill_copy_respects_a_profile_disable_marker(monkeypatch, tmp_path):
     disabled.mkdir()
     (disabled / "SKILL.md.disabled-by-me").write_text("old\n")
 
-    result = install.step_skill_copy(check=False)
+    result = install.step_skill_copy("agenthermes", check=False)
 
     assert not (disabled / "SKILL.md").exists()
     assert (disabled / "SKILL.md.disabled-by-me").read_text() == "old\n"
@@ -104,16 +104,16 @@ def test_skill_copy_respects_a_profile_disable_marker(monkeypatch, tmp_path):
     assert (profile_skills / "attestation-setup" / "SKILL.md").is_file()
     assert result.status == "FIXED"
     # and a second run is quiet: the marker is not "missing" forever
-    assert install.step_skill_copy(check=True).status == "OK"
+    assert install.step_skill_copy("agenthermes", check=True).status == "OK"
 
 
 def test_skill_copy_check_mode_reports_a_stale_profile_copy(monkeypatch, tmp_path):
     fake_home = _fresh_home(monkeypatch, tmp_path)
     profile_skills = _profile_skills(fake_home)
-    install.step_skill_copy(check=False)
+    install.step_skill_copy("agenthermes", check=False)
     (profile_skills / "attestation-feed" / "SKILL.md").write_text("stale\n")
 
-    result = install.step_skill_copy(check=True)
+    result = install.step_skill_copy("agenthermes", check=True)
 
     assert result.status == "BROKEN"
     assert "1 file(s) stale or missing" in result.detail
@@ -136,24 +136,24 @@ def test_skill_copy_supersedes_the_legacy_monolith(monkeypatch, tmp_path):
     (legacy / "data").mkdir()
     (legacy / "data" / "hermes.db").write_bytes(b"\x00db")
 
-    result = install.step_skill_copy(check=False)
+    result = install.step_skill_copy("agenthermes", check=False)
 
     assert result.status == "FIXED"
     assert not (legacy / "SKILL.md").exists()
     assert (legacy / "SKILL.md.superseded-by-attestation-split").read_text() == "# the monolith\n"
     assert (legacy / "scripts" / "setup.sh").read_text() == "echo old\n"
     assert (legacy / "data" / "hermes.db").read_bytes() == b"\x00db"
-    assert install.step_skill_copy(check=True).status == "OK"
+    assert install.step_skill_copy("agenthermes", check=True).status == "OK"
 
 
 def test_skill_copy_check_mode_reports_the_legacy_monolith(monkeypatch, tmp_path):
     fake_home = _fresh_home(monkeypatch, tmp_path)
-    install.step_skill_copy(check=False)
+    install.step_skill_copy("agenthermes", check=False)
     legacy = fake_home / ".hermes" / "profiles" / "research" / "skills" / "research-provenance"
     legacy.mkdir(parents=True)
     (legacy / "SKILL.md").write_text("# the monolith\n")
 
-    result = install.step_skill_copy(check=True)
+    result = install.step_skill_copy("agenthermes", check=True)
 
     assert result.status == "BROKEN"
     assert "research-provenance" in result.detail

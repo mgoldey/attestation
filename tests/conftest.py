@@ -62,6 +62,9 @@ class FakeEmbedder:
     def embed_document(self, title: str, text: str) -> np.ndarray:
         return self._vec(f"doc:{title}:{text}")
 
+    def embed_documents(self, pairs) -> list[np.ndarray]:
+        return [self.embed_document(title, text) for title, text in pairs]
+
     def embed_query(self, text: str) -> np.ndarray:
         return self._vec(f"query:{text}")
 
