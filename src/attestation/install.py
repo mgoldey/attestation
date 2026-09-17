@@ -50,6 +50,18 @@ LEGACY_SKILL_MARKER = "SKILL.md.superseded-by-attestation-split"
 CRON_JOB_NAME = "attestation-refresh"
 REFRESH_SCRIPT_NAME = "attestation-refresh.sh"
 CLI_NAME = "attest"
+# The cron line below ("17 * * * *") is hourly. Both the schedule step and the
+# generated script's tag budget must agree on that interval -- the budget math
+# used to hardcode 3600 a second time, which meant changing the cron cadence
+# without also touching the script would silently desync the two (spec:
+# 2026-08-23-scheduled-refresh-design.md, part 1).
+REFRESH_INTERVAL_SECONDS = 3600
+# The cron literal in step_schedule ("17 * * * *") is hourly by construction;
+# this catches the two drifting apart at import time rather than at 3am.
+assert REFRESH_INTERVAL_SECONDS == 3600, (
+    "the cron expression in step_schedule ('17 * * * *') is hourly -- if"
+    " REFRESH_INTERVAL_SECONDS ever changes, that literal must change with it"
+)
 
 
 class Status(StrEnum):
@@ -744,6 +756,21 @@ def _refresh_script_content(root: Path) -> str:
     #    turned a successful ingest into a reported error. Per CLAUDE.md's
     #    reliability contract ingest must succeed, but tagging is best-effort:
     #    untagged items are picked up by the next pass.
+    #
+    # Plus the three additions from the scheduled-refresh design spec
+    # (2026-08-23-scheduled-refresh-design.md):
+    # 5. `attest tag` was unbounded: a backlog bigger than the cron interval
+    #    meant every later wakeup found the lock still held and skipped
+    #    ingest too -- the slow, best-effort step starving the fast, mandatory
+    #    one. `--limit` is now derived from the SAME interval the cron line
+    #    uses (REFRESH_INTERVAL_SECONDS), not a second hardcoded 3600.
+    # 6. `runs scan` is deterministic, needs no model, and completes in under
+    #    a second on a real corpus -- CLAUDE.md's reliability contract says it
+    #    "must succeed" the way ingest must, so it is placed FIRST and its
+    #    failure is fatal like ingest's, not best-effort like tag's. It is
+    #    gated on RESEARCH_ROOT existing (most users will not have one) and
+    #    silently skipped, never reported as broken, when it is unset --
+    #    "must succeed" only binds when there is something to scan.
     lock = Path.home() / ".hermes" / f"{REFRESH_SCRIPT_NAME.removesuffix('.sh')}.lock"
     return (
         "#!/usr/bin/env bash\n"
@@ -787,6 +814,23 @@ def _refresh_script_content(root: Path) -> str:
         "\n"
         f'echo "[$(date -Iseconds)] refresh start"\n'
         "\n"
+        # runs scan is deterministic, needs no model, and is the cheapest and
+        # most reliable step -- placed first so nothing after it can starve
+        # it. Most users will not have RESEARCH_ROOT set, so an unset or
+        # nonexistent one is a silent, non-fatal skip, not a broken run. Once
+        # gated in, "must succeed" per CLAUDE.md's reliability contract: it
+        # is treated as fatal, the same as ingest, because it is exactly as
+        # deterministic.
+        'if [ -n "${RESEARCH_ROOT:-}" ] && [ -d "$RESEARCH_ROOT" ]; then\n'
+        f"  if uv run {CLI_NAME} runs scan >/dev/null; then\n"
+        '    echo "[$(date -Iseconds)] runs scan ok"\n'
+        "  else\n"
+        "    rc=$?\n"
+        '    echo "[$(date -Iseconds)] runs scan FAILED (exit $rc)"\n'
+        '    exit "$rc"\n'
+        "  fi\n"
+        "fi\n"
+        "\n"
         # Ingest is deterministic and needs no chat model; it must succeed.
         f"if uv run {CLI_NAME} ingest >/dev/null; then\n"
         '  echo "[$(date -Iseconds)] ingest ok"\n'
@@ -796,9 +840,19 @@ def _refresh_script_content(root: Path) -> str:
         '  exit "$rc"\n'
         "fi\n"
         "\n"
-        # Tagging needs Ollama. A cold model is a degraded run, not a broken one.
-        f"if uv run {CLI_NAME} tag >/dev/null; then\n"
-        '  echo "[$(date -Iseconds)] tag ok"\n'
+        # Tagging needs Ollama. A cold model is a degraded run, not a broken
+        # one. `--limit` bounds the run to at most half the cron interval's
+        # worth of work (measured seconds/item below), so a backlog cannot
+        # hold the lock past the next tick -- see the design spec.
+        f"TAG_SECONDS_PER_ITEM=2.3  # measured on this machine (see design spec)\n"
+        "TAG_BUDGET_MULTIPLIER=0.5"
+        "  # leave the next tick a free lock even at full budget\n"
+        f"TAG_INTERVAL_SECONDS={REFRESH_INTERVAL_SECONDS}"
+        "  # must match the cron schedule above\n"
+        'TAG_BUDGET=$(awk -v i="$TAG_INTERVAL_SECONDS" -v m="$TAG_BUDGET_MULTIPLIER"'
+        ' -v s="$TAG_SECONDS_PER_ITEM" \'BEGIN { printf "%d", (i * m) / s }\')\n'
+        f'if uv run {CLI_NAME} tag --limit "$TAG_BUDGET" >/dev/null; then\n'
+        '  echo "[$(date -Iseconds)] tag ok (budget $TAG_BUDGET)"\n'
         "else\n"
         '  echo "[$(date -Iseconds)] tag FAILED (exit $?) -- items remain untagged,"\n'
         '  echo "[$(date -Iseconds)] will retry next run"\n'
@@ -909,7 +963,7 @@ def step_schedule(agent: str | None, check: bool = False) -> StepResult:
             agent,
             "cron",
             "create",
-            "17 * * * *",
+            "17 * * * *",  # hourly -- see REFRESH_INTERVAL_SECONDS above
             "--name",
             CRON_JOB_NAME,
             "--script",

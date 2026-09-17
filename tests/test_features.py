@@ -3,7 +3,9 @@ from conftest import seeded_db
 from pydantic import ValidationError
 
 from attestation.features import (
+    FALLBACK_SECONDS_PER_ITEM,
     ItemTags,
+    estimate_seconds_per_item,
     pref_scores_for_items,
     run_tagging,
     tag_one_item,
@@ -506,6 +508,105 @@ def test_run_tagging_stops_at_an_unreachable_backend_and_says_so(tmp_path):
     assert stats["chat_down"] is True
     assert stats["tagged"] == 0
     assert len(calls) == 1, "a dead socket was retried, or a second item was attempted"
+
+
+# --------------------------------------------------------------------------
+# estimate_seconds_per_item (spec: scheduled-refresh, part 2)
+# --------------------------------------------------------------------------
+
+
+def _seed_tagged_at(conn, item_id, tagged_at, model="test-model"):
+    conn.execute(
+        "INSERT INTO item_features(item_id, content_type, model, tagged_at)"
+        " VALUES (?, 'paper', ?, ?)",
+        (item_id, model, tagged_at),
+    )
+    conn.commit()
+
+
+def test_estimate_falls_back_to_constant_with_no_history(tmp_path):
+    """A brand-new database has no item_features rows at all -- there is
+    nothing to derive a per-item cost from, so the estimate must fall back to
+    the named, cited constant rather than raising or returning 0."""
+    conn = seeded_db(tmp_path / "t.db")
+
+    seconds = estimate_seconds_per_item(conn)
+
+    assert seconds == FALLBACK_SECONDS_PER_ITEM
+
+
+def test_estimate_falls_back_when_only_one_tagged_row_exists(tmp_path):
+    """One row yields zero consecutive deltas -- a run of 1 item has no
+    interval to measure, so this must fall back rather than divide by zero
+    or fabricate a number from a single timestamp."""
+    conn = seeded_db(tmp_path / "t.db")
+    item_id = add_item(conn, "solo")
+    _seed_tagged_at(conn, item_id, "2026-09-17T10:00:00")
+
+    seconds = estimate_seconds_per_item(conn)
+
+    assert seconds == FALLBACK_SECONDS_PER_ITEM
+
+
+def test_estimate_derives_from_consecutive_tagged_at_deltas(tmp_path):
+    """Several items tagged 2 seconds apart, back to back, in one run --
+    the trailing window should read back ~2.0s/item, not the fallback."""
+    conn = seeded_db(tmp_path / "t.db")
+    base = "2026-09-17T10:00:0{}"
+    for i, item_id in enumerate(add_item(conn, f"item-{i}", days_ago=0) for i in range(5)):
+        _seed_tagged_at(conn, item_id, base.format(2 * i))
+
+    seconds = estimate_seconds_per_item(conn)
+
+    assert seconds == pytest.approx(2.0, abs=0.01)
+
+
+def test_estimate_excludes_gaps_between_runs(tmp_path):
+    """A gap between two separate tagging RUNS is not a per-item cost. Three
+    items tagged 2s apart (one run), then a 3600s gap, then two more items
+    tagged 2s apart (a later run): the cross-run gap must be excluded as an
+    outlier so it does not drag a 2s/item history toward an hour/item.
+    """
+    conn = seeded_db(tmp_path / "t.db")
+    timestamps = [
+        "2026-09-17T09:00:00",
+        "2026-09-17T09:00:02",
+        "2026-09-17T09:00:04",
+        "2026-09-17T10:00:04",  # +3600s: a new run starting, not a slow item
+        "2026-09-17T10:00:06",
+    ]
+    for i, ts in enumerate(timestamps):
+        item_id = add_item(conn, f"item-{i}")
+        _seed_tagged_at(conn, item_id, ts)
+
+    seconds = estimate_seconds_per_item(conn)
+
+    assert seconds == pytest.approx(2.0, abs=0.01)
+
+
+def test_run_tagging_prints_cost_estimate_to_stderr_when_there_is_work(tmp_path, capsys):
+    """The spec's onboarding fix: a 40-minute silent command is the classic
+    abandonment point. When there IS untagged work, run_tagging must announce
+    the count and a time estimate to stderr (so it survives the script's
+    `>/dev/null` stdout redirect) before the loop starts."""
+    conn = seeded_db(tmp_path / "t.db")
+    add_item(conn, "first")
+    add_item(conn, "second")
+
+    run_tagging(conn, chat_fn=good_chat_fn, model="test-model")
+
+    err = capsys.readouterr().err
+    assert "2 untagged item" in err
+    assert "s/item" in err or "sec/item" in err
+
+
+def test_run_tagging_prints_nothing_when_there_is_no_work(tmp_path, capsys):
+    conn = seeded_db(tmp_path / "t.db")
+
+    run_tagging(conn, chat_fn=good_chat_fn, model="test-model")
+
+    err = capsys.readouterr().err
+    assert err == ""
 
 
 def test_top_and_bottom_keys_matches_key_stats_and_score(tmp_path):

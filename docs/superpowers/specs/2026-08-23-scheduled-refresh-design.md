@@ -1,7 +1,7 @@
 # Scheduled refresh: bound the work, and say what it will cost
 
 **Date:** 2026-08-23
-**Status:** proposed
+**Status:** accepted
 **Kind:** design. Small and specific.
 
 ## Problem
@@ -88,11 +88,24 @@ No new scheduler, no systemd units, no second cadence. The crontab/agent
 registration, the lock, and the duplicate detection all stay exactly as they
 are — that machinery is sound and its failure modes are already recorded.
 
-## Open questions
+## Resolved questions
 
-- Whether the per-item estimate should live in the database (a `tag_timings`
-  table) or be derived from `item_features.created_at` deltas, which already
-  exist and need no new schema. The latter, probably.
-- Whether a user with no `RESEARCH_ROOT` should be prompted to set one during
-  `install`, given the ledger is the strongest capability and it is currently
-  opt-in by an environment variable most people will never discover.
+- **Per-item estimate source.** Derived from `item_features.tagged_at` deltas
+  (not `created_at` -- that column does not exist; `tagged_at TEXT NOT NULL
+  DEFAULT (datetime('now'))` is the real one, `db.py`). No new schema, no
+  `tag_timings` table. `features.estimate_seconds_per_item` reads a trailing
+  window of the most recent `tagged_at` rows, takes consecutive deltas, and
+  excludes any delta more than 10x the window's median as a boundary between
+  two separate runs rather than a slow item (a gap between runs is idle time,
+  not a per-item cost, and averaging it in would swamp every genuine ~2s
+  delta with an hour-long outlier). A window of fewer than two timestamps, or
+  one where every delta is excluded as an outlier, falls back to the named
+  constant `FALLBACK_SECONDS_PER_ITEM = 2.3`.
+- **Prompting for `RESEARCH_ROOT` during install.** Declined. `install`
+  already had a step (`mcp_wiring`) report BROKEN over agent wiring a
+  self-hoster never asked for, fixed by making an unconfigured optional
+  capability a silent skip rather than a nag (commit ddd560b). Adding an
+  install-time prompt for another optional environment variable repeats the
+  exact mistake that fix exists to prevent. `runs scan` stays opt-in,
+  discoverable via `attest runs scan` and the CLI's own `set RESEARCH_ROOT`
+  message when a user reaches for it unset, not solicited at install time.
