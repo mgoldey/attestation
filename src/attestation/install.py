@@ -367,6 +367,49 @@ def step_first_data(check: bool = False, yes: bool = False, now: bool = False) -
     return StepResult("first_data", Status.FIXED if ok else Status.BROKEN, detail)
 
 
+def step_ledger() -> StepResult:
+    """Is the run ledger reachable -- i.e. is RESEARCH_ROOT set and real?
+
+    Reports, never fixes, and NEVER returns BROKEN. The ledger is the one
+    capability in the tool that needs no model and completes in about a second
+    on a real corpus, and three reviews independently called it the strongest
+    thing here -- yet it is gated behind an environment variable most people
+    will never discover, which is the discoverability problem the
+    scheduled-refresh spec named and then deliberately declined to solve with a
+    prompt.
+
+    The reason a prompt was declined is the reason this is SKIPPED and not
+    BROKEN. `--check` exits nonzero iff some step is BROKEN, and ddd560b exists
+    precisely because `skill_copy` reported BROKEN over hermes-agent wiring a
+    self-hoster never asked for, forcing exit 1 on a working install. An
+    optional capability that fails the doctor is the same mistake in a
+    different costume. So this line informs and costs nothing: a `[skipped]`
+    naming the variable tells a reader the capability exists and how to turn it
+    on, while a user who only wants the feed still gets exit 0.
+
+    A RESEARCH_ROOT pointing at a directory that is gone is also SKIPPED, not
+    BROKEN -- a stale setting from a moved workspace is not a broken install,
+    and the detail says which of the two states it is so the reader can tell
+    "never configured" from "configured, now wrong".
+
+    No `check` parameter: there is nothing here that could mutate anything, so
+    taking a flag it would ignore would imply otherwise.
+    """
+    from attestation.ledger import workspace_root
+
+    root = workspace_root()
+    if root is None:
+        return StepResult(
+            "ledger",
+            Status.SKIPPED,
+            "set RESEARCH_ROOT to a directory of projects to enable"
+            " `attest runs scan` (no model needed)",
+        )
+    if not root.is_dir():
+        return StepResult("ledger", Status.SKIPPED, f"RESEARCH_ROOT={root} does not exist")
+    return StepResult("ledger", Status.OK, f"RESEARCH_ROOT={root}")
+
+
 def step_warmup(check: bool = False) -> StepResult:
     """Pin chat + embed models in VRAM, skipped under --check (see below) and
     for a non-Ollama backend, which has nothing to pin."""
@@ -1018,6 +1061,10 @@ def _run_steps(check: bool, yes: bool, now: bool) -> list[StepResult]:
     results.append(step_models(check=check, yes=yes))
     results.append(step_env_file(check=check))
     results.append(step_first_data(check=check, yes=yes, now=now))
+    # After first_data (the other purely-local data step) and before the
+    # model-dependent ones: the ledger needs no model, so it belongs with the
+    # tier that works when Ollama does not.
+    results.append(step_ledger())
     results.append(step_warmup(check=check))
     results.append(step_mcp_wiring(agent, check=check))
     results.append(step_skill_copy(agent, check=check))

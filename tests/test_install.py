@@ -1751,3 +1751,71 @@ def test_the_doctor_does_not_inventory_models_it_cannot_reach(monkeypatch):
         f"models reported {result.status} against an unreachable backend: {result.detail}"
     )
     assert "present" not in (result.detail or "")
+
+
+def test_ledger_step_names_research_root_when_unset(monkeypatch, tmp_path, capsys):
+    """The ledger needs no model and runs in ~1s, yet it is gated behind an
+    environment variable most users never discover -- three reviews called it
+    the strongest capability in the tool. `--check` now names it.
+
+    SKIPPED, never BROKEN: prompting for RESEARCH_ROOT during install was
+    declined in the scheduled-refresh spec because ddd560b exists precisely to
+    stop the doctor failing over optional wiring nobody asked for. Informing is
+    the whole point; nagging is the thing being avoided, so this must not move
+    the exit code.
+    """
+    db_path = _db_with_items(tmp_path, n_items=1)
+    monkeypatch.setenv("RSS_DB", str(db_path))
+    monkeypatch.delenv("RESEARCH_ROOT", raising=False)
+    _patch_run(monkeypatch, responses={("ollama", "list"): _ollama_list_ok()})
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
+    monkeypatch.setattr("attestation.cli.warmup", lambda: None)
+    monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
+
+    rc = install.run_install(check=True, yes=False)
+
+    out = capsys.readouterr().out
+    line = next(line_ for line_ in out.splitlines() if "ledger" in line_)
+    assert "skipped" in line.lower(), line
+    assert "RESEARCH_ROOT" in line, line
+    assert rc == 0
+
+
+def test_ledger_step_is_ok_when_research_root_points_somewhere_real(monkeypatch, tmp_path, capsys):
+    db_path = _db_with_items(tmp_path, n_items=1)
+    monkeypatch.setenv("RSS_DB", str(db_path))
+    workspace = tmp_path / "projects"
+    workspace.mkdir()
+    monkeypatch.setenv("RESEARCH_ROOT", str(workspace))
+    _patch_run(monkeypatch, responses={("ollama", "list"): _ollama_list_ok()})
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
+    monkeypatch.setattr("attestation.cli.warmup", lambda: None)
+    monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
+
+    rc = install.run_install(check=True, yes=False)
+
+    out = capsys.readouterr().out
+    line = next(line_ for line_ in out.splitlines() if "ledger" in line_)
+    assert "[ok]" in line, line
+    assert rc == 0
+
+
+def test_ledger_step_is_skipped_not_broken_when_research_root_is_missing(
+    monkeypatch, tmp_path, capsys
+):
+    """A RESEARCH_ROOT pointing at nothing is a stale setting, not a broken
+    install: it must still not fail the doctor for a user whose feed works."""
+    db_path = _db_with_items(tmp_path, n_items=1)
+    monkeypatch.setenv("RSS_DB", str(db_path))
+    monkeypatch.setenv("RESEARCH_ROOT", str(tmp_path / "does-not-exist"))
+    _patch_run(monkeypatch, responses={("ollama", "list"): _ollama_list_ok()})
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
+    monkeypatch.setattr("attestation.cli.warmup", lambda: None)
+    monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
+
+    rc = install.run_install(check=True, yes=False)
+
+    out = capsys.readouterr().out
+    line = next(line_ for line_ in out.splitlines() if "ledger" in line_)
+    assert "skipped" in line.lower(), line
+    assert rc == 0
