@@ -768,6 +768,49 @@ def test_check_mode_does_not_pin_models_into_vram(monkeypatch):
 # --------------------------------------------------------------------------
 
 
+def test_refresh_interval_seconds_matches_the_cron_schedule(tmp_path):
+    """The spec (scheduled-refresh) requires the tag budget to be derived
+    from the SAME interval the cron line uses, not a second hardcoded 3600 --
+    otherwise the two can drift. install.REFRESH_INTERVAL_SECONDS is that
+    shared source; hourly ("17 * * * *") is 3600 seconds.
+    """
+    assert install.REFRESH_INTERVAL_SECONDS == 3600
+
+
+def test_refresh_script_bounds_tagging_with_a_derived_named_budget(tmp_path):
+    """Part 1 of the spec: the script must call `attest tag --limit N` with N
+    derived as (interval_seconds * 0.5) / measured_seconds_per_item, expressed
+    as named shell variables with the measurement in a comment -- not a bare
+    integer. At 3600s and 2.3s/item that is ~780.
+    """
+    content = install._refresh_script_content(tmp_path)
+
+    assert "TAG_SECONDS_PER_ITEM" in content
+    assert "TAG_BUDGET_MULTIPLIER" in content
+    assert "TAG_BUDGET" in content
+    assert "attest tag --limit" in content
+    assert '--limit "$TAG_BUDGET"' in content
+    # The measurement must be named beside the value, not a bare magic number.
+    assert "2.3" in content, "the measured per-item cost must be cited in the script"
+    assert str(install.REFRESH_INTERVAL_SECONDS) in content
+
+
+def test_refresh_script_runs_scan_first_and_gated_on_research_root(tmp_path):
+    """Part 3 of the spec: `runs scan` must run before ingest, and only when
+    RESEARCH_ROOT is set and points at a directory that exists -- silently
+    skipped otherwise, since most users will not have one.
+    """
+    content = install._refresh_script_content(tmp_path)
+
+    scan_pos = content.find("runs scan")
+    ingest_pos = content.find(f"{install.CLI_NAME} ingest")
+    assert scan_pos != -1, "runs scan must appear in the generated script"
+    assert ingest_pos != -1
+    assert scan_pos < ingest_pos, "runs scan must run before ingest"
+    assert "RESEARCH_ROOT" in content
+    assert '-d "$RESEARCH_ROOT"' in content or '-n "$RESEARCH_ROOT"' in content
+
+
 def test_schedule_writes_exact_content_and_exec_bit(monkeypatch, tmp_path):
     fake_home = tmp_path / "fresh-home"
     fake_home.mkdir()
@@ -816,7 +859,11 @@ def test_refresh_script_survives_crons_bare_path(tmp_path):
     proc = subprocess.run([str(script)], env=env, capture_output=True, text=True)
 
     assert proc.returncode == 0, f"script failed under cron's PATH: {proc.stderr}"
-    assert marker.read_text().splitlines() == ["run attest ingest", "run attest tag"]
+    # No RESEARCH_ROOT in this environment, so runs scan is silently skipped
+    # (see test_refresh_script_runs_scan_first_and_gated_on_research_root);
+    # tag's --limit is the budget derived from REFRESH_INTERVAL_SECONDS and
+    # the measured 2.3s/item, computed by the script's own awk line.
+    assert marker.read_text().splitlines() == ["run attest ingest", "run attest tag --limit 782"]
 
     # And a failure must surface as a non-zero exit, not be swallowed.
     uv.write_text("#!/bin/sh\nexit 3\n")
@@ -824,6 +871,111 @@ def test_refresh_script_survives_crons_bare_path(tmp_path):
     failed = subprocess.run([str(script)], env=env, capture_output=True, text=True)
 
     assert failed.returncode != 0, "a failing refresh must exit non-zero so cron reports it"
+
+
+def test_refresh_script_runs_scan_when_research_root_is_set_and_exists(tmp_path):
+    """With RESEARCH_ROOT pointing at a real directory, `runs scan` must
+    actually run, and run before ingest -- exercised end to end rather than
+    just grepped for in the generated text."""
+    import subprocess
+
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    research_root = tmp_path / "projects"
+    research_root.mkdir()
+
+    marker = tmp_path / "ran"
+    uv = home / ".local" / "bin" / "uv"
+    uv.write_text(f'#!/bin/sh\necho "$@" >> {marker}\nexit 0\n')
+    uv.chmod(0o755)
+
+    script = tmp_path / "refresh.sh"
+    script.write_text(install._refresh_script_content(checkout))
+    script.chmod(0o755)
+
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(home),
+        "SHELL": "/bin/sh",
+        "RESEARCH_ROOT": str(research_root),
+    }
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True)
+
+    assert proc.returncode == 0, f"script failed: {proc.stderr}"
+    lines = marker.read_text().splitlines()
+    assert lines[0] == "run attest runs scan", lines
+    assert lines == ["run attest runs scan", "run attest ingest", "run attest tag --limit 782"]
+
+
+def test_refresh_script_scan_failure_is_fatal_like_ingest(tmp_path):
+    """runs scan is deterministic and model-free the same way ingest is, so
+    CLAUDE.md's reliability contract ("must succeed") applies to it the same
+    way: a failure must abort the run with a non-zero exit, not degrade."""
+    import subprocess
+
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    research_root = tmp_path / "projects"
+    research_root.mkdir()
+
+    marker = tmp_path / "ran"
+    uv = home / ".local" / "bin" / "uv"
+    uv.write_text(
+        f'#!/bin/sh\necho "$@" >> {marker}\n'
+        'case "$*" in\n'
+        '  *"runs scan"*) exit 3 ;;\n'
+        "  *) exit 0 ;;\n"
+        "esac\n"
+    )
+    uv.chmod(0o755)
+
+    script = tmp_path / "refresh.sh"
+    script.write_text(install._refresh_script_content(checkout))
+    script.chmod(0o755)
+
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(home),
+        "SHELL": "/bin/sh",
+        "RESEARCH_ROOT": str(research_root),
+    }
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True)
+
+    assert proc.returncode != 0, "a failed runs scan must abort the refresh, like ingest"
+    # ingest and tag must never have run after the fatal scan failure.
+    assert marker.read_text().splitlines() == ["run attest runs scan"]
+
+
+def test_refresh_script_skips_scan_silently_without_research_root(tmp_path):
+    """No RESEARCH_ROOT at all: most users will not have one, so this must be
+    a silent skip, not a broken/failed step."""
+    import subprocess
+
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+
+    marker = tmp_path / "ran"
+    uv = home / ".local" / "bin" / "uv"
+    uv.write_text(f'#!/bin/sh\necho "$@" >> {marker}\nexit 0\n')
+    uv.chmod(0o755)
+
+    script = tmp_path / "refresh.sh"
+    script.write_text(install._refresh_script_content(checkout))
+    script.chmod(0o755)
+
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "SHELL": "/bin/sh"}
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True)
+
+    assert proc.returncode == 0
+    assert "runs scan" not in proc.stdout
+    lines = marker.read_text().splitlines()
+    assert "runs scan" not in " ".join(lines)
 
 
 def _refresh_harness(tmp_path, uv_body: str, monkeypatch=None):
@@ -1599,3 +1751,71 @@ def test_the_doctor_does_not_inventory_models_it_cannot_reach(monkeypatch):
         f"models reported {result.status} against an unreachable backend: {result.detail}"
     )
     assert "present" not in (result.detail or "")
+
+
+def test_ledger_step_names_research_root_when_unset(monkeypatch, tmp_path, capsys):
+    """The ledger needs no model and runs in ~1s, yet it is gated behind an
+    environment variable most users never discover -- three reviews called it
+    the strongest capability in the tool. `--check` now names it.
+
+    SKIPPED, never BROKEN: prompting for RESEARCH_ROOT during install was
+    declined in the scheduled-refresh spec because ddd560b exists precisely to
+    stop the doctor failing over optional wiring nobody asked for. Informing is
+    the whole point; nagging is the thing being avoided, so this must not move
+    the exit code.
+    """
+    db_path = _db_with_items(tmp_path, n_items=1)
+    monkeypatch.setenv("RSS_DB", str(db_path))
+    monkeypatch.delenv("RESEARCH_ROOT", raising=False)
+    _patch_run(monkeypatch, responses={("ollama", "list"): _ollama_list_ok()})
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
+    monkeypatch.setattr("attestation.cli.warmup", lambda: None)
+    monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
+
+    rc = install.run_install(check=True, yes=False)
+
+    out = capsys.readouterr().out
+    line = next(line_ for line_ in out.splitlines() if "ledger" in line_)
+    assert "skipped" in line.lower(), line
+    assert "RESEARCH_ROOT" in line, line
+    assert rc == 0
+
+
+def test_ledger_step_is_ok_when_research_root_points_somewhere_real(monkeypatch, tmp_path, capsys):
+    db_path = _db_with_items(tmp_path, n_items=1)
+    monkeypatch.setenv("RSS_DB", str(db_path))
+    workspace = tmp_path / "projects"
+    workspace.mkdir()
+    monkeypatch.setenv("RESEARCH_ROOT", str(workspace))
+    _patch_run(monkeypatch, responses={("ollama", "list"): _ollama_list_ok()})
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
+    monkeypatch.setattr("attestation.cli.warmup", lambda: None)
+    monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
+
+    rc = install.run_install(check=True, yes=False)
+
+    out = capsys.readouterr().out
+    line = next(line_ for line_ in out.splitlines() if "ledger" in line_)
+    assert "[ok]" in line, line
+    assert rc == 0
+
+
+def test_ledger_step_is_skipped_not_broken_when_research_root_is_missing(
+    monkeypatch, tmp_path, capsys
+):
+    """A RESEARCH_ROOT pointing at nothing is a stale setting, not a broken
+    install: it must still not fail the doctor for a user whose feed works."""
+    db_path = _db_with_items(tmp_path, n_items=1)
+    monkeypatch.setenv("RSS_DB", str(db_path))
+    monkeypatch.setenv("RESEARCH_ROOT", str(tmp_path / "does-not-exist"))
+    _patch_run(monkeypatch, responses={("ollama", "list"): _ollama_list_ok()})
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
+    monkeypatch.setattr("attestation.cli.warmup", lambda: None)
+    monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
+
+    rc = install.run_install(check=True, yes=False)
+
+    out = capsys.readouterr().out
+    line = next(line_ for line_ in out.splitlines() if "ledger" in line_)
+    assert "skipped" in line.lower(), line
+    assert rc == 0

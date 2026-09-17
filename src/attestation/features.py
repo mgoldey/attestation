@@ -30,6 +30,123 @@ TAG_PATTERN = r"^[a-z0-9][a-z0-9-]{0,31}$"
 # must chunk below this limit rather than build one query per item.
 _SQL_VAR_CHUNK = 900
 
+# Fallback per-item tagging cost when there is no usable history to derive one
+# from (fresh database, or a single tagged row with no delta). Measured on
+# this machine (see docs/superpowers/specs/2026-08-23-scheduled-refresh-design.md):
+# 2.3s/item. A 12B model on a slower box is a different number -- this is only
+# ever the floor a fresh install starts from, never the steady-state value
+# `estimate_seconds_per_item` reports once there is a trailing window to read.
+FALLBACK_SECONDS_PER_ITEM = 2.3
+
+# How many of the most recent item_features.tagged_at rows form the trailing
+# window `estimate_seconds_per_item` reads. Large enough to smooth per-item
+# jitter and survive one excluded cross-run gap; small enough that a machine
+# whose speed changed (a model swap, a GPU added) is reflected within a
+# handful of runs rather than averaged against ancient history forever.
+_TRAILING_WINDOW_ROWS = 50
+
+# A gap this many times the median delta is a boundary between two separate
+# tagging RUNS (the cron interval, a manual invocation hours later), not a
+# slow item -- see estimate_seconds_per_item's docstring for why this matters.
+_GAP_OUTLIER_MULTIPLE = 10
+
+
+def estimate_seconds_per_item(conn: sqlite3.Connection) -> float:
+    """Trailing-window per-item tagging cost, derived from
+    `item_features.tagged_at` (no new schema -- the spec's open question is
+    resolved in favor of this column over a new `tag_timings` table).
+
+    Reads the most recent `_TRAILING_WINDOW_ROWS` timestamps, sorts them
+    ascending, and takes consecutive deltas: item N+1's timestamp minus item
+    N's is what tagging item N+1 cost. Two traps that make this wrong if done
+    naively:
+
+    - A gap between two separate RUNS (this cron tick vs. the one an hour
+      before it) is not a per-item cost -- it is idle time between runs. Left
+      in, one such gap would swamp every genuine per-item delta (an hour vs.
+      ~2s). Deltas more than `_GAP_OUTLIER_MULTIPLE` times the median delta
+      are excluded as run boundaries rather than averaged in.
+    - A window of exactly one row has zero deltas -- there is nothing to
+      divide by, and returning 0 or raising would both be worse than falling
+      back to the named constant.
+
+    Falls back to FALLBACK_SECONDS_PER_ITEM when there are fewer than two
+    rows, or when every delta was excluded as an outlier (e.g. every row in
+    the window happens to be the first of its run).
+    """
+    rows = conn.execute(
+        "SELECT tagged_at FROM item_features ORDER BY tagged_at DESC LIMIT ?",
+        (_TRAILING_WINDOW_ROWS,),
+    ).fetchall()
+    timestamps = sorted(r["tagged_at"] for r in rows)
+    return _estimate_from_timestamps(timestamps)
+
+
+def _estimate_from_timestamps(timestamps: list[str]) -> float:
+    """Pure: ascending ISO timestamps -> a per-item seconds estimate.
+
+    Split out of estimate_seconds_per_item so the delta/outlier math is
+    testable without a database and so the DB-facing function stays under
+    the complexity ratchet.
+    """
+    if len(timestamps) < 2:
+        return FALLBACK_SECONDS_PER_ITEM
+    deltas = _positive_deltas(timestamps)
+    if not deltas:
+        return FALLBACK_SECONDS_PER_ITEM
+    return _within_run_average(deltas)
+
+
+def _positive_deltas(timestamps: list[str]) -> list[float]:
+    """Consecutive-timestamp gaps in seconds; equal timestamps drop out (no signal)."""
+    from datetime import datetime
+
+    parsed = [datetime.fromisoformat(t) for t in timestamps]
+    deltas = ((b - a).total_seconds() for a, b in zip(parsed, parsed[1:], strict=False))
+    return [d for d in deltas if d > 0]
+
+
+def _within_run_average(deltas: list[float]) -> float:
+    """Mean of `deltas` after dropping cross-run gaps (see
+    estimate_seconds_per_item's docstring for why a gap is excluded rather
+    than averaged in). Falls back to the named constant if nothing survives.
+    """
+    median = _median(deltas)
+    if median <= 0:
+        return FALLBACK_SECONDS_PER_ITEM
+    within_run = [d for d in deltas if d <= median * _GAP_OUTLIER_MULTIPLE]
+    if not within_run:
+        return FALLBACK_SECONDS_PER_ITEM
+    return sum(within_run) / len(within_run)
+
+
+def _median(values: list[float]) -> float:
+    s = sorted(values)
+    mid = len(s) // 2
+    return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
+
+
+def _announce_tagging_cost(n_untagged: int, seconds_per_item: float) -> None:
+    """Print what this run will cost before it runs, to stderr -- the
+    refresh script redirects stdout to /dev/null (see
+    _refresh_script_content), so stderr is the only place a cron run's
+    output survives. A 40-minute silent command is the classic abandonment
+    point the design spec names.
+    """
+    import sys
+
+    total_minutes = (n_untagged * seconds_per_item) / 60
+    print(
+        f"tagging {n_untagged} untagged items -- about {total_minutes:.0f} min"
+        f" at {seconds_per_item:.1f}s/item",
+        file=sys.stderr,
+    )
+    print(
+        "(use --limit N to do fewer; untagged items are picked up next run)",
+        file=sys.stderr,
+    )
+
+
 # Tags that describe an item's provenance or its post type rather than its
 # subject. Both axes are already recorded structurally -- the publication in
 # items.feed_id, the post type in item_features.content_type -- so as tags they
@@ -413,6 +530,9 @@ def run_tagging(conn, chat_fn, model: str, limit: int | None = None) -> dict:
         sql += " LIMIT ?"
         params = (limit,)
     rows = conn.execute(sql, params).fetchall()
+
+    if rows:
+        _announce_tagging_cost(len(rows), estimate_seconds_per_item(conn))
 
     # `model` is recorded ONCE, per item written -- the caller resolved it
     # once too (see llm.chat_model), which is what keeps a single run from
