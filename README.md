@@ -100,12 +100,12 @@ running locally; `attest install` then pulls **~7.8 GB** of models
 resident while warm. Skip this tier entirely if you only want provenance.
 
 ```bash
-uv run attest install          # idempotent setup: .env, models, first ingest
-uv run attest install --check  # diagnose only, exits 1 on gaps
+uvx attestation install          # from PyPI, nothing cloned; --check diagnoses only
 ```
 
-See [docs/guides/install.md](docs/guides/install.md) for prerequisites and
-the manual steps `attest install` automates.
+No GPU? Point `LLM_BASE_URL` at an OpenAI-compatible endpoint; `--check` confirms
+it answers. [docs/guides/install.md](docs/guides/install.md): that tier,
+prerequisites, and the manual steps `attest install` automates.
 
 ## Chat with it from Discord
 

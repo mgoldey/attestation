@@ -9,6 +9,28 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-18
+
+First published release. Nothing was released under 0.1.0 — the version
+existed in `pyproject.toml` but no tag or PyPI artifact was ever cut, so
+this is the repo's first public artifact despite the number.
+
+### Added
+
+- PyPI release path (`2026-09-11`): `.github/workflows/release.yml` builds
+  and publishes on a `v*` tag through trusted publishing, refusing a tag that
+  does not match `pyproject.toml`; a second console script named
+  `attestation` makes `uvx attestation install` the whole install command.
+  Version bumped to 0.2.0 for the first release.
+- `attest install` hosted-models step (`2026-09-11`): with a non-Ollama
+  `LLM_BASE_URL` the Ollama steps skip and `hosted_models` makes one
+  embedding and one one-token chat request, reporting the server's own
+  reason on failure (measured on NVIDIA NIM: 82 models listed, most chat
+  models tried answered 410 end-of-life or 404 not-enabled, so a catalogue
+  lookup would have passed a configuration that cannot run) and refusing an
+  embedding model narrower than `EMBED_DIMS`. `.env.sample` and the install
+  guide gain the hosted tier.
+
 ### Fixed
 
 - `feed.research` / `attest research` with `--journal` on CrossRef
@@ -187,4 +209,5 @@ commit that carries the reasoning rather than repeating it; `git log
   the first green CI run needed a stubbed daemon test plus a Python build
   that can load the `sqlite-vec` extension (`d4ea750`).
 
-[Unreleased]: https://github.com/mgoldey/attestation/compare/573e42c...HEAD
+[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mgoldey/attestation/compare/573e42c...v0.2.0
