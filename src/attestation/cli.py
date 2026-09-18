@@ -26,16 +26,29 @@ def _default_feeds_path() -> str:
 
 
 @contextlib.contextmanager
-def open_db(db_arg: str | None):
+def open_db(db_arg: str | None, *, need_vectors: bool = False):
     """Open a connection for a CLI arg's DB path and guarantee it closes.
 
     `sqlite3.Connection.__enter__` manages transactions, not handle
     lifetime, so a plain `with get_db(...)` would leave the handle open --
     this wraps it in `contextlib.closing` around the resolved path.
+
+    `need_vectors=True` is Task 12's per-operation gate: pass it from a
+    command that will touch item_vectors/reference_vectors (ingest, library
+    sync/search/embed, eval) so a Python without the sqlite-vec extension
+    refuses here, clearly and once, instead of the command body reaching
+    "no such table: item_vectors" partway through -- get_db() itself leaves
+    those tables uncreated in that case (db.py:_ensure_vec_tables), on
+    purpose, rather than raise attempting a CREATE VIRTUAL TABLE the
+    extension cannot support. `runs scan/compare/list/show/record` and
+    `claims` never pass this: CLAUDE.md's own framing is "the ledger and
+    claim checking need no model; the feed does," and that guarantee is the
+    entire point of Task 12 -- it must hold even when vectors are broken.
     """
     import sqlite3
 
-    from attestation.db import get_db, resolve_db_path
+    from attestation.db import get_db, resolve_db_path, vector_extension_available
+    from attestation.db import vector_extension_unavailable_message as _vec_msg
 
     path = resolve_db_path(db_arg)
     try:
@@ -44,15 +57,22 @@ def open_db(db_arg: str | None):
         # is a typo, and it should read as one.
         path.parent.mkdir(parents=True, exist_ok=True)
         conn = get_db(path)
-    except (OSError, sqlite3.Error) as exc:
+    except (AttributeError, OSError, sqlite3.Error) as exc:
         # A typo in ATTEST_DB, or a cwd the user cannot write, printed 18 lines of
         # traceback ending in "unable to open database file" -- which does not
         # say WHICH file, and so does not say which typo. Every other failure
         # in this CLI is a sentence; this one was the exception because it fired
         # before any command body ran, outside every command's own error
-        # handling. Both arms are needed: mkdir raises OSError, sqlite3 raises
-        # OperationalError, and OperationalError is not an OSError.
+        # handling. mkdir raises OSError, sqlite3 raises OperationalError (not
+        # an OSError), and get_db() itself now degrades the one AttributeError
+        # it knows about (Task 12's missing enable_load_extension) rather than
+        # raising it -- AttributeError stays in this filter as a hedge against
+        # a variant this composition root has not seen yet, so a future one
+        # degrades this one call rather than killing every subcommand outright.
         raise SystemExit(fail(f"cannot open database at {path}: {exc}")) from exc
+    if need_vectors and not vector_extension_available(conn):
+        conn.close()
+        raise SystemExit(fail(_vec_msg()))
     with contextlib.closing(conn):
         yield conn
 
@@ -1127,7 +1147,7 @@ def cmd_library_sync(args: argparse.Namespace) -> int:
     from attestation import library, library_readers
 
     sources = [s.strip() for s in args.sources.split(",")] if args.sources else None
-    with open_db(args.db) as conn:
+    with open_db(args.db, need_vectors=True) as conn:
         try:
             readers = library_readers.readers_from_env(conn, sources=sources)
         except ValueError as exc:
@@ -1157,7 +1177,7 @@ def cmd_library_sync(args: argparse.Namespace) -> int:
 def cmd_library_search(args: argparse.Namespace) -> int:
     from attestation import library
 
-    with open_db(args.db) as conn:
+    with open_db(args.db, need_vectors=True) as conn:
         res = library.search(
             conn,
             args.query,
@@ -1195,7 +1215,7 @@ def cmd_library_embed(args: argparse.Namespace) -> int:
     from attestation import library
     from attestation.embed import Embedder
 
-    with open_db(args.db) as conn:
+    with open_db(args.db, need_vectors=True) as conn:
         done, missing, error = library.embed_missing(conn, Embedder(), args.limit)
     print(f"embedded {done}, {missing} still without a vector" + (f" ({error})" if error else ""))
     return 1 if error and done == 0 else 0
@@ -1227,7 +1247,7 @@ def cmd_library_related(args: argparse.Namespace) -> int:
 def cmd_library_status(args: argparse.Namespace) -> int:
     from attestation import library
 
-    with open_db(args.db) as conn:
+    with open_db(args.db, need_vectors=True) as conn:
         print(json.dumps(library.status(conn), indent=2))
     return 0
 
@@ -1307,14 +1327,27 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     from attestation.ingest import run_ingest
 
     clients = research.null_clients() if args.no_research else research.clients_from_env()
-    with open_db(args.db) as conn:
+    with open_db(args.db, need_vectors=True) as conn:
         stats = run_ingest(conn, Embedder(), args.feeds, clients=clients)
         if args.fulltext_limit > 0:
             stats["fulltext"] = research.fetch_fulltext(
                 conn, limit=args.fulltext_limit, clients=clients
             )
     print(stats)
-    return 0
+    # ingest.py already prints the diagnostic ("embedding model unreachable
+    # ... is ollama running?") via logging when embedder_down latches -- this
+    # only fixes the exit code, matching cmd_tag's precedent for chat_down.
+    #
+    # embedder_down LATCHES true (_ingest_outcome) if ANY feed in the run hit
+    # it, even when earlier feeds succeeded: run_ingest breaks out of its loop
+    # the moment the backend is found down, so the remaining feeds in
+    # feeds.toml were never attempted. That is a degraded, incomplete run --
+    # not a partial success -- so this exits 1 even when `added` is nonzero,
+    # the same way cmd_tag exits 1 on chat_down regardless of any items
+    # tagged before the backend died. A cron script or install.py step reading
+    # exit 0 as "the feed is current" must not be told that on a run that
+    # stopped early.
+    return 1 if stats.get("embedder_down") else 0
 
 
 @_documented("research")
@@ -1415,7 +1448,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     from attestation.rank import evaluate_user, get_user
     from attestation.simulate import source_skew_caveat
 
-    with open_db(args.db) as conn:
+    with open_db(args.db, need_vectors=True) as conn:
         user = get_user(conn, args.user)
         result = evaluate_user(conn, user["id"]) if user else None
         skew = source_skew_caveat(conn, user["id"]) if user else None

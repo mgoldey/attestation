@@ -436,7 +436,7 @@ def test_web_cache_reopen_does_not_reclaim_a_widened_directory(tmp_path):
     assert stat.S_IMODE(cache.stat().st_mode) == 0o755
 
 
-def test_cite_check_says_it_only_checked_the_keys(tmp_path):
+def test_cite_check_says_it_only_checked_the_keys(tmp_path, monkeypatch):
     """It returned ok=true with an EMPTY message on a document holding a
     contradicted claim, and gemma4:e2b relayed that as "OK: true (meaning all
     claims were supported by runs)" -- 3 times out of 3, across three
@@ -447,6 +447,7 @@ def test_cite_check_says_it_only_checked_the_keys(tmp_path):
     description when CHOOSING and then reasons from the payload, so the payload
     has to carry the scope too.
     """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))  # its own DB, never the live one
     from attestation.mcp.citation import _check
 
     draft = tmp_path / "paper.md"
@@ -464,11 +465,12 @@ def test_cite_check_says_it_only_checked_the_keys(tmp_path):
     assert "CITATION KEYS only" in message, message
 
 
-def test_cite_check_response_states_what_it_checked(tmp_path):
+def test_cite_check_response_states_what_it_checked(tmp_path, monkeypatch):
     """`checked` states the same scope as data: cite.check only ever checks
     citation keys, never the numbers -- see test_claims_check_response_states_
     what_it_checked in test_ledger_mcp.py for the runs.claims_check side of
     the pairing."""
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))  # its own DB, never the live one
     from attestation.mcp.citation import _check
 
     draft = tmp_path / "paper.md"

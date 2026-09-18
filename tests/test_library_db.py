@@ -88,15 +88,27 @@ def test_reference_vectors_follow_their_reference(tmp_path):
 
 
 def test_a_fresh_database_has_the_counts_claude_md_states(tmp_path):
-    """17 application tables; 28 rows in sqlite_master with the two vec0 tables,
+    """18 application tables; 29 rows in sqlite_master with the two vec0 tables,
     their four shadow tables each, and sqlite_sequence. CLAUDE.md's Storage
-    line quotes these numbers and was found stale at 12/17 (review round 1)."""
+    line quotes these numbers and was found stale at 12/17 (review round 1).
+
+    Went 16/27 -> 17/28 on 2026-09-11 when migration 010 added
+    `embedding_model` (one row per vec0 table naming the EMBED_MODEL that
+    produced its vectors, so get_db can refuse a same-width/different-model
+    reopen). Went 17/28 -> 18/29 on 2026-09-16 when migration 009
+    (`feat/research-topics`, merged separately) added `reference_fulltext`
+    alongside it -- the two migrations were developed concurrently on
+    different branches and both landed, so both tables are now present. This
+    test and its sibling in test_db.py police the SAME claim from two
+    directions; when a migration lands, both must be updated together, which
+    is exactly the drift both exist to catch.
+    """
     conn = dbmod.get_db(tmp_path / "fresh.db")
     names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
     app = [n for n in names if not n.startswith(("item_vectors", "reference_vectors", "sqlite_"))]
-    assert (len(names), len(app)) == (28, 17)
+    assert (len(names), len(app)) == (29, 18)
     claude_md = (Path(__file__).resolve().parents[1] / "CLAUDE.md").read_text()
-    assert "17 APPLICATION tables" in claude_md and "a fresh file has 28" in claude_md
+    assert "18 APPLICATION tables" in claude_md and "a fresh file has 29" in claude_md
 
 
 def test_a_fresh_database_has_the_library_tables(tmp_path):

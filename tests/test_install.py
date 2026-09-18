@@ -64,8 +64,9 @@ def _default_env(monkeypatch, tmp_path):
     # The shipped skills, already synced into the fake home, so the default
     # fixture represents an all-OK state. The real package files rather than
     # a one-line stand-in: a stand-in never matched the source and the
-    # "already synced" fixture was quietly one step from OK.
-    install.step_skill_copy(check=False)
+    # "already synced" fixture was quietly one step from OK. A stub agent
+    # string drives the sync -- step_skill_copy is SKIPPED with agent=None.
+    install.step_skill_copy("agenthermes", check=False)
     # No agent binary on PATH by default (real _find_agent_binary still runs);
     # agent-wiring tests put a stub executable on this empty PATH themselves.
     monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
@@ -107,7 +108,7 @@ def _presync_skill(monkeypatch, tmp_path):
     fake_home = tmp_path / "synced-home"
     fake_home.mkdir(exist_ok=True)
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
-    install.step_skill_copy(check=False)
+    install.step_skill_copy("agenthermes", check=False)
     return fake_home
 
 
@@ -592,7 +593,7 @@ def test_skill_copy_creates_files(monkeypatch, tmp_path):
     fake_home.mkdir()
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
 
-    result = install.step_skill_copy(check=False)
+    result = install.step_skill_copy("agenthermes", check=False)
 
     dest = fake_home / ".hermes" / "skills" / "attestation-setup"
     assert (dest / "SKILL.md").exists()
@@ -605,8 +606,8 @@ def test_skill_copy_second_run_is_ok(monkeypatch, tmp_path):
     fake_home.mkdir()
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
 
-    install.step_skill_copy(check=False)
-    result = install.step_skill_copy(check=False)
+    install.step_skill_copy("agenthermes", check=False)
+    result = install.step_skill_copy("agenthermes", check=False)
 
     assert result.status == "OK"
 
@@ -622,8 +623,8 @@ def test_skill_copy_never_touches_planted_data_dir(monkeypatch, tmp_path):
     blob = b"\x00\x01binary-db-blob\xff"
     (data_dir / "hermes.db").write_bytes(blob)
 
-    install.step_skill_copy(check=False)
-    install.step_skill_copy(check=False)
+    install.step_skill_copy("agenthermes", check=False)
+    install.step_skill_copy("agenthermes", check=False)
 
     assert (data_dir / "hermes.db").read_bytes() == blob
 
@@ -633,11 +634,28 @@ def test_skill_copy_check_mode_missing_is_broken(monkeypatch, tmp_path):
     fake_home.mkdir()
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
 
-    result = install.step_skill_copy(check=True)
+    result = install.step_skill_copy("agenthermes", check=True)
 
     dest = fake_home / ".hermes" / "skills" / "attestation-setup"
     assert result.status == "BROKEN"
     assert not (dest / "SKILL.md").exists()
+
+
+def test_skill_copy_no_agent_binary_skipped(monkeypatch, tmp_path):
+    """Same treatment as mcp_wiring/reasoning_override/schedule: these skill
+    files exist to be read by a hermes-agent session, so a self-hoster with
+    no agent binary sees this step SKIPPED, not BROKEN -- it never wrote
+    anything for `--check` to complain is missing."""
+    fake_home = tmp_path / "fresh-home"
+    fake_home.mkdir()
+    monkeypatch.setattr(install.Path, "home", lambda: fake_home)
+
+    check_result = install.step_skill_copy(None, check=True)
+    yes_result = install.step_skill_copy(None, check=False)
+
+    assert check_result.status == "SKIPPED"
+    assert yes_result.status == "SKIPPED"
+    assert not (fake_home / ".hermes").exists()
 
 
 def test_skill_source_ships_inside_the_package():
@@ -664,7 +682,7 @@ def test_skill_copy_skips_when_source_missing(monkeypatch, tmp_path, check):
     monkeypatch.setattr(install.Path, "home", lambda: fake_home)
     monkeypatch.setattr(install, "_skill_source_dir", lambda name: tmp_path / "absent")
 
-    result = install.step_skill_copy(check=check)
+    result = install.step_skill_copy("agenthermes", check=check)
 
     assert result.status == "SKIPPED"
     assert not (fake_home / ".hermes" / "skills").exists()
@@ -757,6 +775,49 @@ def test_check_mode_does_not_pin_models_into_vram(monkeypatch):
 # --------------------------------------------------------------------------
 
 
+def test_refresh_interval_seconds_matches_the_cron_schedule(tmp_path):
+    """The spec (scheduled-refresh) requires the tag budget to be derived
+    from the SAME interval the cron line uses, not a second hardcoded 3600 --
+    otherwise the two can drift. install.REFRESH_INTERVAL_SECONDS is that
+    shared source; hourly ("17 * * * *") is 3600 seconds.
+    """
+    assert install.REFRESH_INTERVAL_SECONDS == 3600
+
+
+def test_refresh_script_bounds_tagging_with_a_derived_named_budget(tmp_path):
+    """Part 1 of the spec: the script must call `attest tag --limit N` with N
+    derived as (interval_seconds * 0.5) / measured_seconds_per_item, expressed
+    as named shell variables with the measurement in a comment -- not a bare
+    integer. At 3600s and 2.3s/item that is ~780.
+    """
+    content = install._refresh_script_content(tmp_path)
+
+    assert "TAG_SECONDS_PER_ITEM" in content
+    assert "TAG_BUDGET_MULTIPLIER" in content
+    assert "TAG_BUDGET" in content
+    assert "attest tag --limit" in content
+    assert '--limit "$TAG_BUDGET"' in content
+    # The measurement must be named beside the value, not a bare magic number.
+    assert "2.3" in content, "the measured per-item cost must be cited in the script"
+    assert str(install.REFRESH_INTERVAL_SECONDS) in content
+
+
+def test_refresh_script_runs_scan_first_and_gated_on_research_root(tmp_path):
+    """Part 3 of the spec: `runs scan` must run before ingest, and only when
+    RESEARCH_ROOT is set and points at a directory that exists -- silently
+    skipped otherwise, since most users will not have one.
+    """
+    content = install._refresh_script_content(tmp_path)
+
+    scan_pos = content.find("runs scan")
+    ingest_pos = content.find(f"{install.CLI_NAME} ingest")
+    assert scan_pos != -1, "runs scan must appear in the generated script"
+    assert ingest_pos != -1
+    assert scan_pos < ingest_pos, "runs scan must run before ingest"
+    assert "RESEARCH_ROOT" in content
+    assert '-d "$RESEARCH_ROOT"' in content or '-n "$RESEARCH_ROOT"' in content
+
+
 def test_schedule_writes_exact_content_and_exec_bit(monkeypatch, tmp_path):
     fake_home = tmp_path / "fresh-home"
     fake_home.mkdir()
@@ -805,7 +866,11 @@ def test_refresh_script_survives_crons_bare_path(tmp_path):
     proc = subprocess.run([str(script)], env=env, capture_output=True, text=True)
 
     assert proc.returncode == 0, f"script failed under cron's PATH: {proc.stderr}"
-    assert marker.read_text().splitlines() == ["run attest ingest", "run attest tag"]
+    # No RESEARCH_ROOT in this environment, so runs scan is silently skipped
+    # (see test_refresh_script_runs_scan_first_and_gated_on_research_root);
+    # tag's --limit is the budget derived from REFRESH_INTERVAL_SECONDS and
+    # the measured 2.3s/item, computed by the script's own awk line.
+    assert marker.read_text().splitlines() == ["run attest ingest", "run attest tag --limit 782"]
 
     # And a failure must surface as a non-zero exit, not be swallowed.
     uv.write_text("#!/bin/sh\nexit 3\n")
@@ -813,6 +878,111 @@ def test_refresh_script_survives_crons_bare_path(tmp_path):
     failed = subprocess.run([str(script)], env=env, capture_output=True, text=True)
 
     assert failed.returncode != 0, "a failing refresh must exit non-zero so cron reports it"
+
+
+def test_refresh_script_runs_scan_when_research_root_is_set_and_exists(tmp_path):
+    """With RESEARCH_ROOT pointing at a real directory, `runs scan` must
+    actually run, and run before ingest -- exercised end to end rather than
+    just grepped for in the generated text."""
+    import subprocess
+
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    research_root = tmp_path / "projects"
+    research_root.mkdir()
+
+    marker = tmp_path / "ran"
+    uv = home / ".local" / "bin" / "uv"
+    uv.write_text(f'#!/bin/sh\necho "$@" >> {marker}\nexit 0\n')
+    uv.chmod(0o755)
+
+    script = tmp_path / "refresh.sh"
+    script.write_text(install._refresh_script_content(checkout))
+    script.chmod(0o755)
+
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(home),
+        "SHELL": "/bin/sh",
+        "RESEARCH_ROOT": str(research_root),
+    }
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True)
+
+    assert proc.returncode == 0, f"script failed: {proc.stderr}"
+    lines = marker.read_text().splitlines()
+    assert lines[0] == "run attest runs scan", lines
+    assert lines == ["run attest runs scan", "run attest ingest", "run attest tag --limit 782"]
+
+
+def test_refresh_script_scan_failure_is_fatal_like_ingest(tmp_path):
+    """runs scan is deterministic and model-free the same way ingest is, so
+    CLAUDE.md's reliability contract ("must succeed") applies to it the same
+    way: a failure must abort the run with a non-zero exit, not degrade."""
+    import subprocess
+
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    research_root = tmp_path / "projects"
+    research_root.mkdir()
+
+    marker = tmp_path / "ran"
+    uv = home / ".local" / "bin" / "uv"
+    uv.write_text(
+        f'#!/bin/sh\necho "$@" >> {marker}\n'
+        'case "$*" in\n'
+        '  *"runs scan"*) exit 3 ;;\n'
+        "  *) exit 0 ;;\n"
+        "esac\n"
+    )
+    uv.chmod(0o755)
+
+    script = tmp_path / "refresh.sh"
+    script.write_text(install._refresh_script_content(checkout))
+    script.chmod(0o755)
+
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(home),
+        "SHELL": "/bin/sh",
+        "RESEARCH_ROOT": str(research_root),
+    }
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True)
+
+    assert proc.returncode != 0, "a failed runs scan must abort the refresh, like ingest"
+    # ingest and tag must never have run after the fatal scan failure.
+    assert marker.read_text().splitlines() == ["run attest runs scan"]
+
+
+def test_refresh_script_skips_scan_silently_without_research_root(tmp_path):
+    """No RESEARCH_ROOT at all: most users will not have one, so this must be
+    a silent skip, not a broken/failed step."""
+    import subprocess
+
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+
+    marker = tmp_path / "ran"
+    uv = home / ".local" / "bin" / "uv"
+    uv.write_text(f'#!/bin/sh\necho "$@" >> {marker}\nexit 0\n')
+    uv.chmod(0o755)
+
+    script = tmp_path / "refresh.sh"
+    script.write_text(install._refresh_script_content(checkout))
+    script.chmod(0o755)
+
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "SHELL": "/bin/sh"}
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True)
+
+    assert proc.returncode == 0
+    assert "runs scan" not in proc.stdout
+    lines = marker.read_text().splitlines()
+    assert "runs scan" not in " ".join(lines)
 
 
 def _refresh_harness(tmp_path, uv_body: str, monkeypatch=None):
@@ -1206,9 +1376,39 @@ def test_no_agent_binary_all_wiring_steps_skipped_exit_zero(monkeypatch, tmp_pat
 
     out = capsys.readouterr().out
     assert rc == 0
-    for step in ("mcp_wiring", "reasoning_override", "schedule"):
+    for step in ("mcp_wiring", "skill_copy", "reasoning_override", "schedule"):
         line = next(line_ for line_ in out.splitlines() if step in line_)
         assert "skipped" in line.lower()
+
+
+def test_check_on_a_never_wired_home_with_no_agent_exits_zero_when_only_local_data_is_missing(
+    monkeypatch, tmp_path, capsys
+):
+    """A self-hoster with no hermes-agent binary and an empty (but present)
+    database wants `--check` to exit 0: nothing about the parts they use (the
+    local feed) is broken, and the four hermes-agent wiring steps -- mcp_wiring,
+    skill_copy, reasoning_override, schedule -- are all things they never asked
+    for. Before the fix, skill_copy ran unconditionally and reported BROKEN
+    against a fresh, agent-less home, which alone forced exit 1."""
+    db_path = _db_with_items(tmp_path, n_items=1)
+    monkeypatch.setenv("RSS_DB", str(db_path))
+    _patch_run(monkeypatch, responses={("ollama", "list"): _ollama_list_ok()})
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
+    monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
+    # A genuinely fresh home: NOT pre-synced by the autouse fixture's own
+    # step_skill_copy call, which runs against the tmp_path-derived fake_home
+    # set up before this test body -- point Path.home() at an untouched dir.
+    never_wired_home = tmp_path / "never-wired-home"
+    never_wired_home.mkdir()
+    monkeypatch.setattr(install.Path, "home", lambda: never_wired_home)
+
+    rc = install.run_install(check=True)
+
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    for step in ("mcp_wiring", "skill_copy", "reasoning_override", "schedule"):
+        line = next(line_ for line_ in out.splitlines() if step in line_)
+        assert "skipped" in line.lower(), line
 
 
 # --------------------------------------------------------------------------
@@ -1661,3 +1861,71 @@ def test_hosted_models_step_runs_in_the_sequence(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "[BROKEN] hosted_models: m: HTTP 410 Gone -- eol" in out
     assert rc == 1
+
+
+def test_ledger_step_names_research_root_when_unset(monkeypatch, tmp_path, capsys):
+    """The ledger needs no model and runs in ~1s, yet it is gated behind an
+    environment variable most users never discover -- three reviews called it
+    the strongest capability in the tool. `--check` now names it.
+
+    SKIPPED, never BROKEN: prompting for RESEARCH_ROOT during install was
+    declined in the scheduled-refresh spec because ddd560b exists precisely to
+    stop the doctor failing over optional wiring nobody asked for. Informing is
+    the whole point; nagging is the thing being avoided, so this must not move
+    the exit code.
+    """
+    db_path = _db_with_items(tmp_path, n_items=1)
+    monkeypatch.setenv("RSS_DB", str(db_path))
+    monkeypatch.delenv("RESEARCH_ROOT", raising=False)
+    _patch_run(monkeypatch, responses={("ollama", "list"): _ollama_list_ok()})
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
+    monkeypatch.setattr("attestation.cli.warmup", lambda: None)
+    monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
+
+    rc = install.run_install(check=True, yes=False)
+
+    out = capsys.readouterr().out
+    line = next(line_ for line_ in out.splitlines() if "ledger" in line_)
+    assert "skipped" in line.lower(), line
+    assert "RESEARCH_ROOT" in line, line
+    assert rc == 0
+
+
+def test_ledger_step_is_ok_when_research_root_points_somewhere_real(monkeypatch, tmp_path, capsys):
+    db_path = _db_with_items(tmp_path, n_items=1)
+    monkeypatch.setenv("RSS_DB", str(db_path))
+    workspace = tmp_path / "projects"
+    workspace.mkdir()
+    monkeypatch.setenv("RESEARCH_ROOT", str(workspace))
+    _patch_run(monkeypatch, responses={("ollama", "list"): _ollama_list_ok()})
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
+    monkeypatch.setattr("attestation.cli.warmup", lambda: None)
+    monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
+
+    rc = install.run_install(check=True, yes=False)
+
+    out = capsys.readouterr().out
+    line = next(line_ for line_ in out.splitlines() if "ledger" in line_)
+    assert "[ok]" in line, line
+    assert rc == 0
+
+
+def test_ledger_step_is_skipped_not_broken_when_research_root_is_missing(
+    monkeypatch, tmp_path, capsys
+):
+    """A RESEARCH_ROOT pointing at nothing is a stale setting, not a broken
+    install: it must still not fail the doctor for a user whose feed works."""
+    db_path = _db_with_items(tmp_path, n_items=1)
+    monkeypatch.setenv("RSS_DB", str(db_path))
+    monkeypatch.setenv("RESEARCH_ROOT", str(tmp_path / "does-not-exist"))
+    _patch_run(monkeypatch, responses={("ollama", "list"): _ollama_list_ok()})
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
+    monkeypatch.setattr("attestation.cli.warmup", lambda: None)
+    monkeypatch.setattr(install.os, "get_exec_path", lambda: [])
+
+    rc = install.run_install(check=True, yes=False)
+
+    out = capsys.readouterr().out
+    line = next(line_ for line_ in out.splitlines() if "ledger" in line_)
+    assert "skipped" in line.lower(), line
+    assert rc == 0

@@ -3,7 +3,42 @@ from pathlib import Path
 
 import pytest
 
-from attestation.db import get_db, resolve_db_path
+from attestation.db import get_db, resolve_db_path, vector_extension_available
+
+
+class _NoLoadExtensionConnection:
+    """Wraps a real sqlite3.Connection but hides `enable_load_extension`,
+    reproducing the exact AttributeError a Python built without
+    --enable-loadable-sqlite-extensions raises (see db.py's get_db docstring
+    and Task 12). Subclassing sqlite3.Connection cannot remove the attribute
+    -- it is a slot wrapper on the immutable C type, and `del` on a subclass
+    raises "cannot set ... attribute of immutable type" -- so this proxies
+    everything else through to a genuine connection instead.
+    """
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        object.__setattr__(self, "_real", real)
+
+    def __getattr__(self, name):
+        if name == "enable_load_extension":
+            raise AttributeError(name)
+        return getattr(self._real, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._real, name, value)
+
+
+@pytest.fixture
+def no_load_extension(monkeypatch):
+    """Make every sqlite3.connect() in this test return a connection lacking
+    enable_load_extension, simulating the pyenv-without-loadable-extensions
+    build from Task 12."""
+    real_connect = sqlite3.connect
+
+    def fake_connect(*args, **kwargs):
+        return _NoLoadExtensionConnection(real_connect(*args, **kwargs))
+
+    monkeypatch.setattr(sqlite3, "connect", fake_connect)
 
 
 def test_get_db_creates_schema(tmp_path):
@@ -26,10 +61,60 @@ def test_get_db_creates_schema(tmp_path):
     assert row["rowid"] == item_id
 
 
+def test_fresh_db_object_count_in_sqlite_master(tmp_path):
+    """Pins the count CLAUDE.md's Storage line quotes: 18 application tables
+    (16 plus embedding_model from migration 010, plus reference_fulltext from
+    migration 009 -- concurrent branches, both merged) + 2 vec0 virtual
+    tables + 8 shadow tables (4 each for item_vectors and reference_vectors)
+    + sqlite_sequence = 29 rows of type='table' in sqlite_master. MEASURED
+    2026-09-16. If this fails after a legitimate schema change, update both
+    this assertion and the CLAUDE.md line it cross-checks -- do not just
+    raise the number here without updating the doc, and do not delete the
+    assertion to make a change land quietly.
+    """
+    conn = get_db(tmp_path / "test.db")
+    tables = [r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+    assert len(tables) == 29, sorted(tables)
+
+
 def test_get_db_pragmas(tmp_path):
     conn = get_db(tmp_path / "test.db")
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+
+def test_get_db_survives_a_python_without_loadable_extensions(tmp_path, no_load_extension):
+    """Task 12: a pyenv build compiled without --enable-loadable-sqlite-extensions
+    raises AttributeError from conn.enable_load_extension, not OSError or
+    sqlite3.Error -- so get_db must catch it explicitly or every `attest`
+    subcommand dies, including runs scan/compare and claims, which need no
+    extension at all. Before the fix, this raised straight out of get_db.
+    """
+    conn = get_db(tmp_path / "test.db")
+    assert vector_extension_available(conn) is False
+    # The relational schema must still be usable -- this is the whole point:
+    # the ledger and claim checker need no vector table.
+    conn.execute("INSERT INTO items(feed_id, title, content_hash) VALUES (NULL, 't', 'h')")
+    assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
+
+
+def test_get_db_without_extension_does_not_create_vec0_tables(tmp_path, no_load_extension):
+    """_ensure_vec_tables runs on every get_db() and creates item_vectors /
+    reference_vectors as vec0 virtual tables -- but CREATE VIRTUAL TABLE ...
+    USING vec0 itself requires the extension to be loaded. Attempting it
+    anyway would just trade one obscure crash for another. The table must be
+    genuinely absent so a caller that touches it gets a clear
+    "no such table" rather than a second AttributeError.
+    """
+    conn = get_db(tmp_path / "test.db")
+    tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "item_vectors" not in tables
+    assert "reference_vectors" not in tables
+
+
+def test_vector_extension_available_true_on_a_normal_connection(tmp_path):
+    conn = get_db(tmp_path / "test.db")
+    assert vector_extension_available(conn) is True
 
 
 def test_a_fresh_database_has_no_personas(tmp_path):
@@ -138,6 +223,110 @@ def test_dims_mismatch_refuses_to_open(tmp_path, monkeypatch):
     monkeypatch.setenv("EMBED_DIMS", "512")
     with pytest.raises(RuntimeError, match=r"float\[256\].*EMBED_DIMS=512"):
         get_db(tmp_path / "t.db")
+
+
+def test_embedding_model_is_recorded_on_fresh_db(tmp_path, monkeypatch):
+    """A freshly created vec table records the EMBED_MODEL that will populate
+    it, at creation time -- the table is empty until embed.py writes to it, so
+    creation time is the only hook db.py has that precedes every write."""
+    monkeypatch.setenv("EMBED_MODEL", "embeddinggemma")
+    conn = get_db(tmp_path / "t.db")
+    rows = {r["table_name"]: r["model"] for r in conn.execute("SELECT * FROM embedding_model")}
+    assert rows == {"item_vectors": "embeddinggemma", "reference_vectors": "embeddinggemma"}
+
+
+def test_embedding_model_mismatch_refuses_to_open(tmp_path, monkeypatch):
+    """A database embedded with one model, reopened under a different
+    EMBED_MODEL, must refuse -- same-width vectors from different models are
+    silently incoherent similarity, not a dimension error the existing dims
+    guard would ever catch."""
+    import pytest
+
+    monkeypatch.setenv("EMBED_MODEL", "embeddinggemma")
+    get_db(tmp_path / "t.db").close()
+    monkeypatch.setenv("EMBED_MODEL", "nvidia/nemotron-3-embed-1b")
+    with pytest.raises(
+        RuntimeError, match=r"embeddinggemma.*EMBED_MODEL=nvidia/nemotron-3-embed-1b"
+    ):
+        get_db(tmp_path / "t.db")
+
+
+def test_embedding_model_matching_reopen_succeeds(tmp_path, monkeypatch):
+    monkeypatch.setenv("EMBED_MODEL", "embeddinggemma")
+    get_db(tmp_path / "t.db").close()
+    conn = get_db(tmp_path / "t.db")  # same EMBED_MODEL both times -- must not raise
+    conn.close()
+
+
+def test_legacy_db_with_vectors_and_no_recorded_model_still_opens(tmp_path, monkeypatch):
+    """An existing database created before this feature shipped has vectors
+    but no embedding_model rows. It must NOT hard-fail -- that would break
+    every current user on their next `attest` invocation. The chosen policy:
+    backfill the current EMBED_MODEL as the recorded model on this open
+    (there is no way to recover what actually produced the old vectors, and
+    refusing or leaving it blank forever both cost more than treating "opened
+    under model X with no contrary record" as X)."""
+    monkeypatch.setenv("EMBED_MODEL", "embeddinggemma")
+    path = tmp_path / "legacy.db"
+    conn = get_db(path)
+    conn.execute("INSERT INTO items(feed_id, title, content_hash) VALUES (NULL, 't', 'h')")
+    item_id = conn.execute("SELECT id FROM items").fetchone()["id"]
+    import numpy as np
+
+    vec = np.zeros(256, dtype=np.float32)
+    conn.execute(
+        "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)", (item_id, vec.tobytes())
+    )
+    # Simulate "created before this feature existed": drop the row this open
+    # just wrote, mimicking a database that predates embedding_model entirely.
+    conn.execute("DELETE FROM embedding_model WHERE table_name = 'item_vectors'")
+    conn.commit()
+    conn.close()
+
+    conn = get_db(path)  # must not raise
+    row = conn.execute(
+        "SELECT model FROM embedding_model WHERE table_name = 'item_vectors'"
+    ).fetchone()
+    assert row["model"] == "embeddinggemma"  # backfilled from the current config
+    vecs = conn.execute("SELECT COUNT(*) c FROM item_vectors").fetchone()["c"]
+    assert vecs == 1  # the existing vector survived the backfill untouched
+
+
+def test_empty_legacy_db_with_no_model_recorded_does_not_backfill_early(tmp_path, monkeypatch):
+    """A vec table with zero vectors and no recorded model is the ordinary
+    fresh-creation path (covered above), not the legacy path -- this test
+    only documents that an empty table with a missing row is never treated as
+    a mismatch, whichever EMBED_MODEL is configured on reopen once no vectors
+    exist."""
+    monkeypatch.setenv("EMBED_MODEL", "embeddinggemma")
+    path = tmp_path / "empty.db"
+    get_db(path).close()
+
+    conn = sqlite3.connect(str(path))
+    conn.execute("DELETE FROM embedding_model")
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("EMBED_MODEL", "some-other-model")
+    conn = get_db(path)  # must not raise: nothing to be incoherent with yet
+    row = conn.execute(
+        "SELECT model FROM embedding_model WHERE table_name = 'item_vectors'"
+    ).fetchone()
+    assert row["model"] == "some-other-model"
+
+
+def test_existing_db_migrates_to_embedding_model_table(tmp_path):
+    """An old database (pre-migration) gains the embedding_model table on
+    open without losing its data."""
+    conn = get_db(str(tmp_path / "h.db"))
+    conn.execute("DROP TABLE IF EXISTS embedding_model")
+    conn.execute("PRAGMA user_version = 9")
+    conn.commit()
+    conn.close()
+
+    conn = get_db(str(tmp_path / "h.db"))
+    tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "embedding_model" in tables
 
 
 def test_resolve_db_path_reads_unprefixed_env(tmp_path, monkeypatch):

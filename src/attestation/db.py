@@ -8,6 +8,22 @@ from pathlib import Path
 
 import sqlite_vec
 
+
+class _Connection(sqlite3.Connection):
+    """Plain sqlite3.Connection subclass, existing only so instances get a
+    normal __dict__ -- the base sqlite3.Connection type has none, so
+    `conn.vector_extension_available = False` raises AttributeError on it
+    (verified live). Subclassing changes nothing else: isinstance(conn,
+    sqlite3.Connection) still holds, and every method is inherited.
+
+    `vector_extension_available` records whether Task 12's sqlite-vec load
+    succeeded on THIS connection -- see get_db() and
+    vector_extension_available() below.
+    """
+
+    vector_extension_available: bool
+
+
 # Legacy path, kept deliberately: this is where existing databases live. The
 # skill directory was renamed to research-provenance, but repointing this would
 # orphan every database created before the rename for no benefit.
@@ -470,6 +486,27 @@ def _migration_009_add_research(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_010_add_embedding_model(conn: sqlite3.Connection) -> None:
+    """Add the embedding_model table: one row per vec0 table naming the
+    EMBED_MODEL that produced the vectors currently stored in it.
+
+    Purely additive. Existing rows in item_vectors/reference_vectors get no
+    row here yet -- _ensure_vec_tables backfills the current EMBED_MODEL into
+    any vec table that has vectors but no recorded model, the first time such
+    a database is opened after upgrading. That backfill, not this migration,
+    is what makes the legacy case safe: see _ensure_vec_tables for why.
+
+    Numbered 010, not 009: a concurrent branch (feat/research-topics) already
+    claimed 009 for an unrelated migration by the time this one was written.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS embedding_model("
+        "  table_name TEXT PRIMARY KEY,"
+        "  model TEXT NOT NULL,"
+        "  recorded_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    )
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -487,6 +524,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (7, _migration_007_add_library),
     (8, _migration_008_add_title_key),
     (9, _migration_009_add_research),
+    (10, _migration_010_add_embedding_model),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]
@@ -552,17 +590,108 @@ def embed_dims() -> int:
     return int(os.environ.get("EMBED_DIMS", "256"))
 
 
+# Mirrors llm.DEFAULT_EMBED_MODEL. Not imported from attestation.llm: db.py
+# has no other dependency on that module, and embed_dims() already reads its
+# own env var directly rather than going through a sibling module -- same
+# local-read style, kept consistent here.
+DEFAULT_EMBED_MODEL = "embeddinggemma"
+
+
+def embed_model() -> str:
+    """Configured embedding model name (EMBED_MODEL, default embeddinggemma).
+
+    Read at call time -- see embed_dims(). This is the identity get_db()
+    checks against embedding_model on open: same width, different model, is a
+    silently incoherent vector space the dims guard alone cannot catch.
+    """
+    return os.environ.get("EMBED_MODEL", DEFAULT_EMBED_MODEL)
+
+
+def vector_extension_available(conn: sqlite3.Connection) -> bool:
+    """Whether sqlite-vec actually loaded on THIS connection.
+
+    False on a Python built without --enable-loadable-sqlite-extensions (see
+    get_db()'s docstring for Task 12's incident) or on any platform sqlite-vec
+    ships no binary for (e.g. Alpine/musl). Callers that genuinely need a
+    vec0 table -- ingest's vector insert, search, rank -- check this and
+    refuse with vector_extension_unavailable_message() instead of hitting
+    "no such table" or a bare AttributeError.
+    """
+    return getattr(conn, "vector_extension_available", True)
+
+
+def vector_extension_unavailable_message() -> str:
+    """The one wording for "sqlite-vec did not load", mirroring
+    rank.py's _embedder_unavailable_message() and ingest.py's chat/embedder
+    -down messages: name the real cause, name what still works, name the
+    remedy.
+    """
+    return (
+        "vector search unavailable: this Python was built without loadable"
+        " sqlite extension support (or sqlite-vec has no binary for this"
+        " platform), so sqlite-vec could not load. The ledger and claim"
+        " checker need no extension and are unaffected; feed search, rank,"
+        " and library embedding do. Remedy: use a Python built with"
+        " --enable-loadable-sqlite-extensions (uv-managed CPython, e.g. via"
+        " `uv python install 3.12`, has this; some pyenv/distro builds do"
+        " not) -- `attest install --check` reports which Python is active."
+    )
+
+
 def _vec_schema(dims: int, table: str = "item_vectors") -> str:
     return f"CREATE VIRTUAL TABLE IF NOT EXISTS {table} USING vec0(embedding float[{dims}])"
 
 
 def _ensure_vec_tables(conn: sqlite3.Connection) -> None:
-    """Create item_vectors and reference_vectors at EMBED_DIMS, refusing a mismatch.
+    """Create item_vectors and reference_vectors at EMBED_DIMS, refusing a
+    dims mismatch or an embedding-model mismatch.
 
-    Runs BEFORE SCHEMA because the two delete triggers reference these tables,
-    and a trigger cannot be created against a table that does not exist yet.
+    Skips entirely when vector_extension_available(conn) is False: `CREATE
+    VIRTUAL TABLE ... USING vec0` itself requires the extension, so attempting
+    it here would just trade one crash for another. Leaving the tables
+    genuinely absent is deliberate -- see Task 12's per-operation policy in
+    get_db()'s docstring. The relational SCHEMA and the migration ladder both
+    run regardless, since neither depends on these tables existing (the two
+    delete triggers below are the exception this function itself creates, so
+    skipping this function skips them too, which is correct: nothing to
+    delete-cascade into a vec0 table that was never created).
+
+    Runs BEFORE SCHEMA and the migration ladder because the two delete
+    triggers reference these tables, and a trigger cannot be created against
+    a table that does not exist yet -- so embedding_model is created here too
+    (IF NOT EXISTS, same as migration 010) rather than left for the ladder,
+    which would not have run yet on a fresh database at this point.
+
+    Model-identity policy, by case:
+      - table doesn't exist yet: create it, record the configured model as
+        the one that will populate it. Nothing to be incoherent with.
+      - table exists, has a recorded model, model matches: fine.
+      - table exists, has a recorded model, model differs: refuse, same as
+        the dims guard.
+      - table exists, NO recorded model (a database from before this
+        feature): if it has vectors, this is the legacy case -- refusing
+        would break every current user on their next `attest` invocation, and
+        there is no way to recover what model actually produced those old
+        vectors. Backfill the currently configured model as the recorded one
+        and proceed; from the NEXT open onward this database is tracked and a
+        genuine mismatch will be caught. If it has no vectors, there is
+        nothing to protect yet, so this is really the fresh-creation case
+        under an old table (e.g. dropped and recreated in a test) and gets
+        the same treatment as "doesn't exist yet".
     """
+    if not vector_extension_available(conn):
+        # embedding_model is left uncreated here too -- migration 010 creates
+        # it (IF NOT EXISTS) regardless, and there is no vec table for it to
+        # record a model against yet on this connection.
+        return
     dims = embed_dims()
+    model = embed_model()
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS embedding_model("
+        "  table_name TEXT PRIMARY KEY,"
+        "  model TEXT NOT NULL,"
+        "  recorded_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    )
     for table in ("item_vectors", "reference_vectors"):
         existing = conn.execute("SELECT sql FROM sqlite_master WHERE name = ?", (table,)).fetchone()
         if existing:
@@ -575,6 +704,29 @@ def _ensure_vec_tables(conn: sqlite3.Connection) -> None:
                 )
         else:
             conn.execute(_vec_schema(dims, table))
+        recorded = conn.execute(
+            "SELECT model FROM embedding_model WHERE table_name = ?", (table,)
+        ).fetchone()
+        if recorded is None:
+            # No row yet, whether because the table is brand new or because it
+            # is a pre-existing database from before this feature shipped (the
+            # legacy case: vectors already present, never recorded against).
+            # Both get the same treatment -- backfill the configured model as
+            # the one now of record, and never refuse on this first sighting.
+            # See the docstring's third case for why: there is no way to
+            # recover what actually produced pre-existing vectors, and
+            # refusing here would break every current user on their next
+            # `attest` invocation. A genuine mismatch is caught starting the
+            # NEXT time this database is opened.
+            conn.execute(
+                "INSERT INTO embedding_model(table_name, model) VALUES (?, ?)", (table, model)
+            )
+        elif recorded["model"] != model:
+            raise RuntimeError(
+                f"database has {table} vectors recorded from model={recorded['model']!r} but"
+                f" EMBED_MODEL={model} — re-ingest into a fresh database or set matching"
+                " EMBED_MODEL"
+            )
 
 
 SEED_USERS = {
@@ -708,18 +860,51 @@ def get_db(path: str | Path) -> sqlite3.Connection:
     and seed_demo_users() plants all three. Seeding on creation put the
     author's own persona in every stranger's database; seeding on every open
     resurrected personas the reader had deleted.
+
+    TASK 12 -- sqlite-vec extension load, and why it must not raise here:
+
+    Loading sqlite-vec needs conn.enable_load_extension(True/False), a method
+    a Python built without --enable-loadable-sqlite-extensions does not have
+    at all (measured: pyenv 3.12.4, no; uv-managed 3.12.12/3.13.11, yes -- see
+    Task 12's incident notes). That surfaced as a bare AttributeError, which
+    is neither OSError nor sqlite3.Error, so it passed straight through every
+    handler in this codebase and killed EVERY `attest` subcommand -- including
+    `runs scan`/`compare` and `claims`, which touch no vector table at all and
+    are advertised (README, docs/guides/install.md) as needing no model
+    server and no extension. That promise must survive this failure, so the
+    load is best-effort: catch AttributeError alongside sqlite3.Error (a
+    missing/incompatible sqlite-vec binary raises OperationalError) and
+    OSError (a bad shared-library path), record the outcome on the connection,
+    and continue opening the relational schema regardless.
+
+    Per-operation policy (the rest of Task 12): this function does not decide
+    who may proceed without vectors -- it only makes the fact observable via
+    vector_extension_available(conn), cheaply and per-connection, so callers
+    can. The two-tier split follows CLAUDE.md's own framing verbatim ("the
+    ledger and claim checking need no model; the feed does"): `runs
+    scan/compare/list/show/record` and `claims` never check this and always
+    proceed; `ingest`, `library sync/search/embed`, and `eval` check it in
+    cli.py's open_db(need_vectors=True) and refuse with
+    vector_extension_unavailable_message() before calling any code that would
+    otherwise hit "no such table: item_vectors" -- itself a consequence of
+    _ensure_vec_tables() deliberately not creating vec0 tables it cannot
+    create correctly (see that function's docstring).
     """
     path = Path(path)
     is_new = not path.exists()
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn = sqlite3.connect(str(path), check_same_thread=False, factory=_Connection)
     if is_new:
         # Before any schema is written, so the file is never readable with
         # content in it -- not even for the width of executescript().
         _restrict_db_files(path)
     conn.row_factory = sqlite3.Row
-    conn.enable_load_extension(True)
-    sqlite_vec.load(conn)
-    conn.enable_load_extension(False)
+    try:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        conn.vector_extension_available = True
+    except (AttributeError, OSError, sqlite3.Error):
+        conn.vector_extension_available = False
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")

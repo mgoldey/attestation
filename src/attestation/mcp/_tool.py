@@ -206,6 +206,26 @@ def tool(
                     return result
             except ToolError as exc:
                 return fail(str(exc))
+            except _embedder_unavailable_type() as exc:
+                # An unreachable embedding model is an EXPECTED, actionable
+                # condition -- CLAUDE.md's Reliability contract puts it beside
+                # ToolError, not beside a bug -- so it gets the same verbatim
+                # treatment. Before this it fell into the generic `except
+                # Exception` below and came back as "internal error in
+                # list_feed; see server logs", which reads as a server fault
+                # and gives an agent nothing to act on: no hint that the fix
+                # is starting Ollama, let alone the `attest install --check`
+                # command the web UI's EMBEDDER_DOWN template already names
+                # for the same condition (server.py:145-149). rank.py builds
+                # that actionable text; this only has to pass it through.
+                #
+                # Imported lazily (see _embedder_unavailable_type, below,
+                # mirroring _autocreate_user/_get_user in this same module):
+                # rank.py pulls in sklearn at import time (~929ms per
+                # test_cli_help_stays_fast), and a module-scope import here
+                # would force that cost onto every MCP tool call rather than
+                # only the ones that end up needing rank.py anyway.
+                return fail(str(exc))
             except sqlite3.OperationalError as exc:
                 # Contention is transient and the caller can act on it; a bug
                 # is neither. Both arrived as "internal error; see server
@@ -267,3 +287,13 @@ def _get_user(conn: sqlite3.Connection, name: str):
     from attestation.rank import get_user
 
     return get_user(conn, name)
+
+
+def _embedder_unavailable_type():
+    """`rank.EmbedderUnavailable`, imported lazily -- same reason as
+    `_autocreate_user`/`_get_user` above: importing rank.py at module scope
+    would pull in sklearn (~929ms, test_cli_help_stays_fast) on every import
+    of this module, not just the calls that actually reach it."""
+    from attestation.rank import EmbedderUnavailable
+
+    return EmbedderUnavailable

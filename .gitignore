@@ -10,6 +10,9 @@ __pycache__/
 .ruff_cache/
 .pytest_cache/
 .env
+# Credential-bearing env files (neon.env holds a live Postgres password and S3
+# secret keys). `.env` alone does not match `neon.env` or `*.env`.
+*.env
 
 # Local demo recordings: a 5.5MB .webm plus stills, never committed. Kept out
 # of the repo so a clone stays small -- a binary that large is permanent

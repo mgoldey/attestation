@@ -160,6 +160,37 @@ def test_a_raising_callable_empty_is_contained_not_leaked():
     assert "see server logs" in out["message"]
 
 
+def test_embedder_unavailable_reaches_the_caller_as_a_named_condition_not_a_bug():
+    """rank.EmbedderUnavailable is an EXPECTED, actionable refusal (CLAUDE.md:
+    "an unreachable model server is an EXPECTED, actionable condition, not a
+    bug") -- the web UI already has a dedicated EMBEDDER_DOWN template for it
+    (server.py:145-149). Before this, the MCP path had no case for it at all,
+    so it fell into the generic `except Exception` branch and came back as
+    "internal error in list_feed; see server logs" -- useless to an agent,
+    which cannot act on a bug report for a condition it could actually explain
+    to the user and suggest a fix for.
+
+    The decorator must map it the same way ToolError already is: the message
+    reaches the caller verbatim, not swapped for the generic bug message.
+    """
+    from attestation.rank import EmbedderUnavailable
+
+    @tool(empty={"items": []}, needs_db=False, label="list_feed")
+    def f():
+        raise EmbedderUnavailable(
+            "embedding model unreachable (LLM_BASE_URL=http://127.0.0.1:9/v1) --"
+            " is ollama running? (`attest install --check` diagnoses this)"
+        )
+
+    out = f()
+    assert out["ok"] is False
+    assert out["items"] == []
+    assert "internal error" not in out["message"].lower()
+    assert "see server logs" not in out["message"]
+    assert "embedding model unreachable" in out["message"]
+    assert "attest install --check" in out["message"]
+
+
 def test_unknown_user_names_the_valid_ones(tmp_path, monkeypatch):
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
 

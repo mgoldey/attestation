@@ -9,6 +9,12 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-18
+
+First published release. Nothing was released under 0.1.0 — the version
+existed in `pyproject.toml` but no tag or PyPI artifact was ever cut, so
+this is the repo's first public artifact despite the number.
+
 ### Added
 
 - PyPI release path (`2026-09-11`): `.github/workflows/release.yml` builds
@@ -27,6 +33,16 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Fixed
 
+- `feed.research` / `attest research` with `--journal` on CrossRef
+  (`2026-09-11`): the journal was passed as `query.container-title`, which
+  CrossRef treats as a ranking hint, so a search scoped to the Journal of
+  Chemical Physics returned Chemical Engineering Science 12 of 12 times. The
+  client now resolves the journal name to an ISSN through `/journals` (title
+  equality after normalisation, one cached request per name) and filters
+  with `issn:`; an unresolved abbreviation falls back to the boost plus a
+  client-side container-title match, which returns nothing rather than the
+  wrong journal. PubMed's `[Journal]` term was already a filter and is
+  unchanged.
 - `runs.ask` (`2026-09-03`): comparing arms by a metric the question named
   silently fell back to whichever metric most arms shared instead, because
   `_runs_ask` called `_compare(family)` with no metric argument at all —
@@ -193,4 +209,5 @@ commit that carries the reasoning rather than repeating it; `git log
   the first green CI run needed a stubbed daemon test plus a Python build
   that can load the `sqlite-vec` extension (`d4ea750`).
 
-[Unreleased]: https://github.com/mgoldey/attestation/compare/573e42c...HEAD
+[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mgoldey/attestation/compare/573e42c...v0.2.0

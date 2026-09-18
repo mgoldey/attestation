@@ -26,11 +26,20 @@ def _hermetic_env(tmp_path, monkeypatch):
     is deliberate: an unset variable falls back to $HOME, which is the bug.
     """
     import attestation.corpus
+    import attestation.db
     import attestation.ledger
     import attestation.llm
 
-    for var in (*attestation.llm.ENV_VARS, "EMBED_DIMS", "RSS_DB"):
+    for var in (*attestation.llm.ENV_VARS, "EMBED_DIMS", "RSS_DB", "ATTEST_DB"):
         monkeypatch.delenv(var, raising=False)
+    # Never the LIVE database. resolve_db_path falls through to the skill data
+    # dir when that file exists, and on the author's machine it does: on
+    # 2026-09-11 two cite.check tests opened it, found another session had
+    # migrated it to schema 10 while the code knew 9, and failed on a clean
+    # merged tip. A test that reads machine state fails for reasons unrelated
+    # to the branch. Tests that exercise the fallback itself repoint this to a
+    # path of their own.
+    monkeypatch.setattr(attestation.db, "SKILL_DATA_DB", tmp_path / "absent-skill-data.db")
     monkeypatch.setenv(
         attestation.ledger.METRIC_DIRECTION_PATH_ENV, str(tmp_path / "absent-metric_direction.toml")
     )
@@ -52,6 +61,9 @@ class FakeEmbedder:
 
     def embed_document(self, title: str, text: str) -> np.ndarray:
         return self._vec(f"doc:{title}:{text}")
+
+    def embed_documents(self, pairs) -> list[np.ndarray]:
+        return [self.embed_document(title, text) for title, text in pairs]
 
     def embed_query(self, text: str) -> np.ndarray:
         return self._vec(f"query:{text}")

@@ -92,20 +92,20 @@ one way to use all of them:
 
 ## Install
 
-Two tiers: Python 3.12+ and [`uv`](https://docs.astral.sh/uv/) alone runs
-the ledger and claim checker; add [Ollama](https://ollama.com) for the feed,
-tagging, and knowledge graph. Models are optional and pulled for you.
+Two tiers. **The run ledger and claim checker above need only Python 3.12+
+and [`uv`](https://docs.astral.sh/uv/)** — no model, no download. The feed,
+tagging, and knowledge graph additionally need [Ollama](https://ollama.com/download)
+running locally; `attest install` then pulls **~7.8 GB** of models
+(`gemma4:e2b-it-q4_K_M` 7.2 GB + `embeddinggemma` 621 MB) and holds ~5.4 GB
+resident while warm. Skip this tier entirely if you only want provenance.
 
 ```bash
-uvx attestation install          # from PyPI, nothing cloned
-uvx attestation install --check  # diagnose only, exits 1 on gaps
+uvx attestation install          # from PyPI, nothing cloned; --check diagnoses only
 ```
 
-No GPU? Point `LLM_BASE_URL` at any OpenAI-compatible endpoint with `LLM_API_KEY`;
-`--check` confirms the models answer ([install guide](docs/guides/install.md#hosted-models-instead-of-ollama)).
-
-See [docs/guides/install.md](docs/guides/install.md) for prerequisites and
-the manual steps `attest install` automates.
+No GPU? Point `LLM_BASE_URL` at an OpenAI-compatible endpoint; `--check` confirms
+it answers. [docs/guides/install.md](docs/guides/install.md): that tier,
+prerequisites, and the manual steps `attest install` automates.
 
 ## Chat with it from Discord
 

@@ -40,6 +40,7 @@ from attestation.rank import (
     RELEVANCE_ANCHOR,  # noqa: F401 -- re-exported: the measured policy is read from here
     RELEVANCE_FLOOR,  # noqa: F401
     apply_relevance_floor,
+    item_count,
     record_click,
     vector_search,
 )
@@ -460,11 +461,44 @@ def _list_feed(conn, user_row, limit: int = 4, since_days: SinceDays = 14) -> di
     items = ranked_items(conn, user_row, limit + 1, since_days)
     more = len(items) > limit
     items = items[:limit]
+    if items:
+        message = f"{len(items)} item(s), best first" + (
+            f"; more available -- raise limit (max {MAX_LIST_LIMIT})" if more else ""
+        )
+    else:
+        # `[]` with ok:true was indistinguishable between "the database has
+        # nothing yet" and "there is a feed, just not in this window" --
+        # feed.digest already tells these apart (ToolError("no unread items
+        # to digest")), and this is the documented worst-case first-run
+        # experience: an agent reading `{"items": []}` alone cannot tell the
+        # reader why. Kept as ok:true rather than a ToolError, unlike digest:
+        # a zero-item list is not a refusal-worthy condition here -- an
+        # unrecognised user autocreates and legitimately has nothing ranked
+        # yet, and a caller may reasonably want the true "nothing" answer
+        # rather than an exception to catch. The message carries the
+        # explanation the same way the "more available" caveat above already
+        # does, so no new envelope field or size cost on the common path --
+        # the total-items count is only queried once we already know the
+        # window came back empty.
+        total = item_count(conn)
+        if total == 0:
+            message = (
+                "0 item(s) -- the database has no items yet; run `attest ingest` to fetch some"
+            )
+        elif since_days is None:
+            # Unbounded window with items in the database but none ranked:
+            # every one of them has already been clicked (ranked_items
+            # excludes rated items) -- there is no "larger window" to try.
+            message = (
+                f"0 item(s) -- {total} item(s) exist but all are already rated; try feed.search"
+            )
+        else:
+            message = (
+                f"0 item(s) in the last {since_days} day(s) -- {total} item(s) exist outside"
+                " this window; try a larger since_days"
+            )
     return {
-        "message": (
-            f"{len(items)} item(s), best first"
-            + (f"; more available -- raise limit (max {MAX_LIST_LIMIT})" if more else "")
-        ),
+        "message": message,
         "items": [it.to_row() for it in items],
         "ranking_quality": ranking_quality(conn, user_row["id"]),
     }

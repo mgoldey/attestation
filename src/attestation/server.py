@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from attestation.db import get_db
+from attestation.db import SEED_USERS, get_db
 from attestation.explain import explain
 from attestation.llm import base_url, default_chat_fn
 from attestation.rank import (
@@ -125,17 +125,45 @@ PAGE = env.from_string("""<!doctype html>
 # it on the spot for whoever opened the page: a stranger's first screen was
 # someone else's reading profile. Ranking starts from the interests text
 # alone, so that is the one thing worth asking for.
+#
+# Archetype buttons prefill #interests; they never submit on their own -- the
+# blank textarea IS the product on first run (zero clicks means ranking is
+# pure cosine similarity against this string), so a stranger got a useless
+# feed and no way to know why. The interests text reaches the page through a
+# `data-interests` ATTRIBUTE, never through `| tojson` into an inline JS
+# string: `tojson` only JSON-escapes, and with autoescape on, a `"` in the
+# text would close the onclick="..." attribute early, exactly the class of
+# bug the hx-vals comments above warn about for the vote buttons. Reading it
+# back as `this.dataset.interests` means no JS string literal is ever
+# constructed, so there is nothing to escape wrong.
 ONBOARD = env.from_string("""<div id="feed">
 <h2>Who is reading?</h2>
 <form method="post" action="/personas">
  <p><label>Name <input name="name" required autofocus></label></p>
+ <p>Not sure what to write? Start from an archetype, then edit it:</p>
+ <p>
+ {% for a in archetypes %}
+  <button type="button" class="archetype-btn" data-interests="{{ a.interests }}"
+   onclick="document.getElementById('interests').value=this.dataset.interests"
+   >{{ a.name }}</button>
+ {% endfor %}
+ </p>
  <p><label>What do you read about?<br>
-  <textarea name="interests" rows="3" cols="60" required
+  <textarea id="interests" name="interests" rows="3" cols="60" required
    placeholder="e.g. retrieval and ranking, quantum chemistry, evaluation methodology"></textarea>
  </label></p>
  <p><button type="submit">Start reading</button></p>
 </form>
 </div>""")
+
+# db.SEED_USERS, not new copy: the same three ready-made archetypes that seed
+# the demo personas (attest bootstrap-persona / seed_demo_users), reused here
+# as onboarding suggestions rather than autoseeded -- get_db deliberately
+# never plants them, per CLAUDE.md, so they must be OFFERED and explicitly
+# chosen on the form, never inserted on our behalf. dict order is source
+# order in db.py (researcher, bench-chemist, ml-engineer); Jinja iterates it
+# as given.
+ONBOARD_ARCHETYPES = [{"name": name, "interests": text} for name, text in SEED_USERS.items()]
 
 # Rendered in the feed slot when the embedder is down and this reader has no
 # cached profile vector -- the state every reader is in on a fresh `attest
@@ -322,7 +350,11 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         users = persona_names()
         if user is None:
             if not users:
-                return PAGE.render(users=users, user=None, feed_content=ONBOARD.render())
+                return PAGE.render(
+                    users=users,
+                    user=None,
+                    feed_content=ONBOARD.render(archetypes=ONBOARD_ARCHETYPES),
+                )
             user = users[0]
         # creates the reader if new, and only from a same-origin page; see reader()
         feed_content = render_list(user, request)
@@ -332,7 +364,11 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
     def onboard():
         """The onboarding form on demand, e.g. from a "create another
         persona" link, rather than only when no persona exists yet."""
-        return PAGE.render(users=persona_names(), user=None, feed_content=ONBOARD.render())
+        return PAGE.render(
+            users=persona_names(),
+            user=None,
+            feed_content=ONBOARD.render(archetypes=ONBOARD_ARCHETYPES),
+        )
 
     @app.post("/personas", dependencies=[Depends(require_same_origin)])
     def create_persona(name: str = Form(...), interests: str = Form(...)):

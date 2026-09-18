@@ -766,9 +766,24 @@ def _candidates(conn, embedder, q: str, where: str, params: list, limit: int) ->
 def _semantic(conn, embedder, q: str, where: str, params: list, limit: int) -> SearchResult | None:
     """KNN over reference_vectors, the filters, the relative floor, the boost;
     None when the wire could not be reached or nothing cleared the floor."""
+    # Imported here, not at module scope, for the same reason _candidates
+    # imports vector_search locally: rank.py pulls in sklearn, and paying that
+    # import cost just to load library.py is what `test_cli_help_stays_fast`
+    # polices.
+    from attestation.rank import EmbedderUnavailable
+
     try:
         sims = _candidates(conn, embedder, q, where, params, limit)
-    except (httpx.HTTPError, OSError):
+    except (httpx.HTTPError, OSError, EmbedderUnavailable):
+        # EmbedderUnavailable joined this tuple when rank.vector_search started
+        # converting httpx.ConnectError/ConnectTimeout into it (so feed.search
+        # could report an actionable refusal instead of leaking a raw transport
+        # error). It is a plain RuntimeError, so it silently stopped matching
+        # here and escaped uncaught -- breaking THIS caller's deliberately
+        # different policy. feed.* surfaces the condition to the agent; library
+        # search degrades to substring, per this function's own contract
+        # ("None when the wire could not be reached"). Both readings of the same
+        # underlying failure are correct, so the type has to appear in both.
         return None
     if not sims:
         return None

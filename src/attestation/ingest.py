@@ -18,6 +18,31 @@ log = logging.getLogger(__name__)
 ARXIV_RE = re.compile(r"arXiv:\S+\s+Announce Type:\s*\S+\s*Abstract:\s*", re.IGNORECASE)
 TAG_RE = re.compile(r"<[^>]+>")
 
+# Chunk size for the batched embedding pass (see run_ingest). Batching at all
+# is the big win: MEASURED against live Ollama/embeddinggemma on 96 real corpus
+# items, 416.2ms/item serial vs 42.1ms/item batched, a 9.9x speedup that takes
+# a ~3000-item first ingest from 20.8 min to 2.1 min.
+#
+# The chunk WIDTH is a much smaller effect, and it is a tradeoff rather than a
+# maximum. Swept on the same 96 items, best of three runs each:
+#
+#     16 -> 57.6 ms/item   (6 requests)   the original choice
+#     32 -> 47.5 ms/item   (3 requests)   +21.4%
+#     48 -> 43.5 ms/item   (2 requests)   +32.6%
+#     64 -> 45.5 ms/item   (2 requests)   +26.6%
+#     96 -> 42.3 ms/item   (1 request)    +36.1%
+#
+# Per-item time flattens after ~32 -- 48 and 96 differ by about as much as two
+# runs of the same width do -- while the cost of a failure grows linearly with
+# the chunk, because a chunk fails or succeeds together and `_embed_entries`
+# raises out of the loop, abandoning that feed's whole embedding pass. The
+# endpoint itself imposes no ceiling worth designing around (256 texts in one
+# request returned 256 vectors at 40.7 ms/item), so the bound here is about
+# blast radius, not the server.
+#
+# 32 takes the bulk of the remaining gain while keeping the unit of loss small.
+EMBED_BATCH_SIZE = 32
+
 
 _ARXIV_ID = re.compile(
     r"(?:oai:arXiv\.org:|arxiv\.org/(?:abs|pdf)/)([a-z\-]+/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?",
@@ -262,6 +287,37 @@ def _ingest_outcome(outcomes: list[dict]) -> dict:
     return stats
 
 
+def _embed_entries(embedder, new_entries: list) -> list:
+    """`new_entries` rows with a vector appended, embedded in batches.
+
+    Pass 2 of `run_ingest`, extracted so that function stays under the
+    complexity ratchet: these are the slow HTTP calls to the model server and
+    they run OUTSIDE any transaction, because holding a db lock across them
+    would block every other reader and writer for that long.
+
+    Batched in chunks of `EMBED_BATCH_SIZE` -- measured 9.9x faster than one
+    request per item (416.2 -> 42.1 ms/item on 96 real corpus items), see the
+    constant's comment. `strict=True` on the zip is the guard that matters: a
+    short vector list would otherwise silently pair vectors with the wrong
+    entries.
+
+    A failed chunk raises straight out of here, exactly as a failed single
+    `embed_document` call used to, so `run_ingest`'s handler still sees the
+    same exception, the whole feed's pass 2 is abandoned, and pass 3 never
+    starts. No partial-chunk salvage: that would be a behaviour change rather
+    than a preservation.
+    """
+    vectors: list = []
+    for start in range(0, len(new_entries), EMBED_BATCH_SIZE):
+        chunk = new_entries[start : start + EMBED_BATCH_SIZE]
+        pairs = [(title, summary) for _entry, title, summary, _guid, _chash in chunk]
+        vectors.extend(embedder.embed_documents(pairs))
+    return [
+        (entry, title, summary, guid, chash, vec)
+        for (entry, title, summary, guid, chash), vec in zip(new_entries, vectors, strict=True)
+    ]
+
+
 def run_ingest(
     conn, embedder, feeds_path: str | Path, parse=feedparser.parse, *, clients=None
 ) -> dict:
@@ -294,12 +350,7 @@ def run_ingest(
 
             new_entries, skipped = _new_entries(conn, feed["id"], parsed.entries)
 
-            # Pass 2: embed everything outside of any transaction. These are
-            # the slow HTTP calls to Ollama -- no db lock is held while they run.
-            embedded = [
-                (entry, title, summary, guid, chash, embedder.embed_document(title, summary))
-                for entry, title, summary, guid, chash in new_entries
-            ]
+            embedded = _embed_entries(embedder, new_entries)
 
             # Pass 3: short write transaction -- just the inserts + last_fetched
             # update. `added_here` is counted locally and folded into the

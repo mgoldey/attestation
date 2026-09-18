@@ -140,7 +140,7 @@ tests never touch the network.
 |---|---|---|---|---|
 | `arxiv` | `export.arxiv.org/api/query?search_query=all:<q> AND submittedDate:[<since> TO *]&sortBy=submittedDate` | refused by `parse_topic` (arXiv has categories, not journals) | in the query | 3 s between requests, as arXiv asks |
 | `pubmed` | `eutils …/esearch.fcgi?db=pubmed&term=<q>[ AND "<journal>"[Journal]]&datetype=edat&mindate=<since>` then `efetch.fcgi?db=pubmed&rettype=abstract&retmode=xml` | `[Journal]` field | `mindate` | 3 requests/s, 10 with `NCBI_API_KEY` set |
-| `crossref` | `api.crossref.org/works?query=<q>&query.container-title=<journal>&filter=from-pub-date:<since>` | `query.container-title` | `from-pub-date` | the polite-pool header the CrossRef enricher already sends |
+| `crossref` | `api.crossref.org/works?query=<q>&filter=issn:<issn>,from-pub-date:<since>` | resolved to an ISSN via `/journals?query=<journal>` (title equality after normalisation, cached per client), then `filter=issn:`; an unresolved name (an abbreviation) falls back to `query.container-title` as a boost, over-fetch, and a client-side container-title match -- AMENDED 2026-09-11, see Measured | `from-pub-date` | the polite-pool header the CrossRef enricher already sends |
 
 `from-pub-date`, not `from-index-date`: a topic asks for papers *published*
 since the last run, and index date would resurface old papers CrossRef only
@@ -463,3 +463,20 @@ Whether topic items should be tagged by `attest tag` differently from RSS
 items (no reason yet). What `feed.digest` should say about a topic's first
 run, which can add dozens of items at once with old `published` dates (the
 14-day window already hides most of them; measure before designing).
+
+## Measured 2026-09-11: the journal parameter was a boost
+
+The first shipped CrossRef client passed `journal` as `query.container-title`
+and nothing else. Live: a search scoped to the Journal of Chemical Physics
+returned Chemical Engineering Science 12 times out of 12 under `sort=published`
+(the date sort is applied to the whole match set, so the boost never reaches
+the page) and 0 of 12 of its own papers under relevance order (the boost is
+weak). CrossRef's server-side `container-title` filter is exact-match on the
+registered title -- "The Journal of Chemical Physics" filtered, "Journal of
+Chemical Physics" returned 0. `/journals?query=Journal of Chemical Physics`
+returns the registered title with ISSNs 0021-9606/1089-7690, and
+`filter=issn:0021-9606` returned 218 hits, every one from the journal. So the
+client now resolves the name to an ISSN and filters on it; "J Chem Phys" has
+no `/journals` hit and stays best-effort, which returned 0 live -- an
+abbreviation is a known gap, reported as 0 papers rather than the wrong
+journal's papers.

@@ -1,0 +1,120 @@
+{
+ "status": "ok",
+ "message": {
+  "total-results": 4,
+  "items": [
+   {
+    "DOI": "10.1063/5.0000001",
+    "title": [
+     "Neural network potentials for water"
+    ],
+    "issued": {
+     "date-parts": [
+      [
+       2026,
+       2,
+       1
+      ]
+     ]
+    },
+    "URL": "https://doi.org/10.1063/5.0000001",
+    "author": [
+     {
+      "family": "Doe",
+      "given": "J"
+     }
+    ],
+    "container-title": [
+     "The Journal of Chemical Physics"
+    ],
+    "short-container-title": [
+     "J. Chem. Phys."
+    ]
+   },
+   {
+    "DOI": "10.1016/j.ces.2026.1",
+    "title": [
+     "Polystyrene dissolution by ML"
+    ],
+    "issued": {
+     "date-parts": [
+      [
+       2026,
+       2,
+       1
+      ]
+     ]
+    },
+    "URL": "https://doi.org/10.1016/j.ces.2026.1",
+    "author": [
+     {
+      "family": "Doe",
+      "given": "J"
+     }
+    ],
+    "container-title": [
+     "Chemical Engineering Science"
+    ],
+    "short-container-title": [
+     "Chem. Eng. Sci."
+    ]
+   },
+   {
+    "DOI": "10.1063/5.0000002",
+    "title": [
+     "Kernel force fields revisited"
+    ],
+    "issued": {
+     "date-parts": [
+      [
+       2026,
+       2,
+       1
+      ]
+     ]
+    },
+    "URL": "https://doi.org/10.1063/5.0000002",
+    "author": [
+     {
+      "family": "Doe",
+      "given": "J"
+     }
+    ],
+    "container-title": [
+     "The Journal of Chemical Physics"
+    ],
+    "short-container-title": [
+     "J. Chem. Phys."
+    ]
+   },
+   {
+    "DOI": "10.1021/acs.jctc.1",
+    "title": [
+     "Equivariant models"
+    ],
+    "issued": {
+     "date-parts": [
+      [
+       2026,
+       2,
+       1
+      ]
+     ]
+    },
+    "URL": "https://doi.org/10.1021/acs.jctc.1",
+    "author": [
+     {
+      "family": "Doe",
+      "given": "J"
+     }
+    ],
+    "container-title": [
+     "Journal of Chemical Theory and Computation"
+    ],
+    "short-container-title": [
+     "J. Chem. Theory Comput."
+    ]
+   }
+  ]
+ }
+}

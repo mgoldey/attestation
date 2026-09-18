@@ -7,6 +7,7 @@ import logging
 import sqlite3
 from collections.abc import Sequence
 
+import httpx
 import numpy as np
 from pydantic import BaseModel
 from sklearn.linear_model import LogisticRegression
@@ -56,6 +57,40 @@ RELEVANCE_FLOOR = 0.90
 RELEVANCE_ANCHOR = 3
 
 
+class EmbedderUnavailable(RuntimeError):
+    """The embedder is down and there is no cached vector to fall back on.
+
+    Its own type so callers can tell this expected, cold-start condition apart
+    from a bug -- the web UI's dedicated EMBEDDER_DOWN template catches it
+    (server.py:145-149, 304), and mcp/_tool.py's `@tool` maps it to a
+    ToolError-shaped refusal rather than the generic "internal error; see
+    server logs" bug path. The profile-vector cache is in-process memory, so a
+    freshly started `attest serve` is cold for every reader and this is the
+    FIRST thing a new user hits when Ollama is not running yet.
+    """
+
+
+def _embedder_unavailable_message() -> str:
+    """The one wording for "the embedding model cannot be reached", reused by
+    every raise site in this module.
+
+    rank.py is a domain module (test_domain_reaches_models_only_through_ports
+    forbids importing attestation.llm's concrete client here), so unlike
+    cli.py and server.py it cannot resolve the configured URL via
+    llm.base_url(). It names the env var instead, exactly as ingest.py already
+    does for the same condition -- naming it honestly rather than guessing at
+    a default the caller may not be using.
+    """
+    import os
+
+    configured = os.environ.get("LLM_BASE_URL")
+    where = f"LLM_BASE_URL={configured}" if configured else "LLM_BASE_URL is unset"
+    return (
+        f"embedding model unreachable ({where}) -- is ollama running?"
+        " (`attest install --check` diagnoses this)"
+    )
+
+
 def vector_search(
     conn,
     embedder,
@@ -83,7 +118,17 @@ def vector_search(
     """
     if table not in ("item_vectors", "reference_vectors"):
         raise ValueError(f"not a vector table: {table!r}")
-    vec = embedder.embed_query(query)
+    try:
+        vec = embedder.embed_query(query)
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        # Narrow on purpose -- no noqa needed, and these are exactly the two
+        # concrete transport types ports.backend_unreachable() matches (a
+        # refused or unanswered socket, i.e. Ollama not running), the same
+        # condition _profile_vector's stale-cache fallback already names.
+        # Anything else (a bug, a malformed response) is left to propagate:
+        # misdiagnosing a real bug as "is ollama running?" would send the
+        # caller chasing the wrong fix.
+        raise EmbedderUnavailable(_embedder_unavailable_message()) from exc
     sql = f"SELECT rowid, distance FROM {table} WHERE embedding MATCH ? AND k = ?"
     params: list = [vec.tobytes(), k]
     if restrict is not None:
@@ -255,6 +300,18 @@ def get_user(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
     stored spelling is whatever was passed: preserved on write, folded on read.
     """
     return conn.execute("SELECT * FROM users WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
+
+
+def item_count(conn: sqlite3.Connection) -> int:
+    """Total rows in `items`, regardless of window or rating state.
+
+    Exists so feed.list's empty-result branch can tell "the database has no
+    items yet" (run `attest ingest`) apart from "items exist, just none in
+    this window or all already rated" -- a plain COUNT(*), not ranking logic,
+    so it belongs here rather than as a raw SELECT in the MCP layer (the
+    pattern MCP_SQL_BASELINE in test_architecture.py exists to push back on).
+    """
+    return conn.execute("SELECT COUNT(*) n FROM items").fetchone()["n"]
 
 
 def create_user(conn, name: str, interests: str) -> int:
@@ -531,16 +588,6 @@ def _candidate_items(
     return conn.execute(sql, params).fetchall()
 
 
-class EmbedderUnavailable(RuntimeError):
-    """The embedder is down and there is no cached vector to fall back on.
-
-    Its own type so the web server can tell this expected, cold-start
-    condition apart from a bug: the profile-vector cache is in-process
-    memory, so a freshly started `attest serve` is cold for every reader and
-    this is the FIRST thing a new user hits when Ollama is not running yet.
-    """
-
-
 def _profile_vector(conn, embedder, user_id: int, interests_text: str) -> np.ndarray:
     """Cached profile embedding: recompute only when interests text changes.
 
@@ -566,7 +613,8 @@ def _profile_vector(conn, embedder, user_id: int, interests_text: str) -> np.nda
             )
             return cached[1]
         raise EmbedderUnavailable(
-            f"no cached profile vector for user_id={user_id} and embedder is unavailable"
+            f"{_embedder_unavailable_message()} (no cached profile vector for"
+            f" user_id={user_id} to fall back on)"
         ) from None
 
     _PROFILE_VEC_CACHE[cache_key] = (text_hash, vec)

@@ -310,6 +310,42 @@ def test_doctor_honesty_check_mode_on_wiped_home(tmp_path, monkeypatch):
         server.shutdown()
 
 
+def _snapshot(root: Path) -> tuple[set[Path], dict[Path, bytes]]:
+    """Every path under root (files AND directories, so a step that creates
+    an empty `.hermes/` cannot hide from this) plus file contents, so a test
+    can assert the tree is byte-for-byte unchanged rather than just checking
+    a few paths it happens to know about."""
+    all_paths = {p.relative_to(root) for p in root.rglob("*")}
+    contents = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    return all_paths, contents
+
+
+def test_check_mode_leaves_a_never_before_seen_home_byte_for_byte_unchanged(tmp_path, monkeypatch):
+    """`attest install --check` is documented as read-only (SKILL.md:60 "never
+    mutates anything", docs/guides/install.md:54 "changes nothing"). A machine
+    that has never run `attest install` or hermes-agent has no `~/.hermes` at
+    all -- this asserts the FULL fake-home tree, not just the few paths other
+    tests happen to check, is identical before and after `--check`, catching
+    any step that creates so much as an empty directory.
+    """
+    box, server = _sandbox(tmp_path, monkeypatch)
+    try:
+        assert list(box.fake_home.rglob("*")) == [], "fake home must start empty"
+        before_paths, before_contents = _snapshot(box.fake_home)
+
+        rc = install.run_install(check=True)
+
+        assert rc == 1  # a fresh home genuinely has gaps -- this is not a no-op check
+        after_paths, after_contents = _snapshot(box.fake_home)
+        assert after_paths == before_paths, (
+            f"--check created or removed paths under home: "
+            f"new={after_paths - before_paths} removed={before_paths - after_paths}"
+        )
+        assert after_contents == before_contents, "--check changed file contents under home"
+    finally:
+        server.shutdown()
+
+
 def test_cli_path_dispatches_through_real_parser(tmp_path, monkeypatch):
     box, server = _sandbox(tmp_path, monkeypatch)
     try:

@@ -297,3 +297,40 @@ def test_purge_feedback_clears_clicks_explanations_and_cache(seeded):
     assert conn.execute("SELECT 1 FROM users WHERE id = ?", (uid,)).fetchone() is not None
     purge_feedback(conn, uid, delete_user=True)
     assert conn.execute("SELECT 1 FROM users WHERE id = ?", (uid,)).fetchone() is None
+
+
+def test_propose_interests_offers_archetype_templates_on_an_empty_corpus(tmp_path, monkeypatch):
+    """`_propose_interests` used to return only tag_vocabulary's most common
+    tags -- and on a fresh database `item_tags` is empty until the tagging
+    pass runs, so it had nothing to offer exactly when a new persona needs it
+    most. It must now also carry the same ready-made archetypes db.SEED_USERS
+    holds, so an agent onboarding a stranger on turn one has something to
+    propose even with zero tags in the corpus.
+
+    Reusing SEED_USERS, not inventing new text: CLAUDE.md says the redundant,
+    repetitive phrasing in those strings is what makes them score well as a
+    profile embedding, so this must not tidy or shorten them for the tool
+    payload either.
+    """
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "empty.db"))
+    conn = get_db(tmp_path / "empty.db")
+    conn.execute("DELETE FROM users")
+    conn.commit()
+    conn.close()
+
+    from attestation.db import SEED_USERS
+    from attestation.mcp.personas import _propose_interests
+
+    out = _propose_interests()
+    assert out["prevalent_tags"] == [], "no tags exist yet on a fresh corpus"
+    assert "archetypes" in out, "nothing to propose to a new persona on turn one"
+    names = {a["name"] for a in out["archetypes"]}
+    assert names == set(SEED_USERS), f"archetypes drifted from db.SEED_USERS: {names}"
+    for archetype in out["archetypes"]:
+        assert archetype["interests"] == SEED_USERS[archetype["name"]], (
+            "archetype interests text must reach the tool payload verbatim, not tidied"
+        )
+    # No persona may be created merely by asking what to propose.
+    conn2 = get_db(tmp_path / "empty.db")
+    assert conn2.execute("SELECT COUNT(*) n FROM users").fetchone()["n"] == 0
+    conn2.close()

@@ -55,3 +55,19 @@ class Embedder:
     def embed_query(self, text: str) -> np.ndarray:
         """Embed a search query, with `QUERY_PROMPT` -- see `embed_document`."""
         return self._embed(QUERY_PROMPT.format(text=text))
+
+    def embed_documents(self, pairs: list[tuple[str, str]]) -> list[np.ndarray]:
+        """Batch form of `embed_document`: ONE request for all `(title, text)`
+        pairs, applying `DOC_PROMPT` to each and `truncate_normalize` to each
+        returned vector -- same prompt, same normalization, same asymmetry
+        guarantee, just fewer HTTP round trips.
+
+        Order safety is `EmbeddingClient.embed_many`'s job (it sorts by the
+        response `index`); this method just trusts the list it gets back is
+        already aligned to `pairs` and truncates/normalizes each entry in place.
+        """
+        if not pairs:
+            return []
+        prompts = [DOC_PROMPT.format(title=title or "none", text=text) for title, text in pairs]
+        raw = self.client.embed_many(prompts)
+        return [truncate_normalize(np.asarray(v, dtype=np.float32), self.dims) for v in raw]

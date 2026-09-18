@@ -88,6 +88,74 @@ def test_content_hash_stable():
     assert content_hash("a", "b") != content_hash("a", "c")
 
 
+def test_ingest_uses_batched_embedding_in_chunks(tmp_path, fake_embedder):
+    """run_ingest must call embed_documents (the batch path), not embed_document
+    per item one at a time -- and must chunk rather than sending one huge
+    request for a large feed."""
+    import attestation.ingest as ingest_mod
+
+    conn = get_db(tmp_path / "t.db")
+    feeds = write_feeds_toml(tmp_path, ["https://arxiv.example/rss", "https://blog.example/rss"])
+
+    calls = []
+
+    class BatchProbingEmbedder:
+        dims = 256
+
+        def embed_document(self, title, text):
+            raise AssertionError("must use the batch path, not per-item embed_document")
+
+        def embed_documents(self, pairs):
+            calls.append(list(pairs))
+            return [fake_embedder.embed_document(t, x) for t, x in pairs]
+
+        def embed_query(self, text):
+            return fake_embedder.embed_query(text)
+
+    stats = run_ingest(conn, BatchProbingEmbedder(), feeds, parse=fake_parse)
+
+    assert stats == {"added": 3, "skipped": 0, "failed_feeds": 0}
+    assert len(calls) >= 1, "embed_documents was never called"
+    total_embedded = sum(len(c) for c in calls)
+    assert total_embedded == 3
+    for c in calls:
+        assert len(c) <= ingest_mod.EMBED_BATCH_SIZE
+
+
+def test_ingest_chunks_large_feeds_into_multiple_batches(tmp_path, fake_embedder):
+    """A feed bigger than EMBED_BATCH_SIZE must not become one giant request."""
+    import attestation.ingest as ingest_mod
+
+    conn = get_db(tmp_path / "t.db")
+    conn.execute("INSERT INTO feeds(url, title) VALUES ('http://x', 'X')")
+    conn.commit()
+    feeds_toml = write_feeds_toml(tmp_path, [])
+
+    n = ingest_mod.EMBED_BATCH_SIZE * 2 + 3
+    entries = [_entry(i) for i in range(n)]
+
+    calls = []
+
+    class BatchProbingEmbedder:
+        dims = 256
+
+        def embed_documents(self, pairs):
+            calls.append(len(pairs))
+            return [fake_embedder.embed_document(t, x) for t, x in pairs]
+
+        def embed_query(self, text):
+            return fake_embedder.embed_query(text)
+
+    stats = run_ingest(
+        conn, BatchProbingEmbedder(), feeds_toml, parse=lambda url: _Entries(entries)
+    )
+
+    assert stats["added"] == n
+    assert len(calls) == 3, f"expected 3 chunks, got {calls}"
+    assert sum(calls) == n
+    assert all(c <= ingest_mod.EMBED_BATCH_SIZE for c in calls)
+
+
 def test_embed_calls_do_not_hold_write_lock(tmp_path, fake_embedder):
     """While embed_document runs (the slow HTTP call), a second connection
     must be able to write to the db without hitting SQLITE_BUSY -- proves no
@@ -98,14 +166,15 @@ def test_embed_calls_do_not_hold_write_lock(tmp_path, fake_embedder):
     other_conn = get_db(tmp_path / "t.db")
 
     class ProbingEmbedder:
-        def embed_document(self, title, text):
+        def embed_documents(self, pairs):
             # A concurrent writer must be able to commit right now.
-            other_conn.execute(
-                "INSERT INTO feeds(url, title) VALUES (?, ?)",
-                (f"https://probe.example/{title}", "probe"),
-            )
+            for title, _text in pairs:
+                other_conn.execute(
+                    "INSERT INTO feeds(url, title) VALUES (?, ?)",
+                    (f"https://probe.example/{title}", "probe"),
+                )
             other_conn.commit()
-            return fake_embedder.embed_document(title, text)
+            return [fake_embedder.embed_document(t, x) for t, x in pairs]
 
         def embed_query(self, text):
             return fake_embedder.embed_query(text)
@@ -272,6 +341,9 @@ class _DeadEmbedder:
         import httpx
 
         raise httpx.ConnectError("[Errno 111] Connection refused")
+
+    def embed_documents(self, pairs):
+        return self.embed_document("", "")
 
     def embed_query(self, text):
         return self.embed_document("", text)
