@@ -200,7 +200,13 @@ def test_mcp_domain_modules_stay_small():
         # feed.source_add via a research: url) and a `_feed_ask_needs_argument`
         # helper split out to keep `_feed_ask` itself under the complexity cap
         # -- the same seam `_route_research` used on the routing side.
-        "ask.py": 379,
+        # Raised 2026-09-18 for feed.research's results: `papers` joined
+        # `_RESULT_KEYS` and the refs build moved into `_refs`, because a
+        # paper is a library row with no item_id and the item_id filter
+        # silently dropped every one of them. The extraction was the
+        # complexity gate's call, not a preference -- inline, `_compose` hit
+        # 14 against a limit of 10.
+        "ask.py": 383,
         # Raised for runs.record (2026-09-01): a new tool plus its Arm
         # pydantic model in provenance.py, one new routing rule (with its
         # own ordering comment) in routing.py. Raised again the same day
