@@ -26,7 +26,7 @@ import httpx
 from defusedxml import DefusedXmlException
 from defusedxml import ElementTree as SafeET
 
-from attestation import citations
+from attestation import citations, paths
 from attestation.library import (
     ReferenceRecord,
     arxiv_from_doi,
@@ -36,7 +36,7 @@ from attestation.library import (
     normalise_title,
 )
 
-DEFAULT_CACHE = Path.home() / ".hermes" / "citation-cache"
+DEFAULT_CACHE = paths.citation_cache()
 # Every reader name `readers_from_env(sources=...)` accepts; a typo RAISES,
 # the ATTEST_TOOLS rule, rather than silently syncing nothing.
 SOURCE_NAMES = ("bibtex", "zotero", "feed", "arxiv", "crossref", "s2")

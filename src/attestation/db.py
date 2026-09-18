@@ -8,6 +8,8 @@ from pathlib import Path
 
 import sqlite_vec
 
+from attestation import paths
+
 
 class _Connection(sqlite3.Connection):
     """Plain sqlite3.Connection subclass, existing only so instances get a
@@ -28,8 +30,35 @@ class _Connection(sqlite3.Connection):
 # skill directory was renamed to research-provenance, but repointing this would
 # orphan every database created before the rename for no benefit.
 SKILL_DATA_DB = (
-    Path.home() / ".hermes" / "skills" / "science-recommendations" / "data" / "hermes.db"
-)
+    Path.home() / paths.DEFAULT_HOME_DIRNAME / "skills" / "science-recommendations" / "data"
+) / "hermes.db"
+
+# The same path, resolved through HERMES_HOME at call time. The constant above
+# is evaluated at import and stays because conftest's hermetic fixture and two
+# db tests monkeypatch it by name -- `live-db-in-tests` is the failure that
+# fixture exists to prevent, and repointing it here would quietly re-open the
+# real database in the suite. `resolve_db_path` asks THIS, so a provisioning
+# script that exports HERMES_HOME is obeyed while a test that patches the
+# constant still wins.
+_SKILL_DATA_SUFFIX = ("skills", "science-recommendations", "data", "hermes.db")
+
+
+def skill_data_db() -> Path:
+    """Where a pre-existing skill-data database lives under the agent home.
+
+    Monkeypatching `SKILL_DATA_DB` overrides this, because the suite must be
+    able to point it at a path that does not exist.
+    """
+    default = Path.home() / paths.DEFAULT_HOME_DIRNAME
+    for part in _SKILL_DATA_SUFFIX:
+        default = default / part
+    if SKILL_DATA_DB != default:
+        return SKILL_DATA_DB
+    resolved = paths.hermes_home()
+    for part in _SKILL_DATA_SUFFIX:
+        resolved = resolved / part
+    return resolved
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users(
@@ -789,8 +818,9 @@ def resolve_db_path(explicit: str | None) -> Path:
     if env_db:
         return Path(env_db)
 
-    if SKILL_DATA_DB.exists():
-        return SKILL_DATA_DB
+    skill_db = skill_data_db()
+    if skill_db.exists():
+        return skill_db
 
     return Path("hermes.db")
 

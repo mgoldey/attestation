@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from attestation import paths
+
 
 def workspace_root(explicit: str | None = None) -> Path | None:
     """Where the projects live. Explicit argument, then RESEARCH_ROOT, else None.
@@ -121,7 +123,7 @@ def _config_ladder(env_var: str, filename: str, workspace: Path | None = None) -
         candidate = Path(workspace) / filename
         if candidate.is_file():
             return candidate
-    return Path.home() / ".hermes" / filename
+    return paths.hermes_home() / filename
 
 
 # Split/phase affixes stripped from a metric name before the METRIC_DIRECTION
