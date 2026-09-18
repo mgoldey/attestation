@@ -105,6 +105,7 @@ HELP: dict[str, str] = {
     "reload": "restart running MCP servers so code edits take effect",
     "backup": "write a consistent copy of the database",
     "emit": "agent configs generated from the tool surfaces",
+    "manifest": "what a packager needs to know, derived from this package",
     "kg-report": "knowledge-graph health + topic clusters",
     "claims": "verify claims written in Markdown against runs",
     "browse": "open the ledger in Datasette (read-only)",
@@ -233,6 +234,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--write", action="store_true", help="write the Claude agent files (default: report only)"
     )
     sp.set_defaults(func=cmd_emit)
+
+    sp = sub.add_parser("manifest", help=HELP["manifest"])
+    sp.set_defaults(func=cmd_manifest)
 
     sp = sub.add_parser("kg-report", help=HELP["kg-report"])
     add_db(sp)
@@ -509,6 +513,21 @@ def cmd_backup(args: argparse.Namespace) -> int:
         return 1
     size = dest.stat().st_size / 1e6
     print(f"wrote {dest} ({size:.1f} MB) — restore by copying it back over {src}")
+    return 0
+
+
+@_documented("manifest")
+def cmd_manifest(args: argparse.Namespace) -> int:
+    """`attest manifest`: the integration facts, as JSON on stdout.
+
+    A packager (agentmarkit's starter presets, today) otherwise transcribes
+    them by hand into its own repo, where they go stale -- which is how a pin
+    sat 81 commits behind and `HERMES_HOME` went undocumented for a release.
+    Everything printed is derived from this package, never typed twice.
+    """
+    from attestation import manifest
+
+    print(manifest.render(), end="")
     return 0
 
 
