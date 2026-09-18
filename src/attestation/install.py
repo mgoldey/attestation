@@ -20,6 +20,7 @@ from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlparse
 
+from attestation import paths
 from attestation.llm import base_url, chat_model, embed_model
 
 # One skill per agent surface plus one for setup, mirroring AGENT_SURFACES and
@@ -563,7 +564,7 @@ def _skill_dest_roots() -> list[Path]:
     profile's skills from that directory only when it exists, so creating it
     would change which tree the profile reads.
     """
-    home = Path.home() / ".hermes"
+    home = paths.hermes_home()
     roots = [home / "skills"]
     profiles = home / "profiles"
     if profiles.is_dir():
@@ -914,7 +915,7 @@ def _refresh_script_content(root: Path) -> str:
     #    gated on RESEARCH_ROOT existing (most users will not have one) and
     #    silently skipped, never reported as broken, when it is unset --
     #    "must succeed" only binds when there is something to scan.
-    lock = Path.home() / ".hermes" / f"{REFRESH_SCRIPT_NAME.removesuffix('.sh')}.lock"
+    lock = paths.hermes_home() / f"{REFRESH_SCRIPT_NAME.removesuffix('.sh')}.lock"
     return (
         "#!/usr/bin/env bash\n"
         # No `-e`: failures are handled per-step below, so that a non-fatal
@@ -1006,7 +1007,7 @@ def _refresh_script_content(root: Path) -> str:
 
 
 def _refresh_script_path() -> Path:
-    return Path.home() / ".hermes" / "scripts" / REFRESH_SCRIPT_NAME
+    return paths.scripts_dir() / REFRESH_SCRIPT_NAME
 
 
 def _write_refresh_script(check: bool, root: Path) -> StepResult:

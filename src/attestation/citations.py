@@ -35,6 +35,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from attestation import paths
+
 DEFAULT_ZOTERO = Path.home() / "Zotero" / "zotero.sqlite"
 
 
@@ -386,7 +388,7 @@ class WebReader:
     network = True
 
     def __init__(self, cache_dir: Path | None = None):
-        self.cache_dir = cache_dir or (Path.home() / ".hermes" / "citation-cache")
+        self.cache_dir = cache_dir or paths.citation_cache()
 
     def all(self) -> Iterator[Reference]:
         """Not supported: a network source has no fixed set to enumerate.
