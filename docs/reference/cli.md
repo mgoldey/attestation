@@ -139,6 +139,15 @@ options:
   --write     write the Claude agent files (default: report only)
 ```
 
+## attest manifest
+
+```
+usage: attest manifest [-h]
+
+options:
+  -h, --help  show this help message and exit
+```
+
 ## attest kg-report
 
 ```
