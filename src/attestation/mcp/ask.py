@@ -146,10 +146,25 @@ def _feed_ask(user: str, question: str) -> dict:
     return _compose(out, decision.tool)
 
 
-def _compose(out: dict, tool: str) -> dict:
-    """Turn a tool's payload into an Answer, keeping every caveat."""
+def _refs(out: dict) -> list[dict]:
+    """How a reader reaches what the answer names: feed items by item_id,
+    research hits by the doi/arXiv id `cite.lookup` takes.
+
+    Split from `_compose` when papers joined it: a paper is a library row with
+    no item_id, so the item_id filter dropped every one and the reader was
+    told about work it had no way to open.
+    """
     items = out.get("items") or []
     refs = [{"item_id": i["item_id"], "url": i.get("url")} for i in items if "item_id" in i]
+    papers = [p for p in (out.get("papers") or []) if any(map(p.get, _PAPER_ID_KEYS))]
+    return refs + [
+        {"paper_id": p.get("arxiv_id") or p.get("doi"), "url": p.get("url")} for p in papers
+    ]
+
+
+def _compose(out: dict, tool: str) -> dict:
+    """Turn a tool's payload into an Answer, keeping every caveat."""
+    refs = _refs(out)
     quality = out.get("ranking_quality") or {}
     caveats = [c for c in (quality.get("caveat"), out.get("caveat")) if c]
     caveats += list(out.get("caveats") or [])
@@ -177,8 +192,12 @@ def _compose(out: dict, tool: str) -> dict:
 # A route whose result key is absent here degrades to a bare count, which is
 # silent, so test_ask_routing asserts the ANSWER names concepts rather than
 # counting them.
+# What makes a research hit reachable: any one of these is enough to cite it.
+_PAPER_ID_KEYS = ("url", "arxiv_id", "doi")
+
 _RESULT_KEYS = (
     "items",
+    "papers",
     "nodes",
     "concepts",
     "neighbors",

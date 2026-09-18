@@ -453,3 +453,59 @@ def test_runs_ask_metric_argument_wins_over_a_paraphrased_question(tmp_path, mon
     assert "winner: sweep_a" in out["answer"], (
         f"explicit metric= was not honoured over the paraphrased question: {out!r}"
     )
+
+
+def test_feed_research_answer_names_the_papers_and_carries_their_links():
+    """`feed.research` routed correctly and then threw its results away.
+
+    MEASURED from a live Discord session 2026-09-18: asked to "research
+    orthogonalized mixtures of experts", the agent called feed.ask, got back
+    "3 paper(s) from arxiv, pubmed; 3 new in the library" and answered that it
+    had "only a summary count rather than the specific details or titles". It
+    was not being evasive -- `_compose` really did hand it nothing else.
+
+    Two causes, both here rather than in the tool: `_RESULT_KEYS` listed
+    `items` but not `papers`, which is the key feed.research returns, so
+    `_summarise` degraded to the bare message; and `refs` is built only from
+    rows carrying `item_id`, which a paper row has no reason to have. The
+    reader then asked for "the explicit corpus" and got an apology, because
+    the ids and urls never crossed the wire.
+
+    This is the same failure as test_kg_ask_returns_the_answer_not_just_a_count
+    one route further on -- a route whose result key is absent degrades
+    silently -- so it is pinned the same way.
+    """
+    from attestation.mcp.ask import _compose
+
+    out = {
+        "ok": True,
+        "message": "3 paper(s) from arxiv, pubmed; 3 new in the library",
+        "papers": [
+            {
+                "title": "Towards a Statistical Understanding of Mixture-of-Experts",
+                "url": "https://arxiv.org/abs/2609.03501",
+                "arxiv_id": "2609.03501",
+                "doi": None,
+            },
+            {
+                "title": "Evidence for Shared Routing Geometry in Sparse MoE",
+                "url": "https://arxiv.org/abs/2609.02404",
+                "arxiv_id": "2609.02404",
+                "doi": None,
+            },
+        ],
+        "n_found": 3,
+        "stored": 3,
+        "offline": False,
+        "errors": [],
+    }
+
+    composed = _compose(out, "feed.research")
+
+    assert "Mixture-of-Experts" in composed["answer"], (
+        f"named the tool and dropped its papers: {composed['answer']!r}"
+    )
+    urls = [r.get("url") for r in composed["refs"]]
+    assert "https://arxiv.org/abs/2609.03501" in urls, (
+        f"the reader cannot reach a paper it was told about: {composed['refs']!r}"
+    )
