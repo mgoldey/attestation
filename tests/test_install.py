@@ -1726,6 +1726,12 @@ def test_a_box_without_ollama_gets_a_message_not_a_traceback(monkeypatch):
     """
     monkeypatch.setattr(install, "_is_ollama_backend", lambda: True)
     monkeypatch.setattr(install.shutil, "which", lambda name: None)
+    # Neither binary NOR daemon -- the actual fresh box. Stated explicitly
+    # because a CLI-less box with a REACHABLE daemon is now a working
+    # configuration (test_models_inventoried_over_http_when_the_cli_is_absent),
+    # and leaving this unpatched let the developer's own running Ollama decide
+    # which branch the test took.
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: False)
 
     def missing_binary(cmd, **kw):
         raise FileNotFoundError(2, "No such file or directory", cmd[0])
@@ -1929,3 +1935,39 @@ def test_ledger_step_is_skipped_not_broken_when_research_root_is_missing(
     line = next(line_ for line_ in out.splitlines() if "ledger" in line_)
     assert "skipped" in line.lower(), line
     assert rc == 0
+
+
+def test_models_inventoried_over_http_when_the_cli_is_absent(monkeypatch):
+    """A reachable server with no `ollama` binary is a working configuration.
+
+    MEASURED 2026-09-21 in agentmarkit's rehearsal, on the Agent37 base image
+    Agent37 actually boots: `attest install --check` printed
+
+        [ok] ollama_reachable
+        [BROKEN] models: ollama is not installed or not on PATH
+
+    two lines apart. The server answered /api/tags and /v1/embeddings, and the
+    run had just ingested 1300 items through it -- so the only BROKEN step in
+    the whole install was a false negative about a backend that demonstrably
+    worked. `_installed_models` shells out to the CLI, and a container, a
+    remote Ollama or any sidecar deployment has the daemon without the binary.
+
+    The CLI stays the way models get PULLED (that is genuinely its job); this
+    only stops the INVENTORY from requiring it. A box with neither binary nor
+    reachable daemon still reports BROKEN --
+    test_a_box_without_ollama_gets_a_message_not_a_traceback covers that.
+    """
+    monkeypatch.setattr(install, "_is_ollama_backend", lambda: True)
+    monkeypatch.setattr(install.shutil, "which", lambda name: None)
+    monkeypatch.setattr(install, "_ollama_native_root_reachable", lambda: True)
+    monkeypatch.setattr(
+        install,
+        "_models_over_http",
+        lambda: {
+            install._normalize_model(m) for m in (install.chat_model(), install.embed_model())
+        },
+    )
+
+    result = install.step_models(check=True)
+
+    assert result.status == install.Status.OK, result.detail

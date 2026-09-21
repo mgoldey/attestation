@@ -225,6 +225,29 @@ def _installed_models(run_fn) -> set[str]:
     return {_normalize_model(line.split()[0]) for line in lines if line.strip()}
 
 
+def _models_over_http() -> set[str]:
+    """The daemon's own inventory, read from /api/tags instead of the CLI.
+
+    A reachable server with no `ollama` binary beside it is an ordinary
+    deployment -- a container, a sidecar, a remote box -- and the CLI is not
+    available to ask. Same normalisation as `_installed_models` so the two
+    sources are interchangeable to the caller.
+    """
+    import httpx
+
+    try:
+        response = httpx.get(f"{_native_root()}/api/tags", timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        return set()
+    return {
+        _normalize_model(entry["name"])
+        for entry in payload.get("models") or []
+        if isinstance(entry, dict) and entry.get("name")
+    }
+
+
 def _step_models_check(missing: list[str]) -> StepResult:
     detail = f"missing: {', '.join(missing)} — rerun with --yes to pull"
     return StepResult("models", Status.BROKEN, detail)
@@ -267,6 +290,13 @@ def step_models(check: bool = False, yes: bool = False) -> StepResult:
     # aborted the run -- and results render only after every step completes, so
     # the user got a traceback and no report at all.
     if not shutil.which("ollama"):
+        # A reachable daemon with no CLI beside it is a working configuration,
+        # not a broken one. MEASURED on agentmarkit's Agent37 base image: the
+        # server answered /api/tags and had just ingested 1300 items, while
+        # this step called it BROKEN two lines under "[ok] ollama_reachable".
+        # Pulling still needs the binary; inventorying does not.
+        if _ollama_native_root_reachable():
+            return _models_verdict(_models_over_http(), check, yes, can_pull=False)
         return StepResult(
             "models",
             Status.BROKEN,
@@ -287,11 +317,27 @@ def step_models(check: bool = False, yes: bool = False) -> StepResult:
             f"cannot inventory models while {_native_root()} is unreachable"
             " (`ollama list` queries the default port, not LLM_BASE_URL)",
         )
+    return _models_verdict(_installed_models(_run), check, yes, can_pull=True)
+
+
+def _models_verdict(installed: set[str], check: bool, yes: bool, *, can_pull: bool) -> StepResult:
+    """Compare what is installed against what is wanted, and say what to do.
+
+    Shared by both inventory sources. `can_pull` is False when the inventory
+    came over HTTP, because pulling is the one thing that really does need the
+    CLI -- the message then says where to run it rather than offering.
+    """
     wanted = [chat_model(), embed_model()]
-    installed = _installed_models(_run)
     missing = [m for m in wanted if _normalize_model(m) not in installed]
     if not missing:
         return StepResult("models", Status.OK, f"{', '.join(wanted)} present")
+    if not can_pull:
+        return StepResult(
+            "models",
+            Status.BROKEN,
+            f"missing: {', '.join(missing)} — pull them where the daemon runs"
+            f" (`ollama pull {missing[0]}`); no ollama CLI here to do it",
+        )
     if check:
         return _step_models_check(missing)
     return _step_models_pull(missing, yes)
