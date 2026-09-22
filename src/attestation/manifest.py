@@ -173,6 +173,39 @@ def build() -> dict:
             "still_works": list(STILL_WORKS_WITHOUT_MODEL),
             "unavailable": list(NEEDS_MODEL),
         },
+        "embedding": _embedding(),
+    }
+
+
+def _embedding() -> dict:
+    """The one embedding fact a packager needs, and how to check it.
+
+    Not "what dimensions does your model have" -- that question is malformed
+    and a packager was asking its buyers to answer it. `EMBED_DIMS` is a
+    Matryoshka SLICE, not a model property: `embed.truncate_normalize` takes
+    any vector at least that wide, cuts it to the stored width and
+    renormalises. Wider is fine. Narrower raises, because zero-padding would
+    fabricate signal.
+
+    So the constraint is one-directional and machine-checkable, which is what
+    `probe` names: `attest install --check`'s hosted-models step makes a real
+    embedding request and measures the reply rather than trusting a catalogue.
+    """
+    from attestation.db import embed_dims
+
+    stored = embed_dims()
+    return {
+        "stored_dims": stored,
+        "min_model_dims": stored,
+        "note": (
+            f"any model returning >= {stored} dims works; wider is sliced"
+            " (Matryoshka) and renormalised, narrower is refused"
+        ),
+        "fixed_at": (
+            "first ingest, on a fresh database -- the vec0 table is created at"
+            " this width and get_db() refuses a later mismatch"
+        ),
+        "probe": "attest install --check",
     }
 
 
