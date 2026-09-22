@@ -38,4 +38,36 @@ uv run --group demos playwright install chromium
 
 Each `record.sh`/`record.py` writes its output to `../../demo/` (the
 repo-root `demo/` directory, already gitignored) unless given a path as its
-first argument.
+first argument. `feed/record.py` always writes to `demo/feed.webm` and
+ignores that argument.
+
+## Last verified
+
+All six ran green on 2026-09-22 against `main`, and nothing here needed a
+code change to keep working:
+
+| demo | how it was checked |
+|---|---|
+| `ledger/` | `narrate.sh examples/workspace` — 9 runs, 7 claims, coverage lint |
+| `claims/` | `narrate.sh examples/citations` — 4 claims, 1 uncited key, `cite.*` over MCP |
+| `kg-symbolic/` | seeded (40 items tagged, 0 failed), then `record.sh` → 2.5 KB cast, 152 KB gif |
+| `feed/` | seeded + persona, then `record.py` → 628 KB webm |
+| `hermes/` provenance | real agent turn: called `runs_ask`, answered `winner: kdsweep_t4` with both caveats |
+| `hermes/` feed | real agent turn: called `feed_ask`, returned 4 ranked items with tags |
+
+Two notes for whoever runs these next, both of which cost time to rediscover:
+
+- **`kg-symbolic/demo.py` takes its database from `ATTEST_DB`, not from a
+  positional argument.** Passing a path as an argument is silently ignored and
+  the demo runs against whatever `resolve_db_path` finds — for the author that
+  was the live 12k-item database, whose `kg.communities` output is an
+  alphabetical sprawl rather than the four coherent clusters the seeded
+  fixture gives.
+- **The MCP server's INFO logs go to stderr**, so running `demo.py` by hand
+  looks noisy (28 of 91 lines). `record.sh` already redirects them; the
+  recording was never polluted.
+
+`hermes/record-feed.sh` reads the `attestation-feed` MCP server from
+`~/.hermes/config.yaml`. With no `ATTEST_DB` set there it demos against the
+author's live database rather than the seeded fixture, which works but is not
+what `feed/seed_feed_db.py` was written for.

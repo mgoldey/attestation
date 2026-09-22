@@ -77,6 +77,7 @@ nav:
       - Claims and citations: guides/claims-and-citations.md
       - The feed and knowledge graph: guides/feed.md
       - Prompt evals and the optimizer: guides/evals.md
+      - Demo recordings: guides/demos.md
       - Tests: guides/testing.md
   - Golden paths: getting-started.md
   - Reference:

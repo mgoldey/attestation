@@ -166,8 +166,8 @@ one does, to score prompts against a running LLM.
 
 - `prompt-evals/` — the tagging prompt's dev score and the transfer gate
 
-See `examples/README.md` for what each demonstrates and how long it takes.
-The most thorough is `flows/`:
+See `examples/README.md` for what each demonstrates, and `demos/` for six
+scripts that record these surfaces on video. The most thorough is `flows/`:
 
 ```bash
 uv run --group examples python examples/flows/run_all.py --offline

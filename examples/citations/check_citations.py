@@ -56,7 +56,12 @@ async def run() -> int:
         checked = _payload(await session.call_tool("cite.check", {"path": draft}))
         print(f"cite.check -> {checked.get('message')}")
         for u in checked.get("uncited", []):
-            print(f"  uncited key={u['key']!r} at {u['where']}")
+            # `where` echoes the absolute path this script had to pass (the
+            # MCP server runs with its own cwd), and printing it verbatim put
+            # the author's home directory on screen -- which ends up baked
+            # into the demo recording this example feeds. Relative to here.
+            where = str(u["where"]).replace(f"{HERE}/", "")
+            print(f"  uncited key={u['key']!r} at {where}")
 
         found = _payload(await session.call_tool("cite.lookup", {"key": "vaswani2017attention"}))
         ref = found.get("reference") or {}
