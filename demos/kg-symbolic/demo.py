@@ -36,7 +36,9 @@ async def run() -> int:
 
     # kg.* lives on the `knowledge` surface, sym.* on `symbolic` -- ATTEST_TOOLS
     # takes exactly one surface name, so this demo leaves it unset and gets
-    # all 46 tools rather than running two sessions for two namespaces.
+    # every tool rather than running two sessions for two namespaces. The
+    # count is deliberately not written here: it moved 46 -> 49 while this
+    # comment said 46, and nothing in a demo depends on knowing it.
     env = {k: v for k, v in os.environ.items() if k not in ("ATTEST_TOOLS", "ATTEST_EXPAND")}
     params = StdioServerParameters(
         command="uv", args=["run", "--project", str(REPO_ROOT), "attest-mcp"], env=env
