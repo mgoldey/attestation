@@ -141,3 +141,52 @@ def test_manifest_is_json_serialisable_and_schema_versioned():
     m = manifest.build()
     assert m["schema"] == "attestation/manifest/1"
     assert json.loads(json.dumps(m)) == m
+
+
+def test_embedding_block_states_the_constraint_a_packager_must_satisfy():
+    """agentmarkit asked its buyer for "embedding dimensions" as one of six
+    required_user_inputs. That question is malformed, and the manifest is
+    where the real constraint belongs.
+
+    EMBED_DIMS is not the model's width -- it is a Matryoshka SLICE.
+    `embed.truncate_normalize` takes any vector of at least that many dims,
+    slices to it and renormalises; a narrower one RAISES rather than
+    zero-padding, which would fabricate signal. So the constraint is
+    one-directional (>= stored_dims works, wider is fine, narrower is not),
+    and `attest install --check` already probes it live -- step_hosted_models
+    makes a real embedding request and measures the reply.
+
+    Stating it here turns "what are your embedding dimensions?", which a buyer
+    cannot answer and can answer WRONG permanently (the vec0 table width is
+    fixed at first ingest), into a check the installer runs.
+    """
+    from attestation.db import embed_dims
+
+    block = manifest.build()["embedding"]
+
+    assert block["stored_dims"] == embed_dims()
+    # The floor IS the stored width: that is what truncate_normalize requires.
+    assert block["min_model_dims"] == embed_dims()
+    assert block["probe"], "a constraint with no way to check it is trivia"
+    assert "fresh" in block["fixed_at"].lower(), block["fixed_at"]
+
+
+def test_the_embedding_floor_matches_what_truncate_normalize_enforces():
+    """Not a transcription: the manifest's floor is exercised against the
+    function that enforces it, so the two cannot drift.
+    """
+    import numpy as np
+    import pytest
+
+    from attestation.embed import truncate_normalize
+
+    floor = manifest.build()["embedding"]["min_model_dims"]
+
+    wide = truncate_normalize(np.ones(floor + 128, dtype=np.float32))
+    assert len(wide) == floor, "a wider model must be sliced to the stored width"
+
+    exact = truncate_normalize(np.ones(floor, dtype=np.float32))
+    assert len(exact) == floor
+
+    with pytest.raises(ValueError):
+        truncate_normalize(np.ones(floor - 1, dtype=np.float32))
