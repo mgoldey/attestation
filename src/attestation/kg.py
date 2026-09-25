@@ -19,6 +19,7 @@ No networkx: at ~711 nodes, BFS over an adjacency dict is both fast (0.226s
 for a full build) and obvious.
 """
 
+import re
 import sqlite3
 import tomllib
 from collections import defaultdict
@@ -143,8 +144,51 @@ def resolve_or_raise(name: str, members: set[str], *, kind: str) -> str:
     """
     resolved = resolve_query(name, {member: () for member in members})
     if resolved not in members:
-        raise ValueError(_KIND_MESSAGES[kind].format(name=name))
+        message = _KIND_MESSAGES[kind].format(name=name)
+        near = nearest(name, members)
+        if near:
+            message += f". Closest: {', '.join(near)}"
+        raise ValueError(message)
     return resolved
+
+
+def nearest(name: str, members: set[str], limit: int = 5) -> list[str]:
+    """Concepts a reader probably meant, for a refusal to name.
+
+    MEASURED 2026-09-25: an agent passed "Memory System" and was told to call
+    kg.concepts() -- which lists 1403 names, a payload a 2B model cannot
+    render. The graph held memory-retrieval and memory-management; naming
+    those turns a dead end into a retry. Members that share a word come first
+    (most shared words, then shortest), then close spellings.
+    """
+    import difflib
+
+    ordered = [w for w in re.split(r"[\s\-_]+", name.lower()) if len(w) > 2]
+    # Singularise so "systems" still meets system-design; keep question order,
+    # because the first noun is usually the one meant ("Memory System" is
+    # about memory). Rarity weighting was tried and measured worse: "memory"
+    # is in MORE concepts than "system", so it ranked immune-system first.
+    position = {}
+    for i, w in enumerate(ordered):
+        position.setdefault(_singular(w), i)
+    words = set(position)
+
+    def shared(m: str) -> set[str]:
+        """The question's words that concept `m` also contains, singularised."""
+        return {_singular(part) for part in m.split("-")} & words
+
+    sharing = sorted(
+        (m for m in members if shared(m)),
+        key=lambda m: (-len(shared(m)), min(position[w] for w in shared(m)), len(m), m),
+    )
+    spelled = difflib.get_close_matches(
+        "-".join(name.lower().split()), sorted(members), n=limit, cutoff=0.75
+    )
+    out: list[str] = []
+    for m in [*sharing, *spelled]:
+        if m not in out:
+            out.append(m)
+    return out[:limit]
 
 
 def canonical(tag: str) -> str:

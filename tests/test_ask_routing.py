@@ -509,3 +509,221 @@ def test_feed_research_answer_names_the_papers_and_carries_their_links():
     assert "https://arxiv.org/abs/2609.03501" in urls, (
         f"the reader cannot reach a paper it was told about: {composed['refs']!r}"
     )
+
+
+def test_feed_ask_research_survives_the_answer_model_through_the_real_server(tmp_path, monkeypatch):
+    """The regression the previous test missed, pinned at the layer it lived in.
+
+    test_feed_research_answer_names_the_papers_and_carries_their_links checked
+    `_compose`'s dict and never built `Answer` -- so when paper refs gained a
+    `paper_id` and no `item_id`, `Ref(item_id: int)` rejected every one of
+    them, and EVERY research question through feed.ask raised a validation
+    error. That shipped in 0.2.0. Worse, the papers were stored before the
+    failure, so the library changed while the caller was told nothing worked.
+
+    This drives the registered tool on a real FastMCP server, so the Answer
+    model and MCP's own output validation both run. Only the network client is
+    stubbed.
+    """
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation import research
+    from attestation.db import get_db
+    from attestation.mcp import register_all
+    from attestation.mcp import research as research_mod
+
+    db = tmp_path / "t.db"
+    monkeypatch.setenv("ATTEST_DB", str(db))
+    get_db(db).close()
+
+    paper = research.Paper(
+        client="arxiv",
+        external_id="2609.03501",
+        title="Towards a Statistical Understanding of Mixture-of-Experts",
+        abstract="",
+        authors=("Doe, Jane",),
+        published="2026-09-01",
+        arxiv_id="2609.03501",
+        url="https://arxiv.org/abs/2609.03501",
+    )
+
+    class Fixed:
+        name, offline = "arxiv", False
+
+        def search(self, query, *, journal=None, since=None, limit=50):
+            return [paper]
+
+    server = FastMCP("t")
+    register_all(server)
+    # AFTER register_all: research.register() rebuilds CLIENTS from the
+    # environment, so patching first silently restored the real arXiv client
+    # and this test made a live network call (which 406'd).
+    monkeypatch.setattr(
+        research_mod,
+        "CLIENTS",
+        {
+            "arxiv": Fixed(),
+            "pubmed": research.NullClient("pubmed"),
+            "crossref": research.NullClient("crossref"),
+        },
+    )
+
+    async def call():
+        result = await server.call_tool(
+            "feed.ask", {"user": "matt", "question": "research mixture of experts on arxiv"}
+        )
+        return result[1] if isinstance(result, tuple) else result
+
+    structured = asyncio.run(call())
+
+    assert structured.get("ok") is True, structured
+    assert structured["tool_used"] == "feed.research", structured
+    assert "Mixture-of-Experts" in structured["answer"], structured["answer"]
+    urls = [ref.get("url") for ref in structured["refs"]]
+    assert "https://arxiv.org/abs/2609.03501" in urls, structured["refs"]
+
+
+# --- 2026-09-25 query battery -------------------------------------------------
+# 39 realistic questions (nine of them lifted from real Hermes transcripts that
+# went wrong) were driven through the real attest-mcp over stdio against a copy
+# of the live database. The first run passed 25/38 -- and five of those "passes"
+# were wrong on inspection. Each finding is pinned here at the layer it lived in.
+
+
+@pytest.mark.parametrize(
+    ("question", "tool"),
+    [
+        # Named subjects that fell through to a clarifier the feed surface
+        # cannot act on (real sessions, 2026-09-04).
+        ("latest in memory systems for LLMs", "feed.search"),
+        ("What is known about orthogonalized mixtures of agents?", "feed.search"),
+        ("What articles support these claims about mixture of experts?", "feed.search"),
+        # Ownership vs advice vs instruction: "subscribe" matched "subscribed".
+        ("what feeds am I subscribed to?", "feed.sources"),
+        ("which feeds do I follow?", "feed.sources"),
+        ("am I missing any sources?", "feed.source_suggest"),
+        ("subscribe me to arxiv cs.CL", "feed.source_add"),
+        # "top of my feeds" wants ranked items, not the subscription list.
+        ("give me the top of my feeds", "feed.list"),
+        ("when was your recent scrape?", "feed.sources"),
+        ("why aren't you learning from what I read?", "feed.persona_status"),
+        # A bare "learning" must NOT be read as a question about the persona.
+        ("find me papers on machine learning", "feed.search"),
+    ],
+)
+def test_battery_feed_routes(question, tool):
+    assert route_feed(question).tool == tool
+
+
+@pytest.mark.parametrize(
+    ("question", "route", "tool"),
+    [
+        ("show me the details of kdsweep_t4", route_runs, "runs.detail"),  # "sweep" in kdsweep
+        ("which arm of the sweep won?", route_runs, "runs.compare"),
+        (
+            "which numbers in this draft are not backed by a claim?",
+            route_runs,
+            "runs.claims_coverage",
+        ),
+        ("what are my main research areas?", route_kg, "kg.communities"),
+    ],
+)
+def test_battery_runs_and_kg_routes(question, route, tool):
+    assert route(question).tool == tool
+
+
+def test_digest_claims_and_coverage_answers_name_what_they_found():
+    """Each of these came back as a bare count, and the digest with zero refs
+    although every nested item had an id and a url."""
+    from attestation.mcp.ask import Answer, _compose
+
+    digest = Answer(
+        **_compose(
+            {
+                "ok": True,
+                "message": "16 item(s) in 2 topic(s); showing 4",
+                "topics": [
+                    {"label": "machine-learning", "items": [{"item_id": 1, "url": "u1"}]},
+                    {"label": "reasoning", "items": [{"item_id": 2, "url": "u2"}]},
+                ],
+            },
+            "feed.digest",
+        )
+    )
+    assert "machine-learning" in digest.answer and len(digest.refs) == 2
+
+    checked = Answer(
+        **_compose(
+            {
+                "ok": True,
+                "message": "2 claim(s): 1 contradicted, 1 supported",
+                "claims": [
+                    {"verdict": "supported", "line": 18, "message": "wer=0.0731"},
+                    {"verdict": "contradicted", "line": 33, "message": "says 0.0701, run 0.0688"},
+                ],
+            },
+            "runs.claims_check",
+        )
+    )
+    # The contradicted claim leads: it is what the reader has to fix.
+    assert checked.answer.index("contradicted line 33") < checked.answer.index("supported line")
+
+    covered = Answer(
+        **_compose(
+            {
+                "ok": True,
+                "message": "1/2 number(s) covered",
+                "uncovered": [{"line": 13, "value": 41.3, "context": "41.3M parameters."}],
+            },
+            "runs.claims_coverage",
+        )
+    )
+    assert "line 13" in covered.answer
+
+
+def test_a_failed_research_client_reaches_the_caveat():
+    """The headline keeps text before its first ';', so "1 client(s) failed"
+    was cut and caveat was None while arXiv returned 406 -- the reader got
+    PubMed papers as if they were the arXiv results."""
+    from attestation.mcp.ask import Answer, _compose
+
+    answer = Answer(
+        **_compose(
+            {
+                "ok": True,
+                "message": "0 paper(s) from arxiv; 0 new in the library; 1 client(s) failed",
+                "papers": [],
+                "errors": ["arxiv: HTTPStatusError: Client error '406 Not Acceptable'"],
+            },
+            "feed.research",
+        )
+    )
+    assert answer.caveat and "arxiv" in answer.caveat and "406" in answer.caveat
+
+
+def test_runs_ask_record_does_not_pretend_to_have_recorded():
+    """It fell through to a run listing while reporting tool_used=runs.record."""
+    from attestation.mcp.ask import _runs_ask
+
+    out = _runs_ask("record these metrics for my sweep")
+    assert out["tool_used"] is None and out["options"] == ["runs.record"]
+
+
+def test_sym_verify_answers_in_words_not_the_difference():
+    """`result` is lhs - rhs, i.e. "0" exactly when the identity HOLDS."""
+    from attestation.mcp.ask import _sym_ask
+
+    same = _sym_ask("(x+1)**2 == x**2 + 2*x + 1", "is it equal?")
+    assert same["tool_used"] == "sym.verify" and "equal" in same["answer"], same
+    assert same["answer"].strip() != "0"
+
+
+def test_an_unknown_concept_refusal_names_what_the_reader_probably_meant():
+    """Told to call kg.concepts() -- 1403 names a 2B model cannot render."""
+    from attestation import kg
+
+    members = {"memory", "working-memory", "immune-system", "system-design", "rag"}
+    near = kg.nearest("Memory System", members)
+    assert near[:2] == ["memory", "working-memory"], near

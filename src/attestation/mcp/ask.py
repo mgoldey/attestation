@@ -31,9 +31,16 @@ class Ref(BaseModel):
     Minimal does not mean invisible: show the url. A watched session rendered
     ids without links and the reader answered "you didn't give links".
     `item_id` is for your next call; `url` is the only field a human can use.
+
+    Exactly one of `item_id` / `paper_id` is set. A feed item has an integer
+    id; a research hit is a library row identified by the arXiv id or DOI
+    `cite.lookup` takes, and has no item_id at all. `item_id` used to be
+    required, so 0.2.0 raised a validation error on EVERY research question
+    routed through feed.ask -- after storing the papers.
     """
 
-    item_id: int
+    item_id: int | None = None
+    paper_id: str | None = None
     url: str | None = None
 
 
@@ -154,7 +161,7 @@ def _refs(out: dict) -> list[dict]:
     no item_id, so the item_id filter dropped every one and the reader was
     told about work it had no way to open.
     """
-    items = out.get("items") or []
+    items = _linkable(out)
     refs = [{"item_id": i["item_id"], "url": i.get("url")} for i in items if "item_id" in i]
     papers = [p for p in (out.get("papers") or []) if any(map(p.get, _PAPER_ID_KEYS))]
     return refs + [
@@ -162,19 +169,47 @@ def _refs(out: dict) -> list[dict]:
     ]
 
 
-def _compose(out: dict, tool: str) -> dict:
-    """Turn a tool's payload into an Answer, keeping every caveat."""
-    refs = _refs(out)
+def _linkable(out: dict) -> list[dict]:
+    """Every row a reader could open, including those nested one level down.
+
+    feed.digest puts its items INSIDE topics, so the flat `items` read found
+    none and a digest answer came back with zero refs while every nested item
+    had an id and a url (measured 2026-09-25).
+    """
+    rows = list(out.get("items") or [])
+    for topic in out.get("topics") or []:
+        rows += topic.get("items") or []
+    return rows + list(out.get("unclustered") or [])
+
+
+def _caveats(out: dict) -> str | None:
+    """Every reason not to trust the answer, including clients that failed.
+
+    feed.research reports failed clients in `errors`, and the answer headline
+    keeps only the text before its first ';' -- so "1 client(s) failed" was cut
+    and the caveat was None while arXiv returned 406. The reader then got
+    PubMed papers on Alzheimer's as if they were the arXiv results. Naming the
+    client and its status is what lets anyone act on it.
+    """
     quality = out.get("ranking_quality") or {}
     caveats = [c for c in (quality.get("caveat"), out.get("caveat")) if c]
     caveats += list(out.get("caveats") or [])
+    caveats += [f"failed: {_clip(str(e))}" for e in out.get("errors") or []]
+    return " ".join(caveats) or None
 
+
+def _compose(out: dict, tool: str) -> dict:
+    """Turn a tool's payload into an Answer, keeping every caveat."""
     answer = _summarise(out)
+    if tool == "feed.persona_status" and out.get("interests"):
+        # The interests text IS the answer to "what are my interests?" --
+        # the status message is only a click count.
+        answer = f"{answer} Interests: {_clip(out['interests'], 240)}"
     return {
         "ok": bool(out.get("ok")),
         "answer": answer.strip(),
-        "refs": refs,
-        "caveat": " ".join(caveats) or None,
+        "refs": _refs(out),
+        "caveat": _caveats(out),
         "options": [],
         "tool_used": tool,
     }
@@ -207,6 +242,13 @@ _RESULT_KEYS = (
     "feeds",
     "runs",
     "suggestions",
+    # Measured 2026-09-25 as bare counts: feed.digest ("16 item(s) in 2
+    # topic(s)"), runs.claims_check ("7 claim(s): 1 contradicted...") and
+    # runs.claims_coverage ("3/5 number(s) covered") -- each names nothing,
+    # and "which claims are wrong?" is exactly what the reader asked.
+    "topics",
+    "claims",
+    "uncovered",
 )
 
 
@@ -223,6 +265,9 @@ def _summarise(out: dict) -> str:
     winner at all, even though the tool it called knew one.
     """
     named: list = next((out[k] for k in _RESULT_KEYS if out.get(k)), [])
+    # A claim that holds is the least interesting line in a check: lead with
+    # the contradicted and unsupported ones, which are what need fixing.
+    named = sorted(named, key=_supported_last)
     labels = [x for x in (_label(n) for n in named[:5]) if x]
     headline = _headline_with_winner(out)
     if not labels:
@@ -263,6 +308,11 @@ def _label(x) -> str:
         return _clip(x)
     if not isinstance(x, dict):
         return _clip(str(x))
+    return _located_label(x) or _titled_label(x)
+
+
+def _titled_label(x: dict) -> str:
+    """Title (or name/label/tag), with its source or project when known."""
     title = x.get("title") or x.get("name") or x.get("label") or x.get("tag")
     source = x.get("source") or x.get("project")
     if title and source:
@@ -270,9 +320,30 @@ def _label(x) -> str:
     return _clip(str(title or ""))
 
 
-def _clip(text: str) -> str:
+def _located_label(x: dict) -> str | None:
+    """A claim or an uncovered number, labelled by the line it sits on.
+
+    Neither has a title; what a reader needs is WHERE, so they can fix it.
+    """
+    if "verdict" in x:  # a claim from runs.claims_check
+        return _clip(f"{x['verdict']} line {x.get('line')}: {x.get('message', '')}")
+    if "context" in x and "line" in x:  # an uncovered number from coverage
+        return _clip(f"line {x['line']}: {x['context']}")
+    return None
+
+
+def _supported_last(x) -> int:
+    """Sort key: a claim that already holds sorts after one that does not.
+
+    Only claims carry a verdict; every other row keeps its given order
+    (sorted() is stable), so ranked feed items stay ranked.
+    """
+    return 1 if isinstance(x, dict) and x.get("verdict") == "supported" else 0
+
+
+def _clip(text: str, limit: int = MAX_LABEL_CHARS) -> str:
     text = " ".join(text.split())
-    return text if len(text) <= MAX_LABEL_CHARS else text[:MAX_LABEL_CHARS].rstrip() + "…"
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
 def _which_family(listed: dict) -> str:
@@ -338,6 +409,16 @@ def _runs_ask(
     decision = route_runs(question)
     if decision.tool is None:
         return _declined(decision)
+    if decision.tool == "runs.record":
+        # runs.record needs a family, arms and metric values, none of which
+        # runs.ask takes. It used to fall through to the run listing while
+        # still reporting tool_used="runs.record" -- telling the agent a record
+        # had been written when nothing was.
+        return _needs(
+            "runs.record",
+            "Call runs.record with family, arm and METRIC=VALUE pairs;"
+            " runs.ask cannot write results.",
+        )
     if decision.tool == "runs.compare":
         if not family:
             return {
@@ -361,9 +442,60 @@ def _runs_ask(
         out = prov._coverage(path)
     elif decision.tool == "runs.scan":
         out = prov._scan(confirm=True)
+    elif decision.tool == "runs.detail":
+        return _runs_detail(question)
     else:
         out = prov._list(limit=10)
     return _compose(out, decision.tool)
+
+
+def _runs_detail(question: str) -> dict:
+    """runs.detail for the one run the question names, or a question back."""
+    from attestation.mcp import provenance as prov
+
+    found = _run_named_in(question)
+    if found is None:
+        return _needs("runs.detail", "Which run? Name it (e.g. kdsweep_t4) and I will show it.")
+    out = prov._detail(*found)
+    run = out.get("run") or {}
+    # The message is only "7 metric row(s)"; the values are what was asked.
+    values = "; ".join(f"{m['metric']}={m['value']:g}" for m in (run.get("metrics") or [])[:8])
+    out["message"] = (
+        f"{run.get('name')} ({run.get('project')}): {values}" if values else out.get("message", "")
+    )
+    out["caveats"] = list(run.get("caveats") or [])
+    return _compose(out, "runs.detail")
+
+
+def _needs(tool: str, answer: str) -> dict:
+    """A routed question the router cannot complete without an argument."""
+    return {
+        "ok": False,
+        "answer": answer,
+        "refs": [],
+        "caveat": None,
+        "options": [tool],
+        "tool_used": None,
+    }
+
+
+def _run_named_in(question: str) -> tuple[str, str] | None:
+    """(project, name) for the one recorded run the question names, else None.
+
+    Run names are identifiers (kdsweep_t4, layer_importance), so only tokens
+    that look like one are tried; a name shared by two projects is ambiguous
+    and returns None rather than picking one.
+    """
+    from attestation import ledger
+    from attestation.db import get_db, resolve_db_path
+
+    tokens = [t for t in re.findall(r"[A-Za-z0-9][\w.\-]*", question) if "_" in t or "-" in t]
+    conn = get_db(resolve_db_path(None))
+    try:
+        rows = ledger.runs_named(conn, tokens)
+    finally:
+        conn.close()
+    return rows[0] if len(rows) == 1 else None
 
 
 def _kg_ask(question: str, source: str | None = None, target: str | None = None) -> dict:
@@ -410,13 +542,23 @@ def _sym_ask(expr: str, question: str = "simplify") -> dict:
     if decision.tool is None:
         return _declined(decision)
     if decision.tool == "sym.verify":
+        # An expression written as an equation already carries both sides.
+        # Declining "(x+1)**2 == x**2 + 2*x + 1" to ask for lhs and rhs sent
+        # the reader to restate what they had just typed.
+        sides = re.split(r"\s*==\s*|\s+equals?\s+(?:to\s+)?", expr, maxsplit=1)
+        if len(sides) != 2 or not all(s.strip() for s in sides):
+            return _needs("sym.verify", "Give me both sides to compare, as lhs and rhs.")
+        out = sym_mod._sym_verify(sides[0].strip(), sides[1].strip())
         return {
-            "ok": False,
-            "answer": "Give me both sides to compare, as lhs and rhs.",
+            "ok": bool(out.get("ok")),
+            # The MESSAGE, not `result`: result is lhs - rhs simplified, which
+            # is "0" exactly when the identity HOLDS -- a reader saw "0" and
+            # read it as false (measured 2026-09-25).
+            "answer": str(out.get("message") or out.get("result") or ""),
             "refs": [],
             "caveat": None,
-            "options": ["sym.verify"],
-            "tool_used": None,
+            "options": [],
+            "tool_used": "sym.verify",
         }
     dispatch = {
         "sym.simplify": sym_mod._sym_simplify,

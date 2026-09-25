@@ -114,7 +114,9 @@ _CONTENT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
 )
 _SOURCE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("feed.source_add", ("add ", "subscribe", "follow ")),
+    # "subscribe " with its space: bare "subscribe" also matched "subscribed",
+    # so "what feeds am I subscribed to?" was routed to ADD a feed.
+    ("feed.source_add", ("add ", "subscribe ", "subscribe me", "follow ")),
     (
         "feed.sources",
         (
@@ -124,12 +126,37 @@ _SOURCE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "which feeds",
             "list feeds",
             "show me my feeds",
+            # Freshness: every row carries last_fetched, and a reader asking
+            # "when was your recent scrape?" (real session, 2026-09-04) was
+            # told it could not be known.
+            "last fetched",
+            "last updated",
+            "recent scrape",
+            "last scrape",
+            "last ingest",
+            "last refresh",
+            "how fresh",
+            "how current",
         ),
     ),
     ("feed.source_remove", ("unsubscribe", "remove feed", "drop feed")),
     (
         "feed.persona_status",
-        ("persona", "profile", "how well trained", "how trained", "my interests"),
+        (
+            "persona",
+            "profile",
+            "how well trained",
+            "how trained",
+            "my interests",
+            # "why aren't you learning from what I read?" (real session). Not
+            # the bare word "learning" -- "papers on machine learning" would
+            # land here instead of in search.
+            "are you learning",
+            "aren't you learning",
+            "you learning from",
+            "learn from what",
+            "learn from me",
+        ),
     ),
     (
         "feed.list",
@@ -168,6 +195,23 @@ _SUGGEST_PHRASES = (
     "what feeds",
 )
 
+# "what feeds am I subscribed to?" contains "what feeds", so the advice rule
+# above claimed it and answered with feeds the reader does NOT have -- the
+# opposite of the question. A reader asking about their own subscriptions says
+# so; advice wins only when nothing marks the feeds as already theirs.
+# Narrow on purpose: bare "am i " also caught "am I missing any sources?", which
+# IS a request for advice.
+_OWNED_SOURCE_MARKERS = ("subscribed", "feeds am i", "feeds do i", "do i follow", "feeds i have")
+_OWNED_FEED_QUESTIONS = (
+    "subscribed to",
+    "am i subscribed",
+    "feeds am i",
+    "feeds do i",
+    "do i follow",
+    "i'm subscribed",
+    "im subscribed",
+)
+
 # A search needs a subject AND a word that means searching. " about " is too
 # weak -- "tell me about machine learning" could mean the feed, the graph or
 # the archive, and guessing is what the catch-all finding warns against.
@@ -183,12 +227,88 @@ _SEARCH_PHRASES = (
     "look for",
 )
 
+# Phrases that introduce a SUBJECT, so the text after them is the query.
+# MEASURED 2026-09-25 against real Hermes transcripts: "latest in memory
+# systems for LLMs", "What is known about orthogonalized mixtures of agents?"
+# and "What articles support these claims about mixture of experts?" all fell
+# through to the feed-or-archive clarifier, and on the feed surface the agent
+# cannot call either option -- so it told the reader nothing was found, while
+# 49 items were tagged memory and 66 mixture-of-experts. Each of these names
+# its subject explicitly, which is what separates them from the ambiguous
+# "tell me about X" the catch-all finding warns against.
+_SUBJECT_PHRASES = (
+    "articles about",
+    "articles supporting",
+    "papers supporting",
+    "latest in ",
+    "latest on ",
+    "latest work on ",
+    "known about ",
+    "what do we know about ",
+    "evidence for ",
+    "evidence on ",
+    "evidence about ",
+    "literature on ",
+    "literature about ",
+    "claims about ",
+)
+
+
+def _subject_after(question: str) -> str | None:
+    """The subject following a `_SUBJECT_PHRASES` introducer, or None.
+
+    Returns the text after the introducer, with a trailing '?' and a leading
+    "these claims about" removed. None when no introducer is present or the
+    subject is shorter than two words -- one word is too thin to search on
+    without guessing.
+    """
+    lowered = question.lower()
+    for phrase in _SUBJECT_PHRASES:
+        at = lowered.find(phrase)
+        if at < 0:
+            continue
+        subject = question[at + len(phrase) :].strip().rstrip("?.! ").strip()
+        subject = re.sub(r"^(these |those |the )?claims? (about|on) ", "", subject, flags=re.I)
+        if len(subject.split()) >= 2:
+            return subject
+    return None
+
 
 def _match_rules(q: str, rules: tuple[tuple[str, tuple[str, ...]], ...]) -> Decision | None:
     """The first rule table entry whose phrases appear in `q`, or None."""
     for tool_name, phrases in rules:
         if _has(q, *phrases):
             return Decision(tool_name, {})
+    return None
+
+
+def _before_source_rules(q: str) -> Decision | None:
+    """Two readings the source-rule table would otherwise get wrong.
+
+    "the top of my feeds" means ranked items, not the subscription list the
+    "my feeds" source rule returns; and "which feeds do I follow?" is a
+    question about what the reader already has, which the add rule's
+    "follow " would read as an instruction (both from real sessions).
+    """
+    if _has(q, "top of my feed", "top of the feed", "top items", "top of my list"):
+        return Decision("feed.list", {})
+    if _has(q, *_OWNED_FEED_QUESTIONS):
+        return Decision("feed.sources", {})
+    return None
+
+
+def _search_decision(q: str, question: str) -> Decision | None:
+    """feed.search when the question names a subject; None otherwise.
+
+    An explicit introducer ("known about", "latest in") wins over the looser
+    search phrases, because its subject is exactly the text that follows it.
+    """
+    if (subject := _subject_after(question)) is not None:
+        return Decision("feed.search", {"query": subject})
+    if _has(q, *_SEARCH_PHRASES):
+        topic = _strip_topic(question)
+        if topic and len(topic.split()) >= 2:
+            return Decision("feed.search", {"query": topic})
     return None
 
 
@@ -210,7 +330,7 @@ def route_feed(question: str) -> Decision:
             options=("feed.list", "feed.search", "feed.digest"),
         )
 
-    if "http" not in q and _has(q, *_SUGGEST_PHRASES):
+    if "http" not in q and _has(q, *_SUGGEST_PHRASES) and not _has(q, *_OWNED_SOURCE_MARKERS):
         return Decision("feed.source_suggest", {})
 
     if (content := _match_rules(q, _CONTENT_RULES)) is not None:
@@ -219,13 +339,14 @@ def route_feed(question: str) -> Decision:
     if (research := route_research(q, question)) is not None:
         return research
 
+    if (early := _before_source_rules(q)) is not None:
+        return early
+
     if (source := _match_rules(q, _SOURCE_RULES)) is not None:
         return source
 
-    if _has(q, *_SEARCH_PHRASES):
-        topic = _strip_topic(question)
-        if topic and len(topic.split()) >= 2:
-            return Decision("feed.search", {"query": topic})
+    if (search := _search_decision(q, question)) is not None:
+        return search
 
     return Decision(
         None,
@@ -266,6 +387,10 @@ def route_runs(question: str) -> Decision:
         "no claim",
         "not cited",
         "coverage",
+        "not backed",
+        "unbacked",
+        "backed by a claim",
+        "which numbers",
     ):
         return Decision("runs.claims_coverage", {})
     if _has(
@@ -279,7 +404,12 @@ def route_runs(question: str) -> Decision:
         "verify",
     ):
         return Decision("runs.claims_check", {})
-    if _has(q, "won", "winner", "best arm", "compare", "which arm", "ablation", "sweep"):
+    # "sweep" as a WORD: as a substring it matched run names -- "show me the
+    # details of kdsweep_t4" was sent to compare, not detail (measured
+    # 2026-09-25, the same collision class as subscribe/subscribed).
+    if _has(q, "won", "winner", "best arm", "compare", "which arm", "ablation") or re.search(
+        r"\bsweep", q
+    ):
         return Decision("runs.compare", {})
     if _has(q, "detail", "config", "one run", "show run"):
         return Decision("runs.detail", {})
@@ -309,7 +439,7 @@ def route_kg(question: str) -> Decision:
         q, "most", "central", "important", "biggest", "read about most", "dominant", "top topic"
     ):
         return Decision("kg.central", {})
-    if _has(q, "cluster", "group", "theme", "communit"):
+    if _has(q, "cluster", "group", "theme", "communit", "areas", "fields i", "subfields"):
         return Decision("kg.communities", {})
     if _has(q, "next to", "adjacent", "neighbour", "neighbor", "related to", "near "):
         return Decision("kg.neighbors", {})

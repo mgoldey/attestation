@@ -588,6 +588,24 @@ def adapter_caveats(adapters) -> list[str]:
     return out
 
 
+def runs_named(conn: sqlite3.Connection, names) -> list[tuple[str, str]]:
+    """(project, name) for every recorded run whose name is one of `names`.
+
+    For resolving a run a question mentions by name ("show me kdsweep_t4"):
+    runs.detail needs the project too, and a reader does not say it. More than
+    one row means the name is ambiguous across projects, which the caller
+    must not resolve by picking one.
+    """
+    names = tuple(dict.fromkeys(names))
+    if not names:
+        return []
+    rows = conn.execute(
+        f"SELECT project, name FROM runs WHERE name IN ({','.join('?' * len(names))})",
+        names,
+    ).fetchall()
+    return [(r[0], r[1]) for r in rows]
+
+
 def detail(conn: sqlite3.Connection, project: str, name: str) -> dict | None:
     """One run in full: its row, decoded config, every recorded metric, and
     the caveat (if any) for the adapter that read it -- `None` if no such
