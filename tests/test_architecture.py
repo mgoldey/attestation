@@ -206,7 +206,18 @@ def test_mcp_domain_modules_stay_small():
         # silently dropped every one of them. The extraction was the
         # complexity gate's call, not a preference -- inline, `_compose` hit
         # 14 against a limit of 10.
-        "ask.py": 383,
+        # Raised 2026-09-25 (0.2.1) for the query battery's findings: Ref gained
+        # paper_id (0.2.0 raised a validation error on EVERY research question
+        # through feed.ask), and _compose was split into _linkable/_caveats/
+        # _refs so digest, claims_check and coverage answers name results
+        # instead of counting them, research client failures reach `caveat`,
+        # and runs.record/runs.detail stop falling through to a run listing.
+        # Helpers rather than branches: the complexity gate refused both
+        # _label (13) and _runs_ask (11) until they were split. Then 476:
+        # runs.detail names its metric values instead of "7 metric row(s)",
+        # and sym.verify answers with its verdict -- `result` is lhs - rhs, so
+        # a TRUE identity read "0".
+        "ask.py": 476,
         # Raised for runs.record (2026-09-01): a new tool plus its Arm
         # pydantic model in provenance.py, one new routing rule (with its
         # own ordering comment) in routing.py. Raised again the same day
@@ -227,7 +238,17 @@ def test_mcp_domain_modules_stay_small():
         # explaining the split that the single-table version did not carry.
         # 285 no longer fits; 304 is the measured size with that split plus
         # the `_match_rules` helper the complexity cap on `route_feed` forced.
-        "routing.py": 304,
+        # Raised 2026-09-25 (0.2.1): _SUBJECT_PHRASES/_subject_after (three
+        # real-session questions that named their subject fell through to a
+        # clarifier the feed surface cannot act on), the owned-feeds guard
+        # ("what feeds am I subscribed to?" was answered with suggestions,
+        # then -- once that was fixed -- with source_add, because "subscribe"
+        # matched "subscribed"), freshness and "are you learning" phrases, a
+        # word-boundary "sweep" (it matched run names like kdsweep_t4), and
+        # the _before_source_rules/_search_decision helpers the complexity
+        # cap on route_feed forced. Each new phrase carries its measured
+        # reason inline, which is most of the growth.
+        "routing.py": 412,
         "provenance.py": 415,
         # Raised 2026-09-10 for Task 8 (BibTeX from a library row): `_lookup`
         # gained a `bibtex` field on both return branches and its `empty`,

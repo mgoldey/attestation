@@ -115,7 +115,9 @@ def _neighbors(conn, node: str, limit: int = 20) -> dict:
     shown = min(limit, MAX_LIST_LIMIT)
     found = kg.neighbors(conn, node, limit=shown)
     if not found:
-        raise ToolError(NOT_A_CONCEPT.format(name=node))
+        near = kg.nearest(node, set(kg.build_graph(kg.tag_assignments(conn))[0]))
+        closest = f". Closest: {', '.join(near)}" if near else ""
+        raise ToolError(NOT_A_CONCEPT.format(name=node) + closest)
 
     # The true degree, because kg.neighbors truncates internally and this tool
     # cannot otherwise see what it dropped. This namespace states the rule

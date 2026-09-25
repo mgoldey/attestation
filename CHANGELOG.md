@@ -9,6 +9,59 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-25
+
+A hotfix, found by driving 39 realistic questions — nine lifted from real
+Hermes transcripts that had gone wrong — through the real `attest-mcp` over
+stdio against a copy of the live database. The first run passed 25 of 38, and
+five of those passes were wrong on inspection. Every finding below is pinned by
+a test at the layer it lived in, and three of those tests were mutation-checked
+(each one fails with its fix reverted).
+
+### Fixed
+
+- **`feed.ask` raised a validation error on every research question.** 0.2.0's
+  paper refs carried `paper_id` and no `item_id`, and `Ref.item_id` was
+  required, so `Answer` rejected them — after the papers had already been
+  stored. The regression test only checked `_compose`'s dict and never built
+  `Answer`; the new one drives the registered tool on a real FastMCP server.
+- **A failed research client was invisible.** The headline kept only the text
+  before its first `;`, cutting "1 client(s) failed", and `caveat` was empty
+  while arXiv returned 406 — so PubMed papers on Alzheimer's were presented as
+  if they were the arXiv results. Failed clients and their HTTP status now reach
+  `caveat`.
+- **Answers that counted instead of naming.** `feed.digest` ("16 item(s) in 2
+  topic(s)", zero refs though every nested item had an id and url),
+  `runs.claims_check` and `runs.claims_coverage` now name what they found;
+  contradicted and unsupported claims lead. `runs.detail` names its metric
+  values; "what are my interests?" includes the interests text.
+- **`sym.verify` answered "0" to a true identity** — `result` is lhs − rhs. It
+  now answers with the verdict. It also takes an equation written with `==`
+  instead of asking for both sides separately.
+- **`runs.ask` reported `tool_used="runs.record"` while returning a run
+  listing** — nothing had been written. It now says runs.record needs
+  arguments `runs.ask` cannot carry.
+- **Routing.** Questions that name a subject ("latest in memory systems for
+  LLMs", "what is known about X") fell through to a clarifier the feed surface
+  cannot act on, so the agent reported nothing found; they now search.
+  "what feeds am I subscribed to?" was answered with *suggestions*, then — once
+  that was fixed — routed to *add a feed*, because `"subscribe"` matched
+  `"subscribed"`. `"sweep"` matched run names (`kdsweep_t4` went to compare).
+  "the top of my feeds", "when was your recent scrape?", "are you learning?"
+  and "my main research areas" each reach the right tool.
+- **An unknown concept is refused with the concepts the reader probably
+  meant** ("Memory System" → memory, working-memory…) instead of "call
+  kg.concepts()", which lists 1403 names.
+- **`feed.sources` says when feeds were last fetched**, newest and stalest.
+
+### Known, not fixed here
+
+arXiv's export API is returning 406 to this machine on every paced request
+(nine at 20 s intervals). That is throttling on arXiv's side, not a malformed
+request; 0.2.1 makes it visible rather than silent. `sym.*` calls take 5–9 s
+because the sandbox's `spawn` child re-imports the whole server — measured, and
+tracked separately.
+
 ## [0.2.0] - 2026-09-18
 
 First published release. Nothing was released under 0.1.0 — the version

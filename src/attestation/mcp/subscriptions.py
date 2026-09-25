@@ -81,7 +81,23 @@ def _list_feeds(conn) -> dict:
     from attestation import feeds as feeds_mod
 
     feeds = feeds_mod.list_sources(conn)
-    return {"message": f"{len(feeds)} feed(s)", "feeds": feeds}
+    return {"message": _feeds_message(feeds), "feeds": feeds}
+
+
+def _feeds_message(feeds: list[dict]) -> str:
+    """The count, plus when the newest and stalest feeds were last fetched.
+
+    A reader asked "when was your recent scrape?" (real session, 2026-09-04)
+    and was told it could not be known, though every row carries
+    last_fetched. The stalest one matters as much as the newest: a feed that
+    stopped updating is invisible in a count.
+    """
+    fetched = sorted(f["last_fetched"] for f in feeds if f.get("last_fetched"))
+    if not fetched:
+        return f"{len(feeds)} feed(s), none fetched yet"
+    if fetched[0] == fetched[-1]:
+        return f"{len(feeds)} feed(s), all last fetched {fetched[-1]}"
+    return f"{len(feeds)} feed(s), last fetched {fetched[-1]} (stalest {fetched[0]})"
 
 
 @tool(empty={"orphaned_items": 0}, label="remove_feed")
