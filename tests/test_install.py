@@ -247,6 +247,68 @@ def test_env_file_absent_created_from_sample(monkeypatch, tmp_path):
     assert rc == 0
 
 
+def test_env_file_pins_the_database_a_fresh_machine_would_lose(monkeypatch, tmp_path):
+    """Measured 2026-09-28 on the Agent37 image: ingest filled
+    <checkout>/hermes.db, but Hermes spawned attest-mcp from its own cwd, so
+    every tool answer came from an empty ./hermes.db there. With nothing else
+    fixing the path, install pins ATTEST_DB in the checkout's .env, which every
+    entry point loads, and this process agrees with it for the later steps."""
+    import os
+
+    from attestation.db import resolve_db_path
+    from attestation.llm import load_env
+
+    (tmp_path / ".env").unlink()
+
+    result = install.step_env_file(check=False)
+
+    assert result.status == "FIXED", result.detail
+    pinned = f"ATTEST_DB={tmp_path / 'hermes.db'}"
+    assert (tmp_path / ".env").read_text().splitlines()[-1] == pinned
+    assert os.environ["ATTEST_DB"] == str(tmp_path / "hermes.db")
+
+    # What attest-mcp does on start, from a directory that is not the checkout.
+    monkeypatch.delenv("ATTEST_DB")
+    elsewhere = tmp_path / "hermes-cwd"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    load_env()
+    assert resolve_db_path(None) == tmp_path / "hermes.db"
+
+
+def test_env_file_pins_an_existing_env_and_check_reports_it_first(monkeypatch, tmp_path):
+    env_path = tmp_path / ".env"
+    before = env_path.read_text()
+
+    checked = install.step_env_file(check=True)
+    assert checked.status == "BROKEN" and "ATTEST_DB" in checked.detail
+    assert env_path.read_text() == before, "--check must not write"
+
+    fixed = install.step_env_file(check=False)
+    assert fixed.status == "FIXED"
+    assert env_path.read_text() == before + f"ATTEST_DB={tmp_path / 'hermes.db'}\n"
+    assert install.step_env_file(check=True).status == "OK"
+
+
+def test_env_file_leaves_a_path_that_is_already_fixed(monkeypatch, tmp_path):
+    """An existing install resolves through RSS_DB/ATTEST_DB or the legacy
+    skill-data database; pinning the checkout's path would switch it to an
+    empty one."""
+    import attestation.db
+
+    env_path = tmp_path / ".env"
+    before = env_path.read_text()
+    legacy = tmp_path / "legacy.db"
+    legacy.write_text("")
+    monkeypatch.setattr(attestation.db, "SKILL_DATA_DB", legacy)
+    assert install.step_env_file(check=False).status == "OK"
+
+    monkeypatch.setattr(attestation.db, "SKILL_DATA_DB", tmp_path / "absent.db")
+    env_path.write_text(before + "ATTEST_DB=/data/mine.db\n")
+    assert install.step_env_file(check=False).status == "OK"
+    assert env_path.read_text() == before + "ATTEST_DB=/data/mine.db\n"
+
+
 def test_env_file_present_untouched(monkeypatch, tmp_path):
     db_path = _db_with_items(tmp_path, n_items=1)
     monkeypatch.setenv("RSS_DB", str(db_path))

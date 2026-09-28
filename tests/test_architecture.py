@@ -229,8 +229,12 @@ def test_mcp_domain_modules_stay_small():
         # the way feed.list does -- item rows tagged with their topic, refs
         # exactly those rows (_named_rows, NAMED_ROWS). Naming topics made the
         # agent invent papers; naming a few titles against 12 refs made it
-        # repeat them. Both measured in real hermes turns 2026-09-28.
-        "ask.py": 543,
+        # repeat them. Both measured in real hermes turns 2026-09-28. Then
+        # 547: runs.compare takes the family the question names (a real turn
+        # on the Agent37 image passed only "Compare the kdsweep runs" and was
+        # asked which family), split into _runs_compare because the
+        # complexity gate refused _runs_ask at 11.
+        "ask.py": 547,
         # Raised for runs.record (2026-09-01): a new tool plus its Arm
         # pydantic model in provenance.py, one new routing rule (with its
         # own ordering comment) in routing.py. Raised again the same day
