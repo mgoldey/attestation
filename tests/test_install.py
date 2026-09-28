@@ -1204,6 +1204,27 @@ def test_refresh_script_still_fails_when_ingest_fails(tmp_path):
     assert proc.returncode != 0, "a failing ingest must exit non-zero so cron reports it"
 
 
+def test_refresh_script_tags_after_a_failed_ingest_and_still_reports_it(tmp_path, monkeypatch):
+    """One refusing feed (arXiv answering 406 for days) makes ingest exit
+    non-zero while every other feed's items land. The script exited there,
+    so those items sat untagged until the refusal stopped. Tagging must run
+    anyway, and the exit status must still be ingest's, so cron reports it."""
+    import subprocess
+
+    body = (
+        "#!/bin/sh\n"
+        'echo "$*" >> {marker}\n'
+        'case "$*" in\n  *ingest*) exit 3 ;;\n  *) exit 0 ;;\nesac\n'
+    )
+    script, _, env, marker = _refresh_harness(tmp_path, body, monkeypatch)
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+
+    assert proc.returncode == 3, f"ingest's failure must be the exit status: {proc.stdout!r}"
+    calls = marker.read_text().splitlines()
+    assert any("tag" in c for c in calls), f"tagging must run after a failed ingest: {calls}"
+    assert "tagging anyway" in proc.stdout
+
+
 def test_mcp_wiring_reports_broken_when_add_does_not_take(monkeypatch, tmp_path):
     """Regression: `mcp add` was fire-and-forget, so a failed registration
     reported FIXED and the agent silently got no attestation tools at all --
