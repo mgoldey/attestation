@@ -1,7 +1,7 @@
 # Demo recordings
 
-Six short recordings of `attest` in use, one per major surface plus one
-pair driving a real agent. Unlike `examples/*/`, these are not golden
+Short recordings of `attest` in use, one per major surface plus real agent
+turns calling each `*.ask` router. Unlike `examples/*/`, these are not golden
 paths: they produce video, not a pinned output line, and most need a
 running model server, so `tests/test_golden_paths.py` does not run them.
 What's committed here is the recording *scripts* — real commands against
@@ -15,7 +15,10 @@ subdirectory's own notes for what it needs.
 | `claims/` | `attest claims` plus `cite.*` over MCP — the citation lint over `examples/citations/` | `none — pure local computation` |
 | `kg-symbolic/` | `kg.*` and `sym.*` over MCP — the reading graph and symbolic math, neither of which has a CLI command or web page | `kg.*` needs a model server once, to seed real tags; `sym.*` needs nothing |
 | `feed/` | the HTMX web UI (`attest serve`) — browsing a persona's feed, marking items useful/not, opening the onboarding form | a model server, to seed real tagged items |
-| `hermes/` | a real Hermes Agent (`hermes chat`) calling `runs.ask` and `feed.ask` over MCP — the only pair driving an agent rather than the tools directly | a live Hermes install, and a model server |
+| `record/` | `attest runs record --scan` — writing a sweep's results in the shape `runs scan` reads, then comparing it | `none — pure local computation` |
+| `library/` | `attest library sync/status/search/related/export` over `examples/molecular-ai/` | `none — pure local computation` |
+| `research/` | `attest research` against PubMed and CrossRef, then `attest sources add` for a standing topic | `network` — scripted, not yet recorded (see Last verified) |
+| `hermes/` | a real Hermes Agent (`hermes chat`) calling `runs.ask`, `feed.ask`, `kg.ask` and `sym.ask` over MCP — `record-agent.sh NAME SURFACE MODEL QUESTION` records any one turn | a live Hermes install, and a model server |
 
 ## Recording pipeline
 
@@ -54,6 +57,22 @@ code change to keep working:
 | `feed/` | seeded + persona, then `record.py` → 628 KB webm |
 | `hermes/` provenance | real agent turn: called `runs_ask`, answered `winner: kdsweep_t4` with both caveats |
 | `hermes/` feed | real agent turn: called `feed_ask`, returned 4 ranked items with tags |
+
+Added 2026-09-28, against attestation 0.2.2:
+
+| demo | how it was checked |
+|---|---|
+| `record/` | 3 arms written and compared; winner `warmup_long`, three caveats |
+| `library/` | 48-entry BibTeX synced; `related` lists 66 cited / 10 citing; 9 entries exported for 2022 |
+| `hermes/` knowledge | called `kg_ask`, answered the five largest reading areas |
+| `hermes/` symbolic | called `sym_ask` on gemma4:12b, answered `x^3 cos(x) + 3x^2 sin(x)`; gemma4:e2b printed the call as text instead |
+| `hermes/` rate | called `feed_ask` to list, then `feed_ask` with `item_id` + `useful` → `recorded useful=True` |
+| `research/` | **not recorded**: CrossRef returned off-topic hits dated 2088-2115 and PubMed hits carried other papers' DOIs |
+
+`record/` found a bug on the way: `attest runs record lr-sweep --arm lr_3e4 …`
+writes files the scan groups as family `lr`, so `--scan` prints no comparison
+and `runs compare lr-sweep` finds nothing. The demo uses names that group
+correctly; the bug is tracked for a fix.
 
 Two notes for whoever runs these next, both of which cost time to rediscover:
 

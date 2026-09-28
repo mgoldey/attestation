@@ -1,9 +1,31 @@
 # Demo recordings
 
-Six recording scripts under `demos/` capture `attest` in use — one per major
-surface, plus two driving a real Hermes agent rather than calling the tools
-directly. Every recording below is real output from a real run against the
-fixtures in this repository; nothing is staged or re-typed.
+The recording scripts under `demos/` capture `attest` in use: one per major
+surface, a real Hermes agent calling each of the four `*.ask` routers, and an
+install on the hosting platform attestation ships through. Every recording
+below is real output from a real run; nothing is staged or re-typed.
+
+## Installing on a hosted agent
+
+The Research Assistant starter on AgentMarkit, installed on the platform's own
+template image the way its Worker does it: the starter package, then the
+install script that clones and pins attestation, then every automated smoke
+check. Recorded with `lab/scripts/rehearse_starter.sh` from the AgentMarkit
+repository.
+
+<!-- Raw HTML paths are ../../media/, not ../media/: see the feed video below. -->
+<video src="../../media/agentmarkit-install.mp4" controls muted playsinline width="100%">
+  <a href="../../media/agentmarkit-install.mp4">Download the recording</a>.
+</video>
+
+The same install with a model attached (gemma4:12b), a first ingest, and three
+real questions. Two are answered from attestation. The third reaches `feed.ask`
+but the model cut the question to a bare topic, and the router, which does not
+guess, asks back:
+
+<video src="../../media/agentmarkit-end-to-end.mp4" controls muted playsinline width="100%">
+  <a href="../../media/agentmarkit-end-to-end.mp4">Download the recording</a>.
+</video>
 
 ## The run ledger and claim checker
 
@@ -14,6 +36,14 @@ checks every number in a draft against the run that produced it — one
 covers. No model, no network.
 
 ![The run ledger and claim checker](../media/ledger.gif)
+
+## Recording results
+
+`attest runs record` for a sweep that exists only as numbers: it writes a
+result and a config per arm in the shape `runs scan` reads, declares the
+corpus, and with `--scan` compares the arms in the same call, caveats included.
+
+![attest runs record](../media/record.gif)
 
 ## Citations
 
@@ -30,6 +60,15 @@ topics, a path between two concepts and an honest "no path" — then `sym.*`
 doing algebra exactly, including a rule-by-rule derivation.
 
 ![Knowledge graph and symbolic math](../media/kg-symbolic.gif)
+
+## The reference library
+
+A BibTeX file synced into the deduplicated library, searched, one reference's
+real citation list followed both ways (what it cites, what cites it, and which
+of those are already in the library), and a filtered `.bib` written back out.
+No model, no network.
+
+![The reference library](../media/library.gif)
 
 ## The feed web UI
 
@@ -58,6 +97,21 @@ caveats rather than dropping them:
 
 ![Hermes calling feed.ask](../media/hermes-feed.gif)
 
+Acting on one item: the agent lists the reader's papers, then calls `feed.ask`
+again with that item's `item_id` and `question="useful"`, which records the
+judgement the ranker trains on. On gemma4:e2b the reply lists the papers
+without saying it rated one; the second call in the trace is the rating.
+
+![Hermes rating an item through feed.ask](../media/hermes-rate.gif)
+
+The reading graph through `kg.ask` ("What are the main areas I read about?"),
+and exact calculus through `sym.ask` (recorded on gemma4:12b; on gemma4:e2b
+the model printed the call as text instead of making it):
+
+![Hermes calling kg.ask](../media/hermes-knowledge.gif)
+
+![Hermes calling sym.ask](../media/hermes-symbolic.gif)
+
 ## What each one shows
 
 | directory | shows | needs |
@@ -66,7 +120,10 @@ caveats rather than dropping them:
 | `claims/` | `attest claims` plus `cite.*` over MCP, over `examples/citations/` | nothing — pure local computation |
 | `kg-symbolic/` | `kg.*` and `sym.*` over MCP — neither has a CLI command or web page | a model server, once, to seed real tags |
 | `feed/` | the HTMX web UI: a ranked feed, marking items useful, the onboarding form | a model server, to seed tagged items |
-| `hermes/` (×2) | a real agent calling `runs.ask` and `feed.ask` over MCP | a live Hermes install and a model server |
+| `record/` | `attest runs record --scan` writing a sweep and comparing it | nothing — pure local computation |
+| `library/` | `attest library sync/search/related/export` over `examples/molecular-ai/` | nothing — pure local computation |
+| `research/` | `attest research` against PubMed and CrossRef, then tracking the topic | network — **not yet recorded**, see below |
+| `hermes/` | a real agent calling `runs.ask`, `feed.ask` (listing and rating), `kg.ask` and `sym.ask` over MCP | a live Hermes install and a model server |
 
 Unlike `examples/*/`, these are not golden paths. They produce video rather
 than a pinned output line, and most need a model, so
@@ -123,5 +180,9 @@ recording made in place is never committed by accident.
 
 ## Last verified
 
-All six ran green on 2026-09-22 against `main`, and none needed a code change.
+The original six ran green on 2026-09-22 against `main`. `record/`,
+`library/`, the three new agent turns and the two AgentMarkit videos were
+recorded on 2026-09-28 against attestation 0.2.2. `research/` is scripted but
+deliberately not recorded: its run turned up CrossRef hits dated 2115 and
+PubMed hits carrying another paper's DOI, bugs to fix before it is shown.
 `demos/README.md` carries the per-demo evidence.
