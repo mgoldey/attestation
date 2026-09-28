@@ -443,20 +443,74 @@ def _hosted_probe(transport=None) -> StepResult:
     return StepResult("hosted_models", Status.OK, "; ".join(parts))
 
 
+def _env_file_sets(env_path: Path, key: str) -> bool:
+    """Whether `.env` assigns `key` on an uncommented line."""
+    if not env_path.exists():
+        return False
+    return any(
+        line.strip().startswith(f"{key}=") for line in env_path.read_text().splitlines()
+    )
+
+
+def _db_needs_pinning(env_path: Path) -> bool:
+    """Whether the database path would depend on the caller's working directory.
+
+    With no ATTEST_DB (or RSS_DB) and no legacy skill-data database,
+    `resolve_db_path` falls back to `./hermes.db`. Ingest and the refresh
+    script `cd` into the checkout, but Hermes spawns `attest-mcp` from its own
+    cwd, so on a fresh machine the agent's tools opened an EMPTY database
+    beside the one ingest had filled (measured 2026-09-28 on the Agent37
+    image: 1416 items ingested, every feed answer drawn from /tmp/cwd/hermes.db).
+    `.env` is loaded from the checkout by every entry point, so pinning there
+    reaches the MCP server even though Hermes strips the parent environment.
+    """
+    from attestation.db import skill_data_db
+
+    if any(os.environ.get(k) for k in ("ATTEST_DB", "RSS_DB")):
+        return False
+    if any(_env_file_sets(env_path, k) for k in ("ATTEST_DB", "RSS_DB")):
+        return False
+    return not skill_data_db().exists()
+
+
 def step_env_file(check: bool = False) -> StepResult:
     """Does `.env` exist; create it from `.env.sample` if not (skipped
-    entirely outside a checkout, where there is no sample to copy)."""
+    entirely outside a checkout, where there is no sample to copy). Pins
+    ATTEST_DB to the checkout's database when nothing else fixes the path
+    (see `_db_needs_pinning`)."""
     root = _checkout_root()
     if root is None:
         return StepResult("env_file", Status.SKIPPED, NO_CHECKOUT)
     env_path = root / ".env"
     sample_path = root / ".env.sample"
-    if env_path.exists():
+    existed = env_path.exists()
+    pin = _db_needs_pinning(env_path)
+    if existed and not pin:
         return StepResult("env_file", Status.OK)
     if check:
-        return StepResult("env_file", Status.BROKEN, f"{env_path} missing — copy from .env.sample")
-    env_path.write_text(sample_path.read_text())
-    return StepResult("env_file", Status.FIXED, f"created {env_path} from .env.sample")
+        if not existed:
+            return StepResult(
+                "env_file", Status.BROKEN, f"{env_path} missing — copy from .env.sample"
+            )
+        return StepResult(
+            "env_file",
+            Status.BROKEN,
+            "ATTEST_DB is unset, so the agent's tools open ./hermes.db in whatever"
+            " directory Hermes starts them from — run `attest install` to pin it",
+        )
+    done = []
+    if not existed:
+        env_path.write_text(sample_path.read_text())
+        done.append(f"created {env_path} from .env.sample")
+    if pin:
+        db = root / "hermes.db"
+        text = env_path.read_text()
+        sep = "" if not text or text.endswith("\n") else "\n"
+        env_path.write_text(f"{text}{sep}ATTEST_DB={db}\n")
+        # Later steps in this process (first_data) must agree with the pin.
+        os.environ["ATTEST_DB"] = str(db)
+        done.append(f"pinned ATTEST_DB={db}")
+    return StepResult("env_file", Status.FIXED, "; ".join(done))
 
 
 def _run_ingest_and_maybe_tag(now: bool, root: Path) -> tuple[bool, str]:
