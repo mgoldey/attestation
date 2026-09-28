@@ -11,6 +11,12 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Fixed
 
+- **A failed ingest skipped tagging.** The refresh script `attest install`
+  writes exited as soon as `attest ingest` did. One refusing feed (arXiv's
+  export API answering 406 for days) is enough to fail ingest while every
+  other feed's items land, and those items then sat untagged. Tagging now runs
+  regardless, and ingest's exit status is still the script's, so cron reports
+  the failure.
 - **The feed skill named twelve tools to a session that could call two.** The
   deployed feed surface serves `feed.ask` and `feed.tools` only (hiding the
   specifics was measured: the router chosen 26/26 alone, 1/26 beside them), but

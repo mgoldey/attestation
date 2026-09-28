@@ -961,6 +961,11 @@ def _refresh_script_content(root: Path) -> str:
     #    gated on RESEARCH_ROOT existing (most users will not have one) and
     #    silently skipped, never reported as broken, when it is unset --
     #    "must succeed" only binds when there is something to scan.
+    # 7. An ingest failure exited before tagging. One refusing feed (arXiv's
+    #    export API answering 406 for days) makes ingest exit non-zero while
+    #    every other feed's items still land, so those items sat untagged
+    #    until the refusal stopped. Ingest's failure is still the script's
+    #    exit status -- cron must report it -- but tagging runs first.
     lock = paths.hermes_home() / f"{REFRESH_SCRIPT_NAME.removesuffix('.sh')}.lock"
     return (
         "#!/usr/bin/env bash\n"
@@ -1021,13 +1026,15 @@ def _refresh_script_content(root: Path) -> str:
         "  fi\n"
         "fi\n"
         "\n"
-        # Ingest is deterministic and needs no chat model; it must succeed.
+        # Ingest is deterministic and needs no chat model; it must succeed,
+        # so its failure is the exit status -- but only after tagging, since
+        # a partial ingest still stored items that need tags (item 7 above).
+        "status=0\n"
         f"if uv run {CLI_NAME} ingest >/dev/null; then\n"
         '  echo "[$(date -Iseconds)] ingest ok"\n'
         "else\n"
-        "  rc=$?\n"
-        '  echo "[$(date -Iseconds)] ingest FAILED (exit $rc)"\n'
-        '  exit "$rc"\n'
+        "  status=$?\n"
+        '  echo "[$(date -Iseconds)] ingest FAILED (exit $status) -- tagging anyway"\n'
         "fi\n"
         "\n"
         # Tagging needs Ollama. A cold model is a degraded run, not a broken
@@ -1049,6 +1056,7 @@ def _refresh_script_content(root: Path) -> str:
         "fi\n"
         "\n"
         f'echo "[$(date -Iseconds)] refresh done"\n'
+        'exit "$status"\n'
     )
 
 
