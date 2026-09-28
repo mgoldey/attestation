@@ -423,6 +423,39 @@ def test_runs_ask_uses_the_metric_the_question_named(tmp_path, monkeypatch):
     )
 
 
+def test_runs_ask_compares_the_family_the_question_names(tmp_path, monkeypatch):
+    """MEASURED 2026-09-28 on the Agent37 image: gemma4:e2b called runs.ask
+    with question="Compare the kdsweep runs. Which arm did best?" and no
+    `family`, twice, and was asked "which family?" about the one it had just
+    named. The family comes from the question when the argument is absent;
+    two families named at once is still a question back, not a guess."""
+    import json
+
+    from attestation.db import get_db
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    get_db(tmp_path / "t.db").close()
+    ws = tmp_path / "ws" / "proj" / "results"
+    ws.mkdir(parents=True)
+    (ws / "sweep_a.json").write_text(json.dumps({"wer": 0.1}))
+    (ws / "sweep_b.json").write_text(json.dumps({"wer": 0.2}))
+    (ws / "other_a.json").write_text(json.dumps({"wer": 0.3}))
+    (ws / "other_b.json").write_text(json.dumps({"wer": 0.4}))
+    monkeypatch.setenv("RESEARCH_ROOT", str(tmp_path / "ws"))
+
+    from attestation.mcp import provenance as prov
+    from attestation.mcp.ask import _runs_ask
+
+    prov._scan(confirm=True)
+
+    out = _runs_ask("Compare the sweep runs. Which arm did best?")
+    assert out["ok"] and out["tool_used"] == "runs.compare", out
+    assert "winner: sweep_a" in out["answer"], out
+
+    both = _runs_ask("compare the sweep and other runs, which arm won?")
+    assert not both["ok"] and both["options"] == ["runs.compare"], both
+
+
 def test_runs_ask_metric_argument_wins_over_a_paraphrased_question(tmp_path, monkeypatch):
     """A caller that already extracted the metric should not depend on
     `question` still carrying it: a real Hermes session (2026-09-03, three

@@ -588,6 +588,35 @@ def adapter_caveats(adapters) -> list[str]:
     return out
 
 
+def family_named_in(conn: sqlite3.Connection, text: str) -> str | None:
+    """The one recorded family `text` names as a whole word, else None.
+
+    "Compare the kdsweep runs" names its family in prose; a small model calling
+    runs.ask passes the question and leaves `family` empty, and the router then
+    asked "which family?" about the one it had just been told. Two families
+    named at once is ambiguous and returns None rather than picking one.
+    """
+    lowered = text.lower()
+    hits = [
+        r["family"]
+        for r in conn.execute("SELECT DISTINCT family FROM runs WHERE family IS NOT NULL")
+        if re.search(rf"(?<![\w-]){re.escape(r['family'].lower())}(?![\w-])", lowered)
+    ]
+    return hits[0] if len(hits) == 1 else None
+
+
+def run_named_in(conn: sqlite3.Connection, text: str) -> tuple[str, str] | None:
+    """(project, name) for the one recorded run `text` names, else None.
+
+    Run names are identifiers (kdsweep_t4, layer_importance), so only tokens
+    that look like one are tried; a name shared by two projects is ambiguous
+    and returns None rather than picking one.
+    """
+    tokens = [t for t in re.findall(r"[A-Za-z0-9][\w.\-]*", text) if "_" in t or "-" in t]
+    rows = runs_named(conn, tokens)
+    return rows[0] if len(rows) == 1 else None
+
+
 def runs_named(conn: sqlite3.Connection, names) -> list[tuple[str, str]]:
     """(project, name) for every recorded run whose name is one of `names`.
 

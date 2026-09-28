@@ -447,9 +447,7 @@ def _env_file_sets(env_path: Path, key: str) -> bool:
     """Whether `.env` assigns `key` on an uncommented line."""
     if not env_path.exists():
         return False
-    return any(
-        line.strip().startswith(f"{key}=") for line in env_path.read_text().splitlines()
-    )
+    return any(line.strip().startswith(f"{key}=") for line in env_path.read_text().splitlines())
 
 
 def _db_needs_pinning(env_path: Path) -> bool:

@@ -11,6 +11,12 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Fixed
 
+- **`runs.ask` asked "which family?" about the family it had just been
+  told.** "Compare the kdsweep runs" routed to `runs.compare` and then
+  declined for want of a `family` argument; gemma4:e2b passed only the
+  question, twice. The family now comes from the question when the argument is
+  absent (two named at once still asks back), and caveats are joined with `; `
+  so two of them no longer run together into one sentence.
 - **On a fresh machine the agent's tools read an empty database.** With no
   `ATTEST_DB` and no legacy skill-data database, the path falls back to
   `./hermes.db`. Ingest and the refresh script run in the checkout, but Hermes

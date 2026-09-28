@@ -11,6 +11,7 @@ import re
 
 from pydantic import BaseModel, Field
 
+from attestation import ledger
 from attestation.mcp._shared import ItemId
 from attestation.mcp.routing import (
     Decision,
@@ -253,7 +254,10 @@ def _caveats(out: dict) -> str | None:
     caveats = [c for c in (quality.get("caveat"), out.get("caveat")) if c]
     caveats += list(out.get("caveats") or [])
     caveats += [f"failed: {_clip(str(e))}" for e in out.get("errors") or []]
-    return " ".join(caveats) or None
+    # "; " not " ": each caveat is its own sentence fragment, and a plain space
+    # ran them together ("too close to call from these numbers alone each arm
+    # is a single run") in a live answer on 2026-09-28.
+    return "; ".join(caveats) or None
 
 
 def _compose(out: dict, tool: str | None) -> dict:
@@ -487,8 +491,6 @@ def _metric_in_question(question: str) -> str | None:
     (built-in table plus any TOML override) so a user's own declared metric
     is found too, not just the built-in set.
     """
-    from attestation import ledger
-
     q = question.lower()
     for name in ledger.metric_directions():
         if re.search(rf"\b{re.escape(name.lower())}\b", q):
@@ -515,23 +517,8 @@ def _runs_ask(
             " runs.ask cannot write results.",
         )
     if decision.tool == "runs.compare":
-        if not family:
-            return {
-                "ok": False,
-                "answer": _which_family(prov._list(limit=5)),
-                "refs": [],
-                "caveat": None,
-                "options": ["runs.compare"],
-                "tool_used": None,
-            }
-        # `metric` is the caller's explicit choice; a paraphrasing agent that
-        # calls this tool often normalises the question down to "which arm
-        # won?" before it ever reaches here (measured on gemma4:e2b: "using
-        # the wer metric, compare..." became question="which arm won?" three
-        # times running), so extracting from `question` alone is a fallback,
-        # not the primary path.
-        out = prov._compare(family, metric or _metric_in_question(question))
-    elif decision.tool == "runs.claims_check":
+        return _runs_compare(question, family, metric)
+    if decision.tool == "runs.claims_check":
         out = prov._check(path)
     elif decision.tool == "runs.claims_coverage":
         out = prov._coverage(path)
@@ -544,11 +531,35 @@ def _runs_ask(
     return _compose(out, decision.tool)
 
 
+def _runs_compare(question: str, family: str | None, metric: str | None) -> dict:
+    """runs.compare for the family passed, or else the one the question names."""
+    from attestation.mcp import provenance as prov
+
+    family = family or _in_ledger(ledger.family_named_in, question)
+    if not family:
+        return {
+            "ok": False,
+            "answer": _which_family(prov._list(limit=5)),
+            "refs": [],
+            "caveat": None,
+            "options": ["runs.compare"],
+            "tool_used": None,
+        }
+    # `metric` is the caller's explicit choice; a paraphrasing agent that
+    # calls this tool often normalises the question down to "which arm
+    # won?" before it ever reaches here (measured on gemma4:e2b: "using
+    # the wer metric, compare..." became question="which arm won?" three
+    # times running), so extracting from `question` alone is a fallback,
+    # not the primary path.
+    out = prov._compare(family, metric or _metric_in_question(question))
+    return _compose(out, "runs.compare")
+
+
 def _runs_detail(question: str) -> dict:
     """runs.detail for the one run the question names, or a question back."""
     from attestation.mcp import provenance as prov
 
-    found = _run_named_in(question)
+    found = _in_ledger(ledger.run_named_in, question)
     if found is None:
         return _needs("runs.detail", "Which run? Name it (e.g. kdsweep_t4) and I will show it.")
     out = prov._detail(*found)
@@ -574,23 +585,15 @@ def _needs(tool: str, answer: str) -> dict:
     }
 
 
-def _run_named_in(question: str) -> tuple[str, str] | None:
-    """(project, name) for the one recorded run the question names, else None.
-
-    Run names are identifiers (kdsweep_t4, layer_importance), so only tokens
-    that look like one are tried; a name shared by two projects is ambiguous
-    and returns None rather than picking one.
-    """
-    from attestation import ledger
+def _in_ledger(lookup, question: str):
+    """Run a `ledger.*_named_in` lookup on the question against the live DB."""
     from attestation.db import get_db, resolve_db_path
 
-    tokens = [t for t in re.findall(r"[A-Za-z0-9][\w.\-]*", question) if "_" in t or "-" in t]
     conn = get_db(resolve_db_path(None))
     try:
-        rows = ledger.runs_named(conn, tokens)
+        return lookup(conn, question)
     finally:
         conn.close()
-    return rows[0] if len(rows) == 1 else None
 
 
 def _kg_ask(question: str, source: str | None = None, target: str | None = None) -> dict:
