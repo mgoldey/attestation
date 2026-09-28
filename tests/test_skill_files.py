@@ -530,3 +530,59 @@ def test_every_skill_naming_a_dotted_tool_warns_the_name_may_be_rewritten():
             f"{name} names a dotted tool call but never warns that an MCP "
             "client may rewrite it before the model sees it"
         )
+
+
+# A surface skill may name only what its DEPLOYED session can call. The test
+# above checks namespaces (feed.* belongs to the feed surface), but the
+# deployed session is ATTEST_TOOLS=<surface> WITHOUT ATTEST_EXPAND, which
+# serves the router and its disclosure tool and nothing else -- so the feed
+# skill named twelve tools to a session that could call two. MEASURED
+# 2026-09-25 in real hermes chat turns: the model called listing and digest
+# tools it had read about, Hermes rewrote each name to feed.ask with the wrong
+# arguments, every call failed validation, and the reader was told the feed was
+# "unreachable" (4 of 12 turns). Counts of hidden tools each skill still names;
+# a ratchet, so a rewrite can lower a number and nothing can raise one.
+HIDDEN_TOOL_BASELINE = {"feed": 0, "provenance": 7, "knowledge": 12, "symbolic": 7}
+
+
+def _deployed_tools(surface: str) -> set[str]:
+    """What a session under ATTEST_TOOLS=<surface>, unexpanded, can call."""
+    import asyncio
+    import importlib
+    import os
+
+    from mcp.server.fastmcp import FastMCP
+
+    saved = {k: os.environ.get(k) for k in ("ATTEST_TOOLS", "ATTEST_EXPAND")}
+    os.environ["ATTEST_TOOLS"] = surface
+    os.environ.pop("ATTEST_EXPAND", None)
+    try:
+        import attestation.mcp as mcp_pkg
+
+        importlib.reload(mcp_pkg)
+        server = FastMCP("deployed-surface-check")
+        mcp_pkg.register_all(server)
+        return {t.name for t in asyncio.run(server.list_tools())}
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        import attestation.mcp as mcp_pkg
+
+        importlib.reload(mcp_pkg)
+
+
+def test_a_surface_skill_names_no_tool_its_deployed_session_hides():
+    live = _live_tool_names()
+    counts = {}
+    for name, surface in _surface_skills().items():
+        named = {f"{ns}.{tool}" for ns, tool in _TOOL_TOKEN.findall(_skill_md(name))}
+        hidden = {t for t in named if t in live} - _deployed_tools(surface)
+        counts[surface] = len(hidden)
+        assert len(hidden) <= HIDDEN_TOOL_BASELINE[surface], (
+            f"{name} names {len(hidden)} tool(s) its deployed session cannot call "
+            f"(baseline {HIDDEN_TOOL_BASELINE[surface]}): {sorted(hidden)}"
+        )
+    assert counts["feed"] == 0, "the feed skill must name only feed.ask and feed.tools"

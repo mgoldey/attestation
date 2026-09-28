@@ -727,3 +727,185 @@ def test_an_unknown_concept_refusal_names_what_the_reader_probably_meant():
     members = {"memory", "working-memory", "immune-system", "system-design", "rag"}
     near = kg.nearest("Memory System", members)
     assert near[:2] == ["memory", "working-memory"], near
+
+
+# --- feed.ask carries its target ----------------------------------------------
+# The deployed feed surface serves feed.ask and feed.tools and nothing else
+# (hiding the specifics was measured: the router was picked 1 time in 26 when
+# they were listed beside it, 26 in 26 when they were not). But feed.ask took
+# only `question`, so every action that needs an item or a url answered "tell
+# me which item, then I will call feed.rate" -- a tool the session cannot see.
+# Rating was unreachable: no click was recorded after 2026-08-22 and the
+# engagement table stayed empty, while the ranker waited for feedback.
+
+
+def _one_item_db(tmp_path, monkeypatch):
+    from attestation.db import get_db
+
+    db = tmp_path / "t.db"
+    monkeypatch.setenv("ATTEST_DB", str(db))
+    conn = get_db(db)
+    # The reader exists: in real use they have just been shown a list.
+    conn.execute("INSERT INTO users(name, interests) VALUES ('matt', 'sparse attention')")
+    conn.execute(
+        "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+        " VALUES (NULL, 'Routed Memory for Sparse Control', 'https://arxiv.org/abs/1', 's', 'h1')"
+    )
+    conn.commit()
+    item_id = conn.execute("SELECT id FROM items").fetchone()[0]
+    conn.close()
+    return db, item_id
+
+
+@pytest.mark.parametrize(
+    ("question", "useful"),
+    [("not useful", 0), ("that's not my area", 0), ("already read that one", 0), ("useful", 1)],
+)
+def test_feed_ask_records_a_verdict_when_given_the_item(tmp_path, monkeypatch, question, useful):
+    import sqlite3
+
+    from attestation.mcp.ask import Answer, _feed_ask
+
+    db, item_id = _one_item_db(tmp_path, monkeypatch)
+    answer = Answer(**_feed_ask("matt", question, item_id=item_id))
+
+    assert answer.ok and answer.tool_used == "feed.rate", answer
+    row = (
+        sqlite3.connect(db)
+        .execute(
+            "SELECT c.useful FROM clicks c JOIN users u ON u.id = c.user_id WHERE u.name = 'matt'"
+        )
+        .fetchone()
+    )
+    assert row == (useful,), f"{question!r} recorded {row}, wanted useful={useful}"
+
+
+def test_feed_ask_reads_the_item_it_is_given(tmp_path, monkeypatch):
+    from attestation.mcp.ask import Answer, _feed_ask
+
+    _, item_id = _one_item_db(tmp_path, monkeypatch)
+    answer = Answer(**_feed_ask("matt", "summarize this", item_id=item_id))
+
+    assert answer.ok and answer.tool_used == "feed.read", answer
+    assert "Routed Memory" in answer.answer
+    assert [r.item_id for r in answer.refs] == [item_id]
+
+
+def test_an_item_with_no_recognisable_verb_is_opened_not_refused(tmp_path, monkeypatch):
+    """ "tell me more" plus an item is a request to open it -- reading is the
+    only harmless thing to do with an item nobody said anything about."""
+    from attestation.mcp.ask import _feed_ask
+
+    _, item_id = _one_item_db(tmp_path, monkeypatch)
+    assert _feed_ask("matt", "tell me more", item_id=item_id)["tool_used"] == "feed.read"
+
+
+def test_feed_ask_subscribes_to_the_url_it_is_given(tmp_path, monkeypatch):
+    import sqlite3
+
+    from attestation.mcp.ask import _feed_ask
+
+    db, _ = _one_item_db(tmp_path, monkeypatch)
+    # A research: url registers without a fetch; an http url is validated by
+    # fetching it, which a unit test must not do.
+    topic = "research:arxiv?q=routed+memory"
+    out = _feed_ask("matt", "subscribe me to this", url=topic)
+
+    assert out["ok"] and out["tool_used"] == "feed.source_add", out
+    urls = [r[0] for r in sqlite3.connect(db).execute("SELECT url FROM feeds")]
+    assert topic in urls
+
+
+def test_without_a_target_the_router_still_asks_for_one(tmp_path, monkeypatch):
+    from attestation.mcp.ask import _feed_ask
+
+    _one_item_db(tmp_path, monkeypatch)
+    out = _feed_ask("matt", "not useful")
+    assert out["ok"] is False and out["tool_used"] is None
+
+
+def test_the_registered_feed_ask_exposes_item_id_and_url():
+    """Checked on the real registration, the surface an agent sees."""
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.mcp import register_all
+
+    server = FastMCP("t")
+    register_all(server)
+    schema = {t.name: t for t in asyncio.run(server.list_tools())}["feed.ask"].inputSchema
+    assert {"item_id", "url"} <= set(schema["properties"]), schema["properties"]
+    assert set(schema.get("required", [])) == {"user", "question"}
+
+
+def test_a_digest_answer_names_real_titles_so_nothing_is_invented():
+    """Measured 2026-09-28 in a real hermes turn: the digest answer named only
+    its topic, and gemma4:e2b filled the list by INVENTING papers ("A Paper on
+    Evaluation Metrics") under made-up arXiv ids."""
+    from attestation.mcp.ask import Answer, _compose
+
+    answer = Answer(
+        **_compose(
+            {
+                "ok": True,
+                "message": "2 item(s) in 1 topic(s)",
+                "topics": [
+                    {
+                        "label": "evaluation-metrics",
+                        "items": [
+                            {
+                                "item_id": 1,
+                                "title": "Model Selection with Limited Labels",
+                                "url": "u1",
+                            },
+                            {"item_id": 2, "title": "Do LLMs Know What They Know?", "url": "u2"},
+                        ],
+                    }
+                ],
+            },
+            "feed.digest",
+        )
+    )
+    assert "Model Selection with Limited Labels" in answer.answer, answer.answer
+    assert "Do LLMs Know What They Know?" in answer.answer
+
+
+def test_reading_an_item_answers_with_its_text_not_just_its_title(tmp_path, monkeypatch):
+    from attestation.mcp.ask import Answer, _feed_ask
+
+    _, item_id = _one_item_db(tmp_path, monkeypatch)
+    answer = Answer(**_feed_ask("matt", "summarize this", item_id=item_id))
+    # The fixture's summary is "s": present after the title, not dropped.
+    assert answer.answer.startswith("Routed Memory for Sparse Control: s"), answer.answer
+
+
+def test_a_digest_names_exactly_the_items_its_refs_carry():
+    """The agent renders one line per ref. Measured 2026-09-28: with 1 item in
+    the only topic and 11 unclustered, the answer named one title against 12
+    refs and gemma4:e2b repeated that title to fill the slots. Named rows and
+    refs must be the same items, in the same order -- unclustered included."""
+    from attestation.mcp.ask import NAMED_ROWS, Answer, _compose
+
+    unclustered = [
+        {"item_id": 10 + n, "title": f"Loose paper {n}", "url": f"u{n}"} for n in range(11)
+    ]
+    answer = Answer(
+        **_compose(
+            {
+                "ok": True,
+                "message": "12 item(s) in 1 topic(s)",
+                "topics": [
+                    {
+                        "label": "memory",
+                        "items": [{"item_id": 1, "title": "Routed Memory", "url": "u"}],
+                    }
+                ],
+                "unclustered": unclustered,
+            },
+            "feed.digest",
+        )
+    )
+    assert len(answer.refs) == NAMED_ROWS, answer.refs
+    assert [r.item_id for r in answer.refs] == [1, 10, 11, 12, 13]
+    assert "Routed Memory [memory]" in answer.answer and "Loose paper 0 [other]" in answer.answer
