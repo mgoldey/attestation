@@ -9,6 +9,13 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-28
+
+Found by installing the AgentMarkit research-assistant starter on the real
+Agent37 image and asking it real questions: the install went green while the
+agent's tools read an empty database. Plus the feed skill rewritten around
+`feed.ask`, and feedback made reachable through it.
+
 ### Fixed
 
 - **`runs.ask` asked "which family?" about the family it had just been
@@ -315,5 +322,7 @@ this is the repo's first public artifact despite the number.
   the first green CI run needed a stubbed daemon test plus a Python build
   that can load the `sqlite-vec` extension (`d4ea750`).
 
-[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/mgoldey/attestation/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/mgoldey/attestation/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mgoldey/attestation/compare/573e42c...v0.2.0
