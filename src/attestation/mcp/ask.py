@@ -11,6 +11,7 @@ import re
 
 from pydantic import BaseModel, Field
 
+from attestation.mcp._shared import ItemId
 from attestation.mcp.routing import (
     Decision,
     route_feed,
@@ -114,15 +115,70 @@ def _feed_ask_needs_argument(decision: Decision) -> dict | None:
     return None
 
 
-def _feed_ask(user: str, question: str) -> dict:
+# A verdict is negative when it says so; everything the rate route claims
+# otherwise ("useful", "good find") is positive. The router sends "useful" and
+# "not useful" to the same tool, so the direction has to be read here.
+_REJECTS = ("not ", "n't", "already read", "old news", "wrong subfield", "too applied",
+            "too theoretical", "rather than", "skip")  # fmt: skip
+
+
+def _feed_ask_targeted(
+    decision: Decision, user: str, question: str, item_id: int | None, url: str | None
+) -> dict | None:
+    """Complete a route that needs an item or a url, when the caller passed one.
+
+    The deployed feed surface serves feed.ask and feed.tools only, so a route
+    that answered "tell me which item, then I will call feed.rate" named a tool
+    the session cannot call -- rating was unreachable, and no click was recorded
+    for a month. An item with no recognisable verb is opened: reading is the
+    only harmless thing to do with an item nobody said anything about.
+    """
+    from attestation.mcp import feed as feed_mod
+    from attestation.mcp import subscriptions as subs
+
+    tool = decision.tool or ("feed.read" if item_id is not None else None)
+    if item_id is not None and tool in ("feed.rate", "feed.explain", "feed.read"):
+        if tool == "feed.rate":
+            rejects = _has_any(question.lower(), _REJECTS)
+            out = feed_mod._record_feedback(user, item_id, not rejects)
+        elif tool == "feed.explain":
+            out = feed_mod._explain_item(user, item_id)
+        else:
+            out = feed_mod._read_item(user, item_id)
+        return _compose(out, tool)
+    if url and tool in ("feed.source_add", "feed.source_preview"):
+        out = (
+            subs._add_feed(url, None, user)
+            if tool == "feed.source_add"
+            else subs._preview_feed(url)
+        )
+        return _compose(out, tool)
+    return None
+
+
+def _feed_ask_early(
+    decision: Decision, user: str, question: str, item_id: int | None, url: str | None
+) -> dict | None:
+    """Every answer feed.ask gives before dispatching a routed read:
+    a completed item/url action, a declined route, or a request for the
+    argument the route needs. Split out to keep `_feed_ask` itself flat."""
+    if (targeted := _feed_ask_targeted(decision, user, question, item_id, url)) is not None:
+        return targeted
+    if decision.tool is None:
+        return _declined(decision)
+    return _feed_ask_needs_argument(decision)
+
+
+def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
+    return any(p in text for p in phrases)
+
+
+def _feed_ask(user: str, question: str, item_id: int | None = None, url: str | None = None) -> dict:
     from attestation.mcp import feed as feed_mod
 
     decision = route_feed(question)
-    if decision.tool is None:
-        return _declined(decision)
-
-    if (needs_argument := _feed_ask_needs_argument(decision)) is not None:
-        return needs_argument
+    if (early := _feed_ask_early(decision, user, question, item_id, url)) is not None:
+        return early
 
     if decision.tool == "feed.search":
         out = feed_mod._search_feed(user, decision.kwargs.get("query", question))
@@ -161,7 +217,7 @@ def _refs(out: dict) -> list[dict]:
     no item_id, so the item_id filter dropped every one and the reader was
     told about work it had no way to open.
     """
-    items = _linkable(out)
+    items = _named_rows(out)[:NAMED_ROWS] if out.get("topics") is not None else _linkable(out)
     refs = [{"item_id": i["item_id"], "url": i.get("url")} for i in items if "item_id" in i]
     papers = [p for p in (out.get("papers") or []) if any(map(p.get, _PAPER_ID_KEYS))]
     return refs + [
@@ -177,6 +233,8 @@ def _linkable(out: dict) -> list[dict]:
     had an id and a url (measured 2026-09-25).
     """
     rows = list(out.get("items") or [])
+    if isinstance(out.get("item"), dict):  # feed.read returns one item
+        rows.append(out["item"])
     for topic in out.get("topics") or []:
         rows += topic.get("items") or []
     return rows + list(out.get("unclustered") or [])
@@ -198,13 +256,10 @@ def _caveats(out: dict) -> str | None:
     return " ".join(caveats) or None
 
 
-def _compose(out: dict, tool: str) -> dict:
+def _compose(out: dict, tool: str | None) -> dict:
     """Turn a tool's payload into an Answer, keeping every caveat."""
     answer = _summarise(out)
-    if tool == "feed.persona_status" and out.get("interests"):
-        # The interests text IS the answer to "what are my interests?" --
-        # the status message is only a click count.
-        answer = f"{answer} Interests: {_clip(out['interests'], 240)}"
+    answer = _answer_extras(answer, out, tool)
     return {
         "ok": bool(out.get("ok")),
         "answer": answer.strip(),
@@ -264,11 +319,11 @@ def _summarise(out: dict) -> str:
     real session asked runs.ask "which arm won by wer" and reported no
     winner at all, even though the tool it called knew one.
     """
-    named: list = next((out[k] for k in _RESULT_KEYS if out.get(k)), [])
+    named = _named_rows(out)
     # A claim that holds is the least interesting line in a check: lead with
     # the contradicted and unsupported ones, which are what need fixing.
     named = sorted(named, key=_supported_last)
-    labels = [x for x in (_label(n) for n in named[:5]) if x]
+    labels = [x for x in (_label(n) for n in named[:NAMED_ROWS]) if x]
     headline = _headline_with_winner(out)
     if not labels:
         return out.get("message") or ""
@@ -318,6 +373,46 @@ def _titled_label(x: dict) -> str:
     if title and source:
         return f"{_clip(str(title))} ({source})"
     return _clip(str(title or ""))
+
+
+# How many rows an answer names -- and, for a digest, how many refs it carries.
+NAMED_ROWS = 5
+
+
+def _named_rows(out: dict) -> list:
+    """The rows an answer names, in order. A digest is flattened to its items.
+
+    MEASURED 2026-09-28 in real hermes turns, twice. Naming only a digest's
+    TOPIC made gemma4:e2b invent papers to fill the list; naming a few titles
+    against 12 refs made it split and repeat them to fill 12 slots. The agent
+    renders one line per ref, so a digest answers the way feed.list does: item
+    rows, each tagged with its topic, and `refs` exactly those rows (_refs).
+    """
+    topics = out.get("topics")
+    if topics is None:
+        return next((out[k] for k in _RESULT_KEYS if out.get(k)), [])
+    groups = [*topics, {"label": "other", "items": out.get("unclustered") or []}]
+    return [
+        {**item, "title": f"{item.get('title')} [{group['label']}]"}
+        for group in groups
+        for item in group.get("items") or []
+        if isinstance(item, dict)
+    ]
+
+
+def _answer_extras(answer: str, out: dict, tool: str | None) -> str:
+    """The field that IS the answer when the tool's message is only a count.
+
+    "what are my interests?" is answered by the interests text, not a click
+    count; "summarize item N" by the item's own text, not its title --
+    measured 2026-09-28, the read answer was the title alone.
+    """
+    if tool == "feed.persona_status" and out.get("interests"):
+        return f"{answer} Interests: {_clip(out['interests'], 240)}"
+    item = out.get("item")
+    if tool == "feed.read" and isinstance(item, dict) and item.get("summary"):
+        return f"{answer}: {_clip(item['summary'], 600)}"
+    return answer
 
 
 def _located_label(x: dict) -> str | None:
@@ -603,7 +698,9 @@ def register(mcp) -> None:
     )
 
     @mcp.tool(name="feed.ask")
-    def feed_ask(user: str, question: str) -> Answer:
+    def feed_ask(
+        user: str, question: str, item_id: ItemId | None = None, url: str | None = None
+    ) -> Answer:
         """Ask anything about this reader's PAPERS AND ARTICLES, in their words.
 
         Start here, including for "find me papers on X" and "what's new in Y".
@@ -618,8 +715,13 @@ def register(mcp) -> None:
 
         If the question is ambiguous it asks back and names the alternatives
         in `options` rather than picking a default.
+
+        To act on ONE item from a list you showed, pass its `item_id` (from
+        `refs`): question="useful" or "not useful" records the reader's
+        verdict, "why is this here?" explains its rank, anything else opens
+        it. To subscribe to or preview a feed, pass its `url`.
         """
-        return Answer(**_feed_ask(user, question))
+        return Answer(**_feed_ask(user, question, item_id, url))
 
     @mcp.tool(name="runs.ask")
     def runs_ask(

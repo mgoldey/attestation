@@ -216,8 +216,21 @@ def test_mcp_domain_modules_stay_small():
         # _label (13) and _runs_ask (11) until they were split. Then 476:
         # runs.detail names its metric values instead of "7 metric row(s)",
         # and sym.verify answers with its verdict -- `result` is lhs - rhs, so
-        # a TRUE identity read "0".
-        "ask.py": 476,
+        # a TRUE identity read "0". Then 521 (2026-09-28): feed.ask carries
+        # an optional item_id and url, dispatched by _feed_ask_targeted. The
+        # deployed feed surface serves feed.ask alone, so rating, reading,
+        # explaining and subscribing were unreachable -- no click was
+        # recorded for a month. _feed_ask_early exists because the
+        # complexity gate refused _feed_ask at 11; +1 for importing ItemId,
+        # the ge=1 type the schema test requires of the new item_id. Then 533:
+        # a digest topic is labelled WITH its top titles (a real turn invented
+        # papers when the answer named only the topic) and a read answers with
+        # the item's text, via _answer_extras. Then 543: a digest answers
+        # the way feed.list does -- item rows tagged with their topic, refs
+        # exactly those rows (_named_rows, NAMED_ROWS). Naming topics made the
+        # agent invent papers; naming a few titles against 12 refs made it
+        # repeat them. Both measured in real hermes turns 2026-09-28.
+        "ask.py": 543,
         # Raised for runs.record (2026-09-01): a new tool plus its Arm
         # pydantic model in provenance.py, one new routing rule (with its
         # own ordering comment) in routing.py. Raised again the same day

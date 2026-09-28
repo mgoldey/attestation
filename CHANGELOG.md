@@ -9,6 +9,38 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Fixed
+
+- **The feed skill named twelve tools to a session that could call two.** The
+  deployed feed surface serves `feed.ask` and `feed.tools` only (hiding the
+  specifics was measured: the router chosen 26/26 alone, 1/26 beside them), but
+  `attestation-feed/SKILL.md` taught `feed.list`, `feed.digest`, `feed.rate`
+  and nine more. In real `hermes chat` turns the model called them, Hermes
+  rewrote each name to `feed.ask` with the wrong arguments, every call failed
+  validation, and the reader was told the feed was "unreachable". The skill is
+  rewritten around `feed.ask` (293 → 163 lines) and a ratchet in
+  `test_skill_files.py` counts hidden tools each surface skill names against
+  its DEPLOYED session: feed 0, provenance 7, knowledge 12, symbolic 7, only
+  down.
+- **Feedback was unreachable.** `feed.ask` takes an optional `item_id` and
+  `url`: `question="useful"` / `"not useful"` with an item records the verdict,
+  "why is this here?" explains it, anything else opens it; a `url` subscribes or
+  previews. On a surface that serves only `feed.ask`, "tell me which item, then
+  I will call feed.rate" named a tool the agent could not call -- and no click
+  had been recorded since 2026-08-22.
+- **A digest made the agent invent papers.** Its answer named only the topic,
+  and gemma4:e2b filled the list with titles that do not exist; named a few
+  titles against twelve refs, it repeated them. A digest now answers like
+  `feed.list`: item rows tagged with their topic, and `refs` exactly those rows.
+- Reading an item answers with its text, not only its title.
+
+Measured on 12 real `hermes chat` turns (gemma4:e2b, isolated `HERMES_HOME`,
+a copy of the live database): 8/12 before. After the skill rewrite all 12
+called only `feed.ask` with zero rewritten tool names or errors -- but the
+digest turn still invented titles, so 11/12 answered correctly. After the
+digest alignment fix, two re-runs of that turn each listed five real, distinct
+titles.
+
 ## [0.2.1] - 2026-09-25
 
 A hotfix, found by driving 39 realistic questions — nine lifted from real
