@@ -9,6 +9,18 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Fixed
+
+- **Research hits carried another paper's DOI.** PubMed identifiers were read
+  with `iter("ArticleId")`, which also walks the reference list, so a paper
+  came back with the DOI (and could come back with the PMC id) of the last
+  paper it cites. They now come from the article's own `ArticleIdList`.
+- **CrossRef research returned off-topic papers dated 2115.** Sorting by
+  publication date made the query match on any one word and put bogus future
+  dates first ("Social Network Sites' usage among Greek students" for an
+  interatomic-potentials query). CrossRef searches now rank by relevance, cap
+  at today's date, and skip peer-review records.
+
 ## [0.2.2] - 2026-09-28
 
 Found by installing the AgentMarkit research-assistant starter on the real

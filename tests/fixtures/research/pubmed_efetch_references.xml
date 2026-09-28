@@ -1,0 +1,38 @@
+<?xml version="1.0" ?>
+<!-- The shape of PMID 42393032 (fetched 2026-09-28), trimmed: the article's
+     own ArticleIdList, then a ReferenceList whose citations carry their own.
+     The last reference's DOI is what iter("ArticleId") used to return. -->
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation Status="PubMed-not-MEDLINE" Owner="NLM">
+      <PMID Version="1">42393032</PMID>
+      <Article PubModel="Electronic">
+        <Journal><Title>Nature communications</Title></Journal>
+        <ArticleTitle>Chemical intuition on bond-dissociation energies as an emergent ability of universal interatomic potentials.</ArticleTitle>
+        <ELocationID EIdType="doi" ValidYN="Y">10.1038/s41467-026-74919-8</ELocationID>
+        <AuthorList><Author><LastName>Doe</LastName><ForeName>Jane</ForeName></Author></AuthorList>
+      </Article>
+    </MedlineCitation>
+    <PubmedData>
+      <History><PubMedPubDate PubStatus="pubmed"><Year>2026</Year><Month>7</Month><Day>3</Day></PubMedPubDate></History>
+      <ArticleIdList>
+        <ArticleId IdType="pubmed">42393032</ArticleId>
+        <ArticleId IdType="pmc">PMC13462534</ArticleId>
+        <ArticleId IdType="doi">10.1038/s41467-026-74919-8</ArticleId>
+      </ArticleIdList>
+      <ReferenceList>
+        <Reference>
+          <Citation>Batzner S. et al. E(3)-equivariant graph neural networks.</Citation>
+          <ArticleIdList>
+            <ArticleId IdType="doi">10.1038/s41467-022-29939-5</ArticleId>
+            <ArticleId IdType="pmc">PMC9068614</ArticleId>
+          </ArticleIdList>
+        </Reference>
+        <Reference>
+          <Citation>An older materials paper.</Citation>
+          <ArticleIdList><ArticleId IdType="doi">10.1088/0965-0393/18/1/015012</ArticleId></ArticleIdList>
+        </Reference>
+      </ReferenceList>
+    </PubmedData>
+  </PubmedArticle>
+</PubmedArticleSet>
