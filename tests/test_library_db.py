@@ -101,14 +101,15 @@ def test_a_fresh_database_has_the_counts_claude_md_states(tmp_path):
     different branches and both landed, so both tables are now present. This
     test and its sibling in test_db.py police the SAME claim from two
     directions; when a migration lands, both must be updated together, which
-    is exactly the drift both exist to catch.
+    is exactly the drift both exist to catch. Went 18/29 -> 19/30 on
+    2026-09-29 when migration 011 added `persona_aliases`.
     """
     conn = dbmod.get_db(tmp_path / "fresh.db")
     names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
     app = [n for n in names if not n.startswith(("item_vectors", "reference_vectors", "sqlite_"))]
-    assert (len(names), len(app)) == (29, 18)
+    assert (len(names), len(app)) == (30, 19)
     claude_md = (Path(__file__).resolve().parents[1] / "CLAUDE.md").read_text()
-    assert "18 APPLICATION tables" in claude_md and "a fresh file has 29" in claude_md
+    assert "19 APPLICATION tables" in claude_md and "a fresh file has 30" in claude_md
 
 
 def test_a_fresh_database_has_the_library_tables(tmp_path):

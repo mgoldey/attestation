@@ -64,9 +64,10 @@ def test_get_db_creates_schema(tmp_path):
 def test_fresh_db_object_count_in_sqlite_master(tmp_path):
     """Pins the count CLAUDE.md's Storage line quotes: 18 application tables
     (16 plus embedding_model from migration 010, plus reference_fulltext from
-    migration 009 -- concurrent branches, both merged) + 2 vec0 virtual
+    migration 009 -- concurrent branches, both merged; 19 since migration 011's
+    persona_aliases) + 2 vec0 virtual
     tables + 8 shadow tables (4 each for item_vectors and reference_vectors)
-    + sqlite_sequence = 29 rows of type='table' in sqlite_master. MEASURED
+    + sqlite_sequence = 30 rows of type='table' in sqlite_master. MEASURED
     2026-09-16. If this fails after a legitimate schema change, update both
     this assertion and the CLAUDE.md line it cross-checks -- do not just
     raise the number here without updating the doc, and do not delete the
@@ -74,7 +75,7 @@ def test_fresh_db_object_count_in_sqlite_master(tmp_path):
     """
     conn = get_db(tmp_path / "test.db")
     tables = [r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
-    assert len(tables) == 29, sorted(tables)
+    assert len(tables) == 30, sorted(tables)
 
 
 def test_get_db_pragmas(tmp_path):

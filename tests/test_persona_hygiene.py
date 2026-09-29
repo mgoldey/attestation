@@ -134,7 +134,10 @@ def test_merging_moves_feedback_and_unions_interests(seeded):
     out = personas.merge(seeded, into="real", drop=["seeded"])
 
     assert out["moved"] == 2
-    assert get_user(seeded, "seeded") is None, "the merged-away persona still exists"
+    assert seeded.execute("SELECT 1 FROM users WHERE name = 'seeded'").fetchone() is None, (
+        "the merged-away persona still exists"
+    )
+    assert get_user(seeded, "seeded")["id"] == keep, "the dropped name must reach the keeper"
     kept = get_user(seeded, "real")
     assert "catalysis" in kept["interests"], "the dropped persona's interests were lost"
     assert "protein folding" in kept["interests"]
@@ -334,3 +337,38 @@ def test_propose_interests_offers_archetype_templates_on_an_empty_corpus(tmp_pat
     conn2 = get_db(tmp_path / "empty.db")
     assert conn2.execute("SELECT COUNT(*) n FROM users").fetchone()["n"] == 0
     conn2.close()
+
+
+def test_a_merged_name_reaches_the_keeper_and_is_never_recreated(seeded):
+    """Discord prefixes each message with the sender's display name, so the
+    agent passed "Matthew Goldey" instead of the persona "matt", autocreate
+    made it again after every merge (2026-09-18, 09-28, 09-29), and ratings
+    made in Discord trained a persona nobody read from. A merged name is now
+    an alias: reads, ratings and autocreate under it all land on the keeper."""
+    from attestation.rank import autocreate_user
+
+    keep = get_user(seeded, "real")["id"]
+    personas.merge(seeded, into="real", drop=["seeded"])
+
+    assert get_user(seeded, "SEEDED")["id"] == keep, "aliases fold case like names do"
+    row, _ = autocreate_user(seeded, "seeded")
+    assert row["id"] == keep
+    assert seeded.execute("SELECT COUNT(*) FROM users WHERE name = 'seeded'").fetchone()[0] == 0
+
+    # Merging it again is a no-op, not a purge of the keeper it resolves to.
+    again = personas.merge(seeded, into="real", drop=["seeded"])
+    assert again["aliased"] == [] and get_user(seeded, "real")["id"] == keep
+
+
+def test_aliases_follow_a_chain_of_merges_and_go_with_their_persona(seeded):
+    from attestation.rank import create_user
+
+    create_user(seeded, "third", "")
+    personas.merge(seeded, into="seeded", drop=["third"])  # third -> seeded
+    personas.merge(seeded, into="real", drop=["seeded"])  # seeded -> real
+    keep = get_user(seeded, "real")["id"]
+    assert get_user(seeded, "third")["id"] == keep, "an alias of a merged persona moves with it"
+
+    seeded.execute("DELETE FROM users WHERE id = ?", (keep,))
+    seeded.commit()
+    assert get_user(seeded, "third") is None and get_user(seeded, "seeded") is None

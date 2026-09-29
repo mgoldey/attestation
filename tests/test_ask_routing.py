@@ -997,3 +997,34 @@ def test_feed_ask_creates_a_first_time_reader_from_their_interests(tmp_path, mon
         assert get_user(conn, "owner")["interests"] == "defect passivation"
     finally:
         conn.close()
+
+
+def test_a_listed_paper_carries_its_own_link_beside_its_title():
+    """MEASURED 2026-09-29 in a live Discord turn: the answer named four
+    titles and `refs` held their four urls, and the agent, pairing them by
+    position, linked item 4 to 2609.12105 (a paper from earlier in the
+    conversation) instead of the 2609.34205 the tool returned. Each title now
+    carries its own link, so relaying the answer cannot re-pair them."""
+    from attestation.mcp.ask import _compose
+
+    items = [
+        {
+            "item_id": 15931,
+            "title": "Agentic Multi-Turn Reasoning: A Fairness Approach",
+            "url": "https://arxiv.org/abs/2609.33323",
+            "source": "arXiv cs.LG",
+        },
+        {
+            "item_id": 15522,
+            "title": "Learning to Optimize through Solver-Grounded Self-Play",
+            "url": "https://arxiv.org/abs/2609.34205",
+            "source": "arXiv cs.LG",
+        },
+        {"item_id": 7, "title": "A row with no link", "source": "Nature"},
+    ]
+    out = _compose({"message": "3 item(s), best first", "items": items}, "feed.list")
+
+    for item in items[:2]:
+        assert f"[{item['title']}]({item['url']}) (arXiv cs.LG)" in out["answer"], out["answer"]
+    assert "A row with no link (Nature)" in out["answer"], "no url: a plain title, no empty link"
+    assert [r["url"] for r in out["refs"] if r.get("url")] == [i["url"] for i in items[:2]]

@@ -9,6 +9,24 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Fixed
+
+- **A merged persona kept coming back.** Discord prefixes each message with
+  the sender's display name, so the agent passed `user="Matthew Goldey"`
+  instead of the persona `matt`; `personas.merge` folded that duplicate in
+  and deleted the name, and the next read autocreated it again, empty. It
+  regrew three times, and ratings made in Discord trained a persona nobody
+  read from. Merged names are now aliases (migration 011, `persona_aliases`):
+  reads, ratings and autocreate under them reach the kept persona.
+  `attest persona-merge matt "Matthew Goldey"` does the merge from the CLI.
+- **A listed paper could be linked to a different paper.** An answer named
+  its titles and `refs` held their urls separately, so the agent paired them
+  up itself -- and in a live Discord turn linked "Learning to Optimize through
+  Solver-Grounded Self-Play" to 2609.12105, another paper from earlier in the
+  conversation, instead of the 2609.34205 the tool returned. Each title in an
+  answer is now a Markdown link to its own url, and the feed skill says to copy
+  those links rather than re-pair titles with `refs`.
+
 ## [0.2.4] - 2026-09-29
 
 Feed-ranker first on a hosted machine with no GPU: embeddings from a small

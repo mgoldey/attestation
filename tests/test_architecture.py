@@ -235,8 +235,11 @@ def test_mcp_domain_modules_stay_small():
         # asked which family), split into _runs_compare because the
         # complexity gate refused _runs_ask at 11. Then 550: feed.ask sets
         # interests from "I work on X", which a fresh hosted machine needs --
-        # nothing is tagged there, so autocreate seeds a placeholder.
-        "ask.py": 550,
+        # nothing is tagged there, so autocreate seeds a placeholder. Then
+        # 553: each answer label links its own title (a live Discord turn
+        # paired four titles with the wrong url from `refs`), 554 with
+        # _linked split out because the complexity gate refused _titled_label.
+        "ask.py": 554,
         # Raised for runs.record (2026-09-01): a new tool plus its Arm
         # pydantic model in provenance.py, one new routing rule (with its
         # own ordering comment) in routing.py. Raised again the same day

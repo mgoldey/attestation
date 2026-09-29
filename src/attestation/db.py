@@ -66,6 +66,10 @@ CREATE TABLE IF NOT EXISTS users(
   name TEXT UNIQUE NOT NULL,
   interests TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS persona_aliases(
+  alias TEXT PRIMARY KEY COLLATE NOCASE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS feeds(
   id INTEGER PRIMARY KEY,
   url TEXT UNIQUE NOT NULL,
@@ -536,6 +540,25 @@ def _migration_010_add_embedding_model(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_011_add_persona_aliases(conn: sqlite3.Connection) -> None:
+    """Add persona_aliases: a name that was merged into a persona keeps
+    pointing at it.
+
+    `personas.merge` folded a duplicate into its keeper and deleted the name,
+    and the next read under that name autocreated it again, empty. Discord
+    prefixes each message with the sender's display name, so the agent passed
+    "Matthew Goldey" instead of the persona "matt" and the duplicate regrew
+    three times (2026-09-18, 09-28, 09-29) while ratings made there trained a
+    persona nobody read from. A recorded alias resolves in `rank.get_user`, so
+    that name now reaches the keeper's feed and ratings.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS persona_aliases("
+        "  alias TEXT PRIMARY KEY COLLATE NOCASE,"
+        "  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE)"
+    )
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -554,6 +577,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (8, _migration_008_add_title_key),
     (9, _migration_009_add_research),
     (10, _migration_010_add_embedding_model),
+    (11, _migration_011_add_persona_aliases),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]
