@@ -386,3 +386,66 @@ console.log(judgedHere(items, verdicts));
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "1"
+
+
+# --- import before ranking --------------------------------------------------------
+
+
+def test_feed_ask_imports_page_verdicts_before_ranking(tmp_path, fake_embedder, monkeypatch):
+    """Drives feed.ask on a real FastMCP server: the 0.2.0 regression shipped
+    because a test checked the dict before the tool, not the tool."""
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from attestation.db import get_db
+    from attestation.mcp import _shared, register_all
+
+    db = tmp_path / "t.db"
+    conn = seeded_db(db)
+    uid = get_user(conn, "researcher")["id"]
+    ids = []
+    for i in range(3):
+        cur = conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (NULL, ?, ?, 's', ?)",
+            (f"paper {i}", f"https://example.org/{i}", f"h{i}"),
+        )
+        conn.execute(
+            "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+            (cur.lastrowid, fake_embedder.embed_document(f"paper {i}", "s").tobytes()),
+        )
+        ids.append(cur.lastrowid)
+    conn.commit()
+    conn.close()
+    state = page_state_file(
+        tmp_path / "s.sqlite", {"v": 1, "verdicts": {str(ids[0]): verdict(False)}}
+    )
+    monkeypatch.setenv("ATTEST_DB", str(db))
+    monkeypatch.setenv("ATTEST_DESK_STATE", str(state))
+    monkeypatch.setenv("ATTEST_DESK_USER", "researcher")
+    monkeypatch.setattr(_shared, "get_embedder", lambda: fake_embedder)
+
+    server = FastMCP("t")
+    register_all(server)
+
+    async def call():
+        result = await server.call_tool(
+            "feed.ask", {"user": "researcher", "question": "What should I read today?"}
+        )
+        return result[1] if isinstance(result, tuple) else result
+
+    structured = asyncio.run(call())
+
+    assert structured.get("ok") is True, structured
+    row = (
+        get_db(db)
+        .execute(
+            "SELECT useful, source FROM clicks WHERE user_id = ? AND item_id = ?", (uid, ids[0])
+        )
+        .fetchone()
+    )
+    assert row is not None and (row["useful"], row["source"]) == (0, "ui")
+    # clicked items are excluded from the unread list, so the judged paper is gone
+    refs = [r.get("item_id") for r in structured.get("refs", [])]
+    assert refs and ids[0] not in refs, structured

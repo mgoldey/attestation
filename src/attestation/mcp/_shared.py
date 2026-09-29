@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
+from attestation import desk
 from attestation.mcp._tool import ToolError
 from attestation.ports import EmbedderPort
 from attestation.rank import rank_items, ranking_quality
@@ -83,7 +84,14 @@ def get_embedder() -> EmbedderPort:
 def ranked_items(conn, user_row, limit: int, since_days: int | None) -> list:
     """Rank items for an already-resolved user row against a connection the
     caller owns. Shared by list_feed and digest so digest does not open a
-    second connection to rank the same feed."""
+    second connection to rank the same feed.
+
+    Pending Reading desk verdicts are imported first (a no-op unless
+    ATTEST_DESK_STATE is configured): feed.list, feed.digest and feed.ask's
+    reading routes all rank through here, so a verdict given on the page is a
+    click before any of them orders anything. import_pending never raises.
+    """
+    desk.import_pending(conn)
     return rank_items(conn, get_embedder(), user_row["id"], since_days)[:limit]
 
 
