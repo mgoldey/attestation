@@ -534,6 +534,34 @@ def _yaml_scalars(path: Path) -> dict[str, str]:
     return out
 
 
+def _declared_family(root: Path, stem: str) -> str | None:
+    """The `family:` a run's own config declares, when one sits beside it.
+
+    `attest runs record FAMILY --arm ARM` writes `configs/FAMILY_ARM.yaml`
+    carrying `family: FAMILY`, and the scan used to ignore it and re-derive
+    the family from the file name -- so `record lr-sweep --arm lr_3e4` came
+    back as family `lr` (`lr` is a split token) and `record my_sweep` as
+    `my-sweep` (`family_of` joins with hyphens), `--scan` printed no
+    comparison, and `runs compare lr-sweep` found nothing (2026-09-28). A
+    declared family is the researcher's word; the name heuristic is a guess.
+    """
+    for dirname in CONFIG_DIRS:
+        for suffix in (".yaml", ".yml"):
+            cfg = root / dirname / f"{stem}{suffix}"
+            if cfg.is_file():
+                declared = _yaml_scalars(cfg).get("family")
+                if declared:
+                    return declared
+    return None
+
+
+def _result_family(root: Path, result: Path, base: Path) -> str | None:
+    """A result file's family: its subdirectory, a declared one, or the name's."""
+    if result.parent != base:
+        return result.parent.name
+    return _declared_family(root, result.stem) or family_of(result.stem)
+
+
 def _yaml_path_index(lines: list[tuple[int, str, str | None]], path: tuple[str, ...]) -> int | None:
     """The line index of the nested key at `path`, walking indentation.
 
@@ -1563,7 +1591,7 @@ def discover(root: Path) -> list[RunRecord]:
                     project=project,
                     name=name,
                     source_path=str(result),
-                    family=result.parent.name if result.parent != base else family_of(stem),
+                    family=_result_family(root, result, base),
                     status="recorded",
                     config=_seed_config(payload),
                     metrics=metrics,

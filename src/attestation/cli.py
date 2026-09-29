@@ -1015,8 +1015,12 @@ def _run_record_scan(args: argparse.Namespace, root: Path) -> int:
             result = ledger.compare(conn, args.family)
         except ValueError as exc:
             return fail(str(exc))
-        if result["arms"]:
-            _print_compare(result)
+        if not result["arms"]:
+            # Silence here is how `record lr-sweep --arm lr_3e4` went unnoticed:
+            # the scan grouped the arms under another family and this printed
+            # nothing at all.
+            return fail(f"scanned, but no arms of family {args.family!r} to compare")
+        _print_compare(result)
     return 0
 
 

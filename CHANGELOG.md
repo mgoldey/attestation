@@ -11,6 +11,13 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Fixed
 
+- **`attest runs record` could not find what it had just recorded.** The scan
+  re-derived each run's family from its file name and ignored the `family:`
+  its config declares, so `record lr-sweep --arm lr_3e4` scanned back as
+  family `lr` and `record my_sweep` as `my-sweep`: `--scan` printed no
+  comparison and `runs compare lr-sweep` found nothing. A family a run's own
+  config declares now wins over the name heuristic, and `--scan` with nothing
+  to compare says so instead of printing nothing.
 - **Research hits carried another paper's DOI.** PubMed identifiers were read
   with `iter("ArticleId")`, which also walks the reference list, so a paper
   came back with the DOI (and could come back with the PMC id) of the last
