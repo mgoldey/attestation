@@ -2,13 +2,17 @@
 docs/superpowers/specs/2026-09-29-reading-desk-design.md."""
 
 import json
+import re
+import shutil
 import sqlite3
+import subprocess
 import time
 
+import pytest
 from conftest import seeded_db
 
 from attestation import desk
-from attestation.rank import get_user
+from attestation.rank import get_user, record_click
 
 
 def add_item(conn, title="a paper", url="https://example.org/a", summary="about it"):
@@ -203,3 +207,132 @@ def test_import_pending_swallows_a_database_error(tmp_path, monkeypatch):
 
     monkeypatch.setattr(desk, "import_verdicts", boom)
     assert desk.import_pending(conn) is None
+
+
+# --- rendering ----------------------------------------------------------------
+
+HOST_CSP = (
+    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+    "font-src data:; img-src data:; connect-src 'none'; form-action 'none'; "
+    "base-uri 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'"
+)
+
+
+def ranked_db(tmp_path, embedder, n=3, **item):
+    """A seeded DB with n embedded items, ranked for 'researcher'."""
+    conn = seeded_db(tmp_path / "t.db")
+    ids = []
+    for i in range(n):
+        title = item.get("title", f"paper {i}")
+        cur = conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash) VALUES (NULL,?,?,?,?)",
+            (
+                title,
+                item.get("url", f"https://example.org/{i}"),
+                item.get("summary", "abstract"),
+                f"h{i}",
+            ),
+        )
+        vec = embedder.embed_document(title, "abstract")
+        conn.execute(
+            "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+            (cur.lastrowid, vec.tobytes()),
+        )
+        ids.append(cur.lastrowid)
+    conn.commit()
+    return conn, get_user(conn, "researcher")["id"], ids
+
+
+def test_page_is_self_contained(tmp_path, fake_embedder):
+    conn, uid, _ = ranked_db(tmp_path, fake_embedder)
+    html = desk.render_desk(conn, fake_embedder, uid)
+
+    assert "<script src" not in html.lower()
+    assert "<link" not in html.lower()
+    assert "http:" not in html
+    assert "fetch(" not in html
+    item_urls = {f"https://example.org/{i}" for i in range(3)}
+    assert set(re.findall(r"https://[^\"'\s<\\]+", html)) <= item_urls
+    assert len(html.encode()) < 8 * 1024 * 1024
+
+
+def test_page_has_both_tabs_and_every_item(tmp_path, fake_embedder):
+    conn, uid, ids = ranked_db(tmp_path, fake_embedder)
+    payload = desk.desk_payload(conn, fake_embedder, uid)
+    html = desk.render_desk(conn, fake_embedder, uid)
+
+    assert 'data-tab="triage"' in html and 'data-tab="read"' in html
+    assert sorted(i["id"] for i in payload["items"]) == sorted(ids)
+    assert all(i["summary"] == "abstract" for i in payload["items"])
+
+
+def test_empty_ranking_renders_the_waiting_state(tmp_path, fake_embedder):
+    conn = seeded_db(tmp_path / "t.db")
+    uid = get_user(conn, "researcher")["id"]
+    html = desk.render_desk(conn, fake_embedder, uid)
+    assert "No papers yet" in html
+
+
+def test_caveat_shown_while_the_classifier_is_off(tmp_path, fake_embedder):
+    conn, uid, ids = ranked_db(tmp_path, fake_embedder)
+    payload = desk.desk_payload(conn, fake_embedder, uid)
+    assert payload["caveat"]  # zero clicks: classifier inactive
+    assert payload["rated"] == 0
+
+
+def test_rated_counts_human_verdicts_only(tmp_path, fake_embedder):
+    conn, uid, ids = ranked_db(tmp_path, fake_embedder, n=4)
+    record_click(conn, uid, ids[0], True, source="ui")
+    record_click(conn, uid, ids[1], False, source="agent")
+    record_click(conn, uid, ids[2], True, source="simulated")
+    assert desk.desk_payload(conn, fake_embedder, uid)["rated"] == 2
+
+
+def test_hostile_title_cannot_close_the_data_script(tmp_path, fake_embedder):
+    title = "</script><script>alert(1)</script>" + "x" * 10_000_000
+    conn, uid, _ = ranked_db(tmp_path, fake_embedder, n=1, title=title)
+    html = desk.render_desk(conn, fake_embedder, uid)
+
+    assert html.count("</script>") == html.count("<script")  # only our own tags close
+    assert len(html.encode()) < 200_000
+
+
+@pytest.mark.parametrize("url", ["http://example.org/x", "javascript:alert(1)", None, ""])
+def test_a_non_https_url_is_not_a_link(tmp_path, fake_embedder, url):
+    conn, uid, _ = ranked_db(tmp_path, fake_embedder, n=1, url=url)
+    payload = desk.desk_payload(conn, fake_embedder, uid)
+    assert payload["items"][0]["url"] is None
+
+
+node = shutil.which("node")
+
+
+@pytest.mark.skipif(node is None, reason="node not installed")
+def test_page_logic_prunes_oldest_first_and_merges_newest_wins():
+    script = (
+        desk.DESK_LOGIC_JS
+        + """
+const v = {};
+for (let i = 0; i < 1000; i++)
+  v[String(i)] = {useful: true, at: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString()};
+const kept = prune(v, 28000);
+const size = JSON.stringify({v: 1, verdicts: kept}).length;
+const keys = Object.keys(kept).map(Number);
+const mine = {"1": {useful: true, at: "2026-09-29T10:00:00Z"},
+              "2": {useful: false, at: "2026-09-29T09:00:00Z"}};
+const theirs = {"2": {useful: true, at: "2026-09-29T11:00:00Z"},
+                "3": {useful: true, at: "2026-09-29T08:00:00Z"}};
+const merged = merge(mine, theirs);
+console.log(JSON.stringify({size, min: Math.min(...keys), max: Math.max(...keys), merged}));
+"""
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout)
+    assert got["size"] <= 28000
+    assert got["max"] == 999 and got["min"] > 0  # the OLDEST went, the newest stayed
+    assert got["merged"] == {
+        "1": {"useful": True, "at": "2026-09-29T10:00:00Z"},
+        "2": {"useful": True, "at": "2026-09-29T11:00:00Z"},
+        "3": {"useful": True, "at": "2026-09-29T08:00:00Z"},
+    }
