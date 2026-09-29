@@ -390,8 +390,18 @@ def _pubmed_authors(article) -> tuple[str, ...]:
 
 
 def _pubmed_paper(article, pmid: str, title: str) -> Paper:
-    """One PubmedArticle, already known to have a PMID and a title, as a Paper."""
-    ids = {a.get("IdType"): (a.text or "").strip() for a in article.iter("ArticleId")}
+    """One PubmedArticle, already known to have a PMID and a title, as a Paper.
+
+    Identifiers come from the article's OWN `PubmedData/ArticleIdList` only.
+    `iter("ArticleId")` also walks `ReferenceList`, where every cited paper
+    carries its own ArticleIdList, and the dict kept the last one: MEASURED
+    2026-09-28, PMID 42393032 (10.1038/s41467-026-74919-8) came back with the
+    DOI of the 38th paper it cites, 10.1088/0965-0393/18/1/015012.
+    """
+    ids = {
+        a.get("IdType"): (a.text or "").strip()
+        for a in article.findall("PubmedData/ArticleIdList/ArticleId")
+    }
     return Paper(
         client="pubmed",
         external_id=pmid,
@@ -512,6 +522,18 @@ def venue_matches(item: dict, journal: str) -> bool:
     return any(_venue_key(t) == wanted for t in titles)
 
 
+# `/works` record types that are about a paper rather than one: a relevance
+# search for "equivariant interatomic potentials" returned 'Review for "High-
+# performance training and inference for deep equivariant..."' peer-review
+# records beside the papers themselves (2026-09-28).
+_CROSSREF_NOT_PAPERS = frozenset({"peer-review", "component", "grant"})
+
+
+def _today() -> date:
+    """Today, as CrossRef's date filters want it; a seam for tests."""
+    return datetime.now(UTC).date()
+
+
 def parse_crossref(body: bytes, *, journal: str | None = None) -> list[Paper]:
     """`/works` items as Papers; an item with no title cannot name a paper and is skipped.
 
@@ -521,6 +543,8 @@ def parse_crossref(body: bytes, *, journal: str | None = None) -> list[Paper]:
     out = []
     for item in items:
         if journal and not venue_matches(item, journal):
+            continue
+        if item.get("type") in _CROSSREF_NOT_PAPERS:
             continue
         doi = (item.get("DOI") or "").lower()
         title = _collapse((item.get("title") or [""])[0])
@@ -561,7 +585,14 @@ class CrossrefSearch(_Client):
         # name, over-fetch, and keep only items whose container title matches.
         best_effort = journal is not None and issn is None
         rows = min(limit * JOURNAL_OVERFETCH, CROSSREF_MAX_ROWS) if best_effort else limit
-        params: dict = {"query": query, "rows": rows, "sort": "published", "order": "desc"}
+        # Relevance order, CrossRef's default: `sort=published` made `query`
+        # match on ANY one word and returned the newest such records first --
+        # MEASURED 2026-09-28, "equivariant neural network interatomic
+        # potentials" came back as "Social Network Sites' usage among Greek
+        # students" dated 2115-10-01, then 2100 and 2088, because deposited
+        # dates are not checked. `until-pub-date` keeps such a date out of a
+        # standing topic's window as well.
+        params: dict = {"query": query, "rows": rows}
         filters = []
         if issn:
             filters.append(f"issn:{issn}")
@@ -569,8 +600,8 @@ class CrossrefSearch(_Client):
             params["query.container-title"] = journal
         if since:
             filters.append(f"from-pub-date:{since.isoformat()}")
-        if filters:
-            params["filter"] = ",".join(filters)
+        filters.append(f"until-pub-date:{_today().isoformat()}")
+        params["filter"] = ",".join(filters)
         url = "https://api.crossref.org/works?" + urlencode(params, quote_via=quote_plus)
         return parse_crossref(self._get(url), journal=journal if best_effort else None)[:limit]
 

@@ -1,5 +1,6 @@
 """research.py: topic URLs, payload parsing, conversions, the flag. No network."""
 
+import json
 import time
 from datetime import date
 from pathlib import Path
@@ -157,6 +158,50 @@ def test_parse_pubmed():
     assert p.published == "2023-01-27" and p.doi == "10.1038/s41592-022-01760-3"
     assert p.pmcid == "PMC9912345" and p.url == "https://pubmed.ncbi.nlm.nih.gov/36702928/"
     assert papers[1].authors == ("The Consortium",) and papers[1].published == "2021-12-01"
+
+
+def test_parse_pubmed_takes_the_articles_own_ids_not_its_references():
+    """MEASURED 2026-09-28: PMID 42393032 came back carrying the DOI of the
+    last paper in its reference list, because `iter("ArticleId")` walked
+    every cited paper's ArticleIdList and the dict kept the final one. The
+    PMC id was exposed the same way."""
+    [p] = research.parse_pubmed((FIX / "pubmed_efetch_references.xml").read_bytes())
+    assert p.doi == "10.1038/s41467-026-74919-8"
+    assert p.pmcid == "PMC13462534"
+
+
+def test_parse_crossref_skips_records_that_are_about_a_paper():
+    body = json.dumps(
+        {
+            "message": {
+                "items": [
+                    {"DOI": "10.1/paper", "title": ["A paper"], "type": "journal-article"},
+                    {
+                        "DOI": "10.1/review",
+                        "title": ['Review for "A paper"'],
+                        "type": "peer-review",
+                    },
+                ]
+            }
+        }
+    ).encode()
+    assert [p.doi for p in research.parse_crossref(body)] == ["10.1/paper"]
+
+
+def test_crossref_search_ranks_by_relevance_and_caps_the_date(monkeypatch):
+    """MEASURED 2026-09-28: `sort=published&order=desc` made a query match on
+    any one word and returned the newest such records first -- "equivariant
+    neural network interatomic potentials" gave "Social Network Sites' usage
+    among Greek students", dated 2115-10-01. Relevance order (no `sort`) and
+    `until-pub-date` = today fix both halves."""
+    monkeypatch.setattr(research, "_today", lambda: date(2026, 9, 28))
+    fetch, asked = _fetcher({"crossref.org/works": "crossref_works.json"})
+    research.CrossrefSearch(fetch=fetch).search("equivariant potentials")
+    assert "sort=" not in asked[0] and "order=" not in asked[0]
+    assert "filter=until-pub-date%3A2026-09-28" in asked[0]
+
+    research.CrossrefSearch(fetch=fetch).search("x", since=date(2026, 1, 1))
+    assert "filter=from-pub-date%3A2026-01-01%2Cuntil-pub-date%3A2026-09-28" in asked[1]
 
 
 def test_parse_crossref_skips_titleless():
