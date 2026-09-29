@@ -9,6 +9,15 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Added
+
+- **The Reading desk.** `attest desk build|import|refresh` renders today's
+  ranked papers as one self-contained page with Useful / Not my area on each,
+  and records the verdicts a reader gives there as clicks before the next
+  ranking. The ranker had no new human signal since 2026-08-22; this is a
+  gesture surface on the reader's phone. See
+  `docs/superpowers/specs/2026-09-29-reading-desk-design.md`.
+
 ## [0.2.5] - 2026-09-29
 
 Two fixes from one live Discord turn: an answer's links now travel with their

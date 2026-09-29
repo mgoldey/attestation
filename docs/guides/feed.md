@@ -91,3 +91,13 @@ classifier had never fired for a real account.
 The knowledge graph that sits beside the feed — concepts, centrality,
 communities — is derived from the same tagging pass; see the
 [agents guide](agents.md) for how it is built and the full `kg.*` tool table.
+
+## The Reading desk
+
+`attest desk build --user NAME --out desk.html` writes today's ranked papers
+as one page with two views: Titles, for triage, and Abstracts, for reading.
+Hosted where a page can save state (AgentMarkit's private pages), each paper
+gets Useful / Not my area buttons;
+point `ATTEST_DESK_STATE` at that page's state file and every ranking imports
+the verdicts first. `attest desk refresh` is the configured form the hourly
+refresh runs: it imports, builds, and runs `ATTEST_DESK_PUBLISH` if set.
