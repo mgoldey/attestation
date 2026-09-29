@@ -5,6 +5,7 @@ import contextlib
 import inspect
 import json
 import os
+import subprocess
 import sys
 from importlib.metadata import version
 from pathlib import Path
@@ -137,6 +138,10 @@ HELP: dict[str, str] = {
     "sources.add": "register an RSS feed or a research: topic (no fetch; next ingest)",
     "library.fulltext": "fetch bodies (arXiv PDF / PMC XML) for references that lack one",
     "library.export": "write a filtered set of references as one .bib (new files only)",
+    "desk": "the Reading desk page: today's ranked papers, verdicts taken back",
+    "desk.build": "render the page for a persona to a file (imports pending verdicts first)",
+    "desk.import": "record the page's pending verdicts as clicks",
+    "desk.refresh": "import, build and publish as configured in .env; no-op when unconfigured",
 }
 
 
@@ -267,6 +272,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", type=int, default=8898)
     sp.add_argument("--open", action="store_true", help="open a browser window")
     sp.set_defaults(func=cmd_browse)
+
+    sp = sub.add_parser("desk", help=HELP["desk"])
+    add_db(sp)
+    desk_sub = sp.add_subparsers(dest="desk_command", required=True)
+    dp = desk_sub.add_parser("build", help=HELP["desk.build"])
+    dp.add_argument("--user", required=True)
+    dp.add_argument("--out", required=True, type=Path)
+    dp.add_argument("--limit", type=int, default=20)
+    dp.set_defaults(func=cmd_desk_build)
+    dp = desk_sub.add_parser("import", help=HELP["desk.import"])
+    dp.add_argument("--user", required=True)
+    dp.set_defaults(func=cmd_desk_import)
+    dp = desk_sub.add_parser("refresh", help=HELP["desk.refresh"])
+    dp.set_defaults(func=cmd_desk_refresh)
 
     sp = sub.add_parser("runs", help=HELP["runs"])
     add_db(sp)
@@ -504,6 +523,93 @@ def _emit_agent_files(root, write: bool) -> int:
             print(f"  {agents_dir / f'attestation-{name}.md'}")
         print("  delete one to accept the generated version, or keep your edit")
         return 1
+    return 0
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def _desk_import_line(got) -> str:
+    if got is None:
+        return "verdicts: nothing to import"
+    return f"verdicts: recorded {got.recorded}, unchanged {got.unchanged}, skipped {got.skipped}"
+
+
+@_documented("desk.build")
+def cmd_desk_build(args: argparse.Namespace) -> int:
+    """Pending page verdicts are imported first so the page never shows a
+    paper already judged."""
+    from attestation import desk
+    from attestation.embed import Embedder
+    from attestation.rank import get_user
+
+    with open_db(args.db, need_vectors=True) as conn:
+        user = get_user(conn, args.user)
+        if user is None:
+            return fail(f"no persona {args.user!r}")
+        print(_desk_import_line(desk.import_pending(conn)))
+        _write_atomic(args.out, desk.render_desk(conn, Embedder(), user["id"], args.limit))
+    print(f"wrote {args.out}")
+    return 0
+
+
+@_documented("desk.import")
+def cmd_desk_import(args: argparse.Namespace) -> int:
+    """Without building anything: the rehearsal and a curious operator use it."""
+    from attestation import desk
+    from attestation.rank import get_user
+
+    state_path, _ = desk.desk_config()
+    with open_db(args.db) as conn:
+        user = get_user(conn, args.user)
+        if user is None:
+            return fail(f"no persona {args.user!r}")
+        if state_path is None:
+            print("desk not configured: ATTEST_DESK_STATE is unset")
+            return 0
+        got = desk.import_verdicts(conn, user["id"], desk.read_state(state_path))
+    print(_desk_import_line(got))
+    return 0
+
+
+@_documented("desk.refresh")
+def cmd_desk_refresh(args: argparse.Namespace) -> int:
+    """What the hourly refresh runs. Unconfigured, or configured for a persona
+    that the first conversation has not created yet, is success: the refresh
+    must not go red on a machine that simply has no desk yet."""
+    from attestation import desk
+    from attestation.embed import Embedder
+    from attestation.rank import get_user
+
+    state_path, name = desk.desk_config()
+    if state_path is None or name is None:
+        print("desk not configured: set ATTEST_DESK_STATE and ATTEST_DESK_USER")
+        return 0
+    with open_db(args.db, need_vectors=True) as conn:
+        user = get_user(conn, name)
+        if user is None:
+            print(f"desk: no persona {name!r} yet; nothing built")
+            return 0
+        print(_desk_import_line(desk.import_pending(conn)))
+        out = desk.desk_output_path()
+        _write_atomic(out, desk.render_desk(conn, Embedder(), user["id"]))
+    print(f"wrote {out}")
+    command = (os.environ.get("ATTEST_DESK_PUBLISH") or "").strip()
+    if not command:
+        return 0
+    try:
+        done = desk.publish(command)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(f"desk: publish FAILED ({exc})")
+        return 1
+    if done.returncode != 0:
+        print(f"desk: publish FAILED (exit {done.returncode}): {done.stderr.strip()[:300]}")
+        return 1
+    print("desk: published")
     return 0
 
 

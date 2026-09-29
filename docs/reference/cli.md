@@ -194,6 +194,37 @@ options:
   --open       open a browser window
 ```
 
+## attest desk build
+
+```
+usage: attest desk build [-h] --user USER --out OUT [--limit LIMIT]
+
+options:
+  -h, --help     show this help message and exit
+  --user USER
+  --out OUT
+  --limit LIMIT
+```
+
+## attest desk import
+
+```
+usage: attest desk import [-h] --user USER
+
+options:
+  -h, --help   show this help message and exit
+  --user USER
+```
+
+## attest desk refresh
+
+```
+usage: attest desk refresh [-h]
+
+options:
+  -h, --help  show this help message and exit
+```
+
 ## attest runs scan
 
 ```

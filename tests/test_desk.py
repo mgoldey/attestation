@@ -336,3 +336,53 @@ console.log(JSON.stringify({size, min: Math.min(...keys), max: Math.max(...keys)
         "2": {"useful": True, "at": "2026-09-29T11:00:00Z"},
         "3": {"useful": True, "at": "2026-09-29T08:00:00Z"},
     }
+
+
+# --- publishing -----------------------------------------------------------------
+
+
+def test_publish_command_survives_dotenv_and_shlex(tmp_path, monkeypatch):
+    """Review focus 1: the value AgentMarkit writes into .env must reach
+    subprocess as the argv it means, quotes and all."""
+    from dotenv import dotenv_values
+
+    env = tmp_path / ".env"
+    env.write_text(
+        "ATTEST_DESK_PUBLISH=python3 ~/.hermes/skills/x/private_pages.py register"
+        ' --id reading-desk --title "Reading desk" --html ~/.hermes/workspace/d.html\n'
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    argv = desk.publish_argv(dotenv_values(env)["ATTEST_DESK_PUBLISH"])
+    assert argv == [
+        "python3",
+        f"{tmp_path}/.hermes/skills/x/private_pages.py",
+        "register",
+        "--id",
+        "reading-desk",
+        "--title",
+        "Reading desk",
+        "--html",
+        f"{tmp_path}/.hermes/workspace/d.html",
+    ]
+
+
+def test_output_path_follows_hermes_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hh"))
+    assert desk.desk_output_path() == tmp_path / "hh" / "workspace" / "research-desk" / "desk.html"
+
+
+@pytest.mark.skipif(node is None, reason="node not installed")
+def test_page_counts_only_verdicts_for_papers_it_shows():
+    """Seen in the browser: a verdict saved for a paper that has since left
+    the list was counted as '1 on this page' on a page showing no verdict."""
+    script = (
+        desk.DESK_LOGIC_JS
+        + """
+const items = [{id: 1}, {id: 2}];
+const verdicts = {"2": {useful: true, at: "x"}, "999": {useful: false, at: "y"}};
+console.log(judgedHere(items, verdicts));
+"""
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "1"

@@ -18,10 +18,13 @@ import html
 import json
 import logging
 import os
+import shlex
 import sqlite3
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from attestation import paths
 from attestation.rank import (
     HUMAN_CLICK_SOURCES,
     get_user,
@@ -199,6 +202,9 @@ function prune(verdicts, cap) {
   while (entries.length && size() > cap) entries.shift();
   return Object.fromEntries(entries);
 }
+function judgedHere(items, verdicts) {
+  return items.filter(i => verdicts[String(i.id)]).length;
+}
 function merge(mine, theirs) {
   const out = Object.assign({}, theirs);
   for (const [k, e] of Object.entries(mine)) if (!out[k] || out[k].at < e.at) out[k] = e;
@@ -249,7 +255,7 @@ DESK_UI_JS = (
     for (const [sel, full] of [['#triage', false], ['#read', true]]) {
       $(sel).replaceChildren(...data.items.map(i => row(i, full)));
     }
-    const mine = Object.keys(verdicts).length;
+    const mine = judgedHere(data.items, verdicts);
     const here = mine ? ', ' + mine + ' on this page' : '';
     $('#rated').textContent = data.rated + ' rated so far' + here;
   }
@@ -344,4 +350,32 @@ def render_desk(conn, embedder, user_id: int, limit: int = DEFAULT_DESK_LIMIT) -
         f'{empty}<ol id="triage"></ol><ol id="read"></ol></main>'
         f'<script type="application/json" id="desk-data">{_embed_json(payload)}</script>'
         f"<script>{DESK_LOGIC_JS}{DESK_UI_JS}</script></body></html>"
+    )
+
+
+# --- publishing -------------------------------------------------------------------
+
+PUBLISH_TIMEOUT_S = 60
+
+
+def desk_output_path() -> Path:
+    """Where the configured refresh writes the page."""
+    return paths.hermes_home() / "workspace" / "research-desk" / "desk.html"
+
+
+def publish_argv(command: str) -> list[str]:
+    """ATTEST_DESK_PUBLISH as argv: shell-style quoting, `~` expanded per
+    argument, and no shell -- the value comes from a file, and nothing in it
+    needs pipes or variables."""
+    return [os.path.expanduser(arg) for arg in shlex.split(command)]
+
+
+def publish(command: str) -> subprocess.CompletedProcess:
+    """Run ATTEST_DESK_PUBLISH once; the caller reads the return code."""
+    return subprocess.run(
+        publish_argv(command),
+        capture_output=True,
+        text=True,
+        timeout=PUBLISH_TIMEOUT_S,
+        check=False,
     )
