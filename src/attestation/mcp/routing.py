@@ -312,6 +312,26 @@ def _search_decision(q: str, question: str) -> Decision | None:
     return None
 
 
+# "I work on X" sets what the ranker starts from. Anchored at the start of the
+# message so "find papers I'm interested in" stays a search, and "follow X"
+# keeps meaning track-a-topic.
+_INTERESTS = re.compile(
+    r"^(?:i'?m|i am) interested in |^my interests are |^set my interests to "
+    r"|^i (?:work|research) on |^my (?:research|work) is (?:on|about) |^my field is "
+)
+
+
+def _first_rules(q: str, question: str) -> Decision | None:
+    """The two rules that must beat every table: setting interests (start-
+    anchored) and suggesting sources the reader does not have yet."""
+    if m := _INTERESTS.match(q):
+        interests = question.strip()[m.end() :].strip(" .")
+        return Decision("feed.persona_update", {"interests": interests})
+    if "http" not in q and _has(q, *_SUGGEST_PHRASES) and not _has(q, *_OWNED_SOURCE_MARKERS):
+        return Decision("feed.source_suggest", {})
+    return None
+
+
 def route_feed(question: str) -> Decision:
     """Route a question about the reader's feed or persona.
 
@@ -330,8 +350,8 @@ def route_feed(question: str) -> Decision:
             options=("feed.list", "feed.search", "feed.digest"),
         )
 
-    if "http" not in q and _has(q, *_SUGGEST_PHRASES) and not _has(q, *_OWNED_SOURCE_MARKERS):
-        return Decision("feed.source_suggest", {})
+    if (first := _first_rules(q, question)) is not None:
+        return first
 
     if (content := _match_rules(q, _CONTENT_RULES)) is not None:
         return content

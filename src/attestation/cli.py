@@ -13,12 +13,19 @@ import httpx
 
 
 def _default_feeds_path() -> str:
-    """Prefer a cwd-relative feeds.toml (dev checkout), else the packaged copy.
+    """ATTEST_FEEDS, else a cwd-relative feeds.toml (dev checkout), else the
+    packaged copy.
 
     Mirrors feeds.py::CANDIDATES_PATH and kg.py::_ALIAS_PATH: a
     Path(__file__)-relative fallback so `attest ingest` works from a wheel
     install with no checkout present, not just from the repo root.
+    ATTEST_FEEDS lets an installer seed a different first feed set -- the
+    packaged one is mostly machine learning -- without writing into a
+    checkout it verifies byte for byte.
     """
+    configured = os.environ.get("ATTEST_FEEDS")
+    if configured:
+        return configured
     local = Path("feeds.toml")
     if local.exists():
         return str(local)

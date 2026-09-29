@@ -293,3 +293,27 @@ def test_a_reply_with_no_json_at_all_still_raises():
     client = ChatClient(base_url="https://x/v1", transport=httpx.MockTransport(handler))
     with pytest.raises(ValueError):
         client.chat_json([{"role": "user", "content": "hi"}], {"type": "object"})
+
+
+def test_embeddings_can_come_from_their_own_server_without_the_chat_key(monkeypatch):
+    """A hosted machine embeds on its own CPU (EMBED_BASE_URL -> a local
+    Ollama) while chat goes to the customer's provider. The provider's key
+    must never be sent to the other host; EMBED_API_KEY is its own key."""
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.host, request.headers.get("authorization")))
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.1, 0.2]}]})
+
+    monkeypatch.setenv("LLM_BASE_URL", "http://chat.example/v1")
+    monkeypatch.setenv("LLM_API_KEY", "chat-key")
+    EmbeddingClient(transport=httpx.MockTransport(handler)).embed("x")
+    assert seen[-1] == ("chat.example", "Bearer chat-key"), "unset: embeddings follow chat"
+
+    monkeypatch.setenv("EMBED_BASE_URL", "http://127.0.0.1:11434/v1")
+    EmbeddingClient(transport=httpx.MockTransport(handler)).embed("x")
+    assert seen[-1] == ("127.0.0.1", None), "the chat key went to another host"
+
+    monkeypatch.setenv("EMBED_API_KEY", "embed-key")
+    EmbeddingClient(transport=httpx.MockTransport(handler)).embed("x")
+    assert seen[-1] == ("127.0.0.1", "Bearer embed-key")

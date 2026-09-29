@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from attestation.db import SEED_USERS, get_db
 from attestation.explain import explain
-from attestation.llm import base_url, default_chat_fn
+from attestation.llm import default_chat_fn, embed_base_url
 from attestation.rank import (
     EmbedderUnavailable,
     autocreate_user,
@@ -330,7 +330,7 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         try:
             items = rank_items(conn, embedder, user["id"])[:LIST_LIMIT]
         except EmbedderUnavailable:
-            return EMBEDDER_DOWN.render(url=base_url())
+            return EMBEDDER_DOWN.render(url=embed_base_url())
         return FRAGMENT.render(
             items=items,
             user=user_name,

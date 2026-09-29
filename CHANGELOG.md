@@ -9,6 +9,23 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Added
+
+- **Embeddings from their own server.** `EMBED_BASE_URL` / `EMBED_API_KEY`
+  send embeddings to a different server from chat -- a small CPU embedder on
+  a hosted machine with no GPU (embeddinggemma measured 20 items/s on 2 vCPUs,
+  380 MB resident) beside the customer's chat provider. Unset, embeddings
+  follow `LLM_BASE_URL` as before. The chat key is never sent to a different
+  embedding host.
+- **`ATTEST_FEEDS`** names the feed list a first ingest subscribes to, so an
+  installer can seed a field's journals instead of the packaged, mostly
+  machine-learning list.
+- **"I work on X" sets what the feed ranks for.** `feed.ask` routes "I work
+  on", "I'm interested in", "my research is on" and "my field is" to the
+  reader's interests, creating a first-time reader from their own words. On
+  a fresh hosted machine nothing is tagged yet, so a reader created on sight
+  started from a placeholder.
+
 ## [0.2.3] - 2026-09-28
 
 Found by recording a demo of every surface for experimental and computational

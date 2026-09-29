@@ -30,6 +30,8 @@ ENV_VARS = (
     "CHAT_MODEL",
     "EMBED_MODEL",
     "LLM_API_KEY",
+    "EMBED_BASE_URL",
+    "EMBED_API_KEY",
 )
 
 
@@ -43,6 +45,29 @@ def base_url() -> str:
 def chat_model() -> str:
     """The configured chat model name, resolved at call time -- see `base_url`."""
     return os.environ.get("CHAT_MODEL", DEFAULT_CHAT_MODEL)
+
+
+def embed_base_url() -> str:
+    """Where embeddings come from: EMBED_BASE_URL, else the chat server.
+
+    A hosted machine with no GPU can embed on its own CPU (a local Ollama
+    serving embeddinggemma measured 20 items/s on 2 vCPUs, 380 MB resident)
+    while chat goes to the customer's provider -- two servers, which one
+    LLM_BASE_URL could not describe.
+    """
+    return os.environ.get("EMBED_BASE_URL") or base_url()
+
+
+def embed_api_key() -> str:
+    """The Bearer key for the embedding server.
+
+    EMBED_API_KEY when set. Otherwise LLM_API_KEY -- but only when embeddings
+    go to the same server as chat: with EMBED_BASE_URL pointing somewhere
+    else, the chat provider's key is never sent to that other host.
+    """
+    if os.environ.get("EMBED_API_KEY"):
+        return os.environ["EMBED_API_KEY"]
+    return "" if os.environ.get("EMBED_BASE_URL") else os.environ.get("LLM_API_KEY", "")
 
 
 def embed_model() -> str:
@@ -160,9 +185,9 @@ class EmbeddingClient:
     def __init__(self, base_url=None, model=None, api_key=None, timeout=60, transport=None):
         self.model = model or embed_model()
         self.client = httpx.Client(
-            base_url=base_url or _module_base_url(),
+            base_url=base_url or embed_base_url(),
             timeout=timeout,
-            headers=_headers(api_key),
+            headers=_headers(api_key if api_key is not None else embed_api_key()),
             transport=transport,
         )
 

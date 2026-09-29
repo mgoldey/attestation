@@ -35,6 +35,21 @@ def _create_persona(conn, name: str, interests: str) -> dict:
 
 @tool(needs_user=True, label="update_persona")
 def _update_persona(conn, user_row, interests: str) -> dict:
+    return _write_interests(conn, user_row, interests)
+
+
+@tool(needs_user=True, autocreate_user=True, label="set_interests")
+def _set_interests(conn, user_row, interests: str) -> dict:
+    """feed.ask's "I work on X": the reader's own words become what the ranker
+    starts from. A reader seen for the first time is created first -- on a
+    fresh hosted machine nothing is tagged yet, so autocreate alone would
+    seed them with the placeholder STARTER_INTERESTS and rank against that."""
+    out = _write_interests(conn, user_row, interests)
+    out["message"] = f"ranking {user_row['name']!r}'s feed for: {interests}"
+    return out
+
+
+def _write_interests(conn, user_row, interests: str) -> dict:
     name = user_row["name"]
     conn.execute("UPDATE users SET interests = ? WHERE id = ?", (interests, user_row["id"]))
     conn.commit()

@@ -220,6 +220,19 @@ def test_cli_default_feeds_prefers_local_checkout_copy(tmp_path, monkeypatch):
     assert Path(_default_feeds_path()).resolve() == local.resolve()
 
 
+def test_cli_default_feeds_honours_attest_feeds_first(tmp_path, monkeypatch):
+    """An installer seeds its own first feed set through ATTEST_FEEDS -- the
+    packaged list is mostly machine learning, and a hosted install verifies
+    its checkout byte for byte, so it cannot drop a feeds.toml into it."""
+    from attestation.cli import _default_feeds_path
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "feeds.toml").write_text('[[feeds]]\nurl = "https://example.com/rss"\n')
+    chosen = tmp_path / "science.toml"
+    monkeypatch.setenv("ATTEST_FEEDS", str(chosen))
+    assert _default_feeds_path() == str(chosen)
+
+
 class _Entries:
     def __init__(self, entries):
         self.entries = entries

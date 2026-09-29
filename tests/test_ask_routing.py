@@ -948,3 +948,52 @@ def test_a_digest_names_exactly_the_items_its_refs_carry():
     assert len(answer.refs) == NAMED_ROWS, answer.refs
     assert [r.item_id for r in answer.refs] == [1, 10, 11, 12, 13]
     assert "Routed Memory [memory]" in answer.answer and "Loose paper 0 [other]" in answer.answer
+
+
+@pytest.mark.parametrize(
+    ("question", "interests"),
+    [
+        ("I work on perovskite solar cells.", "perovskite solar cells"),
+        ("I'm interested in single-cell RNA-seq", "single-cell RNA-seq"),
+        ("my research is on heterogeneous catalysis", "heterogeneous catalysis"),
+        ("My field is condensed matter physics", "condensed matter physics"),
+    ],
+)
+def test_feed_ask_sets_interests_from_the_readers_own_words(question, interests):
+    d = route_feed(question)
+    assert (d.tool, d.kwargs) == ("feed.persona_update", {"interests": interests})
+
+
+@pytest.mark.parametrize(
+    ("question", "tool"),
+    [
+        ("find papers I'm interested in", "feed.search"),  # not at the start
+        ("follow graph neural networks for chemistry", "feed.source_add"),  # track, not set
+        ("what are my interests?", "feed.persona_status"),  # asking, not setting
+    ],
+)
+def test_interest_phrases_elsewhere_keep_their_routes(question, tool):
+    assert route_feed(question).tool == tool
+
+
+def test_feed_ask_creates_a_first_time_reader_from_their_interests(tmp_path, monkeypatch):
+    """On a fresh hosted machine nothing is tagged, so a reader autocreated on
+    first sight starts from the placeholder interests. "I work on X" must make
+    X what the ranker starts from, whether or not the reader exists yet."""
+    from attestation.db import get_db
+    from attestation.mcp.ask import _feed_ask
+    from attestation.rank import get_user
+
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    get_db(tmp_path / "t.db").close()
+
+    out = _feed_ask("owner", "I work on perovskite solar cells")
+    assert out["ok"] and out["tool_used"] == "feed.persona_update", out
+    assert "perovskite solar cells" in out["answer"]
+
+    _feed_ask("owner", "my research is on defect passivation")
+    conn = get_db(tmp_path / "t.db")
+    try:
+        assert get_user(conn, "owner")["interests"] == "defect passivation"
+    finally:
+        conn.close()
