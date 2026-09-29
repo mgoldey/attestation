@@ -264,8 +264,11 @@ def test_mcp_domain_modules_stay_small():
         # word-boundary "sweep" (it matched run names like kdsweep_t4), and
         # the _before_source_rules/_search_decision helpers the complexity
         # cap on route_feed forced. Each new phrase carries its measured
-        # reason inline, which is most of the growth.
-        "routing.py": 412,
+        # reason inline, which is most of the growth. Then 421: runs.compare
+        # learned how non-ML scientists ask ("which basis set did best?",
+        # "highest yield", "outperform") after gemma4:12b shortened a question
+        # to exactly that and the router asked back (2026-09-28).
+        "routing.py": 421,
         "provenance.py": 415,
         # Raised 2026-09-10 for Task 8 (BibTeX from a library row): `_lookup`
         # gained a `bibtex` field on both return branches and its `empty`,

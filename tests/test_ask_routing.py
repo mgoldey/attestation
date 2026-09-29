@@ -57,6 +57,12 @@ FEED_CASES = [
 ]
 RUNS_CASES = [
     ("which arm of my sweep won?", "runs.compare"),
+    # Plain-language comparisons, as experimental and computational
+    # scientists ask them (gemma4:12b shortened a question to the first).
+    ("Which basis set did best?", "runs.compare"),
+    ("which catalyst gave the highest yield?", "runs.compare"),
+    ("did cc-pVQZ outperform cc-pVTZ?", "runs.compare"),
+    ("which annealing temperature worked best?", "runs.compare"),
     ("are the numbers in my draft right?", "runs.claims_check"),
     ("what numbers did I forget to cite?", "runs.claims_coverage"),
     ("what runs do I have recorded?", "runs.list"),

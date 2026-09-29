@@ -11,6 +11,11 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Fixed
 
+- **`runs.ask` only understood ML's way of asking which run won.** "Which
+  basis set did best?" was asked back ("comparing arms, listing runs, or
+  checking a draft?") because the comparison rule knew "won", "winner" and
+  "sweep" but not "did best", "worked best", "highest", "lowest" or
+  "outperform". Those now route to `runs.compare`.
 - **`attest runs record` could not find what it had just recorded.** The scan
   re-derived each run's family from its file name and ignored the `family:`
   its config declares, so `record lr-sweep --arm lr_3e4` scanned back as
