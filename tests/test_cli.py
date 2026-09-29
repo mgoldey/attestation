@@ -1637,3 +1637,22 @@ def test_desk_import_records_verdicts(tmp_path, fake_embedder, monkeypatch, caps
     assert main(["desk", "import", "--user", "researcher"]) == 0
     assert "recorded 1" in capsys.readouterr().out
     assert get_db(db).execute("SELECT useful FROM clicks").fetchone()["useful"] == 0
+
+
+def test_desk_refresh_passes_the_publish_output_through(
+    tmp_path, fake_embedder, monkeypatch, capsys
+):
+    """The page host's register command prints the page's link, and that link
+    is the one the agent must send. Swallowing it left the agent no link."""
+    import sys
+
+    _desk_db(tmp_path, fake_embedder, monkeypatch)
+    monkeypatch.setenv("ATTEST_DESK_STATE", str(tmp_path / "s.sqlite"))
+    monkeypatch.setenv("ATTEST_DESK_USER", "researcher")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hh"))
+    monkeypatch.setenv(
+        "ATTEST_DESK_PUBLISH",
+        f'{sys.executable} -c "print(\'{{\\"ok\\": true, \\"url\\": \\"https://x.test/p\\"}}\')"',
+    )
+    assert main(["desk", "refresh"]) == 0
+    assert '"url": "https://x.test/p"' in capsys.readouterr().out

@@ -609,6 +609,10 @@ def cmd_desk_refresh(args: argparse.Namespace) -> int:
     if done.returncode != 0:
         print(f"desk: publish FAILED (exit {done.returncode}): {done.stderr.strip()[:300]}")
         return 1
+    # The publisher's own output (for a hosted page, its link) is passed
+    # through: it is what the caller has to show the reader.
+    if done.stdout.strip():
+        print(done.stdout.strip()[:2000])
     print("desk: published")
     return 0
 
