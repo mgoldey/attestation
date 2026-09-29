@@ -89,7 +89,9 @@ list.
    arXiv cs.LG · language-models, reasoning
 ```
 
-Markdown links
+The answer already writes each title as a Markdown link: copy that link with
+its title, never re-pair titles with `refs` by position (a live Discord turn
+did, and linked a paper to another paper's URL). Markdown links
 are correct on every surface this agent ships to (measured on Telegram, five of
 five); do not hand-write another surface's syntax. **List every item it
 returned** -- the ORDER answers "what first?"; a 2B model told only how to

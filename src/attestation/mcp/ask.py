@@ -374,12 +374,26 @@ def _label(x) -> str:
 
 
 def _titled_label(x: dict) -> str:
-    """Title (or name/label/tag), with its source or project when known."""
+    """Title (or name/label/tag), with its source or project when known, as a
+    Markdown link when the row has a url.
+
+    The link rides beside its own title. MEASURED 2026-09-29 in a live Discord
+    turn: the answer listed four titles and `refs` listed their four urls, and
+    the agent, pairing them up, wrote item 4 with 2609.12105 -- a different
+    paper from earlier in the conversation -- instead of the 2609.34205 the
+    tool returned. A link written next to its title is copied, not matched.
+    """
     title = x.get("title") or x.get("name") or x.get("label") or x.get("tag")
     source = x.get("source") or x.get("project")
-    if title and source:
-        return f"{_clip(str(title))} ({source})"
-    return _clip(str(title or ""))
+    text = _linked(_clip(str(title or "")), x.get("url"))
+    return f"{text} ({source})" if title and source else text
+
+
+def _linked(text: str, url) -> str:
+    """`text` as a Markdown link to `url` when both are usable."""
+    if text and isinstance(url, str) and url.startswith(("http://", "https://")):
+        return f"[{text}]({url})"
+    return text
 
 
 # How many rows an answer names -- and, for a digest, how many refs it carries.
