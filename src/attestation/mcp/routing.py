@@ -355,6 +355,17 @@ def route_feed(question: str) -> Decision:
     )
 
 
+# How people ask which run came out ahead. The ML words came first; the rest
+# are how a chemist or a physicist asks it. MEASURED 2026-09-28: gemma4:12b
+# cut "Compare the basis runs. Which basis set did best?" to "Which basis set
+# did best?" and the router asked "comparing arms, listing runs, or checking a
+# draft?" about a comparison.
+_COMPARE_PHRASES = tuple(
+    "won|winner|best arm|compare|which arm|ablation|did best|performed best|worked best"
+    "|was best|is best|came out ahead|outperform|highest|lowest".split("|")
+)
+
+
 def route_runs(question: str) -> Decision:
     """Route a question about recorded runs or claims in a draft."""
     q = question.lower().strip()
@@ -407,9 +418,7 @@ def route_runs(question: str) -> Decision:
     # "sweep" as a WORD: as a substring it matched run names -- "show me the
     # details of kdsweep_t4" was sent to compare, not detail (measured
     # 2026-09-25, the same collision class as subscribe/subscribed).
-    if _has(q, "won", "winner", "best arm", "compare", "which arm", "ablation") or re.search(
-        r"\bsweep", q
-    ):
+    if _has(q, *_COMPARE_PHRASES) or re.search(r"\bsweep", q):
         return Decision("runs.compare", {})
     if _has(q, "detail", "config", "one run", "show run"):
         return Decision("runs.detail", {})
