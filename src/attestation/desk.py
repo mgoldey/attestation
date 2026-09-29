@@ -159,6 +159,19 @@ def _https_or_none(url: str | None) -> str | None:
     return url if isinstance(url, str) and url.startswith("https://") else None
 
 
+def _utc_iso(value: str | None) -> str:
+    """`published` as the page's clock reads it: ISO 8601 with a `Z`.
+
+    SQLite's datetime('now') default writes '2026-09-28 08:00:00' and ingest
+    writes '2026-09-29T17:06:45', both UTC and neither saying so; a browser
+    parses a bare timestamp as LOCAL time, which would age every paper by the
+    reader's offset."""
+    if not value:
+        return ""
+    text = str(value).strip().replace(" ", "T", 1)
+    return text if text.endswith("Z") or "+" in text[10:] else text + "Z"
+
+
 def desk_payload(conn, embedder, user_id: int, limit: int = DEFAULT_DESK_LIMIT) -> dict:
     """What the page shows, as data: the ranked items, the ranking caveat
     while the classifier is off, and how many papers a person has rated."""
@@ -171,6 +184,15 @@ def desk_payload(conn, embedder, user_id: int, limit: int = DEFAULT_DESK_LIMIT) 
         ),
         (user_id, *sources),
     ).fetchone()[0]
+    ids = [it.item_id for it in items]
+    published = dict(
+        conn.execute(
+            "SELECT id, published FROM items WHERE id IN ({})".format(",".join("?" * len(ids))),
+            ids,
+        ).fetchall()
+        if ids
+        else []
+    )
     return {
         "items": [
             {
@@ -178,6 +200,7 @@ def desk_payload(conn, embedder, user_id: int, limit: int = DEFAULT_DESK_LIMIT) 
                 "title": clip(it.title, TITLE_CHARS),
                 "url": _https_or_none(it.url),
                 "source": clip(it.source or "", SOURCE_CHARS),
+                "published": _utc_iso(published.get(it.item_id)),
                 "tags": [clip(t, TAG_CHARS) for t in it.tags[:3]],
                 "summary": clip((it.summary or "").strip(), SUMMARY_CHARS),
             }
@@ -210,6 +233,25 @@ function merge(mine, theirs) {
   for (const [k, e] of Object.entries(mine)) if (!out[k] || out[k].at < e.at) out[k] = e;
   return out;
 }
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function ago(iso, now) {
+  const t = Date.parse(iso);
+  if (!iso || Number.isNaN(t)) return '';
+  const s = Math.max(0, (now - t) / 1000);
+  if (s < 60) return 'now';
+  if (s < 3600) return Math.floor(s / 60) + 'm';
+  if (s < 86400) return Math.floor(s / 3600) + 'h';
+  if (s < 7 * 86400) return Math.floor(s / 86400) + 'd';
+  const d = new Date(t);
+  return MONTHS[d.getUTCMonth()] + ' ' + d.getUTCDate();
+}
+function mark(source) {
+  const m = /[A-Za-z0-9]/.exec(source || '');
+  let h = 2166136261;
+  for (const c of source || '') { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  return {letter: m ? m[0].toUpperCase() : '?', hue: h % 360};
+}
 """
 
 # The page script. `window.agentmarkit` is the page host's bridge (state,
@@ -220,44 +262,73 @@ DESK_UI_JS = (
 (() => {
   const data = JSON.parse(document.getElementById('desk-data').textContent);
   const am = window.agentmarkit;
-  let revision = 0, verdicts = {};
+  const SVG = 'http://www.w3.org/2000/svg';  // an XML namespace name, never fetched
+  let revision = 0, verdicts = {}, toastTimer = 0;
   const $ = s => document.querySelector(s);
-  const say = t => { $('#status').textContent = t; };
+  function say(t, sticky) {
+    const n = $('#toast');
+    n.textContent = t; n.dataset.on = t ? '1' : '';
+    clearTimeout(toastTimer);
+    if (t && !sticky) toastTimer = setTimeout(() => { n.dataset.on = ''; }, 1600);
+  }
   function el(tag, cls, text) {
     const n = document.createElement(tag);
     if (cls) n.className = cls;
     if (text) n.textContent = text;
     return n;
   }
+  function icon(d) {
+    const svg = document.createElementNS(SVG, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('aria-hidden', 'true');
+    const p = document.createElementNS(SVG, 'path');
+    p.setAttribute('d', d);
+    svg.append(p);
+    return svg;
+  }
+  const CHECK = 'M3 8.5l3.2 3L13 4.5', CROSS = 'M4 4l8 8M12 4l-8 8';
   function buttons(id) {
     const box = el('div', 'verdict');
-    for (const [useful, label] of [[true, 'Useful'], [false, 'Not my area']]) {
-      const b = el('button', useful ? 'yes' : 'no', label);
+    const v = verdicts[String(id)];
+    for (const [useful, label, d] of [[true, 'Useful', CHECK], [false, 'Not my area', CROSS]]) {
+      const b = el('button', useful ? 'yes' : 'no');
       b.type = 'button';
-      const v = verdicts[String(id)];
+      b.append(icon(d), el('span', '', label));
       b.setAttribute('aria-pressed', String(v ? v.useful === useful : false));
       b.addEventListener('click', () => judge(id, useful));
       box.append(b);
     }
     return box;
   }
-  function row(item, full) {
-    const li = el('li', 'paper');
+  function row(item, full, now) {
+    const v = verdicts[String(item.id)];
+    const li = el('li', 'paper' + (v ? (v.useful ? ' judged useful' : ' judged notmine') : ''));
+    const m = mark(item.source);
+    const badge = el('span', 'mark', m.letter);
+    badge.style.setProperty('--h', m.hue);
+    badge.setAttribute('aria-hidden', 'true');
+    const body = el('div', 'body');
     const title = item.url ? el('a', 'title', item.title) : el('span', 'title', item.title);
     if (item.url) { title.href = item.url; title.rel = 'noreferrer'; }
-    const meta = [item.source, ...item.tags].filter(Boolean).join(' \u00b7 ');
-    li.append(title, el('div', 'meta', meta));
-    if (full && item.summary) li.append(el('p', 'summary', item.summary));
-    if (am) li.append(buttons(item.id));
+    const meta = el('div', 'meta');
+    meta.append(el('span', 'src', item.source));
+    const age = ago(item.published, now);
+    if (age) meta.append(el('span', 'age', age));
+    for (const t of item.tags) meta.append(el('span', 'tag', t));
+    body.append(title, meta);
+    if (full && item.summary) body.append(el('p', 'summary', item.summary));
+    if (am) body.append(buttons(item.id));
+    li.append(badge, body);
     return li;
   }
   function render() {
+    const now = Date.now();
     for (const [sel, full] of [['#triage', false], ['#read', true]]) {
-      $(sel).replaceChildren(...data.items.map(i => row(i, full)));
+      $(sel).replaceChildren(...data.items.map(i => row(i, full, now)));
     }
-    const mine = judgedHere(data.items, verdicts);
-    const here = mine ? ', ' + mine + ' on this page' : '';
-    $('#rated').textContent = data.rated + ' rated so far' + here;
+    const total = data.items.length, done = judgedHere(data.items, verdicts);
+    $('#progress span').style.width = total ? (100 * done / total) + '%' : '0';
+    $('#progress').setAttribute('aria-valuenow', String(done));
+    $('#done').textContent = am && total ? done + ' of ' + total + ' judged' : '';
   }
   async function save(retry) {
     const r = await am.save({v: 1, verdicts: prune(verdicts, CAP)}, revision);
@@ -271,12 +342,12 @@ DESK_UI_JS = (
       verdicts = merge(verdicts, (r.state.data && r.state.data.verdicts) || {});
       return save(false);
     }
-    say('Not saved yet. Tap again to retry.');
+    say('Not saved. Tap your choice again to retry.', true);
   }
   function judge(id, useful) {
     verdicts[String(id)] = {useful, at: new Date().toISOString()};
-    am.dirty(true); say('Saving\u2026'); render();
-    save(true).catch(e => say(e.message));
+    am.dirty(true); render();
+    save(true).catch(e => say(e.message, true));
   }
   async function load() {
     try {
@@ -286,11 +357,15 @@ DESK_UI_JS = (
         const d = r.state.data || {};
         verdicts = d.v === 1 && d.verdicts ? d.verdicts : {};
       }
-    } catch (e) { say(e.message); }
+    } catch (e) { say(e.message, true); }
     render();
   }
   for (const b of document.querySelectorAll('[data-tab]')) {
-    b.addEventListener('click', () => { document.body.dataset.show = b.dataset.tab; });
+    b.addEventListener('click', () => {
+      document.body.dataset.show = b.dataset.tab;
+      for (const o of document.querySelectorAll('[data-tab]'))
+        o.setAttribute('aria-pressed', String(o === b));
+    });
   }
   if (am) { load(); addEventListener('agentmarkit-resume', load); } else { render(); }
 })();
@@ -298,32 +373,72 @@ DESK_UI_JS = (
 ).replace("CAP", str(STATE_PRUNE_CHARS))
 
 _DESK_CSS = """
-:root{--bg:#fbfaf7;--fg:#1d1d1b;--muted:#6b6a65;--line:#e4e1d8;--accent:#2f5d50}
-@media (prefers-color-scheme:dark){:root{--bg:#161614;--fg:#ecebe6;--muted:#a3a19a;
---line:#2c2b27;--accent:#8cc5b2}}
-body{margin:0;padding:16px;background:var(--bg);color:var(--fg);
-font:16px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
-main{max-width:720px;margin:0 auto}
-h1{font-size:1.3rem;margin:0 0 .25rem}
-.sub,.meta,#rated,#status{color:var(--muted);font-size:.9rem}
-.caveat{border-left:3px solid var(--accent);padding:.25rem .75rem;margin:.75rem 0}
-nav{display:flex;gap:.5rem;margin:1rem 0}
-nav button{flex:1;padding:.5rem;border:1px solid var(--line);background:none;color:var(--fg);
-border-radius:6px;font:inherit}
-body[data-show=triage] nav [data-tab=triage],body[data-show=read] nav [data-tab=read]{
-border-color:var(--accent);color:var(--accent)}
+:root{--bg:#fff;--fg:#1d2127;--muted:#667080;--line:#e4e7eb;--soft:#f3f5f7;
+--yes:#1e7f55;--yes-soft:#e3f2ea;--no:#8a5a2b;--no-soft:#f5ece3;--link:#1d2127;
+--mark-l:46%;--mark-s:38%;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#111418;--fg:#e6e8eb;--muted:#9aa3ae;
+--line:#252a31;--soft:#191d22;--yes:#5cc095;--yes-soft:#16291f;--no:#d9a36b;
+--no-soft:#2a2016;--link:#e6e8eb;--mark-l:62%;--mark-s:42%;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+-webkit-font-smoothing:antialiased}
+header{position:sticky;top:0;z-index:2;background:var(--bg);padding:14px 16px 0;
+border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+h1{font-size:1.35rem;line-height:1.2;margin:0;font-weight:700;letter-spacing:-.01em}
+#done{color:var(--muted);font-size:.85rem;font-variant-numeric:tabular-nums}
+.sub{color:var(--muted);font-size:.85rem;margin:2px 0 10px}
+#progress{height:3px;background:var(--soft);border-radius:3px;overflow:hidden}
+#progress span{display:block;height:100%;width:0;background:var(--yes);
+transition:width .25s ease}
+nav{display:flex;gap:4px;padding:10px 0}
+nav button{font:inherit;font-size:.9rem;padding:5px 12px;border-radius:7px;border:0;
+background:none;color:var(--muted);cursor:pointer}
+nav button[aria-pressed=true]{background:var(--soft);color:var(--fg);font-weight:600}
+.caveat{margin:12px 16px 0;padding:10px 12px;border-radius:8px;background:var(--soft);
+color:var(--muted);font-size:.85rem}
+main{max-width:680px;margin:0 auto}
 body[data-show=triage] #read,body[data-show=read] #triage{display:none}
-ol{list-style:none;padding:0;margin:0}
-.paper{padding:.75rem 0;border-bottom:1px solid var(--line)}
-.title{font-weight:600;color:var(--fg)}
-a.title{color:var(--accent)}
-.summary{margin:.4rem 0}
-.verdict{display:flex;gap:.5rem;margin-top:.5rem}
-.verdict button{padding:.35rem .75rem;border:1px solid var(--line);border-radius:999px;
-background:none;color:var(--fg);font:inherit;font-size:.9rem}
-.verdict button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);
-color:var(--bg)}
-.empty{padding:2rem 0;color:var(--muted)}
+ol{list-style:none;margin:0;padding:0}
+.paper{display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px;padding:14px 16px;
+border-bottom:1px solid var(--line)}
+.mark{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;
+font-size:.8rem;font-weight:700;color:#fff;
+background:hsl(var(--h) var(--mark-s) var(--mark-l))}
+.title{display:block;font-size:1rem;font-weight:600;line-height:1.3;color:var(--link);
+text-decoration:none;text-wrap:pretty}
+a.title:hover{text-decoration:underline;text-underline-offset:2px}
+.meta{display:flex;gap:10px;margin-top:4px;font-size:.8rem;color:var(--muted);
+white-space:nowrap;overflow:hidden;mask-image:linear-gradient(90deg,#000 85%,transparent)}
+.meta>*{flex:none}
+.src{font-weight:600;color:var(--fg);opacity:.75}
+.tag{padding:0 7px;border:1px solid var(--line);border-radius:999px}
+.summary{margin:10px 0 0;max-width:62ch;
+font:1rem/1.6 Charter,"Iowan Old Style","Palatino Linotype",Georgia,serif}
+.verdict{display:flex;gap:8px;margin-top:10px}
+.verdict button{display:inline-flex;align-items:center;gap:6px;font:inherit;
+font-size:.82rem;padding:5px 11px 5px 9px;border-radius:999px;cursor:pointer;
+border:1px solid var(--line);background:var(--bg);color:var(--muted)}
+.verdict svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;
+stroke-linecap:round;stroke-linejoin:round}
+.verdict .yes[aria-pressed=true]{background:var(--yes-soft);border-color:transparent;
+color:var(--yes);font-weight:600}
+.verdict .no[aria-pressed=true]{background:var(--no-soft);border-color:transparent;
+color:var(--no);font-weight:600}
+.judged .title{font-weight:500;color:var(--muted)}
+.judged .mark{opacity:.45}
+.judged.notmine .title{text-decoration:line-through;text-decoration-thickness:1px}
+body[data-show=triage] .judged{padding-top:10px;padding-bottom:10px}
+body[data-show=triage] .judged .meta{display:none}
+body[data-show=triage] .judged .verdict{margin-top:6px}
+button:focus-visible,a:focus-visible{outline:2px solid var(--yes);outline-offset:2px}
+.empty{padding:48px 16px;color:var(--muted);text-align:center}
+#toast{position:fixed;left:50%;bottom:16px;transform:translate(-50%,8px);opacity:0;
+background:var(--fg);color:var(--bg);font-size:.85rem;padding:7px 14px;border-radius:8px;
+transition:opacity .2s,transform .2s;pointer-events:none}
+#toast[data-on="1"]{opacity:1;transform:translate(-50%,0)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 """
 
 
@@ -331,23 +446,26 @@ def render_desk(conn, embedder, user_id: int, limit: int = DEFAULT_DESK_LIMIT) -
     """One self-contained HTML page: no request of its own, safe under the
     page host's CSP (see the spec's "What the platform allows")."""
     payload = desk_payload(conn, embedder, user_id, limit)
-    empty = (
-        ""
-        if payload["items"]
-        else '<p class="empty">No papers yet: the refresh fetches new ones hourly.</p>'
-    )
+    n = len(payload["items"])
+    count = f"{n} paper{'s' if n != 1 else ''}, best first" if n else "Nothing new yet"
+    rated = payload["rated"]
+    sub = f"{count}. You have rated {rated}." if rated else f"{count}."
+    empty = "" if n else '<p class="empty">No papers yet: the refresh fetches new ones hourly.</p>'
     caveat = f'<p class="caveat">{html.escape(payload["caveat"])}</p>' if payload["caveat"] else ""
     return (
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
         '<meta name=viewport content="width=device-width,initial-scale=1">'
         f"<title>Reading desk</title><style>{_DESK_CSS}</style></head>"
-        '<body data-show="triage"><main>'
-        '<h1>Reading desk</h1><p class="sub">Today\'s papers, best first. '
-        "Mark what helps and what is not your area; the ranking learns from both.</p>"
-        f'{caveat}<p id="rated"></p><p id="status" role="status"></p>'
-        '<nav><button type="button" data-tab="triage">Triage</button>'
-        '<button type="button" data-tab="read">Read</button></nav>'
-        f'{empty}<ol id="triage"></ol><ol id="read"></ol></main>'
+        '<body data-show="triage"><header>'
+        '<div class="bar"><h1>Reading desk</h1><span id="done"></span></div>'
+        f'<p class="sub">{html.escape(sub)}</p>'
+        '<div id="progress" role="progressbar" aria-label="Papers judged" '
+        f'aria-valuemin="0" aria-valuemax="{n}" aria-valuenow="0"><span></span></div>'
+        '<nav><button type="button" data-tab="triage" aria-pressed="true">Titles</button>'
+        '<button type="button" data-tab="read" aria-pressed="false">Abstracts</button></nav>'
+        f"</header><main>{caveat}{empty}"
+        '<ol id="triage"></ol><ol id="read"></ol></main>'
+        '<div id="toast" role="status"></div>'
         f'<script type="application/json" id="desk-data">{_embed_json(payload)}</script>'
         f"<script>{DESK_LOGIC_JS}{DESK_UI_JS}</script></body></html>"
     )

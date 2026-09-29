@@ -249,7 +249,8 @@ def test_page_is_self_contained(tmp_path, fake_embedder):
 
     assert "<script src" not in html.lower()
     assert "<link" not in html.lower()
-    assert "http:" not in html
+    # The SVG namespace is a name the DOM API needs, not a request.
+    assert "http:" not in html.replace("http://www.w3.org/2000/svg", "")
     assert "fetch(" not in html
     item_urls = {f"https://example.org/{i}" for i in range(3)}
     assert set(re.findall(r"https://[^\"'\s<\\]+", html)) <= item_urls
@@ -449,3 +450,64 @@ def test_feed_ask_imports_page_verdicts_before_ranking(tmp_path, fake_embedder, 
     # clicked items are excluded from the unread list, so the judged paper is gone
     refs = [r.get("item_id") for r in structured.get("refs", [])]
     assert refs and ids[0] not in refs, structured
+
+
+# --- redesign: age, source marks, views -------------------------------------------
+
+
+def test_payload_carries_each_papers_publication_time_as_utc(tmp_path, fake_embedder):
+    conn, uid, ids = ranked_db(tmp_path, fake_embedder, n=2)
+    conn.execute("UPDATE items SET published = '2026-09-29T17:06:45' WHERE id = ?", (ids[0],))
+    conn.execute("UPDATE items SET published = '2026-09-28 08:00:00' WHERE id = ?", (ids[1],))
+    conn.commit()
+    got = {i["id"]: i["published"] for i in desk.desk_payload(conn, fake_embedder, uid)["items"]}
+    assert got == {ids[0]: "2026-09-29T17:06:45Z", ids[1]: "2026-09-28T08:00:00Z"}
+
+
+@pytest.mark.skipif(node is None, reason="node not installed")
+def test_page_says_how_old_each_paper_is():
+    script = (
+        desk.DESK_LOGIC_JS
+        + """
+const now = Date.parse("2026-09-29T18:00:00Z");
+console.log(JSON.stringify([
+  ago("2026-09-29T17:59:30Z", now), ago("2026-09-29T17:15:00Z", now),
+  ago("2026-09-29T09:00:00Z", now), ago("2026-09-26T18:00:00Z", now),
+  ago("2026-08-01T00:00:00Z", now), ago("", now), ago("garbage", now)]));
+"""
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == ["now", "45m", "9h", "3d", "Aug 1", "", ""]
+
+
+@pytest.mark.skipif(node is None, reason="node not installed")
+def test_every_source_gets_a_stable_mark():
+    """The page cannot load favicons, so a source is recognised by a coloured
+    initial. Same source, same colour, every build."""
+    script = (
+        desk.DESK_LOGIC_JS
+        + """
+console.log(JSON.stringify([mark("arXiv cs.LG"), mark("arXiv cs.LG"), mark("Nature"), mark("")]));
+"""
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    a, b, nature, blank = json.loads(out.stdout)
+    assert a == b
+    assert a["letter"] == "A" and nature["letter"] == "N" and blank["letter"] == "?"
+    assert 0 <= a["hue"] < 360 and a["hue"] != nature["hue"]
+
+
+def test_views_are_named_for_what_they_show(tmp_path, fake_embedder):
+    conn, uid, _ = ranked_db(tmp_path, fake_embedder)
+    html = desk.render_desk(conn, fake_embedder, uid)
+    assert ">Titles</button>" in html and ">Abstracts</button>" in html
+    assert 'id="progress"' in html
+
+
+def test_the_paper_grid_column_can_shrink(tmp_path, fake_embedder):
+    """Seen in the browser: with a one-line meta row, a `1fr` column took the
+    row's min-content width and the page scrolled sideways on a phone."""
+    conn, uid, _ = ranked_db(tmp_path, fake_embedder)
+    assert "grid-template-columns:28px minmax(0,1fr)" in desk.render_desk(conn, fake_embedder, uid)
