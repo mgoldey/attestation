@@ -1485,3 +1485,42 @@ def test_library_fulltext_command_reports_counts(tmp_path, capsys, monkeypatch):
     )
     assert main(["library", "--db", str(tmp_path / "t.db"), "fulltext", "--limit", "3"]) == 0
     assert "fetched 0" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("family", "arms"),
+    [
+        ("lr-sweep", ("lr_1e3", "lr_3e4")),  # `lr` is a split token: grouped as `lr`
+        ("my_sweep", ("a", "b")),  # family_of joins with hyphens: `my-sweep`
+        ("warmup", ("short", "long")),  # already worked; must keep working
+    ],
+)
+def test_runs_record_scan_compares_the_family_it_recorded(tmp_path, capsys, family, arms):
+    """MEASURED 2026-09-28: `runs record lr-sweep --arm lr_3e4 ... --scan`
+    wrote configs declaring `family: lr-sweep`, but the scan re-derived the
+    family from the file name (`lr`), so --scan printed no comparison and
+    `runs compare lr-sweep` found nothing. The declared family now wins."""
+    db = tmp_path / "t.db"
+    root = tmp_path / "ws"
+    argv = ["runs", "--db", str(db), "record", family, "--root", str(root), "--scan"]
+    for arm, wer in zip(arms, ("0.176", "0.182"), strict=True):
+        argv += ["--arm", arm, f"wer={wer}"]
+
+    rc = main(argv)
+
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert f"winner: {family}_{arms[0]}" in out
+    assert main(["runs", "--db", str(db), "compare", family]) == 0
+
+
+def test_runs_record_scan_says_so_when_there_is_nothing_to_compare(tmp_path, capsys, monkeypatch):
+    """A scan that finds no arms of the recorded family used to print nothing."""
+    from attestation import ledger
+
+    monkeypatch.setattr(ledger, "compare", lambda conn, family: {"arms": []})
+    argv = ["runs", "--db", str(tmp_path / "t.db"), "record", "fam", "--root", str(tmp_path)]
+    rc = main([*argv, "--arm", "a", "wer=0.1", "--scan"])
+
+    assert rc == 1
+    assert "no arms of family 'fam'" in capsys.readouterr().err
