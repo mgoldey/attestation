@@ -95,9 +95,10 @@ link. Approved by Matt on 2026-09-29.
 
 ### D4. attestation never names AgentMarkit
 
-It takes a state path (`ATTEST_DESK_STATE`) and, for the refresh, a publish
-command (`ATTEST_DESK_PUBLISH`). Both unset: `attest desk build` still writes
-a page, import is a no-op, and the refresh does what it does today.
+It takes a state path (`ATTEST_DESK_STATE`), a persona (`ATTEST_DESK_USER`)
+and a publish command (`ATTEST_DESK_PUBLISH`). All unset: `attest desk build`
+still writes a page, import is a no-op, and `attest desk refresh` (which the
+hourly refresh calls) says "desk not configured" and does nothing.
 
 ### D5. Briefs are files, not pages
 
@@ -123,7 +124,7 @@ class Imported:
 
 def read_state(path: Path) -> dict            # {} when missing/unreadable/wrong v
 def import_verdicts(conn, user_id: int, state: dict) -> Imported
-def import_pending(conn, user_id: int) -> Imported | None   # reads ATTEST_DESK_STATE; None when unset
+def import_pending(conn) -> Imported | None   # ATTEST_DESK_STATE + ATTEST_DESK_USER; None when either is unset
 def render_desk(conn, embedder, user_id: int, limit: int = DEFAULT_DESK_LIMIT) -> str
 ```
 
@@ -138,9 +139,14 @@ def render_desk(conn, embedder, user_id: int, limit: int = DEFAULT_DESK_LIMIT) -
   existing row with the same `useful` counts `unchanged` and is not
   rewritten. An id not in `items`, a non-integer key, or a non-bool
   `useful` counts `skipped`.
-- `import_pending` resolves `ATTEST_DESK_STATE` at call time (a local file,
-  not a network reader, so the construction-time rule for network flags does
-  not apply) and wraps the two above.
+- `import_pending` resolves `ATTEST_DESK_STATE` and `ATTEST_DESK_USER` at
+  call time (a local file, not a network reader, so the construction-time
+  rule for network flags does not apply), looks the persona up with
+  `get_user` (aliases resolve; an unknown name imports nothing and logs), and
+  wraps the two above. Verdicts always belong to the desk persona, whichever
+  persona the current call ranks for. It catches `sqlite3.Error` and
+  `ValueError` itself, logs, and returns `None`, so no caller needs a
+  handler.
 - `render_desk` calls `rank_items(conn, embedder, user_id)` (14 days,
   clicked items excluded, the same candidate set `feed.list` uses) and
   `_ranking_quality`, then emits one HTML string: inline CSS, inline script,
@@ -176,48 +182,51 @@ def render_desk(conn, embedder, user_id: int, limit: int = DEFAULT_DESK_LIMIT) -
 - `attest desk build --user NAME --out PATH [--limit N]`: import, then render,
   then write `PATH` atomically.
 - `attest desk import --user NAME`: import only; prints the `Imported` counts.
-- `feed.ask` and `feed.list`: call `import_pending` inside the tool body before
-  ranking. A failure there is logged and ranking proceeds on existing clicks;
-  it is a narrow `except (sqlite3.Error, ValueError)` with its reason inline,
-  not a new `BLE001` site.
+- `feed.list`, `feed.digest` and `feed.ask`'s reading routes: one call to
+  `import_pending(conn)` in `mcp/_shared.ranked_items`, the helper all three
+  already rank through (`feed.ask` reaches it via `_list_feed`). A failure
+  there is logged and ranking proceeds on existing clicks. No change to
+  `feed.py` or `ask.py`, both of which sit at their size caps.
 
-### The refresh
+### Configuration and the refresh
 
-The refresh runs under cron's bare environment (`install.py`'s script sets
-only `PATH` and `cd`s into the checkout), so variables exported anywhere else
-never reach it. The script therefore sources an optional
-`$HERMES_HOME/attestation-refresh.env` right after taking its lock, when that
-file exists; `install_attestation.py` writes it (mode 600) with the same
-three `ATTEST_DESK_*` values it puts in the MCP `env:` block. A user-owned
-file in their own Hermes home is no wider a trust boundary than the
-publish command it carries. The script then gains, after ingest and tag, and
-only when `ATTEST_DESK_STATE` is set:
+All three values live in the checkout's `.env`, beside `ATTEST_DB` and
+`EMBED_*`, which AgentMarkit's installer already writes there
+(`install_attestation.py:_feed_env`). Both attestation entry points load that
+file (`llm.load_env()`, called from `cli.main` and `mcp_server.main`), so the
+MCP server and the cron refresh see the same values with no `env:` block and
+no shell sourcing. Hermes stripping the parent environment from MCP
+subprocesses does not matter here: the server reads the file itself.
 
-```sh
-attest desk build --user "$ATTEST_DESK_USER" --out "$HERMES_HOME/workspace/research-desk/desk.html" \
-  && [ -n "$ATTEST_DESK_PUBLISH" ] && sh -c "$ATTEST_DESK_PUBLISH"
-```
+- `ATTEST_DESK_STATE`: the page's `state.sqlite`.
+- `ATTEST_DESK_USER`: the persona to rank for and record verdicts against.
+- `ATTEST_DESK_PUBLISH`: a command run after a successful build, split with
+  `shlex.split`, each argument `~`-expanded, run without a shell, 60 s
+  timeout.
 
-A failed build or publish is reported the way the refresh already reports a
-failed ingest and does not stop the next hour's run.
+`attest desk refresh` is the configured form: with `ATTEST_DESK_STATE` and
+`ATTEST_DESK_USER` both set it imports, renders to
+`<hermes_home>/workspace/research-desk/desk.html` (`paths.hermes_home()`), and
+runs `ATTEST_DESK_PUBLISH` when set; with either unset it prints "desk not
+configured" and exits 0. `install.py`'s refresh script calls it after
+tagging, as a degraded step like tagging: a failure is logged ("desk FAILED
+... will retry next run") and never changes the script's exit status, which
+stays ingest's.
 
 ### agentmarkit changes
 
 - **`host.mjs`:** in `receive`, for `current.adapter === 'page'`, accept
   `https:` URLs with no userinfo or port into the existing modal. Observatory
   unchanged.
-- **Distribution env:** `install_attestation.py` sets, for the
-  `attestation-feed` MCP server's `env:` block and the refresh environment,
-  `ATTEST_DESK_STATE=~/.hermes/private-pages/reading-desk/state.sqlite`,
-  `ATTEST_DESK_USER=owner`, and `ATTEST_DESK_PUBLISH="python3
-  ~/.hermes/skills/agentmarkit-links/scripts/private_pages.py register --id
-  reading-desk --title 'Reading desk' --html
-  ~/.hermes/workspace/research-desk/desk.html"`. Hermes strips the parent
-  environment from MCP subprocesses, so the `env:` block is the only way the
-  server sees them; the refresh reads the same values from
-  `$HERMES_HOME/attestation-refresh.env` (see The refresh).
+- **Distribution env:** `install_attestation.py:_feed_env` adds
+  `ATTEST_DESK_STATE=<home>/.hermes/private-pages/reading-desk/state.sqlite`,
+  `ATTEST_DESK_USER=owner`, and `ATTEST_DESK_PUBLISH=python3
+  <home>/.hermes/skills/agentmarkit-links/scripts/private_pages.py register
+  --id reading-desk --title "Reading desk" --html
+  <home>/.hermes/workspace/research-desk/desk.html`, with `<home>` from
+  `_hermes_home_parent()` so every path is absolute.
 - **`SOUL.md` step 3:** after showing the list in chat, run `attest desk
-  build` and the publish command, and send the `pages` link from
+  refresh` in the terminal (from the checkout), and send the `pages` link from
   `agentmarkit.json` as a Markdown link. Step 4 accepts verdicts in chat
   **or** on the page.
 - **`activation.json`:** `first_win.artifact` becomes "The Reading desk page:
