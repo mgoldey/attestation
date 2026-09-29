@@ -8,7 +8,7 @@ plain `https:` URL behind the host's existing confirm modal.
 **Spans:** this repo (`desk.py`, `attest desk`, the refresh script, `feed.ask`
 / `feed.list`) and mzumby/agentmarkit (`agentmarkit-site/src/private-pages/host.mjs`,
 the `academic-research-assistant` distribution, the rehearsal). The
-agentmarkit link-policy change needs mzumby's sign-off.
+link-policy change (D3) was approved by Matt on 2026-09-29.
 **Depends on:** ranking (`rank_items`, `_ranking_quality`), the tool-surface
 rules (`2026-08-21-tool-surface-design.md`), implicit feedback
 (`clicks.source` provenance), the scheduled refresh
@@ -91,7 +91,7 @@ existing `pages-external` modal (full address visible) before opening. The
 Observatory adapter keeps its LinkedIn rule. Feed items come from arbitrary
 journal RSS, so a scholarly-host allowlist would leave most links dead and
 need upkeep; the modal is the safeguard against a misleading agent-written
-link. **mzumby signs off on this before it merges.**
+link. Approved by Matt on 2026-09-29.
 
 ### D4. attestation never names AgentMarkit
 
