@@ -300,7 +300,15 @@ def get_user(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
     and a second spelling is refused rather than shadowing the first. The
     stored spelling is whatever was passed: preserved on write, folded on read.
     """
-    return conn.execute("SELECT * FROM users WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
+    row = conn.execute("SELECT * FROM users WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
+    if row is not None:
+        return row
+    # A name merged into another persona resolves to it (personas.merge), so
+    # a read under that name reaches the keeper instead of autocreating it.
+    return conn.execute(
+        "SELECT u.* FROM persona_aliases a JOIN users u ON u.id = a.user_id WHERE a.alias = ?",
+        (name,),
+    ).fetchone()
 
 
 def item_count(conn: sqlite3.Connection) -> int:

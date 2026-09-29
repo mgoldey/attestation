@@ -123,6 +123,7 @@ HELP: dict[str, str] = {
     "runs.show": "one run in full",
     "runs.record": "write per-arm result/config files the ledger can scan",
     "bootstrap-persona": "write pseudo-clicks for a persona",
+    "persona-merge": "fold duplicate personas into one; their names become aliases of it",
     "install": "idempotent setup + --check doctor mode",
     "library": "the deduplicated reference library (BibTeX, Zotero, feed, opt-in web)",
     "library.sync": "read every configured source into the store",
@@ -383,6 +384,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("name")
     sp.add_argument("-k", type=int, default=30)
     sp.set_defaults(func=cmd_bootstrap_persona)
+
+    sp = sub.add_parser("persona-merge", help=HELP["persona-merge"])
+    add_db(sp)
+    sp.add_argument("into", help="the persona to keep, e.g. matt")
+    sp.add_argument("drop", nargs="+", help='duplicates to fold in, e.g. "Matthew Goldey"')
+    sp.set_defaults(func=cmd_persona_merge)
 
     sp = sub.add_parser("install", help=HELP["install"])
     sp.add_argument("--check", action="store_true", help="detect only, change nothing")
@@ -1539,6 +1546,29 @@ def cmd_eval(args: argparse.Namespace) -> int:
             " negatives are sampled to be rejected. The classifier may be"
             " separating those two populations rather than useful from not."
         )
+    return 0
+
+
+@_documented("persona-merge")
+def cmd_persona_merge(args: argparse.Namespace) -> int:
+    """Clicks and explanations move to the kept persona (its own verdict wins
+    where both rated an item), interests are unioned, and each dropped name is
+    recorded as an alias: a later read or rating under it -- Discord passes
+    the sender's display name -- reaches the kept persona instead of quietly
+    creating the duplicate again."""
+    from attestation import personas
+
+    with open_db(args.db) as conn:
+        try:
+            out = personas.merge(conn, into=args.into, drop=args.drop)
+        except ValueError as exc:
+            return fail(str(exc))
+    print(
+        f"merged {', '.join(out['aliased']) or 'nothing new'} into {out['into']!r}:"
+        f" {out['moved']} rating(s) moved, {out['conflicts']} kept the existing verdict"
+    )
+    for name in out["aliased"]:
+        print(f"  {name!r} now reaches {out['into']!r}")
     return 0
 
 

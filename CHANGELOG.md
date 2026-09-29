@@ -9,6 +9,17 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Fixed
+
+- **A merged persona kept coming back.** Discord prefixes each message with
+  the sender's display name, so the agent passed `user="Matthew Goldey"`
+  instead of the persona `matt`; `personas.merge` folded that duplicate in
+  and deleted the name, and the next read autocreated it again, empty. It
+  regrew three times, and ratings made in Discord trained a persona nobody
+  read from. Merged names are now aliases (migration 011, `persona_aliases`):
+  reads, ratings and autocreate under them reach the kept persona.
+  `attest persona-merge matt "Matthew Goldey"` does the merge from the CLI.
+
 ## [0.2.4] - 2026-09-29
 
 Feed-ranker first on a hosted machine with no GPU: embeddings from a small

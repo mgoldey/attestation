@@ -387,6 +387,22 @@ options:
   -k K
 ```
 
+## attest persona-merge
+
+```
+usage: attest persona-merge [-h] [--db DB] into drop [drop ...]
+
+positional arguments:
+  into        the persona to keep, e.g. matt
+  drop        duplicates to fold in, e.g. "Matthew Goldey"
+
+options:
+  -h, --help  show this help message and exit
+  --db DB     DB path. Resolution order if omitted: ATTEST_DB (or RSS_DB) env
+              var > ~/.hermes/skills/science-recommendations/data/hermes.db
+              (if it exists) > ./hermes.db
+```
+
 ## attest install
 
 ```

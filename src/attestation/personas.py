@@ -241,10 +241,13 @@ def merge(conn: sqlite3.Connection, *, into: str, drop: list[str]) -> dict:
     moved = conflicts = 0
     interests = [keeper["interests"] or ""]
 
+    aliased = []
     for name in drop:
         loser = get_user(conn, name)
         if loser is None:
             raise ValueError(f"unknown persona: {name!r}")
+        if loser["id"] == keeper["id"]:
+            continue  # already an alias of the keeper: nothing left to fold
 
         conflicts += conn.execute(
             "SELECT COUNT(*) n FROM clicks a JOIN clicks b"
@@ -264,7 +267,18 @@ def merge(conn: sqlite3.Connection, *, into: str, drop: list[str]) -> dict:
             " SELECT ?, item_id, text FROM explanations WHERE user_id = ?",
             (keeper["id"], loser["id"]),
         )
+        # The dropped name, and any names already aliased to it, now resolve
+        # to the keeper; without this the next read under the dropped name
+        # autocreated it again, empty (see db migration 011).
+        conn.execute(
+            "UPDATE persona_aliases SET user_id = ? WHERE user_id = ?", (keeper["id"], loser["id"])
+        )
         purge_feedback(conn, loser["id"], delete_user=True)
+        conn.execute(
+            "INSERT OR REPLACE INTO persona_aliases(alias, user_id) VALUES (?, ?)",
+            (loser["name"], keeper["id"]),
+        )
+        aliased.append(loser["name"])
         if loser["interests"]:
             interests.append(loser["interests"])
 
@@ -283,4 +297,5 @@ def merge(conn: sqlite3.Connection, *, into: str, drop: list[str]) -> dict:
         "moved": moved,
         "conflicts": conflicts,
         "interests": merged_interests,
+        "aliased": aliased,
     }
