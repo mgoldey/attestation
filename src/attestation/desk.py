@@ -106,6 +106,17 @@ def _newer(clicked_at, at) -> bool:
     return recorded is not None and given is not None and recorded > given
 
 
+def _parse_verdict(conn, key, entry) -> tuple[int, bool] | None:
+    """(item_id, useful) for one well-formed entry naming a known item."""
+    useful = entry.get("useful") if isinstance(entry, dict) else None
+    if not (isinstance(key, str) and key.isdecimal()) or not isinstance(useful, bool):
+        return None
+    item_id = int(key)
+    if conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
+        return None
+    return item_id, useful
+
+
 def import_verdicts(conn, user_id: int, state: dict) -> Imported:
     """Record each `verdicts[<item_id>] = {"useful": bool, ...}` as a `ui` click.
 
@@ -117,14 +128,11 @@ def import_verdicts(conn, user_id: int, state: dict) -> Imported:
         return Imported()
     recorded = unchanged = skipped = 0
     for key, entry in verdicts.items():
-        useful = entry.get("useful") if isinstance(entry, dict) else None
-        if not (isinstance(key, str) and key.isdecimal()) or not isinstance(useful, bool):
+        parsed = _parse_verdict(conn, key, entry)
+        if parsed is None:
             skipped += 1
             continue
-        item_id = int(key)
-        if conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
-            skipped += 1
-            continue
+        item_id, useful = parsed
         row = conn.execute(
             "SELECT useful, clicked_at FROM clicks WHERE user_id = ? AND item_id = ?",
             (user_id, item_id),
