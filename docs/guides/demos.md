@@ -70,6 +70,16 @@ No model, no network.
 
 ![The reference library](../media/library.gif)
 
+## Going out to look
+
+`attest research` searches PubMed and CrossRef, keeps each hit in the
+reference library under the source it came from (two versions of one preprint
+merge into one reference), and `attest sources add` makes the same query a
+standing topic that every ingest re-runs. Needs the network; arXiv is left
+out here only because its export API throttles hard.
+
+![attest research](../media/research.gif)
+
 ## The feed web UI
 
 `attest serve`'s HTMX page: a persona's ranked feed, marking one item useful
@@ -122,7 +132,7 @@ the model printed the call as text instead of making it):
 | `feed/` | the HTMX web UI: a ranked feed, marking items useful, the onboarding form | a model server, to seed tagged items |
 | `record/` | `attest runs record --scan` writing a sweep and comparing it | nothing — pure local computation |
 | `library/` | `attest library sync/search/related/export` over `examples/molecular-ai/` | nothing — pure local computation |
-| `research/` | `attest research` against PubMed and CrossRef, then tracking the topic | network — **not yet recorded**, see below |
+| `research/` | `attest research` against PubMed and CrossRef, then tracking the topic | network |
 | `hermes/` | a real agent calling `runs.ask`, `feed.ask` (listing and rating), `kg.ask` and `sym.ask` over MCP | a live Hermes install and a model server |
 
 Unlike `examples/*/`, these are not golden paths. They produce video rather
@@ -182,7 +192,7 @@ recording made in place is never committed by accident.
 
 The original six ran green on 2026-09-22 against `main`. `record/`,
 `library/`, the three new agent turns and the two AgentMarkit videos were
-recorded on 2026-09-28 against attestation 0.2.2. `research/` is scripted but
-deliberately not recorded: its run turned up CrossRef hits dated 2115 and
-PubMed hits carrying another paper's DOI, bugs to fix before it is shown.
+recorded on 2026-09-28 against attestation 0.2.2. `research/` was recorded
+after #25: its first run turned up CrossRef hits dated 2115 and PubMed hits
+carrying a cited paper's DOI, both fixed before it was shown.
 `demos/README.md` carries the per-demo evidence.

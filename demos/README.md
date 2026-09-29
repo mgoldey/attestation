@@ -17,7 +17,7 @@ subdirectory's own notes for what it needs.
 | `feed/` | the HTMX web UI (`attest serve`) — browsing a persona's feed, marking items useful/not, opening the onboarding form | a model server, to seed real tagged items |
 | `record/` | `attest runs record --scan` — writing a sweep's results in the shape `runs scan` reads, then comparing it | `none — pure local computation` |
 | `library/` | `attest library sync/status/search/related/export` over `examples/molecular-ai/` | `none — pure local computation` |
-| `research/` | `attest research` against PubMed and CrossRef, then `attest sources add` for a standing topic | `network` — scripted, not yet recorded (see Last verified) |
+| `research/` | `attest research` against PubMed and CrossRef, then `attest sources add` for a standing topic | `network` |
 | `hermes/` | a real Hermes Agent (`hermes chat`) calling `runs.ask`, `feed.ask`, `kg.ask` and `sym.ask` over MCP — `record-agent.sh NAME SURFACE MODEL QUESTION` records any one turn | a live Hermes install, and a model server |
 
 ## Recording pipeline
@@ -67,12 +67,12 @@ Added 2026-09-28, against attestation 0.2.2:
 | `hermes/` knowledge | called `kg_ask`, answered the five largest reading areas |
 | `hermes/` symbolic | called `sym_ask` on gemma4:12b, answered `x^3 cos(x) + 3x^2 sin(x)`; gemma4:e2b printed the call as text instead |
 | `hermes/` rate | called `feed_ask` to list, then `feed_ask` with `item_id` + `useful` → `recorded useful=True` |
-| `research/` | **not recorded**: CrossRef returned off-topic hits dated 2088-2115 and PubMed hits carried other papers' DOIs |
+| `research/` | 5 hits (3 PubMed, 2 CrossRef), each with its own DOI; a standing topic registered. The first attempt found CrossRef hits dated 2088-2115 and PubMed hits carrying a cited paper's DOI, fixed in #25 before recording |
 
 `record/` found a bug on the way: `attest runs record lr-sweep --arm lr_3e4 …`
-writes files the scan groups as family `lr`, so `--scan` prints no comparison
-and `runs compare lr-sweep` finds nothing. The demo uses names that group
-correctly; the bug is tracked for a fix.
+wrote files the scan grouped as family `lr`, so `--scan` printed no
+comparison. Fixed in #26: the scan now honours the `family:` a run's config
+declares, and `--scan` with nothing to compare says so.
 
 Two notes for whoever runs these next, both of which cost time to rediscover:
 
