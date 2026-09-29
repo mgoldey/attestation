@@ -5,6 +5,19 @@ surface, a real Hermes agent calling each of the four `*.ask` routers, and an
 install on the hosting platform attestation ships through. Every recording
 below is real output from a real run; nothing is staged or re-typed.
 
+## The whole story, narrated
+
+Four minutes, for experimental and computational scientists: installing on a
+hosted agent, catching a wrong number in a draft, asking the agent, reading
+the literature, and exact mathematics. Every clip is a real recording; the
+voice is Piper, synthesized locally. `demos/film/build.py` rebuilds it from
+`demos/film/scenes.toml`.
+
+<video src="../../media/attestation-narrated.mp4" controls playsinline width="100%">
+  <track kind="captions" src="../../media/attestation-narrated.vtt" srclang="en" label="English">
+  <a href="../../media/attestation-narrated.mp4">Download the film</a>.
+</video>
+
 ## Installing on a hosted agent
 
 The Research Assistant starter on AgentMarkit, installed on the platform's own
@@ -37,11 +50,24 @@ covers. No model, no network.
 
 ![The run ledger and claim checker](../media/ledger.gif)
 
+## A lab and a simulation
+
+The ledger and the claim checker over an experimental project and a
+computational one: a catalyst screen (yield, %) and a basis-set convergence
+study (mean absolute error, kcal/mol). The draft carries one stale number, one
+result from an experiment never run, one citation key no reference list holds,
+and a catalyst loading nothing backs. The numbers are invented for the demo,
+and `demos/science/workspace/FINDINGS.md` says so.
+
+![A catalyst screen and a basis-set study](../media/science.gif)
+
 ## Recording results
 
-`attest runs record` for a sweep that exists only as numbers: it writes a
-result and a config per arm in the shape `runs scan` reads, declares the
-corpus, and with `--scan` compares the arms in the same call, caveats included.
+`attest runs record` for results that exist only in a lab notebook -- here
+three annealing temperatures and a conductivity for each. It writes a result
+and a config per arm in the shape `runs scan` reads, declares the metric's
+direction, and with `--scan` compares the arms in the same call, caveats
+included.
 
 ![attest runs record](../media/record.gif)
 
@@ -97,9 +123,13 @@ and one not, and the caveat line changing as the ranking learns.
 
 ## A real agent, not a script
 
-The only two demos that drive an agent rather than calling tools directly.
-Hermes answers a provenance question by calling `runs.ask`, and relays the
-caveats rather than dropping them:
+These drive an agent rather than calling tools directly. Asked which basis
+set did best, Hermes calls `runs.ask` and relays both caveats, including
+"too close to call" (gemma4:12b):
+
+![Hermes comparing basis sets through runs.ask](../media/hermes-basis.gif)
+
+The same for a machine-learning sweep:
 
 ![Hermes calling runs.ask](../media/hermes-prov.gif)
 
@@ -130,7 +160,9 @@ the model printed the call as text instead of making it):
 | `claims/` | `attest claims` plus `cite.*` over MCP, over `examples/citations/` | nothing — pure local computation |
 | `kg-symbolic/` | `kg.*` and `sym.*` over MCP — neither has a CLI command or web page | a model server, once, to seed real tags |
 | `feed/` | the HTMX web UI: a ranked feed, marking items useful, the onboarding form | a model server, to seed tagged items |
-| `record/` | `attest runs record --scan` writing a sweep and comparing it | nothing — pure local computation |
+| `science/` | ledger and claims over a catalyst screen and a basis-set study, with citation keys | nothing — pure local computation |
+| `record/` | `attest runs record --scan` writing notebook results and comparing them | nothing — pure local computation |
+| `film/` | the narrated film: every clip stitched with a local Piper voiceover | ffmpeg and a Piper voice |
 | `library/` | `attest library sync/search/related/export` over `examples/molecular-ai/` | nothing — pure local computation |
 | `research/` | `attest research` against PubMed and CrossRef, then tracking the topic | network |
 | `hermes/` | a real agent calling `runs.ask`, `feed.ask` (listing and rating), `kg.ask` and `sym.ask` over MCP | a live Hermes install and a model server |

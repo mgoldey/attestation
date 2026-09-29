@@ -1,0 +1,4 @@
+# Directions the ledger does not know built in. `yield` is a percentage of
+# product: more is better. `mae` (kcal/mol) is already lower_is_better.
+[metric_direction]
+yield = "higher_is_better"

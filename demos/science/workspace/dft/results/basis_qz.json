@@ -1,0 +1,8 @@
+{
+  "tag": "basis_qz",
+  "functional": "B3LYP-D3",
+  "basis": "cc-pVQZ",
+  "benchmark": "GMTKN55 subset",
+  "mae": 1.37,
+  "n_records": 54
+}

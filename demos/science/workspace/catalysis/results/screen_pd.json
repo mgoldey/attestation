@@ -1,0 +1,8 @@
+{
+  "tag": "screen_pd",
+  "catalyst": "Pd(OAc)2",
+  "temperature_c": 80,
+  "time_h": 12,
+  "yield": 78.0,
+  "n_records": 3
+}

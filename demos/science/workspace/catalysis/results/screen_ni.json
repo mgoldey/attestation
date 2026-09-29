@@ -1,0 +1,8 @@
+{
+  "tag": "screen_ni",
+  "catalyst": "NiCl2(dme)",
+  "temperature_c": 80,
+  "time_h": 12,
+  "yield": 64.0,
+  "n_records": 3
+}

@@ -8,6 +8,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$(mktemp -d)"
 export ATTEST_DB="$PWD/attest.db"
+export LEDGER_METRIC_DIRECTION_FILE="$PWD/metric_direction.toml"  # --direction writes here
 clear
 
 run() {
@@ -18,11 +19,11 @@ run() {
 }
 attest() { uv run -q --project "$REPO" attest "$@"; }
 
-echo "# Three warmup schedules, and only their word error rates to show for it."
+echo "# Three annealing temperatures, and a conductivity for each in a lab notebook."
 echo
-run attest runs record warmup --arm short wer=0.182 --arm long wer=0.176 --arm none wer=0.241 --corpus librispeech-dev --scan
-echo "\$ find results configs -type f && cat results/warmup_long.json"
+run attest runs record anneal --arm 300k conductivity=412 --arm 450k conductivity=655 --arm 600k conductivity=631 --direction conductivity=higher_is_better --scan
+echo "\$ find results configs -type f && cat results/anneal_450k.json"
 find results configs -type f | sort
-cat results/warmup_long.json
+cat results/anneal_450k.json
 echo
 sleep 3
