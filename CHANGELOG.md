@@ -9,6 +9,22 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-28
+
+Found by recording a demo of every surface for experimental and computational
+scientists: research results carried the wrong DOIs and off-topic CrossRef
+hits, `runs record` could not find what it had recorded, and `runs.ask` only
+understood machine learning's way of asking which run won.
+
+### Added
+
+- **Demo recordings for every surface, and a narrated film.** The demos page
+  now covers recording results, the reference library, literature research,
+  a lab-and-simulation ledger example (a catalyst screen and a basis-set
+  study, numbers labelled invented), real agent turns on each `*.ask` router,
+  and the AgentMarkit install. `demos/film/build.py` stitches them into one
+  film with a locally synthesized voiceover and captions.
+
 ### Fixed
 
 - **`runs.ask` only understood ML's way of asking which run won.** "Which
@@ -346,7 +362,8 @@ this is the repo's first public artifact despite the number.
   the first green CI run needed a stubbed daemon test plus a Python build
   that can load the `sqlite-vec` extension (`d4ea750`).
 
-[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/mgoldey/attestation/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/mgoldey/attestation/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/mgoldey/attestation/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mgoldey/attestation/compare/573e42c...v0.2.0
