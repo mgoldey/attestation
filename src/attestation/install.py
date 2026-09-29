@@ -1107,6 +1107,19 @@ def _refresh_script_content(root: Path) -> str:
         '  echo "[$(date -Iseconds)] will retry next run"\n'
         "fi\n"
         "\n"
+        # The Reading desk (desk.py). `attest desk refresh` reads its own
+        # configuration from the checkout .env and exits 0 when there is none,
+        # so this line is inert on a machine without a desk. A failure is
+        # degraded like tagging: the page is a view of the feed, and a stale
+        # page must not turn a successful ingest red.
+        f"if uv run {CLI_NAME} desk refresh >/dev/null; then\n"
+        '  echo "[$(date -Iseconds)] desk ok"\n'
+        # rc first: `$(date ...)` in the echo would reset $? before it expands.
+        "else\n"
+        "  rc=$?\n"
+        '  echo "[$(date -Iseconds)] desk FAILED (exit $rc) -- will retry next run"\n'
+        "fi\n"
+        "\n"
         f'echo "[$(date -Iseconds)] refresh done"\n'
         'exit "$status"\n'
     )

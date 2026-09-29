@@ -932,7 +932,11 @@ def test_refresh_script_survives_crons_bare_path(tmp_path):
     # (see test_refresh_script_runs_scan_first_and_gated_on_research_root);
     # tag's --limit is the budget derived from REFRESH_INTERVAL_SECONDS and
     # the measured 2.3s/item, computed by the script's own awk line.
-    assert marker.read_text().splitlines() == ["run attest ingest", "run attest tag --limit 782"]
+    assert marker.read_text().splitlines() == [
+        "run attest ingest",
+        "run attest tag --limit 782",
+        "run attest desk refresh",
+    ]
 
     # And a failure must surface as a non-zero exit, not be swallowed.
     uv.write_text("#!/bin/sh\nexit 3\n")
@@ -975,7 +979,12 @@ def test_refresh_script_runs_scan_when_research_root_is_set_and_exists(tmp_path)
     assert proc.returncode == 0, f"script failed: {proc.stderr}"
     lines = marker.read_text().splitlines()
     assert lines[0] == "run attest runs scan", lines
-    assert lines == ["run attest runs scan", "run attest ingest", "run attest tag --limit 782"]
+    assert lines == [
+        "run attest runs scan",
+        "run attest ingest",
+        "run attest tag --limit 782",
+        "run attest desk refresh",
+    ]
 
 
 def test_refresh_script_scan_failure_is_fatal_like_ingest(tmp_path):
@@ -1169,7 +1178,7 @@ def test_refresh_script_takes_the_lock_without_flock(tmp_path, monkeypatch):
 
     assert proc.returncode == 0, proc.stderr
     assert "SKIP" not in proc.stdout, f"uncontended lock was reported as held: {proc.stdout!r}"
-    assert marker.read_text().splitlines() == ["ran", "ran"], "both steps must run"
+    assert marker.read_text().splitlines() == ["ran", "ran", "ran"], "every step must run"
 
     import re as _re
 
@@ -2054,3 +2063,44 @@ def test_models_inventoried_over_http_when_the_cli_is_absent(monkeypatch):
     result = install.step_models(check=True)
 
     assert result.status == install.Status.OK, result.detail
+
+
+def test_refresh_script_runs_the_desk_after_tagging(tmp_path, monkeypatch):
+    import subprocess
+
+    body = '#!/bin/sh\necho "$*" >> {marker}\nexit 0\n'
+    script, _, env, marker = _refresh_harness(tmp_path, body, monkeypatch)
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    calls = marker.read_text().splitlines()
+    assert calls[-1] == "run attest desk refresh", calls
+    assert "desk ok" in proc.stdout
+
+
+def test_refresh_script_a_desk_failure_is_degraded_not_fatal(tmp_path, monkeypatch):
+    import subprocess
+
+    body = (
+        "#!/bin/sh\n"
+        'echo "$*" >> {marker}\n'
+        'case "$*" in\n  *desk*) exit 5 ;;\n  *) exit 0 ;;\nesac\n'
+    )
+    script, _, env, marker = _refresh_harness(tmp_path, body, monkeypatch)
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+
+    assert proc.returncode == 0, "a desk failure must not turn the refresh red"
+    assert "desk FAILED (exit 5)" in proc.stdout
+
+
+def test_refresh_script_exit_status_stays_ingests_when_desk_also_fails(tmp_path, monkeypatch):
+    import subprocess
+
+    body = (
+        "#!/bin/sh\n"
+        'echo "$*" >> {marker}\n'
+        'case "$*" in\n  *ingest*) exit 3 ;;\n  *desk*) exit 5 ;;\n  *) exit 0 ;;\nesac\n'
+    )
+    script, _, env, marker = _refresh_harness(tmp_path, body, monkeypatch)
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 3
