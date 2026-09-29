@@ -9,6 +9,13 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-09-29
+
+Feed-ranker first on a hosted machine with no GPU: embeddings from a small
+CPU embedder on the machine while chat goes to the customer's provider, a
+first feed list an installer can choose, and a reader who can say what they
+work on.
+
 ### Added
 
 - **Embeddings from their own server.** `EMBED_BASE_URL` / `EMBED_API_KEY`
@@ -379,7 +386,8 @@ this is the repo's first public artifact despite the number.
   the first green CI run needed a stubbed daemon test plus a Python build
   that can load the `sqlite-vec` extension (`d4ea750`).
 
-[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/mgoldey/attestation/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/mgoldey/attestation/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/mgoldey/attestation/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/mgoldey/attestation/compare/v0.2.0...v0.2.1
