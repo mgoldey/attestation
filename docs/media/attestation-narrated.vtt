@@ -1,0 +1,46 @@
+WEBVTT
+
+1
+00:00:00.400 --> 00:00:11.836
+Attestation. For experimental and computational scientists who need every number in a paper to trace back to the experiment or simulation that produced it, and a research assistant that reads their own literature.
+
+2
+00:00:13.436 --> 00:00:26.184
+First, the install. This is the Research Assistant being set up on AgentMarkit, on the same machine image a customer gets. It installs a pinned release, wires its tools into the agent, and checks itself. Every step passes.
+
+3
+00:00:34.072 --> 00:01:09.958
+It reads the result files your instruments and simulations already write. There is no logging library to adopt. Here are two projects: a catalyst screen, and a basis set convergence study. It ranks the catalysts, and says plainly that three replicates are not enough to be sure. Quadruple zeta beats triple zeta by five hundredths of a kilocalorie per mole, and it calls that too close to call. Then it checks the draft. The draft says the nickel yield was sixty eight percent. The run says sixty four. The iron result cites an experiment that was never run, one citation key matches no reference, and the catalyst loading has no source at all.
+
+4
+00:01:11.558 --> 00:01:20.161
+No results file? Type in the numbers from your notebook. It writes them in a form the ledger reads, and compares them straight away, with the same caution.
+
+5
+00:01:24.183 --> 00:01:34.064
+The same questions work in plain English, through the agent. Asked which basis set did best, it answers from the recorded runs, not from the web, and it keeps both caveats.
+
+6
+00:01:42.593 --> 00:01:48.491
+The agent also reads the journals and preprint servers this researcher follows, and ranks what is new for them.
+
+7
+00:02:10.253 --> 00:02:15.060
+When they say a paper is useful, that judgement is recorded, and the ranking learns from it.
+
+8
+00:02:32.973 --> 00:02:41.124
+When the collection is missing something, it searches PubMed and CrossRef, keeps each paper with its own identifier, and can watch the topic from then on.
+
+9
+00:02:53.173 --> 00:03:01.811
+A BibTeX file becomes a searchable library that follows each paper's real citations in both directions, and shows which of them you already have.
+
+10
+00:03:21.473 --> 00:03:27.743
+And for the mathematics in a methods section, it does exact symbolic algebra, not a language model's guess.
+
+11
+00:03:38.353 --> 00:03:51.496
+It never guesses. Close results are called close. Unsupported numbers are called unsupported. A vague question comes back as a question. Run it yourself, it is open source, or start the hosted Research Assistant on AgentMarkit.
+

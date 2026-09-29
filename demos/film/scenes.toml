@@ -1,0 +1,83 @@
+# The narrated demo film, scene by scene, in playing order. build.py reads
+# this. `clip` is a recording under ../../demo/ (or an absolute path) made by
+# the recorders in ../; `card` is a title card drawn instead. `slow` stretches
+# a terminal recording whose output lands faster than anyone can read it.
+# Narration is written for the ear: no symbols, units spoken in full.
+
+[[scene]]
+card = ["Attestation", "Every number in your paper, traced to the run that produced it"]
+say = """Attestation. For experimental and computational scientists who need every
+number in a paper to trace back to the experiment or simulation that produced
+it, and a research assistant that reads their own literature."""
+
+[[scene]]
+clip = "agentmarkit-install.mp4"
+slow = 1.5
+say = """First, the install. This is the Research Assistant being set up on
+AgentMarkit, on the same machine image a customer gets. It installs a pinned
+release, wires its tools into the agent, and checks itself. Every step passes."""
+
+[[scene]]
+clip = "science.gif"
+slow = 2.5
+say = """It reads the result files your instruments and simulations already
+write. There is no logging library to adopt. Here are two projects: a catalyst
+screen, and a basis set convergence study. It ranks the catalysts, and says
+plainly that three replicates are not enough to be sure. Quadruple zeta beats
+triple zeta by five hundredths of a kilocalorie per mole, and it calls that
+too close to call. Then it checks the draft. The draft says the nickel yield
+was sixty eight percent. The run says sixty four. The iron result cites an
+experiment that was never run, one citation key matches no reference, and the
+catalyst loading has no source at all."""
+
+[[scene]]
+clip = "record.gif"
+slow = 2.5
+say = """No results file? Type in the numbers from your notebook. It writes them
+in a form the ledger reads, and compares them straight away, with the same
+caution."""
+
+[[scene]]
+clip = "hermes-basis.gif"
+slow = 1.0
+say = """The same questions work in plain English, through the agent. Asked
+which basis set did best, it answers from the recorded runs, not from the web,
+and it keeps both caveats."""
+
+[[scene]]
+clip = "hermes-feed.gif"
+slow = 1.0
+say = """The agent also reads the journals and preprint servers this researcher
+follows, and ranks what is new for them."""
+
+[[scene]]
+clip = "hermes-rate.gif"
+slow = 1.0
+say = """When they say a paper is useful, that judgement is recorded, and the
+ranking learns from it."""
+
+[[scene]]
+clip = "research.gif"
+slow = 2.5
+say = """When the collection is missing something, it searches PubMed and
+CrossRef, keeps each paper with its own identifier, and can watch the topic
+from then on."""
+
+[[scene]]
+clip = "library.gif"
+slow = 2.0
+say = """A BibTeX file becomes a searchable library that follows each paper's
+real citations in both directions, and shows which of them you already have."""
+
+[[scene]]
+clip = "hermes-symbolic.gif"
+slow = 1.0
+say = """And for the mathematics in a methods section, it does exact symbolic
+algebra, not a language model's guess."""
+
+[[scene]]
+card = ["It never guesses.", "pip install attestation  ·  Research Assistant on agentmarkit.com"]
+say = """It never guesses. Close results are called close. Unsupported numbers
+are called unsupported. A vague question comes back as a question. Run it
+yourself, it is open source, or start the hosted Research Assistant on
+AgentMarkit."""
