@@ -87,7 +87,10 @@ def test_a_changed_mind_overwrites(tmp_path):
     a = add_item(conn)
     desk.import_verdicts(conn, uid, {"v": 1, "verdicts": {str(a): verdict(True)}})
 
-    got = desk.import_verdicts(conn, uid, {"v": 1, "verdicts": {str(a): verdict(False)}})
+    # A change of mind on the page is stamped when the reader taps, which is
+    # after the first verdict was imported.
+    later = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 5))
+    got = desk.import_verdicts(conn, uid, {"v": 1, "verdicts": {str(a): verdict(False, at=later)}})
 
     assert got.recorded == 1
     assert clicks(conn, uid) == {a: (0, "ui")}
@@ -511,3 +514,62 @@ def test_the_paper_grid_column_can_shrink(tmp_path, fake_embedder):
     row's min-content width and the page scrolled sideways on a phone."""
     conn, uid, _ = ranked_db(tmp_path, fake_embedder)
     assert "grid-template-columns:28px minmax(0,1fr)" in desk.render_desk(conn, fake_embedder, uid)
+
+
+# --- final review fixes ---------------------------------------------------------
+
+
+def test_a_newer_chat_verdict_is_not_overwritten_by_an_older_page_verdict(tmp_path):
+    """Review finding: the page said Useful at 10:00, chat said not useful at
+    10:10, and every later import rewrote the row back to Useful. The last
+    verdict must win, whichever surface gave it."""
+    conn = seeded_db(tmp_path / "t.db")
+    uid = get_user(conn, "researcher")["id"]
+    a = add_item(conn)
+    page = {"v": 1, "verdicts": {str(a): verdict(True, at="2026-09-29T10:00:00Z")}}
+    desk.import_verdicts(conn, uid, page)
+    record_click(conn, uid, a, False, source="agent")
+    conn.execute("UPDATE clicks SET clicked_at = '2026-09-29 10:10:00' WHERE item_id = ?", (a,))
+    conn.commit()
+
+    got = desk.import_verdicts(conn, uid, page)
+
+    assert got == desk.Imported(recorded=0, unchanged=1, skipped=0)
+    assert clicks(conn, uid) == {a: (0, "agent")}
+
+
+def test_a_newer_page_verdict_still_overwrites_an_older_chat_verdict(tmp_path):
+    conn = seeded_db(tmp_path / "t.db")
+    uid = get_user(conn, "researcher")["id"]
+    a = add_item(conn)
+    record_click(conn, uid, a, False, source="agent")
+    conn.execute("UPDATE clicks SET clicked_at = '2026-09-29 10:00:00' WHERE item_id = ?", (a,))
+    conn.commit()
+
+    page = {"v": 1, "verdicts": {str(a): verdict(True, at="2026-09-29T10:10:00Z")}}
+    got = desk.import_verdicts(conn, uid, page)
+
+    assert got.recorded == 1
+    assert clicks(conn, uid) == {a: (1, "ui")}
+
+
+@pytest.mark.skipif(node is None, reason="node not installed")
+def test_a_failed_save_points_at_the_hosts_retry_not_at_tapping_again():
+    """Review finding: the page host keeps a failed save pending and refuses
+    every new one until its own Retry runs, so "tap again" could never work."""
+    script = (
+        desk.DESK_LOGIC_JS
+        + """
+console.log(JSON.stringify([
+  failureText({ok: false, error: "This page changed elsewhere."}),
+  failureText({ok: false}), failureText(undefined),
+  failureText(new Error("The page did not answer."))]));
+"""
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    msgs = json.loads(out.stdout)
+    assert msgs[0].startswith("This page changed elsewhere.")
+    assert msgs[3].startswith("The page did not answer.")
+    assert all("Retry at the top" in m for m in msgs)
+    assert not any("again" in m.lower() for m in msgs)

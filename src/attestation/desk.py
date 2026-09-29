@@ -22,6 +22,7 @@ import shlex
 import sqlite3
 import subprocess
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from attestation import paths
@@ -88,6 +89,23 @@ def read_state(path: str | Path) -> dict:
     return value
 
 
+def _utc(value) -> datetime | None:
+    """A click's `clicked_at` (SQLite's naive-UTC 'YYYY-MM-DD HH:MM:SS') or a
+    page verdict's `at` (ISO 8601 with Z), as an aware UTC datetime."""
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _newer(clicked_at, at) -> bool:
+    """Whether the recorded click is newer than the page's verdict. An
+    unreadable time on either side keeps the old rule: the page verdict applies."""
+    recorded, given = _utc(clicked_at), _utc(at)
+    return recorded is not None and given is not None and recorded > given
+
+
 def import_verdicts(conn, user_id: int, state: dict) -> Imported:
     """Record each `verdicts[<item_id>] = {"useful": bool, ...}` as a `ui` click.
 
@@ -108,9 +126,12 @@ def import_verdicts(conn, user_id: int, state: dict) -> Imported:
             skipped += 1
             continue
         row = conn.execute(
-            "SELECT useful FROM clicks WHERE user_id = ? AND item_id = ?", (user_id, item_id)
+            "SELECT useful, clicked_at FROM clicks WHERE user_id = ? AND item_id = ?",
+            (user_id, item_id),
         ).fetchone()
-        if row is not None and bool(row[0]) == useful:
+        if row is not None and (bool(row[0]) == useful or _newer(row[1], entry.get("at"))):
+            # Same verdict, or a newer one from another surface (chat, the web
+            # UI): the last verdict wins, whichever surface gave it.
             unchanged += 1
             continue
         record_click(conn, user_id, item_id, useful, source="ui")
@@ -246,6 +267,12 @@ function ago(iso, now) {
   const d = new Date(t);
   return MONTHS[d.getUTCMonth()] + ' ' + d.getUTCDate();
 }
+function failureText(r) {
+  // The page host keeps a failed save pending and refuses new ones until its
+  // own Retry (in the bar above the page) runs, so that is the only advice.
+  const why = r && (r.error || r.message);
+  return (why ? why + ' ' : 'Not saved. ') + 'Use Retry at the top of the page.';
+}
 function mark(source) {
   const m = /[A-Za-z0-9]/.exec(source || '');
   let h = 2166136261;
@@ -342,12 +369,12 @@ DESK_UI_JS = (
       verdicts = merge(verdicts, (r.state.data && r.state.data.verdicts) || {});
       return save(false);
     }
-    say('Not saved. Tap your choice again to retry.', true);
+    say(failureText(r), true);
   }
   function judge(id, useful) {
     verdicts[String(id)] = {useful, at: new Date().toISOString()};
     am.dirty(true); render();
-    save(true).catch(e => say(e.message, true));
+    save(true).catch(e => say(failureText(e), true));
   }
   async function load() {
     try {
