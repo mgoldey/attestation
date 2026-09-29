@@ -134,8 +134,9 @@ def render_desk(conn, embedder, user_id: int, limit: int = DEFAULT_DESK_LIMIT) -
   IMMEDIATE` never waits on it. Missing file, `sqlite3.Error`, bad JSON or a
   wrong `v` return `{}` and log one line; they never raise.
 - `import_verdicts` is DB-only and pure over `state`: for each
-  `verdicts[<item_id>] = {"useful": bool, "at": iso}`, upsert
-  `clicks(user_id, item_id, useful, clicked_at=at, source='ui')`. An
+  `verdicts[<item_id>] = {"useful": bool, "at": iso}`, write through
+  `rank.record_click(..., source='ui')`, the single click write path
+  (`clicked_at` is the import time; `at` only orders verdicts on the page). An
   existing row with the same `useful` counts `unchanged` and is not
   rewritten. An id not in `items`, a non-integer key, or a non-bool
   `useful` counts `skipped`.
