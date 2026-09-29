@@ -83,8 +83,9 @@ def _embedder_unavailable_message() -> str:
     """
     import os
 
-    configured = os.environ.get("LLM_BASE_URL")
-    where = f"LLM_BASE_URL={configured}" if configured else "LLM_BASE_URL is unset"
+    var = "EMBED_BASE_URL" if os.environ.get("EMBED_BASE_URL") else "LLM_BASE_URL"
+    configured = os.environ.get(var)
+    where = f"{var}={configured}" if configured else f"{var} is unset"
     return (
         f"embedding model unreachable ({where}) -- is ollama running?"
         " (`attest install --check` diagnoses this)"

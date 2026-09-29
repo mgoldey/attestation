@@ -233,8 +233,10 @@ def test_mcp_domain_modules_stay_small():
         # 547: runs.compare takes the family the question names (a real turn
         # on the Agent37 image passed only "Compare the kdsweep runs" and was
         # asked which family), split into _runs_compare because the
-        # complexity gate refused _runs_ask at 11.
-        "ask.py": 547,
+        # complexity gate refused _runs_ask at 11. Then 550: feed.ask sets
+        # interests from "I work on X", which a fresh hosted machine needs --
+        # nothing is tagged there, so autocreate seeds a placeholder.
+        "ask.py": 550,
         # Raised for runs.record (2026-09-01): a new tool plus its Arm
         # pydantic model in provenance.py, one new routing rule (with its
         # own ordering comment) in routing.py. Raised again the same day
@@ -267,8 +269,12 @@ def test_mcp_domain_modules_stay_small():
         # reason inline, which is most of the growth. Then 421: runs.compare
         # learned how non-ML scientists ask ("which basis set did best?",
         # "highest yield", "outperform") after gemma4:12b shortened a question
-        # to exactly that and the router asked back (2026-09-28).
-        "routing.py": 421,
+        # to exactly that and the router asked back (2026-09-28). Then 434:
+        # _INTERESTS, the start-anchored rule for "I work on X" / "my research
+        # is on X", anchored so "find papers I'm interested in" stays a search,
+        # and 437 for _first_rules, split out because the complexity gate
+        # refused route_feed at 11.
+        "routing.py": 437,
         "provenance.py": 415,
         # Raised 2026-09-10 for Task 8 (BibTeX from a library row): `_lookup`
         # gained a `bibtex` field on both return branches and its `empty`,

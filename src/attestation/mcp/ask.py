@@ -176,6 +176,7 @@ def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
 
 def _feed_ask(user: str, question: str, item_id: int | None = None, url: str | None = None) -> dict:
     from attestation.mcp import feed as feed_mod
+    from attestation.mcp import personas as personas_mod
 
     decision = route_feed(question)
     if (early := _feed_ask_early(decision, user, question, item_id, url)) is not None:
@@ -195,6 +196,8 @@ def _feed_ask(user: str, question: str, item_id: int | None = None, url: str | N
         )
     elif decision.tool == "feed.persona_status":
         out = feed_mod._profile_status(user)
+    elif decision.tool == "feed.persona_update":
+        out = personas_mod._set_interests(user, decision.kwargs["interests"])
     elif decision.tool == "feed.research":
         from attestation.mcp import research as research_mod
 

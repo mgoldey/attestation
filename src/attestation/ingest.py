@@ -421,8 +421,9 @@ def run_ingest(
                     # through_ports). So this cannot resolve the URL the way
                     # cli.py's sibling message does via base_url(); it names the
                     # env var honestly instead of guessing at a default.
-                    configured = os.environ.get("LLM_BASE_URL")
-                    where = f"LLM_BASE_URL={configured}" if configured else "LLM_BASE_URL is unset"
+                    var = "EMBED_BASE_URL" if os.environ.get("EMBED_BASE_URL") else "LLM_BASE_URL"
+                    configured = os.environ.get(var)
+                    where = f"{var}={configured}" if configured else f"{var} is unset"
                     log.warning(
                         "embedding model unreachable (%s) -- is ollama"
                         " running? (`attest install --check` diagnoses this). Skipping"

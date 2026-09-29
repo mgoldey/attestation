@@ -30,7 +30,7 @@ def _hermetic_env(tmp_path, monkeypatch):
     import attestation.ledger
     import attestation.llm
 
-    for var in (*attestation.llm.ENV_VARS, "EMBED_DIMS", "RSS_DB", "ATTEST_DB"):
+    for var in (*attestation.llm.ENV_VARS, "EMBED_DIMS", "RSS_DB", "ATTEST_DB", "ATTEST_FEEDS"):
         monkeypatch.delenv(var, raising=False)
     # Never the LIVE database. resolve_db_path falls through to the skill data
     # dir when that file exists, and on the author's machine it does: on
