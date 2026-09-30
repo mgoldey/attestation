@@ -1524,3 +1524,135 @@ def test_runs_record_scan_says_so_when_there_is_nothing_to_compare(tmp_path, cap
 
     assert rc == 1
     assert "no arms of family 'fam'" in capsys.readouterr().err
+
+
+# --- attest desk ------------------------------------------------------------------
+
+
+def _desk_db(tmp_path, fake_embedder, monkeypatch):
+    db = tmp_path / "t.db"
+    conn = seeded_db(db)
+    cur = conn.execute(
+        "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+        " VALUES (NULL, 'p', 'https://example.org/p', 's', 'h')"
+    )
+    conn.execute(
+        "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+        (cur.lastrowid, fake_embedder.embed_document("p", "s").tobytes()),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr("attestation.embed.Embedder", lambda *a, **k: fake_embedder)
+    monkeypatch.setenv("ATTEST_DB", str(db))
+    return db, cur.lastrowid
+
+
+def test_desk_build_writes_the_page(tmp_path, fake_embedder, monkeypatch):
+    _desk_db(tmp_path, fake_embedder, monkeypatch)
+    out = tmp_path / "desk.html"
+    assert main(["desk", "build", "--user", "researcher", "--out", str(out)]) == 0
+    assert "Reading desk" in out.read_text()
+
+
+def test_desk_build_unknown_persona_fails(tmp_path, fake_embedder, monkeypatch, capsys):
+    _desk_db(tmp_path, fake_embedder, monkeypatch)
+    out = tmp_path / "d.html"
+    assert main(["desk", "build", "--user", "nobody", "--out", str(out)]) == 1
+    assert not out.exists()
+    assert "nobody" in capsys.readouterr().err
+
+
+def test_desk_refresh_unconfigured_is_a_quiet_success(monkeypatch, capsys):
+    monkeypatch.delenv("ATTEST_DESK_STATE", raising=False)
+    monkeypatch.delenv("ATTEST_DESK_USER", raising=False)
+    assert main(["desk", "refresh"]) == 0
+    assert "desk not configured" in capsys.readouterr().out
+
+
+def test_desk_refresh_before_the_persona_exists(tmp_path, fake_embedder, monkeypatch, capsys):
+    """Review focus 2: the hourly refresh can fire before the first
+    conversation creates the persona. Exit 0, say so, create nothing."""
+    from attestation.rank import get_user
+
+    db, _ = _desk_db(tmp_path, fake_embedder, monkeypatch)
+    monkeypatch.setenv("ATTEST_DESK_STATE", str(tmp_path / "s.sqlite"))
+    monkeypatch.setenv("ATTEST_DESK_USER", "owner")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hh"))
+    assert main(["desk", "refresh"]) == 0
+    assert "no persona 'owner' yet" in capsys.readouterr().out
+    assert get_user(get_db(db), "owner") is None
+
+
+def _state_file(path, verdicts):
+    c = sqlite3.connect(path)
+    c.execute("CREATE TABLE state (id INTEGER PRIMARY KEY, revision INTEGER, value TEXT)")
+    c.execute("INSERT INTO state VALUES (1, 1, ?)", (json.dumps({"v": 1, "verdicts": verdicts}),))
+    c.commit()
+    c.close()
+    return path
+
+
+def test_desk_refresh_imports_builds_and_publishes(tmp_path, fake_embedder, monkeypatch, capsys):
+    import sys
+
+    db, item_id = _desk_db(tmp_path, fake_embedder, monkeypatch)
+    state = _state_file(
+        tmp_path / "s.sqlite", {str(item_id): {"useful": True, "at": "2026-09-29T00:00:00Z"}}
+    )
+    marker = tmp_path / "published"
+    monkeypatch.setenv("ATTEST_DESK_STATE", str(state))
+    monkeypatch.setenv("ATTEST_DESK_USER", "researcher")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hh"))
+    monkeypatch.setenv(
+        "ATTEST_DESK_PUBLISH", f"{sys.executable} -c \"open('{marker}','w').write('x')\""
+    )
+
+    assert main(["desk", "refresh"]) == 0
+
+    assert (tmp_path / "hh" / "workspace" / "research-desk" / "desk.html").exists()
+    assert marker.exists()
+    row = get_db(db).execute("SELECT useful, source FROM clicks").fetchone()
+    assert (row["useful"], row["source"]) == (1, "ui")
+    assert "recorded 1" in capsys.readouterr().out
+
+
+def test_desk_refresh_reports_a_failed_publish(tmp_path, fake_embedder, monkeypatch, capsys):
+    import sys
+
+    _desk_db(tmp_path, fake_embedder, monkeypatch)
+    monkeypatch.setenv("ATTEST_DESK_STATE", str(tmp_path / "s.sqlite"))
+    monkeypatch.setenv("ATTEST_DESK_USER", "researcher")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hh"))
+    monkeypatch.setenv("ATTEST_DESK_PUBLISH", f"{sys.executable} -c 'raise SystemExit(4)'")
+    assert main(["desk", "refresh"]) == 1
+    assert "publish FAILED (exit 4)" in capsys.readouterr().out
+
+
+def test_desk_import_records_verdicts(tmp_path, fake_embedder, monkeypatch, capsys):
+    db, item_id = _desk_db(tmp_path, fake_embedder, monkeypatch)
+    state = _state_file(
+        tmp_path / "s.sqlite", {str(item_id): {"useful": False, "at": "2026-09-29T00:00:00Z"}}
+    )
+    monkeypatch.setenv("ATTEST_DESK_STATE", str(state))
+    assert main(["desk", "import", "--user", "researcher"]) == 0
+    assert "recorded 1" in capsys.readouterr().out
+    assert get_db(db).execute("SELECT useful FROM clicks").fetchone()["useful"] == 0
+
+
+def test_desk_refresh_passes_the_publish_output_through(
+    tmp_path, fake_embedder, monkeypatch, capsys
+):
+    """The page host's register command prints the page's link, and that link
+    is the one the agent must send. Swallowing it left the agent no link."""
+    import sys
+
+    _desk_db(tmp_path, fake_embedder, monkeypatch)
+    monkeypatch.setenv("ATTEST_DESK_STATE", str(tmp_path / "s.sqlite"))
+    monkeypatch.setenv("ATTEST_DESK_USER", "researcher")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hh"))
+    monkeypatch.setenv(
+        "ATTEST_DESK_PUBLISH",
+        f'{sys.executable} -c "print(\'{{\\"ok\\": true, \\"url\\": \\"https://x.test/p\\"}}\')"',
+    )
+    assert main(["desk", "refresh"]) == 0
+    assert '"url": "https://x.test/p"' in capsys.readouterr().out
