@@ -64,7 +64,11 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS users(
   id INTEGER PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
-  interests TEXT NOT NULL DEFAULT ''
+  interests TEXT NOT NULL DEFAULT '',
+  -- Reading desk verdicts older than this are never imported (desk.py): set
+  -- when the persona is created and whenever its feedback is purged. NULL on
+  -- personas that predate migration 012 means no cutoff.
+  feedback_since TEXT
 );
 CREATE TABLE IF NOT EXISTS persona_aliases(
   alias TEXT PRIMARY KEY COLLATE NOCASE,
@@ -559,6 +563,21 @@ def _migration_011_add_persona_aliases(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_012_add_feedback_since(conn: sqlite3.Connection) -> None:
+    """Add users.feedback_since: the Reading desk's import cutoff.
+
+    `feed.persona_reset` deletes a persona's clicks, but the page host's state
+    file still holds every verdict the page saved, and the next ranking
+    imported them all again -- the reset lasted until the next feed.list.
+    Existing personas get NULL (no cutoff), so an upgrade changes nothing
+    until a persona is reset or created. ALTER TABLE cannot take a
+    `datetime('now')` default, which is why creation sets it explicitly.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    if "feedback_since" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN feedback_since TEXT")
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -578,6 +597,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (9, _migration_009_add_research),
     (10, _migration_010_add_embedding_model),
     (11, _migration_011_add_persona_aliases),
+    (12, _migration_012_add_feedback_since),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]
@@ -861,7 +881,9 @@ def seed_demo_users(conn: sqlite3.Connection) -> None:
     """
     for name, interests in SEED_USERS.items():
         conn.execute(
-            "INSERT OR IGNORE INTO users(name, interests) VALUES (?, ?)", (name, interests)
+            "INSERT OR IGNORE INTO users(name, interests, feedback_since)"
+            " VALUES (?, ?, datetime('now'))",
+            (name, interests),
         )
     conn.commit()
 

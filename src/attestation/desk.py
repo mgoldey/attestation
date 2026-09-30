@@ -42,6 +42,7 @@ STATE_VERSION = 1
 # write is a single-row replace, so anything longer means something is wrong
 # and ranking should go ahead on the clicks it already has.
 READ_TIMEOUT_S = 5
+MAX_ITEM_ID = 2**63 - 1  # SQLite INTEGER
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,8 @@ def read_state(path: str | Path) -> dict:
             row = conn.execute("SELECT value FROM state WHERE id = 1").fetchone()
         finally:
             conn.close()
-        value = json.loads(row[0]) if row else {}
+        # A NULL or numeric value is not a blob this page wrote; read it as none.
+        value = json.loads(row[0]) if row and isinstance(row[0], (str, bytes)) else {}
     except (sqlite3.Error, ValueError) as exc:
         log.warning("desk: cannot read page state %s: %s", path, exc)
         return {}
@@ -112,9 +114,27 @@ def _parse_verdict(conn, key, entry) -> tuple[int, bool] | None:
     if not (isinstance(key, str) and key.isdecimal()) or not isinstance(useful, bool):
         return None
     item_id = int(key)
+    # Past SQLite's int64 the SELECT itself raises OverflowError; no row has it.
+    if item_id > MAX_ITEM_ID:
+        return None
     if conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
         return None
     return item_id, useful
+
+
+def _feedback_since(conn, user_id: int) -> datetime | None:
+    """The persona's import cutoff (users.feedback_since), None when unset."""
+    row = conn.execute("SELECT feedback_since FROM users WHERE id = ?", (user_id,)).fetchone()
+    return _utc(row[0]) if row and row[0] else None
+
+
+def _before(at, since: datetime | None) -> bool:
+    """Whether a page verdict predates the persona's cutoff: a reset, or the
+    persona's creation. An unreadable time cannot prove it came after."""
+    if since is None:
+        return False
+    given = _utc(at)
+    return given is None or given < since
 
 
 def import_verdicts(conn, user_id: int, state: dict) -> Imported:
@@ -126,10 +146,11 @@ def import_verdicts(conn, user_id: int, state: dict) -> Imported:
     verdicts = state.get("verdicts")
     if not isinstance(verdicts, dict):
         return Imported()
+    since = _feedback_since(conn, user_id)
     recorded = unchanged = skipped = 0
     for key, entry in verdicts.items():
         parsed = _parse_verdict(conn, key, entry)
-        if parsed is None:
+        if parsed is None or _before(entry.get("at"), since):
             skipped += 1
             continue
         item_id, useful = parsed

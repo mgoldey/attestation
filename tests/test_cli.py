@@ -1583,6 +1583,14 @@ def test_desk_refresh_before_the_persona_exists(tmp_path, fake_embedder, monkeyp
     assert get_user(get_db(db), "owner") is None
 
 
+def _after_now():
+    """A verdict time after the fixture persona was created -- the order a
+    real page produces (a verdict older than its persona is not imported)."""
+    import time
+
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 5))
+
+
 def _state_file(path, verdicts):
     c = sqlite3.connect(path)
     c.execute("CREATE TABLE state (id INTEGER PRIMARY KEY, revision INTEGER, value TEXT)")
@@ -1596,9 +1604,7 @@ def test_desk_refresh_imports_builds_and_publishes(tmp_path, fake_embedder, monk
     import sys
 
     db, item_id = _desk_db(tmp_path, fake_embedder, monkeypatch)
-    state = _state_file(
-        tmp_path / "s.sqlite", {str(item_id): {"useful": True, "at": "2026-09-29T00:00:00Z"}}
-    )
+    state = _state_file(tmp_path / "s.sqlite", {str(item_id): {"useful": True, "at": _after_now()}})
     marker = tmp_path / "published"
     monkeypatch.setenv("ATTEST_DESK_STATE", str(state))
     monkeypatch.setenv("ATTEST_DESK_USER", "researcher")
@@ -1631,7 +1637,7 @@ def test_desk_refresh_reports_a_failed_publish(tmp_path, fake_embedder, monkeypa
 def test_desk_import_records_verdicts(tmp_path, fake_embedder, monkeypatch, capsys):
     db, item_id = _desk_db(tmp_path, fake_embedder, monkeypatch)
     state = _state_file(
-        tmp_path / "s.sqlite", {str(item_id): {"useful": False, "at": "2026-09-29T00:00:00Z"}}
+        tmp_path / "s.sqlite", {str(item_id): {"useful": False, "at": _after_now()}}
     )
     monkeypatch.setenv("ATTEST_DESK_STATE", str(state))
     assert main(["desk", "import", "--user", "researcher"]) == 0

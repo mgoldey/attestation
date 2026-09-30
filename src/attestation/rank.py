@@ -350,7 +350,10 @@ def create_user(conn, name: str, interests: str) -> int:
     if existing is not None:
         raise ValueError(f"user already exists: {name!r}")
     try:
-        cur = conn.execute("INSERT INTO users(name, interests) VALUES (?, ?)", (name, interests))
+        cur = conn.execute(
+            "INSERT INTO users(name, interests, feedback_since) VALUES (?, ?, datetime('now'))",
+            (name, interests),
+        )
         conn.commit()
         return cur.lastrowid
     except sqlite3.IntegrityError:
