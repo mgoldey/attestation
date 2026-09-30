@@ -42,6 +42,7 @@ STATE_VERSION = 1
 # write is a single-row replace, so anything longer means something is wrong
 # and ranking should go ahead on the clicks it already has.
 READ_TIMEOUT_S = 5
+MAX_ITEM_ID = 2**63 - 1  # SQLite INTEGER
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,8 @@ def read_state(path: str | Path) -> dict:
             row = conn.execute("SELECT value FROM state WHERE id = 1").fetchone()
         finally:
             conn.close()
-        value = json.loads(row[0]) if row else {}
+        # A NULL or numeric value is not a blob this page wrote; read it as none.
+        value = json.loads(row[0]) if row and isinstance(row[0], (str, bytes)) else {}
     except (sqlite3.Error, ValueError) as exc:
         log.warning("desk: cannot read page state %s: %s", path, exc)
         return {}
@@ -112,6 +114,9 @@ def _parse_verdict(conn, key, entry) -> tuple[int, bool] | None:
     if not (isinstance(key, str) and key.isdecimal()) or not isinstance(useful, bool):
         return None
     item_id = int(key)
+    # Past SQLite's int64 the SELECT itself raises OverflowError; no row has it.
+    if item_id > MAX_ITEM_ID:
+        return None
     if conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
         return None
     return item_id, useful

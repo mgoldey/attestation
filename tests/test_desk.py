@@ -573,3 +573,39 @@ console.log(JSON.stringify([
     assert msgs[3].startswith("The page did not answer.")
     assert all("Retry at the top" in m for m in msgs)
     assert not any("again" in m.lower() for m in msgs)
+
+
+# --- code review fixes ------------------------------------------------------------
+
+
+def test_an_id_too_large_for_sqlite_is_skipped_not_raised(tmp_path):
+    """Code review: an all-digit key past int64 raised OverflowError out of
+    the SELECT, and import_pending runs in front of every ranking."""
+    conn = seeded_db(tmp_path / "t.db")
+    uid = get_user(conn, "researcher")["id"]
+    a = add_item(conn)
+    state = {"v": 1, "verdicts": {"9" * 20: verdict(True), str(a): verdict(True)}}
+
+    got = desk.import_verdicts(conn, uid, state)
+
+    assert got == desk.Imported(recorded=1, unchanged=0, skipped=1)
+
+
+def test_a_state_value_that_is_not_text_reads_as_no_state(tmp_path):
+    """Code review: a NULL or numeric `value` made json.loads raise TypeError."""
+    for value in (None, 7):
+        path = tmp_path / f"s-{value}.sqlite"
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE state (id INTEGER PRIMARY KEY, revision INTEGER, value)")
+        conn.execute("INSERT INTO state VALUES (1, 1, ?)", (value,))
+        conn.commit()
+        conn.close()
+        assert desk.read_state(path) == {}
+
+
+def test_import_pending_survives_a_hostile_state_file(tmp_path, monkeypatch):
+    conn = seeded_db(tmp_path / "t.db")
+    path = page_state_file(tmp_path / "s.sqlite", {"v": 1, "verdicts": {"9" * 20: verdict(True)}})
+    monkeypatch.setenv("ATTEST_DESK_STATE", str(path))
+    monkeypatch.setenv("ATTEST_DESK_USER", "researcher")
+    assert desk.import_pending(conn) == desk.Imported(skipped=1)
