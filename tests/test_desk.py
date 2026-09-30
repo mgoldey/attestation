@@ -15,6 +15,16 @@ from attestation import desk
 from attestation.rank import get_user, record_click
 
 
+def desk_db(path):
+    """seeded_db whose personas have a cutoff early in 2026, so the fixed
+    verdict times below postdate it -- the order a real page produces:
+    persona first, verdicts after (see users.feedback_since)."""
+    conn = seeded_db(path)
+    conn.execute("UPDATE users SET feedback_since = '2026-01-01 00:00:00'")
+    conn.commit()
+    return conn
+
+
 def add_item(conn, title="a paper", url="https://example.org/a", summary="about it"):
     cur = conn.execute(
         "INSERT INTO items(feed_id, title, url, summary, content_hash) VALUES (NULL, ?, ?, ?, ?)",
@@ -57,7 +67,7 @@ def clicks(conn, user_id):
 
 
 def test_import_records_each_verdict_as_a_ui_click(tmp_path):
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     uid = get_user(conn, "researcher")["id"]
     a, b = add_item(conn, "a"), add_item(conn, "b")
     state = {"v": 1, "verdicts": {str(a): verdict(True), str(b): verdict(False)}}
@@ -69,7 +79,7 @@ def test_import_records_each_verdict_as_a_ui_click(tmp_path):
 
 
 def test_import_is_idempotent(tmp_path):
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     uid = get_user(conn, "researcher")["id"]
     a = add_item(conn)
     state = {"v": 1, "verdicts": {str(a): verdict(True)}}
@@ -82,7 +92,7 @@ def test_import_is_idempotent(tmp_path):
 
 
 def test_a_changed_mind_overwrites(tmp_path):
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     uid = get_user(conn, "researcher")["id"]
     a = add_item(conn)
     desk.import_verdicts(conn, uid, {"v": 1, "verdicts": {str(a): verdict(True)}})
@@ -97,7 +107,7 @@ def test_a_changed_mind_overwrites(tmp_path):
 
 
 def test_malformed_and_unknown_entries_are_skipped_not_raised(tmp_path):
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     uid = get_user(conn, "researcher")["id"]
     a = add_item(conn)
     state = {
@@ -117,7 +127,7 @@ def test_malformed_and_unknown_entries_are_skipped_not_raised(tmp_path):
 
 
 def test_no_verdicts_key_imports_nothing(tmp_path):
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     uid = get_user(conn, "researcher")["id"]
     assert desk.import_verdicts(conn, uid, {}) == desk.Imported()
     assert desk.import_verdicts(conn, uid, {"v": 1, "verdicts": []}) == desk.Imported()
@@ -165,7 +175,7 @@ def test_read_state_returns_promptly_while_the_worker_holds_a_write_lock(tmp_pat
 
 
 def test_import_pending_is_none_when_unconfigured(tmp_path, monkeypatch):
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     monkeypatch.delenv("ATTEST_DESK_STATE", raising=False)
     monkeypatch.delenv("ATTEST_DESK_USER", raising=False)
     assert desk.import_pending(conn) is None
@@ -174,7 +184,7 @@ def test_import_pending_is_none_when_unconfigured(tmp_path, monkeypatch):
 
 
 def test_import_pending_imports_for_the_desk_persona(tmp_path, monkeypatch):
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     uid = get_user(conn, "researcher")["id"]
     a = add_item(conn)
     path = page_state_file(tmp_path / "s.sqlite", {"v": 1, "verdicts": {str(a): verdict(True)}})
@@ -188,7 +198,7 @@ def test_import_pending_imports_for_the_desk_persona(tmp_path, monkeypatch):
 
 
 def test_import_pending_unknown_persona_imports_nothing(tmp_path, monkeypatch):
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     a = add_item(conn)
     path = page_state_file(tmp_path / "s.sqlite", {"v": 1, "verdicts": {str(a): verdict(True)}})
     monkeypatch.setenv("ATTEST_DESK_STATE", str(path))
@@ -200,7 +210,7 @@ def test_import_pending_unknown_persona_imports_nothing(tmp_path, monkeypatch):
 
 
 def test_import_pending_swallows_a_database_error(tmp_path, monkeypatch):
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     path = page_state_file(tmp_path / "s.sqlite", {"v": 1, "verdicts": {"1": verdict(True)}})
     monkeypatch.setenv("ATTEST_DESK_STATE", str(path))
     monkeypatch.setenv("ATTEST_DESK_USER", "researcher")
@@ -223,7 +233,7 @@ HOST_CSP = (
 
 def ranked_db(tmp_path, embedder, n=3, **item):
     """A seeded DB with n embedded items, ranked for 'researcher'."""
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     ids = []
     for i in range(n):
         title = item.get("title", f"paper {i}")
@@ -271,7 +281,7 @@ def test_page_has_both_tabs_and_every_item(tmp_path, fake_embedder):
 
 
 def test_empty_ranking_renders_the_waiting_state(tmp_path, fake_embedder):
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     uid = get_user(conn, "researcher")["id"]
     html = desk.render_desk(conn, fake_embedder, uid)
     assert "No papers yet" in html
@@ -406,7 +416,7 @@ def test_feed_ask_imports_page_verdicts_before_ranking(tmp_path, fake_embedder, 
     from attestation.mcp import _shared, register_all
 
     db = tmp_path / "t.db"
-    conn = seeded_db(db)
+    conn = desk_db(db)
     uid = get_user(conn, "researcher")["id"]
     ids = []
     for i in range(3):
@@ -523,7 +533,7 @@ def test_a_newer_chat_verdict_is_not_overwritten_by_an_older_page_verdict(tmp_pa
     """Review finding: the page said Useful at 10:00, chat said not useful at
     10:10, and every later import rewrote the row back to Useful. The last
     verdict must win, whichever surface gave it."""
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     uid = get_user(conn, "researcher")["id"]
     a = add_item(conn)
     page = {"v": 1, "verdicts": {str(a): verdict(True, at="2026-09-29T10:00:00Z")}}
@@ -539,7 +549,7 @@ def test_a_newer_chat_verdict_is_not_overwritten_by_an_older_page_verdict(tmp_pa
 
 
 def test_a_newer_page_verdict_still_overwrites_an_older_chat_verdict(tmp_path):
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     uid = get_user(conn, "researcher")["id"]
     a = add_item(conn)
     record_click(conn, uid, a, False, source="agent")
@@ -581,7 +591,7 @@ console.log(JSON.stringify([
 def test_an_id_too_large_for_sqlite_is_skipped_not_raised(tmp_path):
     """Code review: an all-digit key past int64 raised OverflowError out of
     the SELECT, and import_pending runs in front of every ranking."""
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     uid = get_user(conn, "researcher")["id"]
     a = add_item(conn)
     state = {"v": 1, "verdicts": {"9" * 20: verdict(True), str(a): verdict(True)}}
@@ -604,8 +614,80 @@ def test_a_state_value_that_is_not_text_reads_as_no_state(tmp_path):
 
 
 def test_import_pending_survives_a_hostile_state_file(tmp_path, monkeypatch):
-    conn = seeded_db(tmp_path / "t.db")
+    conn = desk_db(tmp_path / "t.db")
     path = page_state_file(tmp_path / "s.sqlite", {"v": 1, "verdicts": {"9" * 20: verdict(True)}})
     monkeypatch.setenv("ATTEST_DESK_STATE", str(path))
     monkeypatch.setenv("ATTEST_DESK_USER", "researcher")
     assert desk.import_pending(conn) == desk.Imported(skipped=1)
+
+
+def test_a_persona_reset_is_not_undone_by_the_next_import(tmp_path):
+    """Code review: feed.persona_reset deleted the clicks and the next ranking
+    re-imported every verdict still in the page's state, restoring them."""
+    from attestation.personas import purge_feedback
+
+    conn = desk_db(tmp_path / "t.db")
+    uid = get_user(conn, "researcher")["id"]
+    a = add_item(conn)
+    page = {"v": 1, "verdicts": {str(a): verdict(True, at="2026-09-29T10:00:00Z")}}
+    desk.import_verdicts(conn, uid, page)
+    purge_feedback(conn, uid)
+    conn.commit()
+
+    got = desk.import_verdicts(conn, uid, page)
+
+    assert got == desk.Imported(recorded=0, unchanged=0, skipped=1)
+    assert clicks(conn, uid) == {}
+
+
+def test_a_verdict_given_after_a_reset_still_imports(tmp_path):
+    from attestation.personas import purge_feedback
+
+    conn = desk_db(tmp_path / "t.db")
+    uid = get_user(conn, "researcher")["id"]
+    a = add_item(conn)
+    purge_feedback(conn, uid)
+    conn.commit()
+    later = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 5))
+
+    got = desk.import_verdicts(conn, uid, {"v": 1, "verdicts": {str(a): verdict(True, at=later)}})
+
+    assert got.recorded == 1
+
+
+def test_a_recreated_persona_does_not_inherit_the_old_pages_verdicts(tmp_path):
+    from attestation.personas import purge_feedback
+    from attestation.rank import create_user
+
+    conn = desk_db(tmp_path / "t.db")
+    old = get_user(conn, "researcher")["id"]
+    a = add_item(conn)
+    page = {"v": 1, "verdicts": {str(a): verdict(True, at="2026-09-29T10:00:00Z")}}
+    purge_feedback(conn, old, delete_user=True)
+    conn.commit()
+    create_user(conn, "researcher", "machine learning")
+    new = get_user(conn, "researcher")["id"]
+
+    assert desk.import_verdicts(conn, new, page).recorded == 0
+
+
+def test_migration_012_keeps_existing_personas_page_verdicts(tmp_path):
+    """An upgraded database has no reset times on record, so its existing
+    personas import every page verdict, exactly as before the migration."""
+    from attestation.db import SCHEMA_VERSION, get_db
+
+    db = tmp_path / "t.db"
+    conn = seeded_db(db)
+    conn.execute("ALTER TABLE users DROP COLUMN feedback_since")
+    conn.execute("PRAGMA user_version = 11")
+    conn.commit()
+    conn.close()
+
+    conn = get_db(db)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION >= 12
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    assert "feedback_since" in cols
+    uid = get_user(conn, "researcher")["id"]
+    a = add_item(conn)
+    page = {"v": 1, "verdicts": {str(a): verdict(True, at="2020-01-01T00:00:00Z")}}
+    assert desk.import_verdicts(conn, uid, page).recorded == 1

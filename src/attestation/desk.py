@@ -122,6 +122,21 @@ def _parse_verdict(conn, key, entry) -> tuple[int, bool] | None:
     return item_id, useful
 
 
+def _feedback_since(conn, user_id: int) -> datetime | None:
+    """The persona's import cutoff (users.feedback_since), None when unset."""
+    row = conn.execute("SELECT feedback_since FROM users WHERE id = ?", (user_id,)).fetchone()
+    return _utc(row[0]) if row and row[0] else None
+
+
+def _before(at, since: datetime | None) -> bool:
+    """Whether a page verdict predates the persona's cutoff: a reset, or the
+    persona's creation. An unreadable time cannot prove it came after."""
+    if since is None:
+        return False
+    given = _utc(at)
+    return given is None or given < since
+
+
 def import_verdicts(conn, user_id: int, state: dict) -> Imported:
     """Record each `verdicts[<item_id>] = {"useful": bool, ...}` as a `ui` click.
 
@@ -131,10 +146,11 @@ def import_verdicts(conn, user_id: int, state: dict) -> Imported:
     verdicts = state.get("verdicts")
     if not isinstance(verdicts, dict):
         return Imported()
+    since = _feedback_since(conn, user_id)
     recorded = unchanged = skipped = 0
     for key, entry in verdicts.items():
         parsed = _parse_verdict(conn, key, entry)
-        if parsed is None:
+        if parsed is None or _before(entry.get("at"), since):
             skipped += 1
             continue
         item_id, useful = parsed

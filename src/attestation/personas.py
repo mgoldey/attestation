@@ -183,6 +183,10 @@ def purge_feedback(conn: sqlite3.Connection, user_id: int, *, delete_user: bool 
     conn.execute("DELETE FROM explanations WHERE user_id = ?", (user_id,))
     if delete_user:
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    else:
+        # The Reading desk's page keeps every verdict it saved; without a
+        # cutoff the next ranking would import them all back (desk.py).
+        conn.execute("UPDATE users SET feedback_since = datetime('now') WHERE id = ?", (user_id,))
     forget_profile_vector(conn, user_id)
 
 

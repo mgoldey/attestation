@@ -17,6 +17,10 @@ commit that carries the reasoning rather than repeating it; `git log
   ranking. The ranker had no new human signal since 2026-08-22; this is a
   gesture surface on the reader's phone. See
   `docs/superpowers/specs/2026-09-29-reading-desk-design.md`.
+- **Migration 012: `users.feedback_since`.** The desk's import cutoff, set
+  when a persona is created and whenever its feedback is purged, so
+  `feed.persona_reset` is no longer undone by the page's saved verdicts.
+  Existing personas get no cutoff.
 
 ## [0.2.5] - 2026-09-29
 
