@@ -1120,6 +1120,17 @@ def _refresh_script_content(root: Path) -> str:
         '  echo "[$(date -Iseconds)] desk FAILED (exit $rc) -- will retry next run"\n'
         "fi\n"
         "\n"
+        # The reader's bibliography (bibliography.py): fold the hour's reads,
+        # verdicts and explanation requests into each persona's .bib. Inert
+        # without ATTEST_BIB_OUT; degraded like the desk, since a stale .bib
+        # must not turn a successful ingest red.
+        f"if uv run {CLI_NAME} library bib >/dev/null; then\n"
+        '  echo "[$(date -Iseconds)] bib ok"\n'
+        "else\n"
+        "  rc=$?\n"
+        '  echo "[$(date -Iseconds)] bib FAILED (exit $rc) -- will retry next run"\n'
+        "fi\n"
+        "\n"
         f'echo "[$(date -Iseconds)] refresh done"\n'
         'exit "$status"\n'
     )

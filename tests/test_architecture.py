@@ -239,7 +239,11 @@ def test_mcp_domain_modules_stay_small():
         # 553: each answer label links its own title (a live Discord turn
         # paired four titles with the wrong url from `refs`), 554 with
         # _linked split out because the complexity gate refused _titled_label.
-        "ask.py": 554,
+        # Raised 2026-09-30 (bibliography): feed.ask completes a save routed
+        # with an item_id -- the deployed feed surface serves feed.ask only, so
+        # a save it could only NAME would be unreachable, the month-without-
+        # clicks failure again. The act itself lives in bibliography.keep.
+        "ask.py": 563,
         # Raised for runs.record (2026-09-01): a new tool plus its Arm
         # pydantic model in provenance.py, one new routing rule (with its
         # own ordering comment) in routing.py. Raised again the same day
@@ -277,7 +281,9 @@ def test_mcp_domain_modules_stay_small():
         # is on X", anchored so "find papers I'm interested in" stays a search,
         # and 437 for _first_rules, split out because the complexity gate
         # refused route_feed at 11.
-        "routing.py": 437,
+        # Raised 2026-09-30 (bibliography): one cite.save content rule, ahead
+        # of the source rules so "add it to my bib" never subscribes a feed.
+        "routing.py": 461,
         "provenance.py": 415,
         # Raised 2026-09-10 for Task 8 (BibTeX from a library row): `_lookup`
         # gained a `bibtex` field on both return branches and its `empty`,
@@ -289,7 +295,9 @@ def test_mcp_domain_modules_stay_small():
         # `cite.lookup` gained `text_offset`/`text_chars` parameters, the
         # `full_text` window call, and the MAX_TEXT_CHARS constant/docstring
         # sentence -- the actual windowing lives in library.fulltext_window.
-        "citation.py": 272,
+        # Raised 2026-09-30 for cite.save: the tool wrapper and its envelope
+        # only -- resolve/fold/save/render live in bibliography.py.
+        "citation.py": 296,
     }
     # Anything not named above still gets a cap. `if name not in limits:
     # continue` meant a module was exempt until someone remembered to enrol it

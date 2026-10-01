@@ -385,6 +385,16 @@ options:
   --limit LIMIT
 ```
 
+## attest library bib
+
+```
+usage: attest library bib [-h] [--user USER]
+
+options:
+  -h, --help   show this help message and exit
+  --user USER  one persona (default: every persona with signal)
+```
+
 ## attest library export
 
 ```

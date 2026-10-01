@@ -119,6 +119,8 @@ CALLS: list[tuple[str, dict, str]] = [
     ("cite.sync", {"sources": ["feed"]}, "ok"),
     # cite.related on an empty store refuses cleanly, naming the store's count.
     ("cite.related", {"key": "vaswani2017attention"}, "refused"),
+    # cite.save of a key no library row holds refuses rather than inventing one.
+    ("cite.save", {"paper": "vaswani2017attention", "user": "bench-chemist"}, "refused"),
     # --- symbolic (no database)
     ("sym.simplify", {"expr": "(x**2 - 1)/(x - 1)"}, "ok"),
     ("sym.solve", {"expr": "x**2 - 4", "symbol": "x"}, "ok"),

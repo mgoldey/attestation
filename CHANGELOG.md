@@ -11,6 +11,15 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **The reader's bibliography.** Papers a reader rates useful, reads in full
+  or asks about, and papers they ask the agent to save, are kept per persona
+  in one generated `.bib` (`ATTEST_BIB_OUT`), each with a citation key that
+  never changes and the reason it is there; a removal sticks. `cite.save`
+  (the 50th tool) and `feed.ask(question="save this", item_id=...)` save and
+  remove; `attest library bib` and the hourly refresh write the files.
+  Migration 013. `ATTEST_BIB_PATHS` entries may now be folders, so an
+  uploaded `.bib` is read without editing `.env`. See
+  `docs/superpowers/specs/2026-09-30-bibliography-design.md`.
 - **The Reading desk.** `attest desk build|import|refresh` renders today's
   ranked papers as one self-contained page with Useful / Not my area on each,
   and records the verdicts a reader gives there as clicks before the next
