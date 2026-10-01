@@ -9,6 +9,11 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-30
+
+The Reading desk: a phone page of ranked papers whose verdicts come back as
+clicks, the first new human signal the ranker has had since 2026-08-22.
+
 ### Added
 
 - **The Reading desk.** `attest desk build|import|refresh` renders today's
@@ -422,7 +427,8 @@ this is the repo's first public artifact despite the number.
   the first green CI run needed a stubbed daemon test plus a Python build
   that can load the `sqlite-vec` extension (`d4ea750`).
 
-[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/mgoldey/attestation/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/mgoldey/attestation/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/mgoldey/attestation/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/mgoldey/attestation/compare/v0.2.2...v0.2.3
