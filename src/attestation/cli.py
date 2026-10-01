@@ -138,6 +138,7 @@ HELP: dict[str, str] = {
     "sources.add": "register an RSS feed or a research: topic (no fetch; next ingest)",
     "library.fulltext": "fetch bodies (arXiv PDF / PMC XML) for references that lack one",
     "library.export": "write a filtered set of references as one .bib (new files only)",
+    "library.bib": "write each persona's bibliography .bib into ATTEST_BIB_OUT; no-op when unset",
     "desk": "the Reading desk page: today's ranked papers, verdicts taken back",
     "desk.build": "render the page for a persona to a file (imports pending verdicts first)",
     "desk.import": "record the page's pending verdicts as clicks",
@@ -387,6 +388,9 @@ def build_parser() -> argparse.ArgumentParser:
     lp.add_argument("--limit", type=int, default=10)
     lp.set_defaults(func=cmd_library_fulltext)
 
+    lp = lib_sub.add_parser("bib", help=HELP["library.bib"])
+    lp.add_argument("--user", help="one persona (default: every persona with signal)")
+    lp.set_defaults(func=cmd_library_bib)
     lp = lib_sub.add_parser("export", help=HELP["library.export"])
     lp.add_argument(
         "--bib", required=True, help="output path; refuses to overwrite without --force"
@@ -1406,6 +1410,35 @@ def cmd_library_fulltext(args: argparse.Namespace) -> int:
     with open_db(args.db) as conn:
         counts = research.fetch_fulltext(conn, limit=args.limit)
     print(f"fetched {counts['fetched']}, none {counts['none']}, failed {counts['failed']}")
+    return 0
+
+
+@_documented("library.bib")
+def cmd_library_bib(args: argparse.Namespace) -> int:
+    """Inert without ATTEST_BIB_OUT, like the desk without its .env lines: the
+    hourly refresh runs this on every machine and must not go red on one that
+    simply has no bibliography folder."""
+    from attestation import bibliography
+    from attestation.rank import get_user
+
+    if bibliography.output_dir() is None:
+        print("bibliography not configured: set ATTEST_BIB_OUT")
+        return 0
+    with open_db(args.db) as conn:
+        if args.user:
+            user = get_user(conn, args.user)
+            if user is None:
+                print(f"error: unknown persona {args.user!r}", file=sys.stderr)
+                return 2
+            bibliography.fold(conn, user["id"])
+            bibliography.write(conn, user["id"])
+            written = {user["name"]: len(bibliography.entries(conn, user["id"]))}
+        else:
+            written = bibliography.write_all(conn)
+    for name, n in written.items():
+        print(f"{bibliography.file_name(name)}: {n} entries")
+    if not written:
+        print("no persona has a bibliography yet")
     return 0
 
 

@@ -123,6 +123,13 @@ has been fetched, `full_text` as a window (`text`, `offset`, `chars`,
 which is never returned. Papers found by the feed's research tools sit in
 the same library under `research:<client>` sources.
 
+**The reader's own bibliography.** Papers they rated useful, read in full,
+asked about, or asked to save (through the feed) are kept in one generated
+`.bib` per reader, each entry with a stable citation key and the reason it
+is there. Their own uploaded `.bib` files -- an export from Zotero, Mendeley,
+EndNote or Paperpile -- are read as sources like any other, and are never
+edited; the generated file sits apart from them.
+
 `cite.check(path)` lints a Markdown draft's `cite=<key>` annotations for
 keys no configured source resolves. It is a lint -- the key is unknown
 here -- never "the cited work does not support this".

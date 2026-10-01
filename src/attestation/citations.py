@@ -70,11 +70,23 @@ def s2_enabled() -> bool:
 
 
 def bib_paths_from_env() -> list[Path]:
-    """ATTEST_BIB_PATHS (os.pathsep-separated), else every `*.bib` in the cwd."""
+    """ATTEST_BIB_PATHS (os.pathsep-separated), else every `*.bib` in the cwd.
+
+    An entry that is a directory contributes every `*.bib` directly inside it,
+    resolved at each call, so a file uploaded into it is read without editing
+    .env. Non-recursive on purpose: the bibliography writes its own file into
+    an `attestation/` subfolder, and that must never come back as user input.
+    """
     configured = os.environ.get("ATTEST_BIB_PATHS", "")
-    if configured.strip():
-        return [Path(p).expanduser() for p in configured.split(os.pathsep) if p.strip()]
-    return sorted(Path.cwd().glob("*.bib"))
+    if not configured.strip():
+        return sorted(Path.cwd().glob("*.bib"))
+    paths: list[Path] = []
+    for p in configured.split(os.pathsep):
+        if not p.strip():
+            continue
+        path = Path(p).expanduser()
+        paths.extend(sorted(path.glob("*.bib")) if path.is_dir() else [path])
+    return paths
 
 
 def zotero_path_from_env() -> Path:

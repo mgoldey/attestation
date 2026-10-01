@@ -100,7 +100,7 @@ def _feed_ask_needs_argument(decision: Decision) -> dict | None:
             "options": ["feed.source_preview", "feed.source_suggest"],
             "tool_used": None,
         }
-    needs_item = decision.tool in {"feed.rate", "feed.explain", "feed.source_remove"}
+    needs_item = decision.tool in {"feed.rate", "feed.explain", "feed.source_remove", "cite.save"}
     needs_url = decision.tool == "feed.source_add" and "url" not in decision.kwargs
     if needs_item or needs_url:
         # These need an item or a url the question does not carry. Naming the
@@ -123,6 +123,26 @@ _REJECTS = ("not ", "n't", "already read", "old news", "wrong subfield", "too ap
             "too theoretical", "rather than", "skip")  # fmt: skip
 
 
+# A save routed with one of these is a removal (bibliography.remove).
+_BIB_REMOVES = ("out of my bib", "from my bib", "remove", "take it out", "drop it")
+
+
+def _item_action(tool: str | None, user: str, question: str, item_id: int) -> dict | None:
+    """The act a route names for one item, or None when it names none."""
+    from attestation.mcp import citation
+    from attestation.mcp import feed as feed_mod
+
+    if tool == "cite.save":
+        return citation._save(user, str(item_id), _has_any(question.lower(), _BIB_REMOVES))
+    if tool == "feed.rate":
+        return feed_mod._record_feedback(user, item_id, not _has_any(question.lower(), _REJECTS))
+    if tool == "feed.explain":
+        return feed_mod._explain_item(user, item_id)
+    if tool == "feed.read":
+        return feed_mod._read_item(user, item_id)
+    return None
+
+
 def _feed_ask_targeted(
     decision: Decision, user: str, question: str, item_id: int | None, url: str | None
 ) -> dict | None:
@@ -134,18 +154,10 @@ def _feed_ask_targeted(
     for a month. An item with no recognisable verb is opened: reading is the
     only harmless thing to do with an item nobody said anything about.
     """
-    from attestation.mcp import feed as feed_mod
     from attestation.mcp import subscriptions as subs
 
     tool = decision.tool or ("feed.read" if item_id is not None else None)
-    if item_id is not None and tool in ("feed.rate", "feed.explain", "feed.read"):
-        if tool == "feed.rate":
-            rejects = _has_any(question.lower(), _REJECTS)
-            out = feed_mod._record_feedback(user, item_id, not rejects)
-        elif tool == "feed.explain":
-            out = feed_mod._explain_item(user, item_id)
-        else:
-            out = feed_mod._read_item(user, item_id)
+    if item_id is not None and (out := _item_action(tool, user, question, item_id)) is not None:
         return _compose(out, tool)
     if url and tool in ("feed.source_add", "feed.source_preview"):
         out = (

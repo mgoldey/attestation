@@ -66,6 +66,30 @@ def _strip_topic(text: str) -> str:
 # BETWEEN them in `route_feed` -- see `routing_research`'s module docstring
 # for why that ordering is load-bearing.
 _CONTENT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # Keeping a paper (bibliography.py) before everything: "save this, it's
+    # useful" is a save, and "add it to my bib" must not reach the source
+    # rules' "add ". Each phrase names an act on the bib or an object: bare
+    # "save" matched "save me the trouble", and bare "my bib" made "is this
+    # in my bib?" a save.
+    (
+        "cite.save",
+        (
+            "save this",
+            "save that",
+            "save it",
+            "to my bib",
+            "into my bib",
+            "out of my bib",
+            "from my bib",
+            "put it in my bib",
+            "put this in my bib",
+            "put that in my bib",
+            "i'll cite",
+            "i will cite",
+            "cite this",
+            "cite that",
+        ),
+    ),
     # Content before ranking: "what is that paper about" asks what it SAYS,
     # "why is it here" asks why it RANKED.
     (

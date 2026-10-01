@@ -192,6 +192,23 @@ def test_bib_and_zotero_paths_come_from_the_environment(tmp_path, monkeypatch):
     assert [s["name"] for s in resolver.sources()] == ["bibtex"]
 
 
+def test_a_bib_path_may_be_a_folder_of_uploads(tmp_path, monkeypatch):
+    """A hosted reader uploads .bib files into a folder; a new upload must be
+    read without editing .env. Non-recursive, so attestation's own generated
+    file in the attestation/ subfolder is never read back as user input."""
+    up = tmp_path / "bibliography"
+    (up / "attestation").mkdir(parents=True)
+    (up / "zotero-export.bib").write_text("@article{one,\n  title = {One},\n  year = {2020},\n}\n")
+    (up / "attestation" / "owner.bib").write_text(
+        "@misc{gen,\n  title = {Generated},\n  year = {2026},\n}\n"
+    )
+    monkeypatch.setenv("ATTEST_BIB_PATHS", str(up))
+    assert citations.bib_paths_from_env() == [up / "zotero-export.bib"]
+    (up / "later.bib").write_text("@article{two,\n  title = {Two},\n  year = {2021},\n}\n")
+    resolver = citations.Resolver.from_env()
+    assert resolver.lookup("two") is not None and resolver.lookup("gen") is None
+
+
 def test_sources_says_which_readers_can_reach_the_network(tmp_path, monkeypatch):
     """The answer to "did this leave my machine" has to be askable from the
     same surface that did the leaving."""

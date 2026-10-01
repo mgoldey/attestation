@@ -182,6 +182,9 @@ def purge_feedback(conn: sqlite3.Connection, user_id: int, *, delete_user: bool 
     conn.execute("DELETE FROM clicks WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM explanations WHERE user_id = ?", (user_id,))
     if delete_user:
+        # The bibliography is the reader's, so a reset keeps it; a deleted
+        # persona's entries go, since users.id is a rowid SQLite reuses.
+        conn.execute("DELETE FROM bibliography WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     else:
         # The Reading desk's page keeps every verdict it saved; without a
@@ -269,6 +272,15 @@ def merge(conn: sqlite3.Connection, *, into: str, drop: list[str]) -> dict:
         conn.execute(
             "INSERT OR IGNORE INTO explanations(user_id, item_id, text)"
             " SELECT ?, item_id, text FROM explanations WHERE user_id = ?",
+            (keeper["id"], loser["id"]),
+        )
+        # Bibliography entries move where neither the paper nor the cite key
+        # is already the keeper's; OR IGNORE drops the rest with the loser.
+        conn.execute(
+            "INSERT OR IGNORE INTO bibliography"
+            "(user_id, reference_id, cite_key, reason, added_at, removed_at)"
+            " SELECT ?, reference_id, cite_key, reason, added_at, removed_at"
+            " FROM bibliography WHERE user_id = ?",
             (keeper["id"], loser["id"]),
         )
         # The dropped name, and any names already aliased to it, now resolve

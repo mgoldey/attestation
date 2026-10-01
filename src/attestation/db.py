@@ -311,6 +311,24 @@ CREATE TABLE IF NOT EXISTS reference_fulltext(
 );
 """
 
+# The reader's bibliography (bibliography.py, migration 013), single-sourced
+# like the library: a persona's chosen references, rendered as one .bib.
+# removed_at is a tombstone -- an implicit signal never revives it, an
+# explicit save does -- and cite_key is assigned once and stored, because
+# export_bib's row-order suffixes would rename an entry when its twin left.
+_BIBLIOGRAPHY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS bibliography(
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reference_id INTEGER NOT NULL REFERENCES "references"(id) ON DELETE CASCADE,
+  cite_key TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  added_at TEXT NOT NULL DEFAULT (datetime('now')),
+  removed_at TEXT,
+  PRIMARY KEY (user_id, reference_id),
+  UNIQUE (user_id, cite_key)
+);
+"""
+
 # Its own constant because _split_statements splits on ';' and a trigger body
 # holds one: migration 007 executes this whole, SCHEMA embeds it verbatim.
 # reference_vectors is a vec0 table created by _ensure_vec_tables before SCHEMA
@@ -325,7 +343,11 @@ END;
 # fresh database and a migrated one cannot drift apart.
 SCHEMA = SCHEMA.format(
     corpus_schema=_CORPUS_SCHEMA.strip(),
-    library_schema=_LIBRARY_SCHEMA.strip() + "\n" + _LIBRARY_TRIGGER.strip(),
+    library_schema=_LIBRARY_SCHEMA.strip()
+    + "\n"
+    + _BIBLIOGRAPHY_SCHEMA.strip()
+    + "\n"
+    + _LIBRARY_TRIGGER.strip(),
 )
 
 
@@ -578,6 +600,12 @@ def _migration_012_add_feedback_since(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN feedback_since TEXT")
 
 
+def _migration_013_add_bibliography(conn: sqlite3.Connection) -> None:
+    """Add bibliography: the references a persona engaged with or saved,
+    which `attest library bib` and cite.save write out as one .bib each."""
+    conn.execute(_BIBLIOGRAPHY_SCHEMA)
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -598,6 +626,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (10, _migration_010_add_embedding_model),
     (11, _migration_011_add_persona_aliases),
     (12, _migration_012_add_feedback_since),
+    (13, _migration_013_add_bibliography),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]

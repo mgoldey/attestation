@@ -654,6 +654,7 @@ def test_every_tool_is_either_budgeted_or_declared_a_composition_tool():
         "cite.search",
         "cite.check",
         "cite.sources",
+        "cite.save",  # one entry and its one BibTeX record, never a list
         "feed.persona_create",
         "feed.persona_update",
         "feed.persona_delete",

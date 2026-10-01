@@ -936,6 +936,7 @@ def test_refresh_script_survives_crons_bare_path(tmp_path):
         "run attest ingest",
         "run attest tag --limit 782",
         "run attest desk refresh",
+        "run attest library bib",
     ]
 
     # And a failure must surface as a non-zero exit, not be swallowed.
@@ -984,6 +985,7 @@ def test_refresh_script_runs_scan_when_research_root_is_set_and_exists(tmp_path)
         "run attest ingest",
         "run attest tag --limit 782",
         "run attest desk refresh",
+        "run attest library bib",
     ]
 
 
@@ -1178,7 +1180,7 @@ def test_refresh_script_takes_the_lock_without_flock(tmp_path, monkeypatch):
 
     assert proc.returncode == 0, proc.stderr
     assert "SKIP" not in proc.stdout, f"uncontended lock was reported as held: {proc.stdout!r}"
-    assert marker.read_text().splitlines() == ["ran", "ran", "ran"], "every step must run"
+    assert marker.read_text().splitlines() == ["ran"] * 4, "every step must run"
 
     import re as _re
 
@@ -2074,8 +2076,8 @@ def test_refresh_script_runs_the_desk_after_tagging(tmp_path, monkeypatch):
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
     calls = marker.read_text().splitlines()
-    assert calls[-1] == "run attest desk refresh", calls
-    assert "desk ok" in proc.stdout
+    assert calls[-2:] == ["run attest desk refresh", "run attest library bib"], calls
+    assert "desk ok" in proc.stdout and "bib ok" in proc.stdout
 
 
 def test_refresh_script_a_desk_failure_is_degraded_not_fatal(tmp_path, monkeypatch):

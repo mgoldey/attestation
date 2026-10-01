@@ -236,6 +236,21 @@ def _related(conn, key: str) -> dict:
     return rel.to_row()
 
 
+@tool(
+    empty={"entry": None, "removed": False, "entries": 0, "file": None},
+    needs_user=True,
+    label="cite_save",
+)
+def _save(conn, user_row, paper: str, remove: bool = False) -> dict:
+    from attestation import bibliography
+
+    try:
+        rid = bibliography.resolve_paper(conn, paper)
+    except LookupError as exc:
+        raise ToolError(str(exc)) from exc
+    return bibliography.keep(conn, user_row["id"], rid, drop=remove)
+
+
 def register(mcp) -> None:
     """Attach every cite.* tool to the server."""
 
@@ -351,3 +366,22 @@ def register(mcp) -> None:
         behind the capped lists.
         """
         return _related(key)
+
+    @mcp.tool(name="cite.save")
+    def cite_save(
+        paper: Annotated[
+            str, Field(description="a feed item_id, or a citation key, DOI or arXiv id")
+        ],
+        user: Annotated[str, Field(description="the persona whose bibliography this is")],
+        remove: Annotated[bool, Field(description="take it out instead")] = False,
+    ) -> dict:
+        """Save a paper to the reader's bibliography (.bib), or take it out.
+
+        Use when they say "save this", "add it to my bib", "I'll cite this",
+        or "take that out". Papers they rated useful, read in full or asked
+        about are already added on their own; `entry.reason` (useful, read,
+        explained, saved) says why one is there. A removal sticks: reading
+        the paper again will not put it back. Returns the entry's `key` for
+        `\\cite{}` and its `bibtex`; a key never changes once given.
+        """
+        return _save(user, paper, remove)

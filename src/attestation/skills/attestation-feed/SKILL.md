@@ -129,6 +129,21 @@ With an `item_id`, "why is this here?" explains its rank (a local model call,
 cached afterwards -- seconds are normal), and anything else opens it and
 returns its text.
 
+**Keeping a paper for their bibliography.** "Save this", "add it to my bib",
+"I'll cite this" -- pass the item and their words:
+
+```
+feed.ask(user="<name>", question="save this to my bib", item_id=15032)
+feed.ask(user="<name>", question="take it out of my bib", item_id=15032)
+```
+
+The answer gives the paper's citation key for `\cite{}`; it never changes once
+given. They do not have to ask: a paper rated useful, read in full, or asked
+"why is this here?" is added to their `.bib` on its own, and a removal sticks
+-- reading it again will not put it back. If they ask what is in their
+bibliography or why a paper is there, say it is the file the agent keeps for
+them, and that each entry records why (useful, read, explained, saved).
+
 ## Going and looking, and following a topic
 
 When the reader names a place -- arXiv, PubMed, CrossRef, a journal, "the
