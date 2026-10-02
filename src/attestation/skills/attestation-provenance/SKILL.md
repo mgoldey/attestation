@@ -160,6 +160,31 @@ the key is unknown here, nothing more. Claims without `cite` are skipped.
 
 All three are read-only. They report; they never edit a document.
 
+**Claims are checked against the ledger, so it must hold the runs first.**
+Against an empty ledger every claim comes back `unsupported`, which means
+nothing was scanned, not that the draft is wrong. `runs.list()` first; scan
+only if it shows nothing.
+
+## When the tools are not in your tool list
+
+If no `runs.*` tool is available to you, and `runs.tools` cannot explain why,
+the same checks run from a terminal in the attestation checkout. Use only
+these; `claims_check` is a tool name, not a command.
+
+```
+attest runs scan --root <workspace>   # each subfolder is a project
+attest runs compare <family>          # which arm won, with caveats
+attest claims <paper.md>              # the verdict for each claim
+attest claims <paper.md> --coverage   # decimals no claim covers
+```
+
+`attest claims` exits 1 when a claim is contradicted. The command worked;
+report the contradiction, do not retry. Report the same things as the tool
+would: one verdict per claim with the run and value it rests on, every
+caveat verbatim, and `malformed` claims with the reason. For anything else,
+`attest --help` and `attest runs --help` list every command; do not try names
+you have not seen there.
+
 ## Mistakes that look reasonable
 
 | Instead of | Do |
@@ -168,6 +193,8 @@ All three are read-only. They report; they never edit a document.
 | Picking a metric direction yourself | Relay the refusal; the reader declares it |
 | Presenting a winner alone | Include every caveat verbatim |
 | Checking a manuscript with `runs.claims_check` alone | Add `runs.claims_coverage` and `cite.check`; they lint different things |
+| Checking claims before the ledger holds the runs | `runs.list()`, scan if empty; an empty ledger makes every claim `unsupported` |
+| Running `attest claims_check` | The command is `attest claims <file>`; `claims_check` is the tool |
 | Reading `unsupported` as "wrong" | One needs a run, the other needs a correction |
 | Reading `cite.check` as "the paper does not support this" | It says the key does not resolve, nothing more |
 | Retrying a failed call with different arguments | Read the message -- it names the fix |

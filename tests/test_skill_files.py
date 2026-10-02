@@ -188,6 +188,33 @@ def test_no_skill_md_invokes_undeclared_console_scripts():
         )
 
 
+def test_every_attest_command_a_skill_documents_parses():
+    """A skill that tells an agent to run `attest <cmd>` must name a real one.
+
+    The provenance skill gives a CLI fallback for sessions without the MCP
+    tools; an agent following a misspelled command guesses until one works
+    (it tried `attest claims_check` first, which is a tool name).
+    """
+    from attestation.cli import build_parser
+
+    parser = build_parser()
+    seen = 0
+    for name in install.SKILL_NAMES:
+        for line in _skill_md(name).splitlines():
+            m = re.match(r"^\s*attest ((?:runs |claims |desk |library )?[a-z_-]+)\b", line)
+            if not m:
+                continue
+            seen += 1
+            argv = [*m.group(1).split(), "--help"]
+            try:
+                parser.parse_args(argv)
+            except SystemExit as exc:
+                assert exc.code == 0, (
+                    f"{name}/SKILL.md documents `attest {m.group(1)}`, which the CLI rejects"
+                )
+    assert seen, "expected the provenance skill's CLI fallback to be checked"
+
+
 def test_no_skill_md_has_hermes_install_invocation():
     for name in install.SKILL_NAMES:
         assert "hermes install" not in _skill_md(name), name
