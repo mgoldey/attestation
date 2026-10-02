@@ -544,6 +544,21 @@ def publish_argv(command: str) -> list[str]:
     return [os.path.expanduser(arg) for arg in shlex.split(command)]
 
 
+def refusal(stdout: str) -> str | None:
+    """The publisher's own refusal, or None. AgentMarkit's private_pages.py
+    exits 0 on every outcome and reports failure as `{"ok": false, "error":
+    ...}` on its last line, so the exit code alone called a page that was
+    never registered published."""
+    lines = stdout.strip().splitlines()
+    try:
+        result = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        return None
+    if not isinstance(result, dict) or result.get("ok") is not False:
+        return None
+    return str(result.get("error") or "the publisher refused without a reason")
+
+
 def publish(command: str) -> subprocess.CompletedProcess:
     """Run ATTEST_DESK_PUBLISH once; the caller reads the return code."""
     return subprocess.run(

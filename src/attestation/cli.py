@@ -613,6 +613,10 @@ def cmd_desk_refresh(args: argparse.Namespace) -> int:
     if done.returncode != 0:
         print(f"desk: publish FAILED (exit {done.returncode}): {done.stderr.strip()[:300]}")
         return 1
+    refused = desk.refusal(done.stdout)
+    if refused is not None:
+        print(f"desk: publish FAILED (refused): {refused[:300]}")
+        return 1
     # The publisher's own output (for a hosted page, its link) is passed
     # through: it is what the caller has to show the reader.
     if done.stdout.strip():

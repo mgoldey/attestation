@@ -1634,6 +1634,28 @@ def test_desk_refresh_reports_a_failed_publish(tmp_path, fake_embedder, monkeypa
     assert "publish FAILED (exit 4)" in capsys.readouterr().out
 
 
+def test_desk_refresh_reports_a_refused_publish(tmp_path, fake_embedder, monkeypatch, capsys):
+    """AgentMarkit's private_pages.py exits 0 on EVERY outcome and reports a
+    refusal as `{"ok": false, "error": ...}` on stdout (measured against its
+    real script on a machine with no agentmarkit.json). Reading only the exit
+    code printed "desk: published" over a page that was never registered."""
+    import sys
+
+    _desk_db(tmp_path, fake_embedder, monkeypatch)
+    monkeypatch.setenv("ATTEST_DESK_STATE", str(tmp_path / "s.sqlite"))
+    monkeypatch.setenv("ATTEST_DESK_USER", "researcher")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hh"))
+    monkeypatch.setenv(
+        "ATTEST_DESK_PUBLISH",
+        f'{sys.executable} -c "print(\'{{\\"ok\\": false, \\"error\\": \\"Check its'
+        f' registration\\"}}\')"',
+    )
+    assert main(["desk", "refresh"]) == 1
+    out = capsys.readouterr().out
+    assert "publish FAILED" in out and "Check its registration" in out
+    assert "desk: published" not in out
+
+
 def test_desk_import_records_verdicts(tmp_path, fake_embedder, monkeypatch, capsys):
     db, item_id = _desk_db(tmp_path, fake_embedder, monkeypatch)
     state = _state_file(

@@ -203,7 +203,10 @@ subprocesses does not matter here: the server reads the file itself.
 - `ATTEST_DESK_USER`: the persona to rank for and record verdicts against.
 - `ATTEST_DESK_PUBLISH`: a command run after a successful build, split with
   `shlex.split`, each argument `~`-expanded, run without a shell, 60 s
-  timeout.
+  timeout. It has failed when it exits non-zero OR when its last stdout line
+  is a JSON object with `"ok": false` (amended 2026-10-02): AgentMarkit's
+  `private_pages.py` exits 0 on every outcome, so an unlinked machine printed
+  "desk: published" over a page that was never registered.
 
 `attest desk refresh` is the configured form: with `ATTEST_DESK_STATE` and
 `ATTEST_DESK_USER` both set it imports, renders to
