@@ -544,9 +544,16 @@ def _explain_item(conn, user_row, item_id: ItemId) -> dict:
         # cannot act differently on "the model is down" vs "it answered with
         # nothing", and splitting them was not asked for; only unknown_user
         # got a distinct message above.
+        from attestation.llm import chat_failure_message
+
+        why = (
+            f" {chat_failure_message(result.detail)}."
+            if result.reason == "model_unreachable"
+            else ""
+        )
         raise ToolError(
-            "could not generate an explanation -- the local model is"
-            " unreachable or returned nothing. Check `attest install --check`;"
+            "could not generate an explanation -- the chat model is"
+            f" unreachable or returned nothing.{why} Check `attest install --check`;"
             " the ranking itself needs no model and feed.list still works."
         )
     return {

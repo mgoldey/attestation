@@ -15,6 +15,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 
 from attestation.features import pref_scores_for_items
+from attestation.ports import embedding_backend_hint
 
 # SQLite's SQLITE_LIMIT_VARIABLE_NUMBER default: the max bind parameters in one
 # statement. rank_items and search_feed can pass every item in the archive as
@@ -81,14 +82,9 @@ def _embedder_unavailable_message() -> str:
     does for the same condition -- naming it honestly rather than guessing at
     a default the caller may not be using.
     """
-    import os
-
-    var = "EMBED_BASE_URL" if os.environ.get("EMBED_BASE_URL") else "LLM_BASE_URL"
-    configured = os.environ.get(var)
-    where = f"{var}={configured}" if configured else f"{var} is unset"
     return (
-        f"embedding model unreachable ({where}) -- is ollama running?"
-        " (`attest install --check` diagnoses this)"
+        f"embedding model unreachable ({embedding_backend_hint()}) -- is the embedding server"
+        " running? (`attest install --check` diagnoses this)"
     )
 
 

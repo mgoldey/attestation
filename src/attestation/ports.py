@@ -160,3 +160,117 @@ def backend_unreachable(exc: BaseException) -> bool:
     import httpx
 
     return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+
+
+class BackendNotConfigured(BackendUnreachable):
+    """There is no model target to call: the host asked for the one Hermes is
+    connected to and Hermes has none (or its credentials need renewing, or its
+    runtime cannot be found).
+
+    A kind of `BackendUnreachable` so every run that already stops once on a
+    dead backend stops once on this too, with the message it carries --
+    instead of asking the Ollama default for a model it never had.
+    """
+
+
+class BackendRejected(BackendUnreachable):
+    """A model backend that WAS reached refused the request for a reason that
+    holds for every request (401/403 key, 404 no such model, 410 retired).
+
+    Raised by clients that do not speak httpx themselves (the Hermes bridge),
+    so the domain's classifiers treat it exactly like the HTTP error a direct
+    client would have raised. `status` is the HTTP status, 0 when unknown.
+    """
+
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
+
+
+def _server_message(response) -> str:
+    """The reason a server gave in its error body (OpenAI/Ollama `error.message`,
+    NIM `detail`/`title`), else empty. Bounded: a body is not a log line."""
+    try:
+        body = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(body, dict):
+        return ""
+    err = body.get("error")
+    text = err.get("message") if isinstance(err, dict) else err
+    text = text or body.get("detail") or body.get("title") or body.get("message") or ""
+    return " ".join(str(text).split())[:200]
+
+
+def backend_rejected(exc: BaseException) -> bool:
+    """Whether a REACHABLE backend refused the request for a reason that holds
+    for every request: 401/403 (key), 404 (no such model or path), 410 (end of
+    life). Retrying per item cannot help, so a run stops once and says why.
+
+    400 and 422 are NOT here: those can be one item's problem (a schema the
+    server cannot satisfy), and the tagger's own retry owns them.
+    """
+    import httpx
+
+    if isinstance(exc, BackendRejected):
+        return True
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (
+        401,
+        403,
+        404,
+        410,
+    )
+
+
+def failure_detail(exc: BaseException) -> str:
+    """One line on why a backend call failed, safe to print.
+
+    Never `str(exc)` for an HTTP error: that carries the full request URL. The
+    status and the server's own reason are the useful part (a 404 from Ollama
+    reads `model 'x' not found`), and neither can contain a credential.
+    """
+    import httpx
+
+    if isinstance(exc, BackendUnreachable):  # carries its own safe message
+        return str(exc)
+    if isinstance(exc, httpx.HTTPStatusError):
+        reason = _server_message(exc.response)
+        return f"HTTP {exc.response.status_code}" + (f": {reason}" if reason else "")
+    if isinstance(exc, httpx.TransportError):
+        return f"cannot connect ({type(exc).__name__})"
+    return str(exc) or type(exc).__name__
+
+
+def display_url(url: str) -> str:
+    """A URL safe to print: scheme, host, port and path -- no userinfo, no query."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return f"{parts.scheme}://{host}{parts.path}" if parts.scheme else url
+
+
+def embedding_backend_hint() -> str:
+    """Where the embedder's URL came from, for the "embedding model unreachable"
+    messages of the domain modules (which may not import `attestation.llm`).
+
+    Reads the same two variables `llm.embed_base_url` does and says which one
+    won, or that neither is set and the built-in Ollama default applies --
+    the old text named the variable but called an unset one "unset" and left
+    the reader to find out that meant Ollama on port 11434.
+    """
+    import os
+
+    if os.environ.get("EMBED_BASE_URL"):
+        return f"EMBED_BASE_URL={display_url(os.environ['EMBED_BASE_URL'])}"
+    if os.environ.get("LLM_BASE_URL"):
+        return (
+            f"LLM_BASE_URL={display_url(os.environ['LLM_BASE_URL'])};"
+            " EMBED_BASE_URL is unset, so embeddings use it too"
+        )
+    return (
+        "EMBED_BASE_URL and LLM_BASE_URL are unset, so this is the built-in Ollama default;"
+        " set EMBED_BASE_URL to change it"
+    )

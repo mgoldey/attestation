@@ -937,6 +937,7 @@ def test_refresh_script_survives_crons_bare_path(tmp_path):
         "run attest tag --limit 782",
         "run attest desk refresh",
         "run attest library bib",
+        "run attest library dashboard",
     ]
 
     # And a failure must surface as a non-zero exit, not be swallowed.
@@ -986,6 +987,7 @@ def test_refresh_script_runs_scan_when_research_root_is_set_and_exists(tmp_path)
         "run attest tag --limit 782",
         "run attest desk refresh",
         "run attest library bib",
+        "run attest library dashboard",
     ]
 
 
@@ -1180,7 +1182,7 @@ def test_refresh_script_takes_the_lock_without_flock(tmp_path, monkeypatch):
 
     assert proc.returncode == 0, proc.stderr
     assert "SKIP" not in proc.stdout, f"uncontended lock was reported as held: {proc.stdout!r}"
-    assert marker.read_text().splitlines() == ["ran"] * 4, "every step must run"
+    assert marker.read_text().splitlines() == ["ran"] * 5, "every step must run"
 
     import re as _re
 
@@ -2076,8 +2078,45 @@ def test_refresh_script_runs_the_desk_after_tagging(tmp_path, monkeypatch):
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
     calls = marker.read_text().splitlines()
-    assert calls[-2:] == ["run attest desk refresh", "run attest library bib"], calls
+    assert calls[-3:] == [
+        "run attest desk refresh",
+        "run attest library bib",
+        "run attest library dashboard",
+    ], calls
     assert "desk ok" in proc.stdout and "bib ok" in proc.stdout
+    assert "dashboard ok" in proc.stdout
+
+
+def test_refresh_script_a_dashboard_failure_is_degraded_not_fatal(tmp_path, monkeypatch):
+    """The dashboard is a view of the library: a failure to write it must not turn
+    a successful ingest red, and must not skip the steps before it."""
+    import subprocess
+
+    body = (
+        "#!/bin/sh\n"
+        'echo "$*" >> {marker}\n'
+        'case "$*" in\n  *dashboard*) exit 7 ;;\n  *) exit 0 ;;\nesac\n'
+    )
+    script, _, env, marker = _refresh_harness(tmp_path, body, monkeypatch)
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+
+    assert proc.returncode == 0, "a dashboard failure must not turn the refresh red"
+    assert "dashboard FAILED (exit 7)" in proc.stdout
+    assert "refresh done" in proc.stdout
+    assert marker.read_text().splitlines()[-1] == "run attest library dashboard"
+
+
+def test_refresh_script_exit_status_stays_ingests_when_the_dashboard_also_fails(
+    tmp_path, monkeypatch
+):
+    body = (
+        "#!/bin/sh\n"
+        'echo "$*" >> {marker}\n'
+        'case "$*" in\n  *ingest*) exit 4 ;;\n  *dashboard*) exit 7 ;;\n  *) exit 0 ;;\nesac\n'
+    )
+    script, _, env, _ = _refresh_harness(tmp_path, body, monkeypatch)
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 4
 
 
 def test_refresh_script_a_desk_failure_is_degraded_not_fatal(tmp_path, monkeypatch):

@@ -149,6 +149,88 @@ embedding model is pinned per database, so switching means a fresh database.
 And the tagging, explanation and reaction prompts were measured on
 `gemma4:e2b`; `evals/` re-measures them on a different model.
 
+## Chat on the model Hermes is connected to
+
+On a machine provisioned for an agent (a hosted Research Desk), the customer
+connects a model to Hermes -- NVIDIA NIM, ChatGPT sign-in, an OpenAI or
+Anthropic key, OpenRouter, an Ollama or other OpenAI-compatible endpoint --
+while Attestation embeds on a small loopback server of its own. Attestation
+never learns what model Hermes runs unless the host says so. Without it, chat
+falls through to the built-in Ollama default and asks the embedder-only server
+for `gemma4:e2b-it-q4_K_M`; the server answers `404 model ... not found`. Set
+
+```bash
+ATTEST_LLM_FROM_HERMES=1
+```
+
+and the chat endpoint, model and key come from the model Hermes is connected to,
+whichever provider that is. The default is off, so nobody else's behaviour
+changes. Embeddings are never part of it: they stay on `EMBED_BASE_URL`, and a
+chat provider with no embeddings API is never asked for one.
+
+**Resolution order for chat**, per field, first match wins, read on every call
+(so "Change model" in AgentMarkit is followed with no restart):
+
+1. `LLM_BASE_URL` / `CHAT_MODEL` / `LLM_API_KEY`, when set to something of your
+   own. A `LLM_BASE_URL` other than the built-in default is a decision: Hermes
+   is not consulted at all. (The two lines `.env.sample` ships uncommented --
+   the built-in URL and model -- count as unset, because `attest install`
+   copies them into `.env` on every machine.)
+2. With `ATTEST_LLM_FROM_HERMES=1`: the model Hermes is connected to.
+3. The built-in Ollama default.
+
+**Where Hermes keeps it, and who makes the call.** Files under `HERMES_HOME`
+(default `~/.hermes`), never the process environment, because the hourly
+refresh runs under cron outside the agent: `config.yaml` (`model.default`,
+`model.provider`, `model.base_url`, `model.api_key`, `model.api_mode`),
+`.env` (the provider's key) and `auth.json` (OAuth credentials).
+
+| What Hermes is connected to | Who calls it | Key comes from |
+|---|---|---|
+| NVIDIA NIM (`nvidia`), OpenRouter, OpenAI (`openai-api`), DeepSeek, xAI, AI Gateway, Hugging Face, GMI, Arcee | Attestation, OpenAI chat-completions | `<HERMES_HOME>/.env` (`NVIDIA_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, ...), else the process environment |
+| A custom OpenAI-compatible endpoint (`custom`), Ollama or llama.cpp as Hermes runs them, LM Studio | Attestation, OpenAI chat-completions | `model.api_key`, usually `${CUSTOM_API_KEY}` resolved in `.env`; none needed for a local server |
+| ChatGPT sign-in (`openai-codex`, OAuth), Anthropic's native API, Bedrock, Vertex, any provider not in the rows above, any `model.api_mode` other than `chat_completions` | **Hermes**, through its own runtime | held by Hermes; Attestation never reads or refreshes it |
+
+The third row exists because those providers do not speak chat-completions with
+a static key. A ChatGPT sign-in is OAuth against the Responses API, and OAuth
+refresh tokens are single-use, so a second process refreshing the same
+credential would sign the first one out. Attestation therefore starts a small
+helper in Hermes' own Python (`hermes_helper.py`; found through the `hermes`
+launcher on `PATH` or in `~/.local/bin`, else `<HERMES_HOME>/hermes-agent/venv`,
+else `ATTEST_HERMES_PYTHON`) which calls Hermes' own `agent.auxiliary_client.
+call_llm` -- the function Hermes uses for every non-agent model call. The
+credential, the wire format and the token refresh stay in Hermes' process. It
+costs a subprocess per run (about 3-7 s to the first reply, then milliseconds),
+and the reply schema goes in the prompt instead of `response_format`. If a
+Hermes release changes `call_llm`, the helper says so with Hermes' version and
+the three variables to set instead.
+
+**What it says when something is wrong**, each naming where the URL and model
+came from (`env LLM_BASE_URL`, `Hermes (nvidia, <path>)`, `built-in Ollama
+default`) and how to change it, and never a key:
+
+- `Hermes has no model connected; connect one in AgentMarkit (...)` -- no
+  `config.yaml`, no `model.default`, or Hermes signed out;
+- `Hermes has a model (..., provider nvidia) but no API key: set NVIDIA_API_KEY
+  in .../.env, or connect one in AgentMarkit`;
+- `... HTTP 404: model 'x' not found` / `HTTP 401` / `HTTP 410` -- the server
+  *was* reached and refused. This stops the run once instead of retrying every
+  item; before, only a dead socket did, and a 404 printed nothing but
+  `failed: N`;
+- `cannot connect (ConnectError)` -- the URL named is where it tried.
+
+`attest install --check` prints one `backends` line: the resolved chat backend
+(host, model, and where each came from) and the embedding backend -- hosts and
+names only, never a key -- and its `hosted_models` step sends one real request
+to each. It is BROKEN when the host opted in and Hermes has nothing usable.
+
+**Not verified against the real service:** NVIDIA NIM, OpenAI, OpenRouter and
+the ChatGPT sign-in were exercised against stubs shaped like their wires (and,
+for the two Hermes-served providers, against Hermes' real code with those
+stubs behind it -- `tests/test_hermes_real.py`, opt-in), not against the
+live services. Bedrock, Vertex and Copilot are delegated to Hermes by the same
+mechanism but have no test of their own.
+
 ## What `attest install` does (manual-setup reference)
 
 The steps below are what the installer automates. You normally don't need

@@ -21,7 +21,15 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from attestation import paths
-from attestation.llm import base_url, chat_model, embed_model
+from attestation.llm import (
+    BackendNotConfigured,
+    BackendUnreachable,
+    base_url,
+    chat_model,
+    describe_chat,
+    describe_embedding,
+    embed_model,
+)
 
 # One skill per agent surface plus one for setup, mirroring AGENT_SURFACES and
 # the emitted .claude/agents/attestation-<surface>.md files. The single
@@ -137,8 +145,15 @@ def _find_agent_binary() -> str | None:
 
 
 def _is_ollama_backend() -> bool:
-    """base_url() host is localhost-ish (native root reachability checked in the step)."""
-    host = urlparse(base_url()).hostname or ""
+    """base_url() host is localhost-ish (native root reachability checked in the step).
+
+    False when the model Hermes is connected to cannot be resolved: there is no
+    Ollama to check, and the `backends` step reports why instead.
+    """
+    try:
+        host = urlparse(base_url()).hostname or ""
+    except BackendNotConfigured:
+        return False
     return host in ("localhost", "127.0.0.1", "::1")
 
 
@@ -194,6 +209,24 @@ def step_uv() -> StepResult:
     return StepResult(
         "uv", Status.BROKEN, "uv not found on PATH — install: https://docs.astral.sh/uv/"
     )
+
+
+def step_backends() -> StepResult:
+    """Which chat and embedding backends this process resolves to, and from where.
+
+    Hosts and model names only -- never a key. The question this answers is the
+    one a hosted machine raised: Attestation asked an embedder-only server for a
+    chat model, and nothing printed where it had got that URL. Pure resolution,
+    no request, so it costs nothing and changes nothing; it is BROKEN only when
+    the host opted into Hermes' model (`ATTEST_LLM_FROM_HERMES`) and Hermes has
+    none, which is a state every chat step would then fail in.
+    """
+    detail = f"chat: {describe_chat()}; embeddings: {describe_embedding()}"
+    try:
+        base_url()
+    except BackendNotConfigured:
+        return StepResult("backends", Status.BROKEN, detail)
+    return StepResult("backends", Status.OK, detail)
 
 
 def step_ollama_reachable() -> StepResult:
@@ -358,28 +391,50 @@ def _server_reason(response) -> tuple[str, str]:
     return str(title), str(body.get("detail") or "")
 
 
-def _hosted_error(exc: Exception, model: str) -> str:
+def _hosted_error(exc: Exception, model: str, url: str | None = None, *, chat: bool = True) -> str:
     """One line a person can act on, out of whatever a hosted endpoint raised.
 
     Hosted catalogues churn: MEASURED 2026-09-11 against NVIDIA NIM, 82
-    models listed at /v1/models and most of those tried returned 410 (end
-    of life) or 404 (not enabled for the account), so the server's own
-    `title`/`detail` is the useful part and is kept when the body is JSON.
+    models listed at /v1/models and most of those tried returned 410 (end of
+    life) or 404 (not enabled for the account), so the server's own
+    `title`/`detail` is the part worth keeping when the body is JSON.
     A 401/403 additionally says whether LLM_API_KEY is set at all.
+
+    `url` is the endpoint the failing request went to (the embedding server and
+    the chat server are different hosts on a hosted desk); `chat` says which
+    key a 401 is about.
     """
     import httpx
 
+    from attestation.llm import display_url
+
+    if isinstance(exc, BackendUnreachable):  # Hermes' runtime reported it, already worded
+        return f"{model}: {exc}"
+    url = display_url(url or base_url())
     if not isinstance(exc, httpx.HTTPStatusError):
         if isinstance(exc, httpx.HTTPError):
-            return f"{model}: {base_url()} unreachable ({exc.__class__.__name__})"
+            return f"{model}: {url} unreachable ({exc.__class__.__name__})"
         return f"{model}: {exc.__class__.__name__}: {exc}"
     status = exc.response.status_code
     title, detail = _server_reason(exc.response)
-    if status in (401, 403):
-        key_state = "set" if os.environ.get("LLM_API_KEY") else "unset"
-        detail = f"LLM_API_KEY is {key_state}; {base_url()} rejected it. {detail}".strip()
+    detail = _status_hint(status, url, chat, detail)
     head = f"{model}: HTTP {status}" + (f" {title}" if title else "")
     return f"{head} -- {detail[:200]}" if detail else head
+
+
+def _status_hint(status: int, url: str, chat: bool, detail: str) -> str:
+    """What a 401/403/404 means HERE, ahead of the server's own `detail`."""
+    from attestation.llm import describe_chat
+
+    if status in (401, 403):
+        # Which variable is the key: chat uses LLM_API_KEY; embeddings use
+        # EMBED_API_KEY when they have a server of their own, else the same one.
+        var = "LLM_API_KEY" if chat or not os.environ.get("EMBED_BASE_URL") else "EMBED_API_KEY"
+        key_state = "set" if os.environ.get(var) else "unset"
+        return f"{var} is {key_state}; {url} rejected it. {detail}".strip()
+    if status == 404 and chat:
+        return f"{url} has no such model or path ({describe_chat()}). {detail}".strip()
+    return detail
 
 
 def step_hosted_models(check: bool = False) -> StepResult:
@@ -407,15 +462,29 @@ def step_hosted_models(check: bool = False) -> StepResult:
 def _hosted_probe(transport=None) -> StepResult:
     """The two requests behind `step_hosted_models`; `transport` is for tests."""
     from attestation.db import embed_dims
-    from attestation.llm import ChatClient, EmbeddingClient
+    from attestation.llm import (
+        ChatClient,
+        EmbeddingClient,
+        chat_client,
+        chat_target,
+        embed_base_url,
+    )
 
     parts: list[str] = []
+    try:
+        target = chat_target()
+    except BackendNotConfigured as exc:
+        return StepResult("hosted_models", Status.BROKEN, str(exc))
     try:
         vec = EmbeddingClient(transport=transport).embed("attest install check")
     except Exception as exc:  # noqa: BLE001 -- every failure of a hosted
         # embedding call (auth, EOL model, network) is reported through the
         # same one-line detail; nothing here is a bug in this code.
-        return StepResult("hosted_models", Status.BROKEN, _hosted_error(exc, embed_model()))
+        return StepResult(
+            "hosted_models",
+            Status.BROKEN,
+            _hosted_error(exc, embed_model(), embed_base_url(), chat=False),
+        )
     want = embed_dims()
     if len(vec) < want:
         return StepResult(
@@ -426,20 +495,27 @@ def _hosted_probe(transport=None) -> StepResult:
         )
     parts.append(f"embed {embed_model()} ok ({len(vec)} dims)")
     try:
-        chat = ChatClient(transport=transport)
-        resp = chat.client.post(
-            "/chat/completions",
-            json={
-                "model": chat.model,
-                "messages": [{"role": "user", "content": "ok"}],
-                "max_tokens": 1,
-            },
-        )
-        resp.raise_for_status()
+        if target.kind == "hermes":
+            chat_client(target).chat_json(
+                [{"role": "user", "content": 'Reply with {"ok": true}'}], {"type": "object"}
+            )
+        else:
+            chat = ChatClient(transport=transport)
+            resp = chat.client.post(
+                "/chat/completions",
+                json={
+                    "model": chat.model,
+                    "messages": [{"role": "user", "content": "ok"}],
+                    "max_tokens": 1,
+                },
+            )
+            resp.raise_for_status()
     except Exception as exc:  # noqa: BLE001 -- same policy as the embedding
         # call above: one actionable line, never a traceback.
-        return StepResult("hosted_models", Status.BROKEN, _hosted_error(exc, chat_model()))
-    parts.append(f"chat {chat_model()} ok")
+        return StepResult(
+            "hosted_models", Status.BROKEN, _hosted_error(exc, target.model, target.base_url)
+        )
+    parts.append(f"chat {target.model} ok")
     return StepResult("hosted_models", Status.OK, "; ".join(parts))
 
 
@@ -1198,6 +1274,17 @@ def _refresh_script_content(root: Path) -> str:
         '  echo "[$(date -Iseconds)] bib FAILED (exit $rc) -- will retry next run"\n'
         "fi\n"
         "\n"
+        # The library dashboard (dashboard.py): the one JSON file the Files
+        # tab reads. Degraded like the desk and the bibliography -- a stale
+        # file must not turn a successful ingest red, and `attest library
+        # dashboard` works on an empty database, so it needs no gate.
+        f"if uv run {CLI_NAME} library dashboard >/dev/null; then\n"
+        '  echo "[$(date -Iseconds)] dashboard ok"\n'
+        "else\n"
+        "  rc=$?\n"
+        '  echo "[$(date -Iseconds)] dashboard FAILED (exit $rc) -- will retry next run"\n'
+        "fi\n"
+        "\n"
         f'echo "[$(date -Iseconds)] refresh done"\n'
         'exit "$status"\n'
     )
@@ -1355,7 +1442,7 @@ def _print_step(result: StepResult) -> None:
 
 def _run_steps(check: bool, yes: bool, now: bool) -> list[StepResult]:
     agent = _find_agent_binary()
-    results = [step_uv(), step_ollama_reachable()]
+    results = [step_uv(), step_backends(), step_ollama_reachable()]
     results.append(step_models(check=check, yes=yes))
     results.append(step_hosted_models(check=check))
     results.append(step_env_file(check=check))

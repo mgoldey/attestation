@@ -13,7 +13,12 @@ from typing import Literal, NamedTuple
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
-from attestation.ports import backend_unreachable
+from attestation.ports import (
+    BackendUnreachable,
+    backend_rejected,
+    backend_unreachable,
+    failure_detail,
+)
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +39,10 @@ class ExplainResult(NamedTuple):
 
     text: str | None
     reason: Literal["ok", "unknown_user", "model_unreachable", "no_answer"]
+    # Why, when the backend itself failed (HTTP status + the server's reason, or
+    # "Hermes has no model connected"): the caller adds WHERE the url and model
+    # came from, which this domain module may not know.
+    detail: str = ""
 
 
 class Explanation(BaseModel):
@@ -53,6 +62,7 @@ class ExplainState(BaseModel):
     # `explanation` stays None, so explain() can build the right ExplainResult
     # without re-deriving the distinction from a bare None.
     explanation_reason: str = "no_answer"
+    explanation_detail: str = ""
 
 
 def explanation_messages(profile: str, title: str, summary: str) -> list[dict]:
@@ -166,6 +176,7 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
         ).fetchone()
         messages = explanation_messages(state.profile, item["title"], item["summary"])
         reason = "no_answer"
+        detail = ""
         for _ in range(2):  # one retry per spec
             try:
                 out = chat_fn(messages, Explanation.model_json_schema())
@@ -183,10 +194,22 @@ def _build_graph(conn: sqlite3.Connection, chat_fn):
                 # what llm.ChatClient raises. Anything else -- chiefly a
                 # pydantic.ValidationError on a malformed reply -- is
                 # "no_answer": the model answered, but not usably.
+                #
+                # A REACHABLE backend that refuses (404 no such model, 401 key,
+                # 410 retired) is the same user-facing condition -- the model
+                # this machine is configured to ask cannot answer -- and used to
+                # read as "no_answer", i.e. "try again". BackendNotConfigured is
+                # Hermes having no model connected.
                 log.debug("explain attempt failed", exc_info=True)
-                reason = "model_unreachable" if backend_unreachable(exc) else "no_answer"
+                down = (
+                    isinstance(exc, BackendUnreachable)
+                    or backend_unreachable(exc)
+                    or backend_rejected(exc)
+                )
+                reason = "model_unreachable" if down else "no_answer"
+                detail = failure_detail(exc) if down else ""
                 continue
-        return {"explanation": None, "explanation_reason": reason}
+        return {"explanation": None, "explanation_reason": reason, "explanation_detail": detail}
 
     graph = StateGraph(ExplainState)
     graph.add_node("profile", synthesize_profile)
@@ -236,4 +259,4 @@ def explain(conn, user_id: int, item_id: int, chat_fn) -> ExplainResult:
         conn.commit()
         return ExplainResult(text=text, reason="ok")
     reason = result.get("explanation_reason", "no_answer")
-    return ExplainResult(text=None, reason=reason)
+    return ExplainResult(text=None, reason=reason, detail=result.get("explanation_detail", ""))

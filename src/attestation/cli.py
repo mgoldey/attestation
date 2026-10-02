@@ -138,6 +138,7 @@ HELP: dict[str, str] = {
     "sources.add": "register an RSS feed or a research: topic (no fetch; next ingest)",
     "library.fulltext": "fetch bodies (arXiv PDF / PMC XML) for references that lack one",
     "library.export": "write a filtered set of references as one .bib (new files only)",
+    "library.dashboard": "write the library dashboard JSON (a host page's one input file)",
     "library.bib": "write each persona's bibliography .bib into ATTEST_BIB_OUT; no-op when unset",
     "desk": "the Reading desk page: today's ranked papers, verdicts taken back",
     "desk.build": "render the page for a persona to a file (imports pending verdicts first)",
@@ -391,6 +392,17 @@ def build_parser() -> argparse.ArgumentParser:
     lp = lib_sub.add_parser("bib", help=HELP["library.bib"])
     lp.add_argument("--user", help="one persona (default: every persona with signal)")
     lp.set_defaults(func=cmd_library_bib)
+    lp = lib_sub.add_parser("dashboard", help=HELP["library.dashboard"])
+    lp.add_argument(
+        "--out",
+        help="output path (default: $ATTEST_LIBRARY_DASHBOARD, else the Research Desk's"
+        " workspace/research-desk/library/library.json)",
+    )
+    lp.add_argument(
+        "--persona", help="whose saved papers to mark (default: $ATTEST_DESK_USER, else owner)"
+    )
+    lp.add_argument("--limit", type=int, default=5000, help="max references listed (default: 5000)")
+    lp.set_defaults(func=cmd_library_dashboard)
     lp = lib_sub.add_parser("export", help=HELP["library.export"])
     lp.add_argument(
         "--bib", required=True, help="output path; refuses to overwrite without --force"
@@ -425,7 +437,22 @@ def build_parser() -> argparse.ArgumentParser:
 def warmup() -> None:
     """Pin chat + embed models in VRAM. Ollama-specific by design: derives the
     native /api base from the /v1 base URL; other backends don't need pinning."""
-    from attestation.llm import base_url, chat_model, embed_model
+    from attestation.llm import (
+        BackendNotConfigured,
+        base_url,
+        chat_model,
+        chat_target,
+        embed_model,
+    )
+
+    try:
+        if chat_target().url_source.startswith("Hermes"):
+            print("warmup is Ollama-only; chat is the model Hermes is connected to -- skipping")
+            return
+        chat_model()
+    except BackendNotConfigured as exc:
+        print(str(exc))
+        return
 
     # How long Ollama holds the models in RAM after warmup.
     #
@@ -1284,10 +1311,10 @@ def _embedder_or_none():
     dead server should cost one round trip, not one per reference.
     """
     from attestation.embed import Embedder
-    from attestation.llm import base_url
+    from attestation.llm import embed_base_url
 
     try:
-        httpx.get(f"{base_url().rstrip('/')}/models", timeout=2.0)
+        httpx.get(f"{embed_base_url().rstrip('/')}/models", timeout=2.0)
     except httpx.HTTPError:
         return None
     return Embedder()
@@ -1350,13 +1377,23 @@ def cmd_library_search(args: argparse.Namespace) -> int:
 @_documented("library.tag")
 def cmd_library_tag(args: argparse.Namespace) -> int:
     from attestation.features import run_reference_tagging
-    from attestation.llm import base_url, chat_model, default_chat_fn
+    from attestation.llm import (
+        BackendNotConfigured,
+        chat_failure_message,
+        chat_model,
+        default_chat_fn,
+    )
 
+    try:
+        model = chat_model()
+    except BackendNotConfigured as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     with open_db(args.db) as conn:
-        stats = run_reference_tagging(conn, default_chat_fn, chat_model(), limit=args.limit)
+        stats = run_reference_tagging(conn, default_chat_fn, model, limit=args.limit)
     print(stats)
     if stats.get("chat_down"):
-        print(f"chat model unreachable at {base_url()} -- is ollama running?", file=sys.stderr)
+        print(chat_failure_message(stats.get("chat_error")), file=sys.stderr)
         return 1
     return 1 if (stats["tagged"] == 0 and stats["failed"] > 0) else 0
 
@@ -1439,6 +1476,31 @@ def cmd_library_bib(args: argparse.Namespace) -> int:
         print(f"{bibliography.file_name(name)}: {n} entries")
     if not written:
         print("no persona has a bibliography yet")
+    return 0
+
+
+@_documented("library.dashboard")
+def cmd_library_dashboard(args: argparse.Namespace) -> int:
+    """Read-only over the database; the one file it writes is replaced atomically.
+    The hourly refresh runs it as a degraded step, so it must be cheap and must
+    work on an empty database."""
+    from pathlib import Path
+
+    from attestation import dashboard
+
+    if args.limit < 0:
+        return fail("--limit must be 0 or more")
+    out = Path(args.out).expanduser() if args.out else dashboard.default_path()
+    persona = args.persona or os.environ.get("ATTEST_DESK_USER") or dashboard.DEFAULT_PERSONA
+    with open_db(args.db) as conn:
+        doc = dashboard.build(conn, persona=persona, limit=args.limit)
+    dashboard.write(out, doc)
+    t = doc["totals"]
+    print(
+        f"wrote {out}: {t['items']} items, {t['references']} references"
+        f" ({len(doc['references'])} listed{', truncated' if doc['references_truncated'] else ''}),"
+        f" {t['saved']} saved"
+    )
     return 0
 
 
@@ -1589,23 +1651,32 @@ def cmd_sources_add(args: argparse.Namespace) -> int:
 @_documented("tag")
 def cmd_tag(args: argparse.Namespace) -> int:
     import attestation.features
-    from attestation.llm import base_url, chat_model, default_chat_fn
+    from attestation.llm import (
+        BackendNotConfigured,
+        chat_failure_message,
+        chat_model,
+        default_chat_fn,
+    )
 
+    try:
+        model = chat_model()
+    except BackendNotConfigured as exc:
+        # Opted into Hermes' model and Hermes has none: say so before opening
+        # the database, instead of a traceback or a run of failed items.
+        print(str(exc), file=sys.stderr)
+        return 1
     with open_db(args.db) as conn:
-        stats = attestation.features.run_tagging(
-            conn, default_chat_fn, chat_model(), limit=args.limit
-        )
+        stats = attestation.features.run_tagging(conn, default_chat_fn, model, limit=args.limit)
     print(stats)
     if stats.get("chat_down"):
-        # Same diagnosis ingest gives for the same condition (is ollama
-        # running? run --check): this composition root may import llm and
-        # print the resolved URL; ingest.py is a domain module and may not,
-        # so its sibling message names LLM_BASE_URL instead. The stats dict
-        # alone said `failed: 2` and left the cause -- Ollama is not running
-        # -- to be guessed.
+        # This composition root may import llm and name where the url and model
+        # came from; ingest.py is a domain module and may not, so its sibling
+        # message names the env var instead. The stats dict alone said
+        # `failed: 2` and left the cause to be guessed -- and for a model the
+        # server never had (HTTP 404) it said nothing at all.
         print(
-            f"chat model unreachable at {base_url()} -- is ollama running?"
-            " (`attest install --check` diagnoses this)",
+            chat_failure_message(stats.get("chat_error"))
+            + " (`attest install --check` diagnoses this)",
             file=sys.stderr,
         )
         return 1
