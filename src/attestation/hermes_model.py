@@ -37,7 +37,7 @@ Two kinds of backend come out of `resolve`:
 
 Properties, each tested:
 
-1. **Files, not the process environment.** The hourly refresh runs under cron,
+1. **Files first, not the process environment.** The hourly refresh runs under cron,
    outside Hermes' environment; nothing here needs a variable the agent
    exported. The process environment is the last resort for a key only.
 2. **The key is never copied or shown.** It reaches one Authorization header; it
@@ -102,7 +102,7 @@ _PROVIDERS: dict[str, tuple[str, tuple[str, ...], str, bool]] = {
     "gmi": ("https://api.gmi-serving.com/v1", ("GMI_API_KEY",), "GMI_BASE_URL", True),
     "arcee": ("https://api.arcee.ai/api/v1", ("ARCEEAI_API_KEY",), "ARCEE_BASE_URL", True),
     "lmstudio": ("http://127.0.0.1:1234/v1", ("LM_API_KEY",), "LM_BASE_URL", False),
-    "custom": ("", ("CUSTOM_API_KEY", "OPENAI_API_KEY"), "CUSTOM_BASE_URL", False),
+    "custom": ("", ("CUSTOM_API_KEY",), "CUSTOM_BASE_URL", False),
 }
 _ALIASES = {
     "nim": "nvidia",
@@ -111,7 +111,7 @@ _ALIASES = {
     "nemotron": "nvidia",
     "openai-api": "openai",
 }
-_VAR_REF = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+_VAR_REF = re.compile(r"^\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\}$")
 
 
 @dataclass(frozen=True)
@@ -132,6 +132,7 @@ class HermesModel:
     api_key: str = field(default="", repr=False)
     config_path: Path | None = None
     why: str = ""
+    key_source: str = ""  # the variable (or model.api_key) the key came from; never the key
 
 
 def _unavailable(detail: str) -> BackendNotConfigured:
@@ -215,16 +216,76 @@ def _delegated_reason(sec: dict) -> str:
     return ""
 
 
-def _api_key(sec: dict, key_vars: tuple[str, ...], dotenv: dict[str, str]) -> str:
+def _host_matches(url: str, domain: str) -> bool:
+    """Whether the URL's HOST is `domain` or a subdomain of it -- not a substring
+    anywhere in the URL (api.openai.com.evil.test and evil.test/api.openai.com
+    are not OpenAI)."""
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(url).hostname or "").lower()
+    return host == domain or host.endswith("." + domain)
+
+
+def _api_key(
+    sec: dict, key_vars: tuple[str, ...], dotenv: dict[str, str], url: str
+) -> tuple[str, str]:
+    """(key, where it came from). Hermes' own routing, which exists because a key
+    sent to the wrong host is a leak (GHSA-76xc-57q6-vm5m, #28660):
+
+    - an explicit `model.api_key` is used, and a `${VAR}` / `${env:VAR}` reference
+      to an unset variable is an ERROR naming it -- never a fall back to some
+      other variable that happens to be set;
+    - otherwise the provider's own variables, plus OPENAI_API_KEY ONLY when the
+      endpoint is openai.com or openai.azure.com.
+    """
     key = sec["api_key"]
     ref = _VAR_REF.match(key)
-    if ref:  # `api_key: ${CUSTOM_API_KEY}`
-        key = _lookup(ref.group(1), dotenv)
-    for name in () if key else key_vars:
-        key = _lookup(name, dotenv)
-        if key:
-            break
-    return key
+    if ref:
+        name = ref.group(1)
+        found = _lookup(name, dotenv)
+        if not found:
+            raise BackendNotConfigured(
+                f"Hermes' model.api_key refers to {name}, which is not set in"
+                f" {Path('.env')} under HERMES_HOME or the environment; set it, or {CONNECT_HINT}"
+            )
+        return found, name
+    if key:
+        return key, "model.api_key"
+    names = key_vars
+    if _host_matches(url, "openai.com") or _host_matches(url, "openai.azure.com"):
+        names = (*key_vars, "OPENAI_API_KEY")
+    for name in names:
+        found = _lookup(name, dotenv)
+        if found:
+            return found, name
+    return "", ""
+
+
+def _vet_key(key: str, source: str, url: str, provider: str) -> None:
+    """Refuse a key that cannot be sent safely, naming where it came from and
+    never echoing it: not header-safe ASCII, or headed for plain http on a host
+    that is not this machine."""
+    if not key:
+        return
+    from attestation.ports import PLACEHOLDER_KEYS, host_is_loopback, key_is_header_safe
+
+    if not key_is_header_safe(key):
+        raise BackendNotConfigured(
+            f"the API key from {source} is not a valid HTTP header value (it has a space,"
+            " a newline or a non-ASCII character); re-enter it, or set"
+            " LLM_BASE_URL, CHAT_MODEL and LLM_API_KEY instead"
+        )
+    if (
+        url.startswith("http://")
+        and key.lower() not in PLACEHOLDER_KEYS
+        and not host_is_loopback(url)
+    ):
+        raise BackendNotConfigured(
+            f"Hermes' provider {provider} sends its key ({source}) to {url} over plain"
+            " http, which Attestation will not do for a host that is not this machine;"
+            " use an https address, or set LLM_BASE_URL, CHAT_MODEL and LLM_API_KEY"
+            " yourself to accept that"
+        )
 
 
 def resolve(home: Path | None = None) -> HermesModel:
@@ -257,7 +318,8 @@ def resolve(home: Path | None = None) -> HermesModel:
     )
     if not url.startswith(("http://", "https://")):
         raise _unavailable(f"provider {provider!r} has no base_url; set model.base_url")
-    key = _api_key(sec, key_vars, dotenv)
+    key, key_source = _api_key(sec, key_vars, dotenv, url)
+    _vet_key(key, key_source, url, provider)
     if not key and key_required:
         raise BackendNotConfigured(
             f"Hermes has a model ({model}, provider {provider}) but no API key: set"
@@ -270,4 +332,5 @@ def resolve(home: Path | None = None) -> HermesModel:
         base_url=url,
         api_key=key,
         config_path=config_path,
+        key_source=key_source,
     )

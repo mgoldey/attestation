@@ -23,11 +23,23 @@ crosses the pipe: replies carry text and a scrubbed error message, where every
 secret-looking value Hermes loaded is replaced by `***`.
 """
 
+import sys
+
+# FIRST: running this file as a script puts its own directory (attestation/) at
+# sys.path[0], where `import mcp` -- a package Hermes depends on -- would resolve
+# to attestation/mcp. Nothing of Attestation's may shadow Hermes' modules.
+if sys.path and sys.path[0] == __import__("os").path.dirname(
+    __import__("os").path.abspath(__file__)
+):
+    sys.path.pop(0)
+
 import importlib
 import inspect
 import json
 import os
-import sys
+import re
+import threading
+import time
 
 _PROTOCOL = sys.stdout
 sys.stdout = sys.stderr  # whatever Hermes prints must not corrupt the protocol
@@ -41,19 +53,58 @@ def send(obj: dict) -> None:
     _PROTOCOL.flush()
 
 
+_SHAPES = re.compile(
+    r"(?i)(bearer\s+[A-Za-z0-9._~+/=-]{8,}"
+    r"|(?:authorization|x-api-key|api[_-]?key|token|secret)[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9._~+/=-]{8,}"
+    r"|\b(?:sk|nvapi|xai|gsk|hf|pk|rk|ghp|gho)[-_][A-Za-z0-9._-]{12,}"
+    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})"
+)
+_SECRET_NAMES = ("access_token", "refresh_token", "api_key", "agent_key", "id_token", "key")
+
+
+def _walk_secrets(node, out: set[str]) -> None:
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if isinstance(v, str) and str(k).lower() in _SECRET_NAMES and len(v) >= 8:
+                out.add(v)
+            else:
+                _walk_secrets(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _walk_secrets(v, out)
+
+
 def secrets_in_env() -> set[str]:
-    """Every secret-looking value Hermes put in the environment, plus the key
-    of the main runtime, for scrubbing messages."""
+    """Every secret this helper can know about: secret-looking environment values,
+    every token in Hermes' auth.json (singleton and credential pool), and the key
+    of the runtime Hermes resolves for its main provider."""
     found = {
         v for k, v in os.environ.items() if k.upper().endswith(_SECRET_SUFFIXES) and len(v) >= 8
     }
+    try:
+        with open(os.path.join(os.environ.get("HERMES_HOME", ""), "auth.json")) as handle:
+            _walk_secrets(json.load(handle), found)
+    except (OSError, ValueError):
+        pass
+    try:
+        key = importlib.import_module("hermes_cli.runtime_provider").resolve_runtime_provider()
+        if (
+            isinstance(key, dict)
+            and isinstance(key.get("api_key"), str)
+            and len(key["api_key"]) >= 8
+        ):
+            found.add(key["api_key"])
+    except Exception:  # noqa: BLE001 -- best effort: a failing resolver must not lose the error
+        pass
     return found
 
 
 def scrub(text: str, secrets: set[str]) -> str:
-    """`text` with every known secret replaced by `***`, whitespace collapsed, cut at 300."""
-    for secret in secrets:
+    """`text` with every known secret and every credential-shaped string replaced
+    by `***`, whitespace collapsed, cut at 300."""
+    for secret in sorted(secrets, key=len, reverse=True):
         text = text.replace(secret, "***")
+    text = _SHAPES.sub("***", text)
     return " ".join(text.split())[:300]
 
 
@@ -78,22 +129,32 @@ def reason_of(exc: BaseException) -> str:
     return str(getattr(exc, "message", None) or exc)
 
 
+def _kind_of(name: str, lowered: str, status: int) -> str:
+    """The protocol error kind for an exception's class name, text and status."""
+    if status:
+        return "http"
+    if "connection" in name.lower() or "timeout" in name.lower():
+        return "unreachable"
+    if name == "AuthError" or any(
+        hint in lowered
+        for hint in ("hermes setup", "no llm provider", "login", "re-auth", "relogin")
+    ):
+        return "not_configured"
+    return "other"
+
+
 def classify(exc: BaseException, secrets: set[str]) -> dict:
     """An exception as a protocol error: kind, status, scrubbed message."""
     name = type(exc).__name__
-    message = scrub(reason_of(exc), secrets)
-    lowered = message.lower()
     status = status_of(exc)
-    if status:
-        kind = "http"
-    elif "connection" in name.lower() or "timeout" in name.lower():
-        kind = "unreachable"
-    elif name == "AuthError" or "hermes setup" in lowered or "no llm provider" in lowered:
-        kind = "not_configured"
-    elif "login" in lowered or "re-auth" in lowered or "relogin" in lowered:
-        kind = "not_configured"
-    else:
-        kind = "other"
+    # A rejected credential: the provider's own words are the likeliest place for
+    # an echo of it, and nothing in them is actionable beyond the status.
+    message = (
+        "the provider rejected the credential"
+        if status in (401, 403)
+        else scrub(reason_of(exc), secrets)
+    )
+    kind = _kind_of(name, message.lower(), status)
     return {"kind": kind, "status": status, "message": f"{name}: {message}"}
 
 
@@ -141,9 +202,20 @@ def describe() -> dict:
     }
 
 
+def _exit_with_parent() -> None:
+    """Exit when the process that started us is gone (it was killed, so no atexit
+    ran): poll the parent pid. A helper stuck in a model call cannot see EOF on
+    stdin, so this runs on its own thread."""
+    parent = os.getppid()
+    while True:
+        time.sleep(1.0)
+        if os.getppid() != parent:
+            os._exit(0)
+
+
 def serve(call_llm) -> None:
     """Answer JSON-line requests on stdin until it closes."""
-    secrets = secrets_in_env()
+    threading.Thread(target=_exit_with_parent, daemon=True).start()
     for line in sys.stdin:
         if not line.strip():
             continue
@@ -154,7 +226,7 @@ def serve(call_llm) -> None:
         except Exception as exc:  # noqa: BLE001 -- every failure of Hermes' own
             # provider stack is reported to the caller as one scrubbed line;
             # none of them is a bug in this relay.
-            reply = {"ok": False, "error": classify(exc, secrets)}
+            reply = {"ok": False, "error": classify(exc, secrets_in_env())}
         reply["id"] = request.get("id")
         send(reply)
 

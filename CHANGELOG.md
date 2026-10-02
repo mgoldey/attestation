@@ -17,8 +17,8 @@ commit that carries the reasoning rather than repeating it; `git log
   learned what that model was: chat fell through to the built-in Ollama default
   and asked the embedder-only server for `gemma4:e2b-it-q4_K_M` (a 404). With the
   opt-in, the endpoint, model and key are read at call time from `HERMES_HOME`
-  (`config.yaml`, `.env`; never the process environment, so the cron refresh
-  works) and follow "Change model". Providers that speak chat-completions with a
+  (`config.yaml`, `.env`; the process environment only for a key variable `.env`
+  lacks, so the cron refresh works) and follow "Change model". Providers that speak chat-completions with a
   key (NVIDIA NIM, OpenRouter, OpenAI, DeepSeek, custom endpoints, Ollama or
   llama.cpp as Hermes runs them) are called by Attestation; ChatGPT sign-in,
   Anthropic and anything else are called by Hermes' own runtime through a small
@@ -34,6 +34,13 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Fixed
 
+- Review round on this branch: a hung Hermes call is now killed at its deadline
+  (it used to hang the run and the refresh lock), the helper cannot orphan, runs
+  with a minimal environment and cannot be shadowed by `attestation/mcp`;
+  `OPENAI_API_KEY` is no longer sent to a custom host; keys are redacted from every
+  message; keys are refused over plain http to remote hosts or if not header-safe;
+  the dashboard is bounded at 6 MiB (byte caps, `--limit` max 5000) and is one
+  read snapshot that survives a bad byte; a 429/5xx is retried briefly.
 - **A chat backend that answers 401, 403, 404 or 410 now stops a tagging run
   once, with its reason and where the url and model came from.** Only a dead
   socket did; a model the server never had was retried twice per item, counted

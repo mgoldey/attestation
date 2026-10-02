@@ -25,7 +25,9 @@ OLLAMA_404 = {
 
 
 class StubServer:
-    def __init__(self, *, embed_model=None, chat_models=(), api_key=None, chat_404_for=None):
+    def __init__(
+        self, *, embed_model=None, chat_models=(), api_key=None, chat_404_for=None, echo_auth=False
+    ):
         self.reply = {"content_type": "paper", "tags": ["graph-neural-networks"]}
         self.requests: list[dict] = []
         outer = self
@@ -60,8 +62,14 @@ class StubServer:
                     }
                 )
                 presented = {self.headers.get("Authorization"), self.headers.get("x-api-key")}
+                echo = (
+                    f" (you sent Authorization: {self.headers.get('Authorization')};"
+                    f" x-api-key: {self.headers.get('x-api-key')})"
+                    if echo_auth
+                    else ""
+                )
                 if api_key and not presented & {f"Bearer {api_key}", api_key}:
-                    return self._send(401, {"error": {"message": "Authorization failed"}})
+                    return self._send(401, {"error": {"message": "Authorization failed" + echo}})
                 if self.path.endswith("/embeddings"):
                     if req.get("model") != embed_model:
                         return self._send(404, {"error": {"message": "embed model not served"}})
@@ -76,7 +84,7 @@ class StubServer:
                         body = chat_404_for or {
                             "error": {
                                 **OLLAMA_404["error"],
-                                "message": f"model '{req.get('model')}' not found",
+                                "message": f"model '{req.get('model')}' not found" + echo,
                             }
                         }
                         return self._send(404, body)
@@ -186,6 +194,6 @@ def ollama_embedder_only(embed_model="embeddinggemma") -> StubServer:
 
 
 def chat_server(
-    models=("nvidia/nemotron-3-super-120b-a12b",), api_key="nvapi-FAKE-KEY"
+    models=("nvidia/nemotron-3-super-120b-a12b",), api_key="nvapi-FAKE-KEY", echo_auth=False
 ) -> StubServer:
-    return StubServer(chat_models=models, api_key=api_key)
+    return StubServer(chat_models=models, api_key=api_key, echo_auth=echo_auth)

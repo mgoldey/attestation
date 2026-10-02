@@ -24,6 +24,7 @@ swallowed or retried would take that decision away from the one place with
 enough context to make it.
 """
 
+import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -231,14 +232,17 @@ def failure_detail(exc: BaseException) -> str:
     """
     import httpx
 
-    if isinstance(exc, BackendUnreachable):  # carries its own safe message
-        return str(exc)
+    if isinstance(exc, BackendUnreachable):  # carries its own message
+        return redact(str(exc))
     if isinstance(exc, httpx.HTTPStatusError):
-        reason = _server_message(exc.response)
-        return f"HTTP {exc.response.status_code}" + (f": {reason}" if reason else "")
+        status = exc.response.status_code
+        # A rejected credential: the server's words are where an echo of it would
+        # be, and nothing in them is actionable beyond the status.
+        reason = "" if status in (401, 403) else redact(_server_message(exc.response))
+        return f"HTTP {status}" + (f": {reason}" if reason else "")
     if isinstance(exc, httpx.TransportError):
         return f"cannot connect ({type(exc).__name__})"
-    return str(exc) or type(exc).__name__
+    return redact(str(exc) or type(exc).__name__)
 
 
 def display_url(url: str) -> str:
@@ -274,3 +278,51 @@ def embedding_backend_hint() -> str:
         "EMBED_BASE_URL and LLM_BASE_URL are unset, so this is the built-in Ollama default;"
         " set EMBED_BASE_URL to change it"
     )
+
+
+# --- credentials: never in a message -------------------------------------------------------
+
+_SECRETS: set[str] = set()
+_SHAPES = re.compile(
+    r"(?i)(bearer\s+[A-Za-z0-9._~+/=-]{8,}"
+    r"|(?:authorization|x-api-key|api[_-]?key|token|secret)[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9._~+/=-]{8,}"
+    r"|\b(?:sk|nvapi|xai|gsk|hf|pk|rk|ghp|gho)[-_][A-Za-z0-9._-]{12,}"
+    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})"
+)
+_HEADER_SAFE = re.compile(r"[\x21-\x7e]+")
+PLACEHOLDER_KEYS = ("ollama", "no-key-required", "lm-studio", "none")
+
+
+def register_secret(value: str | None) -> None:
+    """Remember a credential so `redact` removes it from every message, whatever
+    shape it has. Called wherever a key is resolved; nothing is ever printed."""
+    if value and len(value) >= 6 and value.lower() not in PLACEHOLDER_KEYS:
+        _SECRETS.add(value)
+
+
+def redact(text: str) -> str:
+    """`text` with every registered secret and every credential-shaped string
+    (Bearer values, x-api-key, sk-/nvapi- keys, JWTs) replaced by `***`."""
+    for secret in sorted(_SECRETS, key=len, reverse=True):
+        text = text.replace(secret, "***")
+    return _SHAPES.sub("***", text)
+
+
+def key_is_header_safe(value: str) -> bool:
+    """Whether `value` can be an HTTP header value: printable ASCII, no spaces or
+    newlines. A key that is not fails every request in a way that names nothing."""
+    return bool(_HEADER_SAFE.fullmatch(value))
+
+
+def host_is_loopback(url: str) -> bool:
+    """Whether the URL's host is this machine (localhost, 127.0.0.0/8, ::1)."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(url).hostname or "").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False

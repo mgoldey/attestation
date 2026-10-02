@@ -408,7 +408,7 @@ options:
                      desk/library/library.json)
   --persona PERSONA  whose saved papers to mark (default: $ATTEST_DESK_USER,
                      else owner)
-  --limit LIMIT      max references listed (default: 5000)
+  --limit LIMIT      max references listed (default and maximum: 5000)
 ```
 
 ## attest library export

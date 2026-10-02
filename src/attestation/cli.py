@@ -401,7 +401,9 @@ def build_parser() -> argparse.ArgumentParser:
     lp.add_argument(
         "--persona", help="whose saved papers to mark (default: $ATTEST_DESK_USER, else owner)"
     )
-    lp.add_argument("--limit", type=int, default=5000, help="max references listed (default: 5000)")
+    lp.add_argument(
+        "--limit", type=int, default=5000, help="max references listed (default and maximum: 5000)"
+    )
     lp.set_defaults(func=cmd_library_dashboard)
     lp = lib_sub.add_parser("export", help=HELP["library.export"])
     lp.add_argument(
@@ -1490,11 +1492,18 @@ def cmd_library_dashboard(args: argparse.Namespace) -> int:
 
     if args.limit < 0:
         return fail("--limit must be 0 or more")
+    if args.limit > dashboard.MAX_LIMIT:
+        print(f"--limit clamped to {dashboard.MAX_LIMIT}", file=sys.stderr)
     out = Path(args.out).expanduser() if args.out else dashboard.default_path()
     persona = args.persona or os.environ.get("ATTEST_DESK_USER") or dashboard.DEFAULT_PERSONA
     with open_db(args.db) as conn:
         doc = dashboard.build(conn, persona=persona, limit=args.limit)
-    dashboard.write(out, doc)
+    if out.is_dir():
+        return fail(f"--out {out} is a directory; name the file, e.g. {out / 'library.json'}")
+    try:
+        dashboard.write(out, doc)
+    except OSError as exc:
+        return fail(f"cannot write {out}: {exc.strerror or exc}")
     t = doc["totals"]
     print(
         f"wrote {out}: {t['items']} items, {t['references']} references"

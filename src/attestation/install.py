@@ -30,6 +30,7 @@ from attestation.llm import (
     describe_embedding,
     embed_model,
 )
+from attestation.ports import redact
 
 # One skill per agent surface plus one for setup, mirroring AGENT_SURFACES and
 # the emitted .claude/agents/attestation-<surface>.md files. The single
@@ -409,17 +410,17 @@ def _hosted_error(exc: Exception, model: str, url: str | None = None, *, chat: b
     from attestation.llm import display_url
 
     if isinstance(exc, BackendUnreachable):  # Hermes' runtime reported it, already worded
-        return f"{model}: {exc}"
+        return redact(f"{model}: {exc}")
     url = display_url(url or base_url())
     if not isinstance(exc, httpx.HTTPStatusError):
         if isinstance(exc, httpx.HTTPError):
             return f"{model}: {url} unreachable ({exc.__class__.__name__})"
-        return f"{model}: {exc.__class__.__name__}: {exc}"
+        return redact(f"{model}: {exc.__class__.__name__}: {exc}")
     status = exc.response.status_code
     title, detail = _server_reason(exc.response)
     detail = _status_hint(status, url, chat, detail)
     head = f"{model}: HTTP {status}" + (f" {title}" if title else "")
-    return f"{head} -- {detail[:200]}" if detail else head
+    return redact(f"{head} -- {detail[:200]}" if detail else head)
 
 
 def _status_hint(status: int, url: str, chat: bool, detail: str) -> str:
@@ -427,9 +428,18 @@ def _status_hint(status: int, url: str, chat: bool, detail: str) -> str:
     from attestation.llm import describe_chat
 
     if status in (401, 403):
-        # Which variable is the key: chat uses LLM_API_KEY; embeddings use
-        # EMBED_API_KEY when they have a server of their own, else the same one.
-        var = "LLM_API_KEY" if chat or not os.environ.get("EMBED_BASE_URL") else "EMBED_API_KEY"
+        # Which key: chat's comes from wherever chat_target() says (env LLM_API_KEY
+        # or Hermes' own provider key); embeddings use EMBED_API_KEY when they
+        # have a server of their own, else LLM_API_KEY.
+        if chat:
+            from attestation.llm import chat_target
+
+            try:
+                source = chat_target().key_source
+            except BackendNotConfigured:
+                source = "unset"
+            return f"the key ({source}) was rejected by {url}. {detail}".strip()
+        var = "LLM_API_KEY" if not os.environ.get("EMBED_BASE_URL") else "EMBED_API_KEY"
         key_state = "set" if os.environ.get(var) else "unset"
         return f"{var} is {key_state}; {url} rejected it. {detail}".strip()
     if status == 404 and chat:

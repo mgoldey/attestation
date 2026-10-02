@@ -107,11 +107,11 @@ def test_a_custom_endpoint_reads_its_key_through_the_env_reference(tmp_path, mon
     make_home(
         tmp_path,
         monkeypatch,
-        config("custom", "my-model", "http://gw.example.test/v1/", "${CUSTOM_API_KEY}"),
+        config("custom", "my-model", "https://gw.example.test/v1/", "${CUSTOM_API_KEY}"),
         f"CUSTOM_API_KEY={FAKE_KEY}\n",
     )
     m = hermes_model.resolve()
-    assert (m.kind, m.base_url, m.api_key) == ("openai", "http://gw.example.test/v1", FAKE_KEY)
+    assert (m.kind, m.base_url, m.api_key) == ("openai", "https://gw.example.test/v1", FAKE_KEY)
 
 
 def test_ollama_as_hermes_runs_it_is_a_keyless_custom_endpoint(tmp_path, monkeypatch):
@@ -292,15 +292,17 @@ def test_the_env_sample_boilerplate_does_not_defeat_the_opt_in(tmp_path, monkeyp
     assert t.base_url.startswith("https://integrate.api.nvidia.com") and t.model == NIM_MODEL
 
 
-def test_chat_model_and_key_env_vars_still_override_hermes_per_field(tmp_path, monkeypatch):
+def test_chat_model_env_still_overrides_hermes_but_llm_api_key_is_not_paired_with_its_url(
+    tmp_path, monkeypatch
+):
     nim_home(tmp_path, monkeypatch)
     monkeypatch.setenv("ATTEST_LLM_FROM_HERMES", "1")
     monkeypatch.setenv("CHAT_MODEL", "meta/llama-3.1-70b-instruct")
     monkeypatch.setenv("LLM_API_KEY", "explicit")
     t = llm.chat_target()
     assert t.base_url.startswith("https://integrate.api.nvidia.com")
-    assert (t.model, t.api_key) == ("meta/llama-3.1-70b-instruct", "explicit")
-    assert t.model_source == "env CHAT_MODEL" and t.key_source == "env LLM_API_KEY"
+    assert (t.model, t.api_key) == ("meta/llama-3.1-70b-instruct", FAKE_KEY)
+    assert t.model_source == "env CHAT_MODEL" and t.key_source.startswith("Hermes")
 
 
 def test_change_model_in_hermes_is_followed_at_call_time(tmp_path, monkeypatch):
@@ -647,3 +649,220 @@ def test_a_refused_provider_config_never_echoes_a_key(tmp_path, monkeypatch, cap
         hermes_model.resolve()
     assert FAKE_KEY not in str(exc.value) and FAKE_KEY not in repr(exc.value)
     assert capsys.readouterr() == ("", "")
+
+
+# --- review findings: key routing, plain http, key shape, redaction -----------------------------
+
+CANARY = "sk-proj-CANARY0123456789abcdef"
+
+
+def _custom(url, api_key="", model="m"):
+    return config("custom", model, url, api_key)
+
+
+def test_openai_api_key_is_never_sent_to_a_custom_host(tmp_path, monkeypatch):
+    """Hermes sends OPENAI_API_KEY only to openai.com / openai.azure.com (GHSA-76xc)."""
+    make_home(
+        tmp_path, monkeypatch, _custom("https://llm.corp.example/v1"), f"OPENAI_API_KEY={CANARY}\n"
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", CANARY)
+    assert hermes_model.resolve().api_key == ""
+
+
+def test_an_unset_explicit_key_reference_does_not_fall_back_to_another_variable(
+    tmp_path, monkeypatch
+):
+    make_home(
+        tmp_path,
+        monkeypatch,
+        _custom("https://llm.corp.example/v1", "${CUSTOM_API_KEY}"),
+        f"OPENAI_API_KEY={CANARY}\n",
+    )
+    monkeypatch.delenv("CUSTOM_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", CANARY)
+    with pytest.raises(BackendNotConfigured) as exc:
+        hermes_model.resolve()
+    assert "CUSTOM_API_KEY" in str(exc.value) and CANARY not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("url", "gets_key"),
+    [
+        ("https://api.openai.com/v1", True),
+        ("https://my-res.openai.azure.com/openai/v1", True),
+        ("https://api.openai.com.evil.test/v1", False),
+        ("https://evil.test/api.openai.com/v1", False),
+    ],
+)
+def test_openai_api_key_goes_only_to_openai_hosts(tmp_path, monkeypatch, url, gets_key):
+    make_home(tmp_path, monkeypatch, _custom(url), f"OPENAI_API_KEY={CANARY}\n")
+    assert (hermes_model.resolve().api_key == CANARY) is gets_key
+
+
+def test_the_env_colon_reference_form_hermes_supports_is_resolved(tmp_path, monkeypatch):
+    make_home(
+        tmp_path,
+        monkeypatch,
+        _custom("https://llm.corp.example/v1", "${env:GATEWAY_KEY}"),
+        "GATEWAY_KEY=from-env-form-0123\n",
+    )
+    assert hermes_model.resolve().api_key == "from-env-form-0123"
+
+
+@pytest.mark.parametrize("host", ["gpu-box.lan", "203.0.113.7", "api.example.com"])
+def test_a_key_is_never_sent_over_plain_http_to_a_remote_host(tmp_path, monkeypatch, host):
+    make_home(
+        tmp_path,
+        monkeypatch,
+        _custom(f"http://{host}:8000/v1", "${CUSTOM_API_KEY}"),
+        f"CUSTOM_API_KEY={CANARY}\n",
+    )
+    with pytest.raises(BackendNotConfigured) as exc:
+        hermes_model.resolve()
+    assert "plain http" in str(exc.value) and CANARY not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "url", ["http://localhost:11434/v1", "http://127.0.0.1:8000/v1", "http://[::1]:8000/v1"]
+)
+def test_loopback_http_with_a_key_is_fine(tmp_path, monkeypatch, url):
+    make_home(
+        tmp_path, monkeypatch, _custom(url, "${CUSTOM_API_KEY}"), f"CUSTOM_API_KEY={CANARY}\n"
+    )
+    assert hermes_model.resolve().api_key == CANARY
+
+
+def test_the_ollama_placeholder_key_is_not_a_secret_so_lan_http_is_allowed(tmp_path, monkeypatch):
+    make_home(
+        tmp_path,
+        monkeypatch,
+        _custom("http://gpu-box.lan:11434/v1", "${CUSTOM_API_KEY}"),
+        "CUSTOM_API_KEY=ollama\n",
+    )
+    assert hermes_model.resolve().api_key == "ollama"
+
+
+@pytest.mark.parametrize(
+    "escaped",
+    ["abc\\ndef-secret", "caf\u00e9-secret-123456", "has space in-secret", "tab\\tsecret-key"],
+)
+def test_a_key_that_cannot_be_an_http_header_is_named_not_echoed(tmp_path, monkeypatch, escaped):
+    make_home(
+        tmp_path,
+        monkeypatch,
+        _custom("https://llm.corp.example/v1", "${CUSTOM_API_KEY}"),
+        f'CUSTOM_API_KEY="{escaped}"\n',
+    )
+    with pytest.raises(BackendNotConfigured) as exc:
+        hermes_model.resolve()
+    message = str(exc.value)
+    assert "CUSTOM_API_KEY" in message and "secret" not in message
+
+
+def test_an_env_llm_api_key_with_a_newline_is_rejected_by_name(monkeypatch):
+    monkeypatch.setenv("LLM_API_KEY", "abc\ndef")
+    with pytest.raises(BackendNotConfigured, match="LLM_API_KEY"):
+        llm.chat_target()
+
+
+def test_llm_api_key_is_not_paired_with_hermes_url_unless_llm_base_url_is_explicit(
+    tmp_path, monkeypatch
+):
+    nim_home(tmp_path, monkeypatch)
+    monkeypatch.setenv("ATTEST_LLM_FROM_HERMES", "1")
+    monkeypatch.setenv("LLM_API_KEY", "key-meant-for-another-host")
+    t = llm.chat_target()
+    assert t.api_key == FAKE_KEY and t.key_source.startswith("Hermes")
+
+
+@pytest.mark.parametrize("status", [401, 404])
+def test_a_provider_that_echoes_the_credential_never_leaks_it_on_the_direct_path(
+    tmp_path, monkeypatch, capsys, caplog, servers, status
+):
+    """A 401 body echoing the Authorization header, and a 404 body doing the same."""
+    if status == 401:
+        chat = servers(
+            chat_server(models=("the-model",), api_key="a-different-key", echo_auth=True)
+        )
+    else:  # right key, model the server does not have
+        chat = servers(chat_server(models=("other",), api_key=FAKE_KEY, echo_auth=True))
+    make_home(
+        tmp_path,
+        monkeypatch,
+        config("nvidia", "the-model", chat.url),
+        f"NVIDIA_API_KEY={FAKE_KEY}\n",
+    )
+    monkeypatch.setenv("ATTEST_DB", str(db_with_items(tmp_path)))
+    monkeypatch.setenv("ATTEST_LLM_FROM_HERMES", "1")
+    rc, out, err, logs = run_attest(["tag"], capsys, caplog)
+    assert rc == 1 and f"HTTP {status}" in err
+    for text in (out, err, logs):
+        assert FAKE_KEY not in text and "a-different-key" not in text
+        assert "Bearer nvapi" not in text
+
+
+def test_failure_detail_redacts_registered_keys_and_credential_shapes():
+    from attestation import ports
+
+    ports.register_secret("plain-secret-value-123")
+    text = ports.redact(
+        "bad plain-secret-value-123; Authorization: Bearer abcdefgh12345678;"
+        " x-api-key: zzzzzzzz9999; token sk-live-ABCDEFGHIJKLMNOP"
+    )
+    for leaked in (
+        "plain-secret-value-123",
+        "abcdefgh12345678",
+        "zzzzzzzz9999",
+        "sk-live-ABCDEFGHIJKLMNOP",
+    ):
+        assert leaked not in text
+
+
+def test_the_401_hint_names_the_real_key_source(tmp_path, monkeypatch, servers):
+    from attestation import install
+
+    chat = servers(chat_server(models=(NIM_MODEL,), api_key="a-different-key"))
+    embedder = servers(ollama_embedder_only())
+    nim_home(tmp_path, monkeypatch, config("nvidia", NIM_MODEL, chat.url))
+    monkeypatch.setenv("ATTEST_LLM_FROM_HERMES", "1")
+    monkeypatch.setenv("EMBED_BASE_URL", embedder.url)
+    monkeypatch.setenv("EMBED_MODEL", "embeddinggemma")
+    monkeypatch.setenv("EMBED_DIMS", "256")
+    detail = install._hosted_probe().detail
+    assert (
+        "HTTP 401" in detail and "NVIDIA_API_KEY" in detail and "LLM_API_KEY is unset" not in detail
+    )
+    assert FAKE_KEY not in detail
+
+
+def test_a_429_or_503_is_retried_with_a_bounded_backoff(monkeypatch):
+    import json as _json
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) < 3:
+            return httpx.Response(503 if len(calls) == 1 else 429, headers={"Retry-After": "1"})
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": _json.dumps({"ok": 1})}}]}
+        )
+
+    slept = []
+    monkeypatch.setattr(llm.time, "sleep", slept.append)
+    c = llm.ChatClient(base_url="http://t/v1", model="m", transport=httpx.MockTransport(handler))
+    assert c.chat_json([], {}) == {"ok": 1} and len(calls) == 3
+    assert slept and max(slept) <= 5
+
+
+def test_a_persistent_503_gives_up_after_a_small_number_of_attempts(monkeypatch):
+    calls = []
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    c = llm.ChatClient(
+        base_url="http://t/v1",
+        model="m",
+        transport=httpx.MockTransport(lambda r: (calls.append(1), httpx.Response(503))[1]),
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        c.chat_json([], {})
+    assert len(calls) <= 4

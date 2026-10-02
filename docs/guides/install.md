@@ -180,10 +180,26 @@ chat provider with no embeddings API is never asked for one.
 3. The built-in Ollama default.
 
 **Where Hermes keeps it, and who makes the call.** Files under `HERMES_HOME`
-(default `~/.hermes`), never the process environment, because the hourly
-refresh runs under cron outside the agent: `config.yaml` (`model.default`,
-`model.provider`, `model.base_url`, `model.api_key`, `model.api_mode`),
-`.env` (the provider's key) and `auth.json` (OAuth credentials).
+(default `~/.hermes`) are what is read, because the hourly refresh runs under
+cron outside the agent: `config.yaml` (`model.default`, `model.provider`,
+`model.base_url`, `model.api_key`, `model.api_mode`), `.env` (the provider's key)
+and `auth.json` (OAuth credentials, read only by Hermes' own code). The process
+environment is consulted in exactly one case: a key variable (`NVIDIA_API_KEY`,
+`${CUSTOM_API_KEY}`...) that `.env` does not set. `.env` wins.
+
+**Which key goes where** follows Hermes' own routing, because a key sent to the
+wrong host is a leak: an explicit `model.api_key` is used, and a `${VAR}` or
+`${env:VAR}` reference to a variable that is not set is an error naming it, never
+a fall back to some other variable; otherwise the provider's own variable.
+`OPENAI_API_KEY` is used for a `custom` endpoint only when its host is
+`openai.com` or `openai.azure.com`. `LLM_API_KEY` is not paired with Hermes'
+URL (it was set for an `LLM_BASE_URL`, and a set `LLM_BASE_URL` skips Hermes
+altogether). A key is never sent over plain `http` to a host that is not this
+machine (the Ollama placeholder key `ollama` is not a secret and is exempt), and
+a key with a space, newline or non-ASCII character is refused by name rather
+than failing every request. Keys and OAuth tokens are redacted from every
+message Attestation prints or logs, on both paths, and a 401 or 403 is reported
+as the status alone.
 
 | What Hermes is connected to | Who calls it | Key comes from |
 |---|---|---|
@@ -195,7 +211,9 @@ The third row exists because those providers do not speak chat-completions with
 a static key. A ChatGPT sign-in is OAuth against the Responses API, and OAuth
 refresh tokens are single-use, so a second process refreshing the same
 credential would sign the first one out. Attestation therefore starts a small
-helper in Hermes' own Python (`hermes_helper.py`; found through the `hermes`
+helper (with a minimal environment: no `LLM_API_KEY`, `EMBED_API_KEY` or other
+secrets, so Hermes' fallback chain cannot silently chat on another provider)
+in Hermes' own Python (`hermes_helper.py`; found through the `hermes`
 launcher on `PATH` or in `~/.local/bin`, else `<HERMES_HOME>/hermes-agent/venv`,
 else `ATTEST_HERMES_PYTHON`) which calls Hermes' own `agent.auxiliary_client.
 call_llm` -- the function Hermes uses for every non-agent model call. The
@@ -218,6 +236,14 @@ default`) and how to change it, and never a key:
   item; before, only a dead socket did, and a 404 printed nothing but
   `failed: N`;
 - `cannot connect (ConnectError)` -- the URL named is where it tried.
+
+A 404 or 410 stops the run even when it is a proxy's passing hiccup rather than a
+missing model. Nothing is lost: progress is saved per item and the next hourly
+refresh picks up where it stopped. A 429 or 502/503/504 is retried twice with a
+short, capped backoff (`Retry-After` honoured up to 5 s) before it counts.
+A call to Hermes' runtime has a hard deadline (the request timeout plus 5 s) after
+which the helper process is killed, and a helper cannot outlive Attestation: it
+exits when its parent does.
 
 `attest install --check` prints one `backends` line: the resolved chat backend
 (host, model, and where each came from) and the embedding backend -- hosts and

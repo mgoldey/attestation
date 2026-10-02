@@ -7,6 +7,7 @@ constructor arg > env var > default. No retries here — reliability policy
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from attestation.ports import (
     BackendUnreachable,  # noqa: F401 -- re-exported: callers import them from here
     backend_unreachable,  # noqa: F401
     display_url,
+    key_is_header_safe,
+    register_secret,
 )
 
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
@@ -90,15 +93,18 @@ def _hermes_target(hermes, model_env, key_env) -> ChatTarget:
             provider=hermes.provider,
             model_override=override,
         )
+    # LLM_API_KEY is NOT used here: it was set for an LLM_BASE_URL, and this URL is
+    # Hermes'. Pairing a key with a host it was not set for is how keys leak.
+    register_secret(hermes.api_key)
     return ChatTarget(
         base_url=hermes.base_url,
         model=model_env if override else hermes.model,
-        api_key=key_env or hermes.api_key,
+        api_key=hermes.api_key,
         url_source=where,
         model_source="env CHAT_MODEL" if override else where,
-        key_source="env LLM_API_KEY"
-        if key_env
-        else (f"Hermes ({hermes.provider})" if hermes.api_key else "unset"),
+        key_source=(
+            f"Hermes ({hermes.provider}: {hermes.key_source})" if hermes.api_key else "unset"
+        ),
         provider=hermes.provider,
         model_override=override,
     )
@@ -134,6 +140,12 @@ def chat_target() -> ChatTarget:
     url_env = os.environ.get("LLM_BASE_URL")
     model_env = os.environ.get("CHAT_MODEL")
     key_env = os.environ.get("LLM_API_KEY", "")
+    if key_env and not key_is_header_safe(key_env):
+        raise BackendNotConfigured(
+            "LLM_API_KEY is not a valid HTTP header value (it has a space, a newline or a"
+            " non-ASCII character); re-enter it"
+        )
+    register_secret(key_env)
     if _opted_into_hermes() and url_env in (None, "", DEFAULT_BASE_URL):
         from attestation import hermes_model
 
@@ -226,9 +238,11 @@ def embed_api_key() -> str:
     go to the same server as chat: with EMBED_BASE_URL pointing somewhere
     else, the chat provider's key is never sent to that other host.
     """
-    if os.environ.get("EMBED_API_KEY"):
-        return os.environ["EMBED_API_KEY"]
-    return "" if os.environ.get("EMBED_BASE_URL") else os.environ.get("LLM_API_KEY", "")
+    key = os.environ.get("EMBED_API_KEY") or (
+        "" if os.environ.get("EMBED_BASE_URL") else os.environ.get("LLM_API_KEY", "")
+    )
+    register_secret(key)
+    return key
 
 
 def describe_embedding() -> str:
@@ -268,6 +282,7 @@ def load_env() -> None:
 
 def _headers(api_key: str | None) -> dict:
     key = api_key if api_key is not None else os.environ.get("LLM_API_KEY")
+    register_secret(key)
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 
@@ -298,6 +313,25 @@ class ChatClient:
             transport=transport,
         )
 
+    def _post(self, payload: dict) -> httpx.Response:
+        """POST the completion, backing off briefly on 429 and 502/503/504.
+
+        At most two retries, waiting `Retry-After` (else 1 s, then 2 s) capped at
+        5 s: a rate limit or a proxy blip should cost seconds, not a tagging run,
+        and a server that stays down must not be hammered.
+        """
+        resp = self.client.post("/chat/completions", json=payload)
+        for attempt in range(2):
+            if resp.status_code not in (429, 502, 503, 504):
+                break
+            try:
+                wait = float(resp.headers.get("Retry-After", ""))
+            except ValueError:
+                wait = 2.0**attempt
+            time.sleep(min(max(wait, 0.0), 5.0))
+            resp = self.client.post("/chat/completions", json=payload)
+        return resp
+
     def chat_json(self, messages: list[dict], schema: dict) -> dict:
         """One chat call, requesting a JSON object matching `schema`.
 
@@ -321,10 +355,10 @@ class ChatClient:
             },
             "reasoning_effort": "none",
         }
-        resp = self.client.post("/chat/completions", json=payload)
+        resp = self._post(payload)
         if resp.status_code in (400, 422):
             payload.pop("reasoning_effort")
-            resp = self.client.post("/chat/completions", json=payload)
+            resp = self._post(payload)
         resp.raise_for_status()
         return _first_json_object(resp.json()["choices"][0]["message"]["content"])
 

@@ -33,6 +33,9 @@ from attestation import paths
 SCHEMA = 1
 WEEKS = 26
 DEFAULT_LIMIT = 5000
+MAX_LIMIT = 5000  # --limit is clamped to this
+MAX_BYTES = 6 * 1024 * 1024  # the consumer refuses a file over 8 MB; leave headroom
+PERSONA_CAP = 40
 MAX_SOURCES = 20
 MAX_AUTHORS = 8
 MAX_TAGS = 12
@@ -46,9 +49,10 @@ CAP = {
     "author": 120,
     "tag": 60,
     "url": 500,
-    "source": 200,
+    "source": 120,
     "key": 200,
     "id": 200,
+    "arxiv": 40,
 }
 _CHUNK = 500  # below SQLITE_LIMIT_VARIABLE_NUMBER, like features._SQL_VAR_CHUNK
 
@@ -65,8 +69,16 @@ def default_path() -> Path:
     if configured:
         return Path(configured).expanduser()
     raw = (os.environ.get("HERMES_HOME") or "").strip()
-    parent = Path(raw).expanduser().parent if raw else Path.home()
-    return parent / paths.DEFAULT_HOME_DIRNAME / "workspace/research-desk/library/library.json"
+    home = Path(raw).expanduser() if raw else Path.home() / paths.DEFAULT_HOME_DIRNAME
+    if home.parent.name == "profiles":
+        # A Hermes profile (<root>/profiles/<name>): the consumer reads the ROOT's
+        # workspace, not one beside the profiles directory.
+        root = home.parent.parent
+    elif raw:
+        root = home.parent / paths.DEFAULT_HOME_DIRNAME
+    else:
+        root = home
+    return root / "workspace/research-desk/library/library.json"
 
 
 # ---------------------------------------------------------------------------
@@ -76,8 +88,9 @@ def default_path() -> Path:
 
 def clean(value, limit: int) -> str:
     """`value` as text with every control/format character replaced by a space,
-    whitespace collapsed, and at most `limit` characters (ending in an ellipsis
-    when cut).
+    whitespace collapsed, and at most `limit` characters AND `2 * limit` UTF-8 bytes
+    (cut text ends in an ellipsis). A character cap alone is no bound: a 4-byte
+    emoji costs four of the consumer's bytes for one of ours.
 
     HTML is NOT escaped: a title `<script>` stays the literal text it is, and
     the consumer renders text only. Escaping here would show `&lt;` to every
@@ -89,7 +102,12 @@ def clean(value, limit: int) -> str:
     text = str(value)
     text = "".join(" " if unicodedata.category(c).startswith("C") else c for c in text)
     text = " ".join(text.split())
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+    if len(text) <= limit and len(text.encode()) <= 2 * limit:
+        return text
+    text = text[: limit - 1]
+    while len(text.encode()) > 2 * limit - 3:  # room for the 3-byte ellipsis
+        text = text[: max(len(text) * 9 // 10, 0)]
+    return text.rstrip() + "\u2026"
 
 
 def clean_or_none(value, limit: int) -> str | None:
@@ -310,7 +328,7 @@ def _row(r: sqlite3.Row, tags: list[str], sources: list[str], saved: bool, fullt
         "year": year,
         "venue": clean_or_none(r["venue"], CAP["venue"]),
         "doi": clean_or_none(r["doi"], CAP["id"]),
-        "arxiv": clean_or_none(r["arxiv_id"], CAP["id"]),
+        "arxiv": clean_or_none(r["arxiv_id"], CAP["arxiv"]),
         "url": safe_url(r["url"]),
         "tags": tags[:MAX_TAGS],
         "sources": sources[:MAX_REF_SOURCES],
@@ -388,8 +406,28 @@ def build(
     outstanding but is NOT a failure count -- a fresh sync has a backlog and
     no failures.
     """
-    limit = max(int(limit), 0)
+    limit = min(max(int(limit), 0), MAX_LIMIT)
     now = (now or datetime.now(UTC)).astimezone(UTC)
+    # One snapshot: counts and rows from a single read transaction (a refresh may
+    # land mid-export), with undecodable bytes replaced rather than raised -- one
+    # bad byte in one row must not stop the export every hour.
+    began = not conn.in_transaction
+    if began:
+        conn.execute("BEGIN")
+    previous, conn.text_factory = conn.text_factory, _decode
+    try:
+        return fit(_build(conn, persona, limit, now))
+    finally:
+        conn.text_factory = previous
+        if began:
+            conn.rollback()
+
+
+def _decode(raw: bytes) -> str:
+    return raw.decode("utf-8", "replace")
+
+
+def _build(conn: sqlite3.Connection, persona: str, limit: int, now: datetime) -> dict:
     persona_id = _persona_id(conn, persona)
     n_items = _scalar(conn, "SELECT count(*) FROM items")
     n_refs = _scalar(conn, 'SELECT count(*) FROM "references"')
@@ -410,7 +448,7 @@ def build(
     return {
         "schema": SCHEMA,
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "persona": clean(persona, 120),
+        "persona": clean(persona, PERSONA_CAP),
         "totals": {
             "items": n_items,
             "references": n_refs,
@@ -437,13 +475,47 @@ def build(
         "by_source": _by_source(conn),
         "failures": {"fetch": None, "tag": None, "embed": None, "since": None},
         "backlog": {
-            "items_untagged": n_items - _scalar(conn, "SELECT count(*) FROM item_features"),
-            "references_untagged": n_refs - refs_tagged,
+            "items_untagged": max(n_items - items_tagged, 0),
+            "references_untagged": max(n_refs - refs_tagged, 0),
             "references_unembedded": max(n_refs - refs_embedded, 0),
         },
         "references": references,
         "references_truncated": truncated,
         "references_limit": limit,
+    }
+
+
+def fit(doc: dict, max_bytes: int = MAX_BYTES) -> dict:
+    """`doc` guaranteed to render in at most `max_bytes`, by dropping the OLDEST
+    references (the list is newest first) and saying so: `references_truncated`
+    true, `references_limit` the number kept. Totals are not touched -- they stay
+    the database's. Character and byte caps per field make the common case fit;
+    this is the guarantee for the worst case."""
+    refs = doc["references"]
+    if len(render(doc).encode()) <= max_bytes:
+        return doc
+    base = len(render({**doc, "references": []}).encode())
+    sizes = [
+        len(json.dumps(r, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()) + 1
+        for r in refs
+    ]
+    keep, used = 0, base
+    for size in sizes:
+        if used + size > max_bytes:
+            break
+        used += size
+        keep += 1
+    while keep and len(render(_cut(doc, keep)).encode()) > max_bytes:
+        keep -= 1
+    return _cut(doc, keep)
+
+
+def _cut(doc: dict, keep: int) -> dict:
+    return {
+        **doc,
+        "references": doc["references"][:keep],
+        "references_truncated": True,
+        "references_limit": keep,
     }
 
 

@@ -15,7 +15,7 @@ attest library dashboard --out ./library.json --persona owner --limit 5000
 
 The path is `--out`, else `$ATTEST_LIBRARY_DASHBOARD`, else
 `<parent of HERMES_HOME>/.hermes/workspace/research-desk/library/library.json`
-(the folder is created). The write is atomic -- a temp file in the same folder,
+(the folder is created). For a Hermes profile (`HERMES_HOME=<root>/profiles/<name>`) it is the *root's* workspace, where the host page reads. The write is atomic -- a temp file in the same folder,
 fsynced, renamed over the target -- and the file is mode 0600, so a reader sees
 the previous file or the new one, never half. Running it twice on the same
 database gives the same bytes except `generated_at` (sorted keys, stable
@@ -58,7 +58,8 @@ What each number means -- decided in `src/attestation/dashboard.py`, stated here
   references from `.bib` files, Zotero, saved papers and feed items that carry
   an id -- see [Claims and citations](claims-and-citations.md#the-library)).
 - **`tagged`** and **`embedded`** count both stores (an item and a reference are
-  different rows even for the same paper); the split is in the added fields
+  different rows even for the same paper, so `tagged` can exceed `items`: divide
+  `items_tagged` by `items` and `references_tagged` by `references`); the split is in the added fields
   `items_tagged`, `references_tagged`, `items_embedded`, `references_embedded`.
   **`with_fulltext`** counts references whose stored body is non-empty (a
   `none` row -- "tried, nothing to fetch" -- does not count).
@@ -99,8 +100,14 @@ a link, so it must be `http` or `https` with a host, no credentials, no
 whitespace and at most 500 characters, else `null` (never truncated: a cut URL
 points somewhere else).
 
-**Size.** 3,000 synthetic references measure 1.4 MB, and 5,000 well under the
-3 MB the test asserts; the file is compact JSON.
+**Size.** The file is compact JSON and is **guaranteed at most 6 MiB** (the
+consumer refuses more than 8 MB). Every string is capped in UTF-8 *bytes* as well
+as characters (twice the character cap), `--limit` is clamped to 5,000, and if
+the rendered file is still over 6 MiB the oldest references are dropped, 
+`references_truncated` is set and `references_limit` becomes the number kept;
+`totals` always stay the database's. 3,000 realistic references measure 1.4 MB.
+The caps are title 300, venue 200, author 120, tag 60, source 120, arXiv id 40,
+DOI and key 200, URL 500, persona 40.
 
 There is deliberately no MCP tool for it: the dashboard is a file for a page, not
 a question for an agent, and a new tool would move every documented tool count

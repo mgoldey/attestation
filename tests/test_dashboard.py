@@ -672,14 +672,157 @@ def test_the_command_is_in_the_help_table_and_the_reference(capsys):
     assert "--out" in capsys.readouterr().out
 
 
-def test_a_dashboard_failure_is_a_nonzero_exit_the_refresh_treats_as_degraded(
-    tmp_path, conn, monkeypatch
-):
+def test_a_dashboard_failure_is_a_nonzero_exit_the_refresh_treats_as_degraded(tmp_path, conn):
     """The refresh script (test_install.py) runs this as a degraded step; here the
     command itself must fail loudly rather than write a half file."""
     seeded(conn)
     blocker = tmp_path / "blocker"
     blocker.write_text("a file where a directory is needed")
-    with pytest.raises(OSError):
-        main(["library", "dashboard", "--out", str(blocker / "library.json")])
+    assert main(["library", "dashboard", "--out", str(blocker / "library.json")]) != 0
     assert blocker.read_text() == "a file where a directory is needed"
+
+
+# --- review findings: size bound, snapshot, bytes, profile path, bad bytes ----------------------
+
+
+def _insert_maxed_refs(conn, n, filler, authors=8, tags=12):
+    """Rows at every cap, with `filler` as the text: emoji and quote-heavy are the
+    worst cases for a character cap (4 bytes each; every quote doubles in JSON)."""
+    rows = []
+    for i in range(n):
+        rows.append(
+            (
+                f"doi:10.1/{i}",
+                f"10.1/{i}",
+                filler * 400,
+                json.dumps([filler * 200 for _ in range(authors)], ensure_ascii=False),
+                2020,
+                filler * 400,
+                "https://example.org/" + "a" * 400,
+                f"2026-09-{1 + i % 28:02d}T00:00:00+00:00",
+                "2026-09-01",
+            )
+        )
+    conn.executemany(
+        'INSERT INTO "references"(identity, doi, title, authors, year, venue, url, first_seen,'
+        " updated) VALUES (?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    for rid in range(1, n + 1):
+        for t in range(tags):
+            conn.execute("INSERT INTO reference_tags VALUES (?, ?)", (rid, f"{filler * 60}{t}"))
+    conn.commit()
+
+
+@pytest.mark.parametrize("filler", ["\U0001f9ea", '"', "x"])
+def test_the_file_is_bounded_whatever_the_text_is(conn, tmp_path, filler):
+    """5000 rows at the character caps were 22.9 MB ASCII, 43 MB quote-heavy and
+    84 MB emoji against a consumer that refuses more than 8 MB."""
+    _insert_maxed_refs(conn, 2500, filler)
+    doc = build(conn)
+    validate(doc)
+    size = len(dashboard.render(doc).encode())
+    assert size <= dashboard.MAX_BYTES == 6 * 1024 * 1024, size
+    assert doc["totals"]["references"] == 2500, "totals stay honest"
+    out = tmp_path / "library.json"
+    dashboard.write(out, doc)
+    assert out.stat().st_size <= dashboard.MAX_BYTES
+
+
+def test_when_rows_are_dropped_for_size_it_is_the_oldest_and_truncated_is_true(conn):
+    _insert_maxed_refs(conn, 2500, "\U0001f9ea")
+    doc = build(conn)
+    kept = doc["references"]
+    assert 0 < len(kept) < 2500 and doc["references_truncated"] is True
+    assert doc["references_limit"] == len(kept)
+    newest_first = [r["added"] for r in kept]
+    assert newest_first == sorted(newest_first, reverse=True)
+    all_added = [
+        _iso
+        for (_iso,) in conn.execute('SELECT first_seen FROM "references" ORDER BY first_seen DESC')
+    ]
+    assert kept[0]["added"][:10] == all_added[0][:10]
+
+
+def test_text_is_capped_in_bytes_as_well_as_characters():
+    text = dashboard.clean("\U0001f9ea" * 400, 300)
+    assert len(text.encode()) <= 2 * 300 and len(text) <= 300
+    assert dashboard.clean("a" * 400, 300) == "a" * 299 + "…"
+
+
+def test_limit_is_clamped_to_the_maximum(conn):
+    doc = build(conn, limit=10**9)
+    assert doc["references_limit"] == dashboard.MAX_LIMIT == 5000
+
+
+def test_consumer_aligned_caps(conn):
+    add_ref(conn, key="k", source="bibtex:" + "s" * 300, arxiv_id="1" * 90)
+    doc = build(conn)
+    (ref,) = doc["references"]
+    assert max(map(len, ref["sources"])) <= 120 and len(ref["arxiv"]) <= 40
+    assert len(build(conn, persona="p" * 100)["persona"]) <= 40
+
+
+def test_a_non_utf8_byte_in_a_column_does_not_break_the_export(conn):
+    rid = add_ref(conn, key="bad", title="placeholder")
+    conn.execute(
+        'UPDATE "references" SET title = CAST(? AS TEXT) WHERE id = ?', (b"caf\xe9 \xff title", rid)
+    )
+    conn.execute('UPDATE "references" SET venue = CAST(? AS TEXT) WHERE id = ?', (b"V\xc3", rid))
+    conn.commit()
+    doc = build(conn)
+    validate(doc)
+    assert "caf" in doc["references"][0]["title"] and "�" in doc["references"][0]["title"]
+    assert conn.text_factory is str, "the connection's text factory is restored"
+
+
+def test_build_reads_one_snapshot(conn):
+    """Counts and rows come from one read transaction, so a refresh landing
+    mid-export cannot make `references` disagree with `totals.references`."""
+    seeded(conn)
+    seen = []
+    real = dashboard._references
+
+    def spy(c, *a, **k):
+        seen.append(c.in_transaction)
+        return real(c, *a, **k)
+
+    dashboard._references, saved = spy, dashboard._references
+    try:
+        build(conn)
+    finally:
+        dashboard._references = saved
+    assert seen == [True]
+    assert not conn.in_transaction, "and it is closed again"
+
+
+def test_backlog_and_tagged_use_one_definition_and_never_go_negative(conn):
+    i1 = add_item(conn, 1, published="2026-09-29T08:00:00", tags=["a"])
+    add_item(conn, 2, published="2026-09-29T08:00:00")
+    conn.execute("DELETE FROM item_features WHERE item_id = ?", (i1,))  # tags without features
+    conn.commit()
+    doc = build(conn)
+    assert doc["totals"]["items_tagged"] == 1 and doc["backlog"]["items_untagged"] == 1
+
+
+def test_the_default_path_for_a_profile_home_is_the_roots_workspace(tmp_path, monkeypatch):
+    """HERMES_HOME=<root>/profiles/<name> must not write under profiles/.hermes."""
+    monkeypatch.delenv("ATTEST_LIBRARY_DASHBOARD", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes" / "profiles" / "work"))
+    assert dashboard.default_path() == (
+        tmp_path / ".hermes" / "workspace/research-desk/library/library.json"
+    )
+
+
+def test_out_pointing_at_a_directory_is_a_clear_error_not_a_traceback(tmp_path, conn, capsys):
+    rc = main(["library", "dashboard", "--out", str(tmp_path)])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "directory" in err and "Traceback" not in err
+
+
+def test_an_unwritable_destination_is_a_clear_error(tmp_path, conn, capsys):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")
+    assert main(["library", "dashboard", "--out", str(blocker / "library.json")]) != 0
+    assert "Traceback" not in capsys.readouterr().err
