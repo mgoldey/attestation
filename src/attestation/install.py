@@ -826,11 +826,18 @@ def step_mcp_wiring(agent: str | None, check: bool = False) -> StepResult:
 
 
 def _skill_files_to_sync(src_dir: Path) -> list[Path]:
-    files = [src_dir / "SKILL.md"]
-    scripts_dir = src_dir / "scripts"
-    if scripts_dir.is_dir():
-        files.extend(sorted(p for p in scripts_dir.iterdir() if p.is_file()))
-    return files
+    """SKILL.md first, then everything else the skill ships (scripts/,
+    notebooks/, ...), at any depth. Only `scripts/` used to travel with a
+    skill, so a notebook shipped beside SKILL.md never reached the machine."""
+    extras = sorted(
+        p
+        for p in src_dir.rglob("*")
+        if p.is_file()
+        and p.name != "SKILL.md"
+        and "__pycache__" not in p.parts
+        and not any(part.startswith(".") for part in p.relative_to(src_dir).parts)
+    )
+    return [src_dir / "SKILL.md", *extras]
 
 
 def _sync_one_skill_file(src: Path, dest_dir: Path, src_dir: Path) -> bool:

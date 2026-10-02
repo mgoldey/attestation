@@ -165,6 +165,28 @@ Against an empty ledger every claim comes back `unsupported`, which means
 nothing was scanned, not that the draft is wrong. `runs.list()` first; scan
 only if it shows nothing.
 
+## Notebook demos
+
+Three executed notebooks ship beside this file in `notebooks/`: *check a
+draft's claims*, *which arm won?*, and *make your own claim*. Offer one when
+the reader is new to this, asks what a verdict means, or wants to see it before
+trusting it on their own draft. Do not offer one instead of answering a real
+question about their runs.
+
+They run offline against a temporary ledger and never touch the reader's
+database. Outside a repo checkout they write a small stand-in for the example
+workspace and say so.
+
+- **Open one:** copy it into the reader's workspace so it appears under
+  *Files* (the Research Desk starter keeps work under
+  `~/.hermes/workspace/<project>/`) and tell them its path. Never edit the
+  copy in the skills folder.
+- **Run one:** `jupyter nbconvert --execute --to notebook --inplace <copy>`,
+  if Jupyter is installed; do not install it unasked. Otherwise point at
+  `notebooks/RESULTS.md`, the same outputs as plain Markdown.
+- The notebooks teach on the example workspace, not the reader's data. Say
+  that, then run the tools on their draft.
+
 ## When the tools are not in your tool list
 
 If no `runs.*` tool is available to you, and `runs.tools` cannot explain why,
