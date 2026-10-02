@@ -9,6 +9,11 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-02
+
+The provenance skill tells an agent what to do without the tools and ships executed
+notebook demos, and the skill installer now copies what a skill ships.
+
 ### Added
 
 - **Executed notebook demos ship with `attestation-provenance`.** Three offline
@@ -464,7 +469,8 @@ this is the repo's first public artifact despite the number.
   the first green CI run needed a stubbed daemon test plus a Python build
   that can load the `sqlite-vec` extension (`d4ea750`).
 
-[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/mgoldey/attestation/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/mgoldey/attestation/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/mgoldey/attestation/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/mgoldey/attestation/compare/v0.2.3...v0.2.4
