@@ -76,7 +76,7 @@ repos:
 
       - id: xenon
         name: xenon (maintainability)
-        entry: uv run --frozen xenon --max-modules B --max-average A src/attestation
+        entry: uv run --frozen xenon --max-modules B --max-average A -e "*.ipynb" src/attestation
         language: system
         types: [python]
         pass_filenames: false

@@ -1,6 +1,6 @@
 ---
 name: attestation-provenance
-description: "Verify a manuscript you are handed against the experiment runs on disk: rank the arms of a sweep with their caveats, check every numeric claim in an existing Markdown draft against the recorded run, list the numbers no claim covers, and lint citation keys that resolve to nothing. Reads artifacts and existing prose; never re-runs, edits, or writes a document."
+description: "Verify a manuscript you are handed against the experiment runs on disk: rank the arms of a sweep with their caveats, check every numeric claim in an existing Markdown draft against the recorded run, list the numbers no claim covers, and lint citation keys that resolve to nothing. Reads artifacts and existing prose; never re-runs an experiment or edits the researcher's documents (it may save demo notebook copies to their workspace)."
 version: 2.0.0
 author: attestation project
 license: MIT
@@ -164,6 +164,33 @@ All three are read-only. They report; they never edit a document.
 Against an empty ledger every claim comes back `unsupported`, which means
 nothing was scanned, not that the draft is wrong. `runs.list()` first; scan
 only if it shows nothing.
+
+## Notebook demos
+
+Three executed notebooks ship beside this file in `notebooks/`: *check a
+draft's claims*, *which arm won?*, and *make your own claim*. Offer one when
+the reader is new to this, asks what a verdict means, or wants to see it before
+trusting it on their own draft. Do not offer one instead of answering a real
+question about their runs.
+
+They run offline against a temporary ledger and never touch the reader's
+database. Outside a repo checkout they write a small stand-in for the example
+workspace and say so.
+
+- **Open one:** copy it into the researcher's Hermes workspace so it appears
+  under *Files* (the Research Desk starter keeps work under a
+  `workspace/<project>/` folder in the Hermes home) and tell them its path.
+  Never edit the copy in the skills folder (a sync overwrites it); the
+  researcher edits their workspace copy.
+- **Run one:** the notebook's kernel must be the attestation environment (it
+  imports `attestation` and calls `attest`), which a `uvx attestation` install
+  does not provide. From an attestation checkout:
+  `uv run --with jupyter jupyter nbconvert --to notebook --execute --inplace <copy>`
+  (checked: runs in about ten seconds). Without a checkout, or on **any**
+  failure, do not debug it: point at `notebooks/RESULTS.md`, the same outputs
+  as plain Markdown.
+- The notebooks teach on the example workspace, not the reader's data. Say
+  that, then run the tools on their draft.
 
 ## When the tools are not in your tool list
 

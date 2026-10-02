@@ -825,11 +825,38 @@ def step_mcp_wiring(agent: str | None, check: bool = False) -> StepResult:
     return _check_surfaces(agent, check=check)
 
 
+# What a skill may ship besides SKILL.md. An ALLOWLIST, because the folder is
+# an editable checkout's source tree: a blocklist copies whatever a merge or an
+# editor leaves there, and a stray `SKILL.md.orig` copied to a machine makes
+# `_skill_disabled` treat the skill as retired -- permanently, with `--check`
+# still saying OK.
+_SKILL_SYNC_DIRS = ("scripts", "notebooks")
+_SKILL_SYNC_SUFFIXES = frozenset(
+    {".py", ".sh", ".md", ".ipynb", ".json", ".toml", ".yaml", ".yml", ".txt"}
+)
+
+
+def _is_shippable_skill_file(path: Path, src_dir: Path) -> bool:
+    rel = path.relative_to(src_dir)
+    return (
+        path.is_file()
+        and not path.is_symlink()
+        and path.suffix.lower() in _SKILL_SYNC_SUFFIXES
+        and not rel.name.startswith("SKILL.md")
+        and not any(part.startswith(".") or part == "__pycache__" for part in rel.parts)
+    )
+
+
 def _skill_files_to_sync(src_dir: Path) -> list[Path]:
+    """SKILL.md first, then the allowlisted files under scripts/ and
+    notebooks/ at any depth. Symlinks are skipped, never followed."""
     files = [src_dir / "SKILL.md"]
-    scripts_dir = src_dir / "scripts"
-    if scripts_dir.is_dir():
-        files.extend(sorted(p for p in scripts_dir.iterdir() if p.is_file()))
+    for sub in _SKILL_SYNC_DIRS:
+        folder = src_dir / sub
+        if folder.is_dir() and not folder.is_symlink():
+            files.extend(
+                sorted(p for p in folder.rglob("*") if _is_shippable_skill_file(p, src_dir))
+            )
     return files
 
 
@@ -845,13 +872,53 @@ def _sync_one_skill_file(src: Path, dest_dir: Path, src_dir: Path) -> bool:
     return True
 
 
+def _is_edited_notebook(f: Path, dest_dir: Path, src_dir: Path) -> bool:
+    """A notebook the researcher changed in place: it exists but differs. The
+    next sync overwrites it, which is the documented behaviour, so --check
+    notes it rather than failing; a MISSING notebook is still stale."""
+    rel = f.relative_to(src_dir)
+    dest = dest_dir / rel
+    return rel.parts[0] == "notebooks" and dest.exists() and dest.read_bytes() != f.read_bytes()
+
+
 def _stale_skill_files(files: list[Path], dest_dir: Path, src_dir: Path) -> list[Path]:
     return [
         f
         for f in files
-        if not (dest_dir / f.relative_to(src_dir)).exists()
-        or (dest_dir / f.relative_to(src_dir)).read_bytes() != f.read_bytes()
+        if (
+            not (dest_dir / f.relative_to(src_dir)).exists()
+            or (dest_dir / f.relative_to(src_dir)).read_bytes() != f.read_bytes()
+        )
+        and not _is_edited_notebook(f, dest_dir, src_dir)
     ]
+
+
+def _edited_notebooks(sources: list[tuple[str, Path]]) -> list[str]:
+    found = []
+    for root in _skill_dest_roots():
+        for name, src_dir in sources:
+            dest_dir = root / name
+            if _skill_disabled(dest_dir):
+                continue
+            found.extend(
+                f.name
+                for f in _skill_files_to_sync(src_dir)
+                if _is_edited_notebook(f, dest_dir, src_dir)
+            )
+    return sorted(set(found))
+
+
+def _skill_check_noting_edits(
+    sources: list[tuple[str, Path]], stale: list[Path], legacy: list[Path]
+) -> StepResult:
+    """The --check verdict, plus a note (still OK) naming installed notebooks
+    the researcher edited, which the next sync will overwrite."""
+    result = _skill_check_result(stale, legacy)
+    edited = _edited_notebooks(sources)
+    if result.status == Status.OK and edited:
+        detail = f"edited notebook(s) will be overwritten on the next sync: {', '.join(edited)}"
+        return StepResult("skill_copy", Status.OK, detail)
+    return result
 
 
 def _legacy_skill_dirs() -> list[Path]:
@@ -896,7 +963,7 @@ def step_skill_copy(agent: str | None = None, check: bool = False) -> StepResult
     stale, changed = _walk_bundled_skills(sources, check)
     legacy = _legacy_skill_dirs()
     if check:
-        return _skill_check_result(stale, legacy)
+        return _skill_check_noting_edits(sources, stale, legacy)
 
     for legacy_dir in legacy:
         (legacy_dir / "SKILL.md").rename(legacy_dir / LEGACY_SKILL_MARKER)
