@@ -111,12 +111,7 @@ winner: kdsweep_t4
 ```
 
 ```text
-$ attest runs scan --root .
-  retrieval-ablation           5 run(s)
-  speech-distill               4 run(s)
-9 run(s) across 2 project(s)
-[exit 0]
-$ attest runs compare rank-method --metric n_records
+$ attest runs compare kdsweep --metric n_records
 unknown direction for metric 'n_records' -- refusing to rank. Declare it under [metric_direction] in <tmp>/hermes/metric_direction.toml; guessing would rank ablation arms backwards.
 [exit 1]
 ```

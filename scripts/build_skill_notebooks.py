@@ -38,15 +38,21 @@ from pathlib import Path
 # ledger. Your real database and workspace are never read or changed.
 WORK = Path(tempfile.mkdtemp(prefix="attest-demo-"))
 os.environ["ATTEST_DB"] = str(WORK / "demo.db")
-os.environ["HERMES_HOME"] = str(WORK / "hermes")  # so your own metric_direction.toml is not read
-for _var in ("RESEARCH_ROOT", "LEDGER_METRIC_DIRECTION_FILE", "LEDGER_CORPUS_FILE"):
-    os.environ.pop(_var, None)  # so nothing of yours decides how this demo ranks
+HOME = WORK / "hermes"
+os.environ["HERMES_HOME"] = str(HOME)
+# Point these at the temp folder rather than just unsetting them: every `attest`
+# call reloads a checkout's .env, which would put an unset variable back.
+os.environ["LEDGER_METRIC_DIRECTION_FILE"] = str(HOME / "metric_direction.toml")
+os.environ["LEDGER_CORPUS_FILE"] = str(HOME / "corpus.toml")
+os.environ["RESEARCH_ROOT"] = str(WORK / "workspace")
 
 
 def _find_attest():
     found = shutil.which("attest", path=str(Path(sys.executable).parent)) or shutil.which("attest")
     if found is None:
-        raise RuntimeError("`attest` is not installed for this Python: pip install attestation")
+        raise RuntimeError(
+            "`attest` is not on PATH: run this notebook in the attestation environment"
+        )
     return found
 
 
@@ -86,7 +92,7 @@ The baseline reaches a word error rate of 0.0731.
 Temperature 4 is better, at 0.0642.
 <!-- claim: speech-distill/kdsweep_t4 metric=wer value=0.0642 -->
 
-Temperature 2 gives 0.0701 (stale: the run now says otherwise).
+Temperature 2 gives 0.0701 (the run records a different number).
 <!-- claim: speech-distill/kdsweep_t2 metric=wer value=0.0701 -->
 
 Temperature 8 gives 0.0600 (there is no such run).
@@ -146,7 +152,10 @@ claim. This notebook checks the worked example `speech-distill/FINDINGS.md`,
 in which three claims are **deliberately wrong**, and shows what each kind of
 miss means.
 
-It runs offline (no model server) against a temporary ledger.""",
+It runs offline (no model server) against a temporary ledger.
+
+Copy this notebook before editing it: the copy that ships with the skill is
+overwritten whenever attestation updates it.""",
     ),
     ("code", SETUP_BASE + SETUP_EXAMPLE),
     (
@@ -198,12 +207,15 @@ They are different problems and need different fixes. Never read one as the othe
 | verdict | what it says | what you do |
 |---|---|---|
 | `contradicted` | a run **disagrees** with the number in the prose | the draft or the run is wrong; correct one of them |
-| `unsupported` | **no run matches** (here: a run name that does not exist) | the claim may be true, but nothing backs it; find or record the run. It does not mean false |
+| `unsupported` | **no run matches**: the run name does not exist (as here), or the run has no such metric | the claim may be true, but nothing backs it; find or record the run. It does not mean false |
 | `malformed` | the annotation **cannot be read** (here: no `metric` field) | fix the annotation; it is reported rather than skipped so a claim cannot vanish from review |
 
-`supported` means a run agrees within tolerance. `ambiguous` (a wildcard
-matched several runs) and `stale` (the value matches a run whose file changed
-after `as_of`) are the other two verdicts; this draft has neither.""",
+`supported` means a run agrees within tolerance. Three more verdicts exist and
+this draft has none of them: `ambiguous` (a wildcard matched several runs, or
+one run holds the metric at several splits or steps and the claim does not say
+which: add `split=` or `step=`), `stale` (the value matches a run whose file
+changed after `as_of`) and `uncited` (a claim with `cite=` whose key no
+configured bibliography source has).""",
     ),
     (
         "md",
@@ -237,7 +249,10 @@ reported without them misrepresents what was found. This notebook compares the
 `kdsweep` distillation sweep and shows its caveats exactly as the tool printed
 them.
 
-It runs offline (no model server) against a temporary ledger.""",
+It runs offline (no model server) against a temporary ledger.
+
+Copy this notebook before editing it: the copy that ships with the skill is
+overwritten whenever attestation updates it.""",
     ),
     ("code", SETUP_BASE + SETUP_EXAMPLE),
     (
@@ -268,13 +283,15 @@ The two lines starting `caveat:` above are verbatim from the tool. In words:
 
 - **Too close to call.** The top two arms differ by 0.0017 (2.6%). In this
   sweep `kdsweep_t4b` is `kdsweep_t4` at a different seed, so 0.0017 is
-  also roughly the size of run-to-run noise.
+  also the size of one seed's swing.
 - **No seed replication.** Each arm is one run, so the ranking cannot separate
   the configuration from luck.
 
-A comparison whose margin is smaller than its seed variance has not found
-anything. The honest summary is "t4 is nominally ahead; this sweep cannot tell
-t4 from t2 or t4b", not "t4 won".""",
+The tool's caveat is about the top two arms. Beyond them it says only that
+every arm is a single run; it does not rank the gaps further down. A
+comparison whose margin is no bigger than its seed variance has not found
+anything, so the honest summary is "t4 is nominally ahead and the tool calls
+it too close to call", not "t4 won".""",
     ),
     (
         "md",
@@ -282,22 +299,18 @@ t4 from t2 or t4b", not "t4 won".""",
 
 The ledger **refuses to rank a metric whose direction nobody declared**, rather
 than guess: ranking WER as if higher were better would name the worst arm the
-winner. The repo's example has a second sweep to show it (this cell only runs
-when the repo's examples are present).""",
+winner. `n_records` is a count of records, not a quality score, so nobody has
+declared which way is better.""",
     ),
     (
         "code",
-        """\
-if SOURCE is not None:
-    attest("runs scan --root .", cwd=WORKSPACE)
-    attest("runs compare rank-method --metric n_records", cwd=WORKSPACE)
-else:
-    print("Skipped: needs the repo's retrieval-ablation example.")""",
+        'attest("runs compare kdsweep --metric n_records", cwd=WORKSPACE)',
     ),
     (
         "md",
         """The refusal is the right answer (here the file it names sits in a temporary
-home; on your machine it is `~/.hermes/metric_direction.toml`). The fix is a
+home; on your machine it lives in your Hermes home, by default
+`~/.hermes/metric_direction.toml`). The fix is a
 `[metric_direction]` entry made by the person who knows which way is better, never a guess by the tool or
 by an agent reporting it.""",
     ),
@@ -314,7 +327,10 @@ OWN = [
 Write a tiny results file and a one-claim Markdown note, check it, then change
 the number and watch the verdict turn `contradicted`. Nothing here needs the
 repo's examples or a model server; it writes everything to a temporary folder
-and a temporary ledger.""",
+and a temporary ledger.
+
+Copy this notebook before editing it: the copy that ships with the skill is
+overwritten whenever attestation updates it.""",
     ),
     ("code", SETUP_BASE + '\n\nprint("Working in a temporary folder with a temporary ledger.")\n'),
     (

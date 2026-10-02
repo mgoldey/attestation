@@ -28,9 +28,14 @@ commit that carries the reasoning rather than repeating it; `git log
   because nothing was scanned, and that `attest claims` exiting 1 is a
   contradiction, not a failure. A new test parses every `attest <command>` a
   skill documents against the CLI.
-- **The skill installer copies a skill's whole folder.** It synced only
-  `SKILL.md` and `scripts/`, so anything else a skill ships (the notebooks)
-  never reached a machine.
+- **The skill installer copies what a skill ships, from an allowlist.** It
+  synced only `SKILL.md` and `scripts/`, so anything else a skill ships (the
+  notebooks) never reached a machine. It now syncs `scripts/` and `notebooks/`
+  files with known suffixes, and never `SKILL.md.*` (a merge leftover would
+  have disabled the installed skill for good), symlinks, dotfiles or
+  `__pycache__`. An edited installed notebook is noted by `--check`, not
+  reported BROKEN. Files removed from a skill are still never deleted from a
+  machine, as before.
 
 ## [0.3.0] - 2026-09-30
 

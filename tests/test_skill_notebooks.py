@@ -17,6 +17,7 @@ import getpass
 import importlib.util
 import re
 import shlex
+import shutil
 from pathlib import Path
 
 import nbformat
@@ -143,7 +144,12 @@ def test_the_skill_tells_an_agent_about_every_notebook():
     text = install._skill_source_dir(SKILL).joinpath("SKILL.md").read_text()
     assert "## Notebook demos" in text
     assert "notebooks/RESULTS.md" in text
-    assert "~/.hermes/workspace/" in text
+    assert "Hermes workspace" in text
+    assert "~/.hermes/workspace" not in text, "ignores HERMES_HOME"
+    # the run instruction must name an environment that has attestation in it
+    assert "uv run --with jupyter jupyter nbconvert" in text
+    assert "any" in text and "failure" in text and "RESULTS.md" in text
+    assert "never re-runs, edits, or writes a document" not in text
 
 
 def _load_builder():
@@ -196,15 +202,166 @@ def test_saved_outputs_are_what_the_notebook_prints_today(path, monkeypatch):
     )
 
 
+@pytest.fixture
+def private_tmp(monkeypatch, tmp_path):
+    """The notebooks make a temp folder per run; keep it under pytest's tmp_path
+    so runs do not pile up in the system temp dir."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    return tmp_path
+
+
 @pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
-def test_notebook_still_runs_where_the_repo_examples_are_absent(path, monkeypatch):
+def test_notebook_still_runs_where_the_repo_examples_are_absent(path, monkeypatch, private_tmp):
     """Installed on a machine without examples/: it must say so and use a
     stand-in rather than fail."""
     monkeypatch.setenv("ATTEST_EXAMPLE_WORKSPACE", "none")
-    nb = _rerun(path)
-    text = _printed(nb)[0]
+    text = _printed(_rerun(path))[0]
     if path.name != "make-your-own-claim.ipynb":
         assert "is not on this machine" in text
-    if path.name == "check-a-drafts-claims.ipynb":
-        for verdict in ("supported", "contradicted", "unsupported", "malformed"):
-            assert verdict in text
+
+
+def test_the_stand_in_workspace_teaches_the_same_lessons(monkeypatch, private_tmp):
+    """What every installed-wheel reader gets. `attest()` never raises on a
+    nonzero exit, so renaming a metric in the stand-in once printed `winner:
+    None` and every test still passed: pin the lines that carry the lesson."""
+    monkeypatch.setenv("ATTEST_EXAMPLE_WORKSPACE", "none")
+    which = _printed(_rerun(NOTEBOOK_DIR / "which-arm-won.ipynb"))[0]
+    for line in (
+        "winner: kdsweep_t4",
+        "caveat: the top two arms differ by 0.0017 (2.6%) -- too close to call",
+        "caveat: each arm is a single run; no seed replication",
+        "unknown direction for metric 'n_records' -- refusing to rank.",
+    ):
+        assert line in which, line
+    assert "Skipped" not in which, "the refusal must be shown in both modes"
+    check = _printed(_rerun(NOTEBOOK_DIR / "check-a-drafts-claims.ipynb"))[0]
+    for verdict in ("supported", "contradicted", "unsupported", "malformed"):
+        assert re.search(rf"\*\*{verdict}\*\*", check), verdict
+    assert "1 contradicted" in check and "[exit 1]" in check
+
+
+def test_a_checkouts_dotenv_and_hostile_env_cannot_change_the_refusal(monkeypatch, private_tmp):
+    """Every `attest` subprocess calls load_env(), which fills in from the
+    checkout's .env any variable the notebook merely popped. Pointing the
+    variables at the notebook's own temp folder makes them win instead (the
+    same lesson tests/conftest.py records: repoint, do not delete)."""
+    hostile = private_tmp / "hostile_direction.toml"
+    hostile.write_text('[metric_direction]\nn_records = "higher_is_better"\n')
+    env_file = _REPO_ROOT / ".env"
+    if env_file.exists():
+        pytest.skip("this checkout has a real .env; not overwriting it")
+    env_file.write_text(
+        f"LEDGER_METRIC_DIRECTION_FILE={hostile}\n"
+        f"LEDGER_CORPUS_FILE={private_tmp / 'hostile_corpus.toml'}\n"
+        f"RESEARCH_ROOT={private_tmp}\n"
+    )
+    try:
+        for var in ("LEDGER_METRIC_DIRECTION_FILE", "LEDGER_CORPUS_FILE", "RESEARCH_ROOT"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.delenv("ATTEST_EXAMPLE_WORKSPACE", raising=False)
+        text = _printed(_rerun(NOTEBOOK_DIR / "which-arm-won.ipynb"))[0]
+    finally:
+        env_file.unlink()  # the file this test wrote, nothing else
+    assert "refusing to rank" in text
+    assert "winner: kdsweep_t4" in text
+    assert str(private_tmp / "hostile") not in text
+
+
+def test_a_missing_attest_says_which_environment_to_use_not_pip_install(monkeypatch, private_tmp):
+    nb = _read(NOTEBOOK_DIR / "make-your-own-claim.ipynb")
+    setup = _code_cells(nb)[0].source
+    for var in ("ATTEST_DB", "HERMES_HOME", "RESEARCH_ROOT"):
+        monkeypatch.setenv(var, "x")
+    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+    with pytest.raises(RuntimeError) as err:
+        exec(setup, {"__name__": "nb"})
+    message = str(err.value)
+    assert "pip install" not in message
+    assert "attestation environment" in message
+
+
+def test_every_notebook_says_to_copy_it_before_editing():
+    for path in NOTEBOOKS:
+        assert "Copy this notebook before editing" in _read(path).cells[0].source, path.name
+
+
+def test_the_notebooks_teach_verdicts_as_the_checker_defines_them():
+    text = (NOTEBOOK_DIR / "check-a-drafts-claims.ipynb").read_text()
+    assert "stale: the run now says otherwise" not in text
+    for needle in ("split=", "no such metric", "uncited"):
+        assert needle in text, needle
+    arm = (NOTEBOOK_DIR / "which-arm-won.ipynb").read_text()
+    assert "cannot tell" not in arm, "goes beyond what the tool's caveat says"
+
+
+# --------------------------------------------------------------------------
+# the installer ships an ALLOWLIST of a skill's files
+# --------------------------------------------------------------------------
+
+
+def _install_into_fake_home(monkeypatch, tmp_path, src_root: Path):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(install.Path, "home", lambda: fake_home)
+    monkeypatch.setattr(install, "_skills_source_root", lambda: src_root)
+    result = install.step_skill_copy("agenthermes", check=False)
+    return fake_home / ".hermes" / "skills", result
+
+
+@pytest.fixture
+def source_skills(tmp_path):
+    """A copy of the real skills tree the test is free to litter."""
+    root = tmp_path / "src-skills"
+    shutil.copytree(install._skills_source_root(), root)
+    return root
+
+
+def test_a_merge_leftover_skill_md_is_not_copied_and_does_not_disable_the_skill(
+    monkeypatch, tmp_path, source_skills
+):
+    (source_skills / SKILL / "SKILL.md.orig").write_text("a merge leftover")
+    dest, _ = _install_into_fake_home(monkeypatch, tmp_path, source_skills)
+    assert not (dest / SKILL / "SKILL.md.orig").exists()
+    assert not install._skill_disabled(dest / SKILL)
+    assert install.step_skill_copy("agenthermes", check=True).status == install.Status.OK
+
+
+def test_symlinks_and_editor_litter_are_not_copied(monkeypatch, tmp_path, source_skills):
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("not part of the skill")
+    notebooks = source_skills / SKILL / "notebooks"
+    (notebooks / "link.md").symlink_to(outside)
+    (notebooks / "Untitled~").write_text("autosave")
+    (notebooks / "stray.pyc").write_bytes(b"\0")
+    (notebooks / ".ipynb_checkpoints").mkdir()
+    (notebooks / ".ipynb_checkpoints" / "x-checkpoint.ipynb").write_text("{}")
+    (notebooks / "__pycache__").mkdir()
+    (notebooks / "__pycache__" / "x.py").write_text("")
+    (source_skills / SKILL / ".hidden.md").write_text("dot")
+    dest, _ = _install_into_fake_home(monkeypatch, tmp_path, source_skills)
+    shipped = {p.name for p in (dest / SKILL).rglob("*")}
+    for litter in (
+        "link.md",
+        "Untitled~",
+        "stray.pyc",
+        ".ipynb_checkpoints",
+        "__pycache__",
+        ".hidden.md",
+    ):
+        assert litter not in shipped, litter
+    assert "SKILL.md" in shipped and "RESULTS.md" in shipped
+    assert (dest / "attestation-setup" / "scripts" / "setup.sh").is_file()
+    for name in EXPECTED:
+        assert (dest / SKILL / "notebooks" / name).is_file()
+
+
+def test_an_edited_installed_notebook_is_a_note_not_a_broken_check(monkeypatch, tmp_path):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(install.Path, "home", lambda: fake_home)
+    install.step_skill_copy("agenthermes", check=False)
+    copy = fake_home / ".hermes" / "skills" / SKILL / "notebooks" / "which-arm-won.ipynb"
+    copy.write_text(copy.read_text() + " ")
+    result = install.step_skill_copy("agenthermes", check=True)
+    assert result.status == install.Status.OK
+    assert "which-arm-won.ipynb" in result.detail

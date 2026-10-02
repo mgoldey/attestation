@@ -1,6 +1,6 @@
 ---
 name: attestation-provenance
-description: "Verify a manuscript you are handed against the experiment runs on disk: rank the arms of a sweep with their caveats, check every numeric claim in an existing Markdown draft against the recorded run, list the numbers no claim covers, and lint citation keys that resolve to nothing. Reads artifacts and existing prose; never re-runs, edits, or writes a document."
+description: "Verify a manuscript you are handed against the experiment runs on disk: rank the arms of a sweep with their caveats, check every numeric claim in an existing Markdown draft against the recorded run, list the numbers no claim covers, and lint citation keys that resolve to nothing. Reads artifacts and existing prose; never re-runs an experiment or edits the researcher's documents (it may save demo notebook copies to their workspace)."
 version: 2.0.0
 author: attestation project
 license: MIT
@@ -177,13 +177,18 @@ They run offline against a temporary ledger and never touch the reader's
 database. Outside a repo checkout they write a small stand-in for the example
 workspace and say so.
 
-- **Open one:** copy it into the reader's workspace so it appears under
-  *Files* (the Research Desk starter keeps work under
-  `~/.hermes/workspace/<project>/`) and tell them its path. Never edit the
-  copy in the skills folder.
-- **Run one:** `jupyter nbconvert --execute --to notebook --inplace <copy>`,
-  if Jupyter is installed; do not install it unasked. Otherwise point at
-  `notebooks/RESULTS.md`, the same outputs as plain Markdown.
+- **Open one:** copy it into the researcher's Hermes workspace so it appears
+  under *Files* (the Research Desk starter keeps work under a
+  `workspace/<project>/` folder in the Hermes home) and tell them its path.
+  Never edit the copy in the skills folder (a sync overwrites it); the
+  researcher edits their workspace copy.
+- **Run one:** the notebook's kernel must be the attestation environment (it
+  imports `attestation` and calls `attest`), which a `uvx attestation` install
+  does not provide. From an attestation checkout:
+  `uv run --with jupyter jupyter nbconvert --to notebook --execute --inplace <copy>`
+  (checked: runs in about ten seconds). Without a checkout, or on **any**
+  failure, do not debug it: point at `notebooks/RESULTS.md`, the same outputs
+  as plain Markdown.
 - The notebooks teach on the example workspace, not the reader's data. Say
   that, then run the tools on their draft.
 
