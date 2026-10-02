@@ -9,6 +9,16 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Fixed
+
+- **`attestation-provenance` now says what to do without the tools.** An agent
+  whose session had no `runs.*` tools guessed at the CLI (`attest
+  claims_check`, a tool name) for 17 calls. The skill now gives the four real
+  commands, says a claim checked against an empty ledger is `unsupported`
+  because nothing was scanned, and that `attest claims` exiting 1 is a
+  contradiction, not a failure. A new test parses every `attest <command>` a
+  skill documents against the CLI.
+
 ## [0.3.0] - 2026-09-30
 
 The Reading desk: a phone page of ranked papers whose verdicts come back as
