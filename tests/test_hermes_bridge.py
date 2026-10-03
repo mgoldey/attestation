@@ -369,10 +369,23 @@ def _pid_alive(pid):
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    try:  # a zombie is dead for our purposes
-        return Path(f"/proc/{pid}/stat").read_text().split()[2] != "Z"
-    except OSError:
-        return False
+    return not _is_zombie(pid)
+
+
+def _is_zombie(pid):
+    """A zombie is dead for our purposes. /proc exists on Linux only; macOS has
+    none, and treating 'cannot read it' as dead made every liveness assertion
+    pass vacuously there, so fall back to ps."""
+    stat = Path(f"/proc/{pid}/stat")
+    if stat.parent.parent.is_dir():
+        try:
+            return stat.read_text().split()[2] == "Z"
+        except OSError:
+            return True  # gone between kill(0) and the read
+    out = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    return not out or out.startswith("Z")
 
 
 def _helper_pid():
@@ -916,3 +929,20 @@ def test_ports_redacts_encoded_basic_and_line_split_forms():
         " | pw/with+odd=\nchars-9876543210"
     )
     assert "9876543210" not in text and "dXNlcjpr" not in text and "%2F" not in text
+
+
+def test_pid_alive_is_portable_and_not_vacuous(monkeypatch):
+    """The ps fallback (what macOS uses) must call a live process alive and a
+    dead one dead; a /proc-only check said 'dead' for both."""
+    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert _pid_alive(live.pid)
+        real_is_dir = Path.is_dir
+        monkeypatch.setattr(
+            Path, "is_dir", lambda self: False if str(self) == "/proc" else real_is_dir(self)
+        )
+        assert _pid_alive(live.pid), "the ps fallback must see a live process as alive"
+    finally:
+        live.kill()
+        live.wait()
+    assert not _pid_alive(live.pid)
