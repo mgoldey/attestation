@@ -184,8 +184,10 @@ chat provider with no embeddings API is never asked for one.
 cron outside the agent: `config.yaml` (`model.default`, `model.provider`,
 `model.base_url`, `model.api_key`, `model.api_mode`), `.env` (the provider's key)
 and `auth.json` (OAuth credentials, read only by Hermes' own code). The process
-environment is consulted in exactly one case: a key variable (`NVIDIA_API_KEY`,
-`${CUSTOM_API_KEY}`...) that `.env` does not set. `.env` wins.
+environment is consulted in exactly one case: a key variable that `.env` does not
+set, and only for key-shaped names (`*_API_KEY`, `*_KEY`, `*_TOKEN`), so a
+`model.api_key: ${SESSION_SECRET}` cannot pull an unrelated secret out of the
+process. `.env` wins.
 
 **Which key goes where** follows Hermes' own routing, because a key sent to the
 wrong host is a leak: an explicit `model.api_key` is used, and a `${VAR}` or
@@ -240,10 +242,19 @@ default`) and how to change it, and never a key:
 A 404 or 410 stops the run even when it is a proxy's passing hiccup rather than a
 missing model. Nothing is lost: progress is saved per item and the next hourly
 refresh picks up where it stopped. A 429 or 502/503/504 is retried twice with a
-short, capped backoff (`Retry-After` honoured up to 5 s) before it counts.
+short, capped backoff (`Retry-After` honoured up to 5 s, nonsense values ignored,
+60 s of waiting in total until a request succeeds); if it persists the run stops
+once with `HTTP 429: the chat server is overloaded or down`, instead of spending
+a few seconds on every item while holding the refresh lock.
+
+One chat request may take `ATTEST_LLM_TIMEOUT` seconds (10-600, default 120), on
+both the direct path and the Hermes bridge, so raise it for a slow reasoning
+model. Two read timeouts in a row count as "unreachable" and stop the run, because
+each would otherwise cost a full timeout per item.
 A call to Hermes' runtime has a hard deadline (the request timeout plus 5 s) after
 which the helper process is killed, and a helper cannot outlive Attestation: it
-exits when its parent does.
+exits when its parent does -- including a parent that dies while Hermes is
+still importing.
 
 `attest install --check` prints one `backends` line: the resolved chat backend
 (host, model, and where each came from) and the embedding backend -- hosts and

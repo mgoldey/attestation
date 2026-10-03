@@ -41,10 +41,10 @@ FAKE_CALL_LLM = textwrap.dedent(
     import json, os, re, time, urllib.request
     from types import SimpleNamespace
 
-    import mcp  # Hermes' own `mcp`; Attestation ships an attestation/mcp that must NOT shadow it
-    assert getattr(mcp, "FAKE_HERMES_MCP", False), "import mcp resolved to the wrong package"
+    import mcp  # Hermes depends on the real `mcp`; attestation/mcp must NOT shadow it
+    assert "site-packages" in mcp.__file__, "import mcp resolved to " + mcp.__file__
     if os.path.exists(os.path.join(os.environ["HERMES_HOME"], "startup_hang")):
-        time.sleep(600)
+        time.sleep(30)
 
 
     class APIStatusError(Exception):
@@ -78,13 +78,17 @@ FAKE_CALL_LLM = textwrap.dedent(
         if mode == "leak":
             raise RuntimeError("provider rejected key " + os.environ["NVIDIA_API_KEY"])
         if mode == "hang":
-            time.sleep(600)
+            time.sleep(30)
         if mode == "echo":  # a provider that echoes the credential it was sent
             tok = json.load(open(os.path.join(os.environ["HERMES_HOME"], "auth.json")))
             tok = tok["credential_pool"]["openai-codex"][0]["refresh_token"]
             raise APIStatusError(
                 401, "invalid token " + tok + " (Authorization: Bearer " + tok + ")"
             )
+        if mode == "noise":  # a child/lib writing a FORGED reply to fd 1 (the protocol pipe)
+            forged = b'{"id": 1, "ok": true, "content": "{\\"tags\\": [\\"forged\\"]}"}'
+            os.write(1, forged + b"\n[1]\nnull\n")
+            mode = "ok"
         if mode == "env":
             raise RuntimeError("env: " + json.dumps(sorted(os.environ)))
         if mode == "crash":
@@ -140,8 +144,7 @@ def build_fake_hermes(root, *, version="9.9.9-fake", call_llm_src=FAKE_CALL_LLM)
     (tree / "hermes_cli" / "__init__.py").write_text(f'__version__ = "{version}"\n')
     (tree / "hermes_cli" / "env_loader.py").write_text(FAKE_ENV_LOADER)
     (tree / "hermes_cli" / "runtime_provider.py").write_text(FAKE_RUNTIME)
-    (tree / "mcp").mkdir()
-    (tree / "mcp" / "__init__.py").write_text("FAKE_HERMES_MCP = True\n")
+
     bin_dir = root / "bin"
     bin_dir.mkdir()
     launcher = bin_dir / "hermes"
@@ -377,33 +380,46 @@ def _helper_pid():
     return bridge._proc.pid if bridge._proc else None
 
 
+def _bounded(fn, seconds=12.0):
+    """Run `fn` on a thread; (finished, outcome). A hang fails an assertion after
+    `seconds`, never the whole run: the fakes hang 30 s, not forever."""
+    box = {}
+
+    def go():
+        try:
+            box["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 -- the outcome is what is asserted
+            box["error"] = exc
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    t.join(seconds)
+    return (not t.is_alive()), box
+
+
 def test_a_hung_call_times_out_within_its_budget_and_the_helper_is_killed(codex_desk, monkeypatch):
-    """BLOCKER: close() used to close the pipe a reader thread was blocked on
-    BEFORE killing, so a helper stuck in a call hung the whole run (and the
-    hourly refresh's lock with it). The fake now sleeps 600 s: only a kill ends it."""
+    """close() used to close the pipe a reader thread was blocked on BEFORE
+    killing, so a helper stuck in a call hung the run (and the refresh lock).
+    The fake hangs 30 s; the assertion window is 12 s, so removing the kill fails."""
     monkeypatch.setattr(hermes_bridge, "GRACE", 0.5)
     plan(codex_desk, mode="hang")
     client = hermes_bridge.HermesChatClient(timeout=1)
     started = time.monotonic()
-    pids = []
-    try:
-        client.chat_json(MESSAGES, SCHEMA)
-    except BackendUnreachable as exc:
-        assert "did not answer" in str(exc)
-        pids.append(hermes_bridge._last_pid)
-    elapsed = time.monotonic() - started
-    assert pids, "the call must raise BackendUnreachable"
-    assert elapsed < 15, f"the call outlived its budget: {elapsed:.1f}s"
-    assert not _pid_alive(pids[0]), "the helper process must be dead, not abandoned"
+    finished, box = _bounded(lambda: client.chat_json(MESSAGES, SCHEMA))
+    assert finished, "the call outlived its budget"
+    assert time.monotonic() - started < 12
+    assert isinstance(box.get("error"), BackendUnreachable) and "did not answer" in str(
+        box["error"]
+    )
+    assert not _pid_alive(hermes_bridge._last_pid), "the helper must be dead, not abandoned"
 
 
 def test_a_hang_during_startup_is_bounded_and_kills_the_helper(codex_desk, monkeypatch):
     monkeypatch.setattr(hermes_bridge, "STARTUP_TIMEOUT", 2.0)
     (codex_desk["home"] / "startup_hang").write_text("")
-    started = time.monotonic()
-    with pytest.raises(BackendUnreachable, match="did not answer"):
-        chat()
-    assert time.monotonic() - started < 20
+    finished, box = _bounded(chat)
+    assert finished and isinstance(box.get("error"), BackendUnreachable)
+    assert "did not answer" in str(box["error"])
     assert not _pid_alive(hermes_bridge._last_pid)
 
 
@@ -411,36 +427,86 @@ def test_a_helper_that_ignores_sigterm_is_still_killed(codex_desk, monkeypatch):
     """kill() is SIGKILL; nothing a helper does can keep it alive."""
     monkeypatch.setattr(hermes_bridge, "GRACE", 0.5)
     plan(codex_desk, mode="hang")
-    with pytest.raises(BackendUnreachable):
-        hermes_bridge.HermesChatClient(timeout=1).chat_json(MESSAGES, SCHEMA)
-    assert not _pid_alive(hermes_bridge._last_pid)
-
-
-def test_the_helper_cannot_outlive_a_parent_that_is_killed(codex_desk, tmp_path):
-    """No atexit runs on SIGKILL: the helper must notice its parent died."""
-    script = tmp_path / "parent.py"
-    script.write_text(
-        "import os, sys, time\n"
-        "from attestation import hermes_bridge, llm\n"
-        "llm.default_chat_fn([{'role': 'user', 'content': 'x'}], {'type': 'object'})\n"
-        "print(hermes_bridge._last_pid, flush=True)\n"
-        "time.sleep(600)\n"
+    finished, _ = _bounded(
+        lambda: hermes_bridge.HermesChatClient(timeout=1).chat_json(MESSAGES, SCHEMA)
     )
+    assert finished and not _pid_alive(hermes_bridge._last_pid)
+
+
+PARENT = """
+import os, sys, threading, time
+from attestation import hermes_bridge, llm
+scenario = sys.argv[1]
+def call():
+    try:
+        llm.default_chat_fn([{'role': 'user', 'content': 'x'}], {'type': 'object'})
+    except BaseException:
+        pass
+if scenario == 'idle':
+    call()
+else:
+    threading.Thread(target=call, daemon=True).start()
+    while hermes_bridge._last_pid is None:
+        time.sleep(0.05)
+    time.sleep(2.0 if scenario == 'hang' else 0.3)  # 'hang': mid-call; 'startup': still importing
+print(hermes_bridge._last_pid, flush=True)
+if sys.argv[2] == 'wait':
+    time.sleep(600)
+"""
+
+
+@pytest.mark.parametrize("scenario", ["idle", "hang", "startup"])
+def test_the_helper_cannot_outlive_a_parent_that_is_killed(codex_desk, tmp_path, scenario):
+    """No atexit runs on SIGKILL, so the helper must notice by itself -- including
+    while stuck in a model call (it cannot see EOF on stdin then) and while Hermes
+    is still importing (the watchdog must start before that)."""
+    if scenario == "hang":
+        plan(codex_desk, mode="hang")
+    if scenario == "startup":
+        (codex_desk["home"] / "startup_hang").write_text("")
+    script = tmp_path / "parent.py"
+    script.write_text(PARENT)
     proc = subprocess.Popen(
-        [sys.executable, str(script)], stdout=subprocess.PIPE, text=True, env=dict(os.environ)
+        [sys.executable, str(script), scenario, "wait"],
+        stdout=subprocess.PIPE,
+        text=True,
+        env=dict(os.environ),
     )
     helper = int(proc.stdout.readline())
     assert _pid_alive(helper)
     proc.kill()
     proc.wait()
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + 8
     while _pid_alive(helper) and time.monotonic() < deadline:
         time.sleep(0.2)
-    assert not _pid_alive(helper), "orphaned helper survived its parent"
+    assert not _pid_alive(helper), f"orphaned helper survived its parent ({scenario})"
 
 
-def test_close_all_kills_the_helper_even_while_a_call_is_stuck(codex_desk, monkeypatch):
+def test_a_parent_that_exits_normally_mid_call_takes_the_helper_with_it_at_once(
+    codex_desk, tmp_path
+):
+    """atexit kills the helper before the parent is gone; the 1 s watchdog alone
+    would leave it for up to a second."""
     plan(codex_desk, mode="hang")
+    script = tmp_path / "parent.py"
+    script.write_text(PARENT)
+    proc = subprocess.Popen(
+        [sys.executable, str(script), "hang", "exit"],
+        stdout=subprocess.PIPE,
+        text=True,
+        env=dict(os.environ),
+    )
+    helper = int(proc.stdout.readline())
+    proc.wait(timeout=20)
+    deadline = time.monotonic() + 0.4
+    while _pid_alive(helper) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not _pid_alive(helper)
+
+
+def test_close_all_kills_the_helper_even_while_a_call_is_stuck(codex_desk):
+    plan(codex_desk, mode="hang")
+    done = threading.Event()
     errors = []
 
     def stuck():
@@ -448,17 +514,16 @@ def test_close_all_kills_the_helper_even_while_a_call_is_stuck(codex_desk, monke
             hermes_bridge.HermesChatClient(timeout=60).chat_json(MESSAGES, SCHEMA)
         except Exception as exc:  # noqa: BLE001 -- recorded for the assertion below
             errors.append(exc)
+        done.set()
 
-    t = threading.Thread(target=stuck, daemon=True)
-    t.start()
+    threading.Thread(target=stuck, daemon=True).start()
     deadline = time.monotonic() + 15
     while hermes_bridge._last_pid is None and time.monotonic() < deadline:
         time.sleep(0.1)
     time.sleep(1.0)
     pid = hermes_bridge._last_pid
     hermes_bridge.close_all()
-    t.join(15)
-    assert not t.is_alive() and errors and not _pid_alive(pid)
+    assert done.wait(10) and errors and not _pid_alive(pid)
 
 
 def test_the_helper_gets_a_minimal_environment(codex_desk, monkeypatch):
@@ -660,3 +725,194 @@ def test_an_oversized_reply_is_refused_and_kills_the_helper(codex_desk, monkeypa
     with pytest.raises(BackendUnreachable, match="too large"):
         chat()
     assert not _pid_alive(hermes_bridge._last_pid)
+
+
+def test_fd1_writes_from_hermes_cannot_forge_a_reply(codex_desk):
+    """Hermes (or a subprocess it starts) writing to stdout -- fd 1 -- used to land
+    in the protocol stream. The helper now owns a private duplicate of fd 1."""
+    plan(codex_desk, mode="noise")
+    assert chat()["tags"] == ["graph-neural-networks"]
+
+
+def _bridge(tmp_path):
+    return hermes_bridge.HermesBridge("python", None, tmp_path)
+
+
+@pytest.mark.parametrize("line", ["[1]\n", "null\n", "123\n", '"text"\n', "not json\n", "\n"])
+def test_non_object_json_on_the_pipe_is_noise_not_a_crash(tmp_path, line):
+    b = _bridge(tmp_path)
+    b._lines.put(line)
+    b._lines.put('{"id": 3, "ok": true}\n')
+    assert b._read(2, want_id=3) == {"id": 3, "ok": True}
+
+
+def test_junk_glued_in_front_of_a_reply_is_resynchronised(tmp_path):
+    b = _bridge(tmp_path)
+    b._lines.put('partial{"id": 4, "ok": true, "content": "x"}\n')
+    assert b._read(2, want_id=4)["content"] == "x"
+
+
+def test_endless_noise_ends_the_call_instead_of_looping(tmp_path, monkeypatch):
+    monkeypatch.setattr(hermes_bridge, "MAX_GARBAGE_LINES", 50)
+    b = _bridge(tmp_path)
+    for _ in range(100):
+        b._lines.put("[1]\n")
+    with pytest.raises(BackendUnreachable, match="noise"):
+        b._read(5, want_id=1)
+
+
+def test_stale_replies_do_not_extend_the_deadline(tmp_path):
+    """One overall budget: replies for other requests arriving every 0.2 s must not
+    keep resetting it (a per-get timeout would wait for ever)."""
+    b = _bridge(tmp_path)
+    stop = threading.Event()
+
+    def feeder():
+        while not stop.is_set():
+            b._lines.put('{"id": 999, "ok": true}\n')
+            time.sleep(0.2)
+
+    threading.Thread(target=feeder, daemon=True).start()
+    started = time.monotonic()
+    try:
+        finished, box = _bounded(lambda: b._read(1.0, want_id=1), seconds=6)
+    finally:
+        stop.set()
+    assert finished and isinstance(box.get("error"), BackendUnreachable)
+    assert "did not answer" in str(box["error"]) and time.monotonic() - started < 6
+
+
+def test_the_bridge_tells_the_helper_who_its_parent_is(tmp_path):
+    assert _bridge(tmp_path)._env()["ATTEST_PARENT_PID"] == str(os.getpid())
+
+
+def test_a_helper_whose_parent_is_already_gone_exits_before_importing_hermes(codex_desk):
+    """The spawn race: the parent can die between fork and the helper's first line.
+    The helper compares against the pid it was TOLD, not the one it finds."""
+    env = {
+        "PATH": os.environ["PATH"],
+        "HERMES_HOME": str(codex_desk["home"]),
+        "ATTEST_HERMES_SRC": str(codex_desk["tree"]),
+        "ATTEST_PARENT_PID": "999999",
+    }
+    (codex_desk["home"] / "startup_hang").write_text("")
+    proc = subprocess.Popen(
+        [sys.executable, str(hermes_bridge.HELPER)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        env=env,
+    )
+    try:
+        proc.wait(timeout=8)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        pytest.fail("a helper that was orphaned from birth kept running")
+
+
+# --- the helper's own redaction layers, one test each --------------------------------------
+
+
+@pytest.fixture
+def helper(monkeypatch, tmp_path):
+    import importlib
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    return importlib.import_module("attestation.hermes_helper")
+
+
+class _StatusError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status_code, self.body = status, {"error": {"message": message}}
+
+
+def test_helper_blanks_the_reason_of_a_401_and_a_403(helper):
+    for status in (401, 403):
+        err = helper.classify(_StatusError(status, "echo: tokenvalue-0123456789abcdef"), set())
+        assert err["message"].endswith("the provider rejected the credential")
+        assert "tokenvalue" not in err["message"]
+
+
+def test_helper_redacts_every_long_string_in_auth_json_whatever_its_field_is_called(
+    helper, tmp_path
+):
+    (tmp_path / "auth.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "providers": {"x": {"inventedSecretBlob": "blob-0123456789abcdefXYZ"}},
+                "credential_pool": {
+                    "p": [
+                        {
+                            "id": "abc123",
+                            "label": "a long human readable label here",
+                            "base_url": "https://api.example.test/v1/some/long/path",
+                            "last_refresh": "2026-10-01T00:00:00Z",
+                            "bearer_thing": "bt-0123456789abcdefXYZ",
+                            "nested": {"deeper": ["list-0123456789abcdefXYZ"]},
+                        }
+                    ]
+                },
+            }
+        )
+    )
+    secrets = helper.secrets_in_env()
+    assert {
+        "blob-0123456789abcdefXYZ",
+        "bt-0123456789abcdefXYZ",
+        "list-0123456789abcdefXYZ",
+    } <= secrets
+    assert "https://api.example.test/v1/some/long/path" not in secrets
+    assert "a long human readable label here" not in secrets
+    assert "2026-10-01T00:00:00Z" not in secrets
+    text = helper.scrub("said bt-0123456789abcdefXYZ and blob-0123456789abcdefXYZ", secrets)
+    assert "XYZ" not in text
+
+
+def test_helper_redacts_credential_shaped_strings_it_was_not_told_about(helper):
+    text = helper.scrub(
+        "Bearer abcdefgh12345678 sk-live-ABCDEFGHIJKLMNOP x-api-key: zzzzzzzz9999"
+        " Basic dXNlcjprZXk6cGFzc3dvcmQ=",
+        set(),
+    )
+    for leaked in ("abcdefgh12345678", "sk-live-ABCDEF", "zzzzzzzz9999", "dXNlcjpr"):
+        assert leaked not in text
+
+
+def test_helper_redacts_encoded_and_line_split_secrets(helper):
+    secret = "ab/cd+ef=gh-0123456789"
+    from urllib.parse import quote, quote_plus
+
+    text = helper.scrub(
+        f"{quote(secret, safe='')} {quote_plus(secret)} ab/cd+ef=\ngh-0123456789", {secret}
+    )
+    assert "0123456789" not in text and "%2F" not in text
+
+
+def test_failure_detail_drops_the_body_of_a_401_and_a_403():
+    import httpx
+
+    from attestation import ports
+
+    for status in (401, 403):
+        request = httpx.Request("POST", "http://x/v1")
+        response = httpx.Response(
+            status, request=request, json={"error": {"message": "echo zzz-0000"}}
+        )
+        exc = httpx.HTTPStatusError("x", request=request, response=response)
+        assert ports.failure_detail(exc) == f"HTTP {status}"
+
+
+def test_ports_redacts_encoded_basic_and_line_split_forms():
+    from urllib.parse import quote
+
+    from attestation import ports
+
+    secret = "pw/with+odd=chars-9876543210"
+    ports.register_secret(secret)
+    text = ports.redact(
+        f"{quote(secret, safe='')} | Basic dXNlcjprZXk6cGFzc3dvcmQ="
+        " | pw/with+odd=\nchars-9876543210"
+    )
+    assert "9876543210" not in text and "dXNlcjpr" not in text and "%2F" not in text

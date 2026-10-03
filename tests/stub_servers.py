@@ -26,7 +26,15 @@ OLLAMA_404 = {
 
 class StubServer:
     def __init__(
-        self, *, embed_model=None, chat_models=(), api_key=None, chat_404_for=None, echo_auth=False
+        self,
+        *,
+        embed_model=None,
+        chat_models=(),
+        api_key=None,
+        chat_404_for=None,
+        echo_auth=False,
+        fail_status=None,
+        retry_after=None,
     ):
         self.reply = {"content_type": "paper", "tags": ["graph-neural-networks"]}
         self.requests: list[dict] = []
@@ -70,6 +78,14 @@ class StubServer:
                 )
                 if api_key and not presented & {f"Bearer {api_key}", api_key}:
                     return self._send(401, {"error": {"message": "Authorization failed" + echo}})
+                if fail_status and self.path.endswith("/chat/completions"):
+                    data = b'{"error": {"message": "overloaded"}}'
+                    self.send_response(fail_status)
+                    if retry_after is not None:
+                        self.send_header("Retry-After", str(retry_after))
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    return self.wfile.write(data)
                 if self.path.endswith("/embeddings"):
                     if req.get("model") != embed_model:
                         return self._send(404, {"error": {"message": "embed model not served"}})
@@ -194,6 +210,16 @@ def ollama_embedder_only(embed_model="embeddinggemma") -> StubServer:
 
 
 def chat_server(
-    models=("nvidia/nemotron-3-super-120b-a12b",), api_key="nvapi-FAKE-KEY", echo_auth=False
+    models=("nvidia/nemotron-3-super-120b-a12b",),
+    api_key="nvapi-FAKE-KEY",
+    echo_auth=False,
+    fail_status=None,
+    retry_after=None,
 ) -> StubServer:
-    return StubServer(chat_models=models, api_key=api_key, echo_auth=echo_auth)
+    return StubServer(
+        chat_models=models,
+        api_key=api_key,
+        echo_auth=echo_auth,
+        fail_status=fail_status,
+        retry_after=retry_after,
+    )

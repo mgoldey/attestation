@@ -15,7 +15,7 @@ attest library dashboard --out ./library.json --persona owner --limit 5000
 
 The path is `--out`, else `$ATTEST_LIBRARY_DASHBOARD`, else
 `<parent of HERMES_HOME>/.hermes/workspace/research-desk/library/library.json`
-(the folder is created). For a Hermes profile (`HERMES_HOME=<root>/profiles/<name>`) it is the *root's* workspace, where the host page reads. The write is atomic -- a temp file in the same folder,
+(the folder is created). The default follows the host installer's convention, `<parent of HERMES_HOME>/.hermes/workspace/...`, without resolving symlinks, so a `HERMES_HOME` that is not named `.hermes` (say `/opt/hermes-data`) writes under `/opt/.hermes/` -- which the host page will not read unless that is its home. **When in doubt, set `ATTEST_LIBRARY_DASHBOARD` to the exact path the page reads**; it always wins. For a Hermes profile (`HERMES_HOME=<root>/profiles/<name>`) it is the *root's* workspace, where the host page reads. The write is atomic -- a temp file in the same folder,
 fsynced, renamed over the target -- and the file is mode 0600, so a reader sees
 the previous file or the new one, never half. Running it twice on the same
 database gives the same bytes except `generated_at` (sorted keys, stable

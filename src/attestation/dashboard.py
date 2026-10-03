@@ -104,6 +104,11 @@ def clean(value, limit: int) -> str:
     text = " ".join(text.split())
     if len(text) <= limit and len(text.encode()) <= 2 * limit:
         return text
+    if limit < 4:  # no room for an ellipsis: a plain cut, bytes included
+        text = text[:limit]
+        while len(text.encode()) > 2 * limit:
+            text = text[:-1]
+        return text
     text = text[: limit - 1]
     while len(text.encode()) > 2 * limit - 3:  # room for the 3-byte ellipsis
         text = text[: max(len(text) * 9 // 10, 0)]

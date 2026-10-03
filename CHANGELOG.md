@@ -41,6 +41,12 @@ commit that carries the reasoning rather than repeating it; `git log
   message; keys are refused over plain http to remote hosts or if not header-safe;
   the dashboard is bounded at 6 MiB (byte caps, `--limit` max 5000) and is one
   read snapshot that survives a bad byte; a 429/5xx is retried briefly.
+- Second review round: the helper's parent-death watchdog now starts before Hermes
+  is imported (a parent killed during start-up used to leave it running), fd 1 is a
+  private duplicate so nothing Hermes writes can forge or corrupt a reply, non-object
+  and glued replies are handled, every long string in `auth.json` is redacted whatever
+  its field is called, and a 429/5xx storm stops the run once instead of holding the
+  refresh lock for hours. New `ATTEST_LLM_TIMEOUT` (10-600 s).
 - **A chat backend that answers 401, 403, 404 or 410 now stops a tagging run
   once, with its reason and where the url and model came from.** Only a dead
   socket did; a model the server never had was retried twice per item, counted

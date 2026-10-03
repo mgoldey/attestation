@@ -284,7 +284,7 @@ def embedding_backend_hint() -> str:
 
 _SECRETS: set[str] = set()
 _SHAPES = re.compile(
-    r"(?i)(bearer\s+[A-Za-z0-9._~+/=-]{8,}"
+    r"(?i)((?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"
     r"|(?:authorization|x-api-key|api[_-]?key|token|secret)[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9._~+/=-]{8,}"
     r"|\b(?:sk|nvapi|xai|gsk|hf|pk|rk|ghp|gho)[-_][A-Za-z0-9._-]{12,}"
     r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})"
@@ -303,8 +303,12 @@ def register_secret(value: str | None) -> None:
 def redact(text: str) -> str:
     """`text` with every registered secret and every credential-shaped string
     (Bearer values, x-api-key, sk-/nvapi- keys, JWTs) replaced by `***`."""
+    from urllib.parse import quote, quote_plus
+
     for secret in sorted(_SECRETS, key=len, reverse=True):
-        text = text.replace(secret, "***")
+        for form in {secret, quote(secret, safe=""), quote_plus(secret)}:
+            text = text.replace(form, "***")
+        text = re.sub(r"\s*".join(map(re.escape, secret)), "***", text)  # split across a line
     return _SHAPES.sub("***", text)
 
 

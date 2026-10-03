@@ -826,3 +826,11 @@ def test_an_unwritable_destination_is_a_clear_error(tmp_path, conn, capsys):
     blocker.write_text("x")
     assert main(["library", "dashboard", "--out", str(blocker / "library.json")]) != 0
     assert "Traceback" not in capsys.readouterr().err
+
+
+def test_clean_survives_tiny_limits_and_cuts_by_bytes_before_characters():
+    assert dashboard.clean("abcdef", 1) == "a" or len(dashboard.clean("abcdef", 1)) <= 1
+    assert len(dashboard.clean("\U0001f9ea" * 5, 2).encode()) <= 4
+    # 250 characters, 1000 bytes: under the character cap, over the byte cap
+    cut = dashboard.clean("\U0001f9ea" * 250, 300)
+    assert len(cut.encode()) <= 600 and cut.endswith("\u2026")

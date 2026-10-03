@@ -6,6 +6,7 @@ constructor arg > env var > default. No retries here — reliability policy
 """
 
 import json
+import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -15,7 +16,7 @@ import httpx
 
 from attestation.ports import (
     BackendNotConfigured,
-    BackendUnreachable,  # noqa: F401 -- re-exported: callers import them from here
+    BackendUnreachable,
     backend_unreachable,  # noqa: F401
     display_url,
     key_is_header_safe,
@@ -39,10 +40,28 @@ ENV_VARS = (
     "EMBED_BASE_URL",
     "EMBED_API_KEY",
     "ATTEST_LLM_FROM_HERMES",
+    "ATTEST_LLM_TIMEOUT",
 )
 
 FROM_HERMES_VAR = "ATTEST_LLM_FROM_HERMES"
+DEFAULT_TIMEOUT_S = 120.0
+RETRY_BUDGET_S = 60.0  # total backoff sleep a run may spend before giving up on a sick server
+TIMEOUTS_BEFORE_STOP = 2  # consecutive read timeouts that count as "unreachable"
 BUILTIN = "built-in Ollama default"
+
+
+def llm_timeout() -> float:
+    """Seconds one chat request may take: `ATTEST_LLM_TIMEOUT`, bounded to 10..600,
+    default 120. Read at call time; both the direct client and the Hermes bridge
+    use it, so their deadlines agree. A slow reasoning model raises it; nothing
+    below 10 s is a usable model call."""
+    try:
+        value = float(os.environ.get("ATTEST_LLM_TIMEOUT", ""))
+    except ValueError:
+        return DEFAULT_TIMEOUT_S
+    if not math.isfinite(value):
+        return DEFAULT_TIMEOUT_S
+    return min(max(value, 10.0), 600.0)
 
 
 def _opted_into_hermes() -> bool:
@@ -212,6 +231,11 @@ def chat_failure_message(detail: str | None = None) -> str:
         else "check the model Hermes is connected to (`attest install --check` shows what"
         " resolved), or set LLM_BASE_URL to override it"
     )
+    if _opted_into_hermes() and (detail or "").startswith(("HTTP 401", "HTTP 403")):
+        fix = (
+            "the key or sign-in was rejected: reconnect the model in"
+            " AgentMarkit (`attest install --check` shows what resolved)"
+        )
     return f"{where} failed: {detail or 'unreachable'} -- {fix}"
 
 
@@ -286,12 +310,26 @@ def _headers(api_key: str | None) -> dict:
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 
+def _retry_delay(resp: httpx.Response, attempt: int) -> float:
+    """Seconds to wait before retry `attempt`: `Retry-After` when it is a sane
+    non-negative number, else 1 s then 2 s; never more than 5."""
+    try:
+        wait = float(resp.headers.get("Retry-After", ""))
+    except ValueError:
+        wait = float("nan")
+    if not math.isfinite(wait) or wait < 0:
+        wait = 2.0**attempt
+    return min(wait, 5.0)
+
+
 class ChatClient:
     """A schema-constrained chat completion, against any OpenAI-compatible
     server -- see the module docstring: config resolves per call/construction,
     never at import, and reliability policy (retry, degrade) is the caller's."""
 
-    def __init__(self, base_url=None, model=None, api_key=None, timeout=120, transport=None):
+    def __init__(self, base_url=None, model=None, api_key=None, timeout=None, transport=None):
+        self._timeouts = 0  # consecutive read timeouts
+        self._retry_spent = 0.0  # backoff seconds spent since the last success
         # ONE reading of the environment and Hermes' files for all three, so
         # url, model and key cannot straddle a "Change model". A key is only
         # ever paired with the URL it was resolved for: a caller-supplied
@@ -308,7 +346,7 @@ class ChatClient:
         self.model = model or chat_model()
         self.client = httpx.Client(
             base_url=base_url,
-            timeout=timeout,
+            timeout=llm_timeout() if timeout is None else timeout,
             headers=_headers(api_key),
             transport=transport,
         )
@@ -316,20 +354,42 @@ class ChatClient:
     def _post(self, payload: dict) -> httpx.Response:
         """POST the completion, backing off briefly on 429 and 502/503/504.
 
-        At most two retries, waiting `Retry-After` (else 1 s, then 2 s) capped at
-        5 s: a rate limit or a proxy blip should cost seconds, not a tagging run,
-        and a server that stays down must not be hammered.
+        At most two retries, waiting `Retry-After` (else 1 s, then 2 s; nan,
+        negative and absurd values are ignored) capped at 5 s, and at most
+        `RETRY_BUDGET_S` of waiting in total until a request succeeds. A server
+        still answering 429/5xx after that raises `BackendUnreachable`, so a tagging
+        run stops ONCE with the reason instead of spending ~20 s per item (a
+        782-item hourly budget was hours of holding the refresh lock).
+
+        Two read timeouts in a row are the same condition: each would cost a full
+        timeout per item, and the item retry doubles it.
         """
-        resp = self.client.post("/chat/completions", json=payload)
+        try:
+            resp = self.client.post("/chat/completions", json=payload)
+        except httpx.ReadTimeout:
+            self._timeouts += 1
+            if self._timeouts >= TIMEOUTS_BEFORE_STOP:
+                raise BackendUnreachable(
+                    f"the chat server timed out {self._timeouts} times in a row"
+                    f" ({llm_timeout():.0f}s each; ATTEST_LLM_TIMEOUT raises it)"
+                ) from None
+            raise
+        self._timeouts = 0
         for attempt in range(2):
             if resp.status_code not in (429, 502, 503, 504):
                 break
-            try:
-                wait = float(resp.headers.get("Retry-After", ""))
-            except ValueError:
-                wait = 2.0**attempt
-            time.sleep(min(max(wait, 0.0), 5.0))
+            wait = _retry_delay(resp, attempt)
+            if self._retry_spent + wait > RETRY_BUDGET_S:
+                break
+            self._retry_spent += wait
+            time.sleep(wait)
             resp = self.client.post("/chat/completions", json=payload)
+        if resp.status_code in (429, 502, 503, 504):
+            raise BackendUnreachable(
+                f"HTTP {resp.status_code}: the chat server is overloaded or down"
+                " (retried briefly; the next run tries again)"
+            )
+        self._retry_spent = 0.0
         return resp
 
     def chat_json(self, messages: list[dict], schema: dict) -> dict:

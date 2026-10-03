@@ -174,8 +174,18 @@ def _text(value) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+_KEY_SHAPED = ("_API_KEY", "_KEY", "_TOKEN")
+
+
 def _lookup(name: str, dotenv: dict[str, str]) -> str:
-    return _text(dotenv.get(name)) or _text(os.environ.get(name))
+    """`name` from `<HERMES_HOME>/.env`, else -- for key-shaped names only
+    (`*_API_KEY`, `*_KEY`, `*_TOKEN`) -- from the process environment. A
+    `${SESSION_SECRET}` reference must not read an unrelated secret out of the
+    process and send it to the configured URL (Hermes itself does)."""
+    found = _text(dotenv.get(name))
+    if found or not name.upper().endswith(_KEY_SHAPED):
+        return found
+    return _text(os.environ.get(name))
 
 
 def _section(cfg: dict, config_path: Path) -> dict:

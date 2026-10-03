@@ -31,7 +31,7 @@ from stub_servers import chat_server, ollama_embedder_only
 
 from attestation import hermes_model, llm
 from attestation.db import get_db
-from attestation.ports import BackendNotConfigured
+from attestation.ports import BackendNotConfigured, BackendUnreachable
 
 NIM_CONFIG = config("nvidia", NIM_MODEL, "https://integrate.api.nvidia.com/v1")
 
@@ -863,6 +863,128 @@ def test_a_persistent_503_gives_up_after_a_small_number_of_attempts(monkeypatch)
         model="m",
         transport=httpx.MockTransport(lambda r: (calls.append(1), httpx.Response(503))[1]),
     )
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(BackendUnreachable, match="HTTP 503"):
         c.chat_json([], {})
     assert len(calls) <= 4
+
+
+# --- retries, timeouts, key lookup, caps (re-review) --------------------------------------------
+
+
+def _storm(servers, status=429, retry_after=5):
+    return servers(
+        chat_server(models=("m",), api_key=None, fail_status=status, retry_after=retry_after)
+    )
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_a_storm_stops_the_run_once_and_the_wall_time_is_bounded(
+    tmp_path, monkeypatch, capsys, caplog, servers, status
+):
+    """Before: ~20 s per item, 782 items = hours holding the refresh lock."""
+    srv = _storm(servers, status)
+    monkeypatch.setenv("ATTEST_DB", str(db_with_items(tmp_path, 5)))
+    monkeypatch.setenv("LLM_BASE_URL", srv.url)
+    monkeypatch.setenv("CHAT_MODEL", "m")
+    slept = []
+    monkeypatch.setattr(llm.time, "sleep", slept.append)
+    rc, out, err, _ = run_attest(["tag"], capsys, caplog)
+    assert rc == 1 and "'chat_down': True" in out
+    assert f"HTTP {status}" in err
+    assert len(srv.posts("/chat/completions")) <= 4, "one item's retries, then stop"
+    assert sum(slept) <= llm.RETRY_BUDGET_S <= 60
+
+
+def test_total_retry_time_is_capped_across_calls_and_resets_after_a_success(monkeypatch):
+    responses = []
+    slept = []
+
+    def handler(request):
+        return responses.pop(0) if responses else httpx.Response(503)
+
+    monkeypatch.setattr(llm.time, "sleep", slept.append)
+    monkeypatch.setattr(llm, "RETRY_BUDGET_S", 4.0)
+    c = llm.ChatClient(base_url="http://t/v1", model="m", transport=httpx.MockTransport(handler))
+    for _ in range(5):
+        with pytest.raises(BackendUnreachable):
+            c.chat_json([], {})
+    assert sum(slept) <= 4.0, slept
+    responses.append(httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]}))
+    c.chat_json([], {})  # a success refills the budget
+    with pytest.raises(BackendUnreachable):
+        c.chat_json([], {})
+    assert slept[-1] > 0, "the refilled budget is spendable again"
+
+
+@pytest.mark.parametrize("raw", ["nan", "-5", "1e99", "inf", "abc", "", "0"])
+def test_retry_after_is_parsed_safely(monkeypatch, raw):
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(429, headers={"Retry-After": raw})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    slept = []
+    monkeypatch.setattr(llm.time, "sleep", slept.append)
+    llm.ChatClient(
+        base_url="http://t/v1", model="m", transport=httpx.MockTransport(handler)
+    ).chat_json([], {})
+    assert len(slept) == 1 and 0.0 <= slept[0] <= 5.0 and slept[0] == slept[0]
+
+
+def test_two_read_timeouts_in_a_row_count_as_unreachable_and_a_success_resets(monkeypatch):
+    seen = []
+
+    def handler(request):
+        seen.append(1)
+        if len(seen) == 3:
+            return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+        raise httpx.ReadTimeout("slow", request=request)
+
+    c = llm.ChatClient(base_url="http://t/v1", model="m", transport=httpx.MockTransport(handler))
+    with pytest.raises(httpx.ReadTimeout):
+        c.chat_json([], {})
+    with pytest.raises(BackendUnreachable, match="timed out 2 times"):
+        c.chat_json([], {})
+    assert c.chat_json([], {}) == {}
+    with pytest.raises(httpx.ReadTimeout):
+        c.chat_json([], {})
+
+
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [(None, 120.0), ("30", 30.0), ("5", 10.0), ("9999", 600.0), ("abc", 120.0), ("nan", 120.0)],
+)
+def test_llm_timeout_is_configurable_and_bounded(monkeypatch, raw, want):
+    if raw is None:
+        monkeypatch.delenv("ATTEST_LLM_TIMEOUT", raising=False)
+    else:
+        monkeypatch.setenv("ATTEST_LLM_TIMEOUT", raw)
+    assert llm.llm_timeout() == want
+    assert llm.ChatClient(base_url="http://t/v1", model="m").client.timeout.read == want
+    from attestation import hermes_bridge
+
+    assert hermes_bridge.HermesChatClient().timeout == want
+
+
+def test_a_401_under_the_opt_in_says_the_key_or_signin_was_rejected(tmp_path, monkeypatch):
+    nim_home(tmp_path, monkeypatch)
+    monkeypatch.setenv("ATTEST_LLM_FROM_HERMES", "1")
+    text = llm.chat_failure_message("HTTP 401")
+    assert (
+        "key or sign-in was rejected" in text
+        and "check the model Hermes is connected to" not in text
+    )
+    assert "check the model Hermes is connected to" in llm.chat_failure_message("HTTP 404")
+
+
+def test_a_key_reference_reads_the_process_env_only_for_key_shaped_names(tmp_path, monkeypatch):
+    make_home(tmp_path, monkeypatch, _custom("https://llm.corp.example/v1", "${SESSION_SECRET}"))
+    monkeypatch.setenv("SESSION_SECRET", "unrelated-process-secret-0123456789")
+    with pytest.raises(BackendNotConfigured, match="SESSION_SECRET"):
+        hermes_model.resolve()
+    make_home(tmp_path, monkeypatch, _custom("https://llm.corp.example/v1", "${GATEWAY_API_KEY}"))
+    monkeypatch.setenv("GATEWAY_API_KEY", "process-gateway-key-0123456789")
+    assert hermes_model.resolve().api_key == "process-gateway-key-0123456789"

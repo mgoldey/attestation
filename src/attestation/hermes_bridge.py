@@ -51,6 +51,7 @@ from attestation.ports import BackendNotConfigured, BackendRejected, BackendUnre
 HELPER = Path(__file__).with_name("hermes_helper.py")
 STARTUP_TIMEOUT = 90.0  # first import of Hermes' provider stack measured ~3.5 s
 MAX_REPLY_BYTES = 4_000_000  # a tagging reply is ~100 bytes; a runaway one must not fill memory
+MAX_GARBAGE_LINES = 1000
 GRACE = 5.0  # seconds the helper gets beyond a request's own timeout to answer
 _WATCHED = ("config.yaml", ".env")
 _OVERSIZE = object()
@@ -146,6 +147,7 @@ class HermesBridge:
             if k.lower() in ("http_proxy", "https_proxy", "all_proxy", "no_proxy"):
                 env[k] = v
         env["HERMES_HOME"] = str(self.home)
+        env["ATTEST_PARENT_PID"] = str(os.getpid())  # the helper exits when we are gone
         env["PYTHONUNBUFFERED"] = "1"
         if self.source:
             env["ATTEST_HERMES_SRC"] = self.source
@@ -168,29 +170,38 @@ class HermesBridge:
             pass
         self._lines.put(None)  # EOF: the helper exited
 
+    def _next_line(self, deadline: float, timeout: float) -> str:
+        """The next line from the helper before `deadline`; kills the helper and
+        raises when there is none, when it exited, or when a line was oversized."""
+        try:
+            line = self._lines.get(timeout=max(deadline - time.monotonic(), 0.001))
+        except queue.Empty:
+            self.close()
+            raise BackendUnreachable(
+                f"Hermes' runtime did not answer within {timeout:.0f}s"
+            ) from None
+        if line is _OVERSIZE:
+            self.close()
+            raise BackendUnreachable("Hermes' runtime sent a reply that was too large")
+        if line is None:
+            code = self._proc.poll() if self._proc else None
+            self.close()
+            raise BackendUnreachable(f"Hermes' runtime helper exited (code {code})")
+        return line
+
     def _read(self, timeout: float, want_id: int | None = None) -> dict:
         """The next reply (for `want_id` when given) within `timeout` seconds in
         TOTAL -- a stale reply to an earlier request does not extend the budget.
         On expiry the helper is killed first, then the error raised."""
         deadline = time.monotonic() + timeout
+        garbage = 0
         while True:
-            try:
-                line = self._lines.get(timeout=max(deadline - time.monotonic(), 0.001))
-            except queue.Empty:
-                self.close()
-                raise BackendUnreachable(
-                    f"Hermes' runtime did not answer within {timeout:.0f}s"
-                ) from None
-            if line is _OVERSIZE:
-                self.close()
-                raise BackendUnreachable("Hermes' runtime sent a reply that was too large")
-            if line is None:
-                code = self._proc.poll() if self._proc else None
-                self.close()
-                raise BackendUnreachable(f"Hermes' runtime helper exited (code {code})")
-            try:
-                reply = json.loads(line)
-            except ValueError:
+            reply = _parse_reply(self._next_line(deadline, timeout))
+            if reply is None:
+                garbage += 1
+                if garbage > MAX_GARBAGE_LINES:
+                    self.close()
+                    raise BackendUnreachable("Hermes' runtime helper is sending noise")
                 continue  # noise on the pipe is not a reply
             if want_id is not None and reply.get("id") != want_id and "ready" not in reply:
                 continue  # a late answer to an earlier request
@@ -290,6 +301,28 @@ class HermesBridge:
         return reply
 
 
+def _parse_reply(line: str) -> dict | None:
+    """The protocol object on `line`, or None when there is none.
+
+    Anything that is not a JSON object (`[1]`, `null`, `123`) is noise. A line with
+    junk glued in front of a reply (a child process wrote a partial line to the
+    shared pipe) is resynchronised: the object is taken from the first `{` that
+    starts valid JSON, so one stray byte costs nothing instead of the whole
+    request timeout.
+    """
+    pos = line.find("{")
+    tries = 0
+    while pos != -1 and tries < 20:
+        try:
+            value = json.loads(line[pos:])
+        except ValueError:
+            pos = line.find("{", pos + 1)
+            tries += 1
+            continue
+        return value  # always an object: the candidate text starts with `{`
+    return None
+
+
 def _write_line(proc: subprocess.Popen, line: str) -> None:
     assert proc.stdin is not None
     proc.stdin.write(line)
@@ -367,8 +400,11 @@ class HermesChatClient:
     """`chat_json` through Hermes' runtime -- the `ChatClient` contract for a
     provider Attestation does not call itself."""
 
-    def __init__(self, model: str | None = None, timeout: float = 120.0):
-        self.model, self.timeout = model, timeout
+    def __init__(self, model: str | None = None, timeout: float | None = None):
+        from attestation.llm import llm_timeout
+
+        self.model = model
+        self.timeout = timeout if timeout is not None else llm_timeout()
 
     def chat_json(self, messages: list[dict], schema: dict) -> dict:
         """One chat call on Hermes' model, the reply parsed as the one JSON object

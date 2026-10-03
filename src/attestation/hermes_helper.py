@@ -41,37 +41,69 @@ import re
 import threading
 import time
 
-_PROTOCOL = sys.stdout
-sys.stdout = sys.stderr  # whatever Hermes prints must not corrupt the protocol
+_PARENT = os.getppid()  # who started us, captured before anything slow can run
+_PROTOCOL = None  # the protocol stream, set by _init_protocol() -- not at import
 _REQUIRED = {"messages", "model", "provider", "timeout", "extra_body"}
 _SECRET_SUFFIXES = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD")
 
 
+def _init_protocol() -> None:
+    """Move the protocol to a private duplicate of fd 1 and point fd 1 at stderr.
+
+    Whatever Hermes (or a subprocess it starts) writes to stdout -- fd 1 itself,
+    not just sys.stdout -- then lands on stderr and cannot corrupt the protocol.
+    Done in main(), not at import, so the module can be imported by tests."""
+    global _PROTOCOL
+    _PROTOCOL = os.fdopen(os.dup(1), "w")
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
+
+
 def send(obj: dict) -> None:
-    """Write one protocol line to the REAL stdout (stdout itself is rerouted)."""
+    """Write one protocol line (one atomic write, newline-terminated)."""
+    assert _PROTOCOL is not None
     _PROTOCOL.write(json.dumps(obj) + "\n")
     _PROTOCOL.flush()
 
 
 _SHAPES = re.compile(
-    r"(?i)(bearer\s+[A-Za-z0-9._~+/=-]{8,}"
+    r"(?i)((?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"
     r"|(?:authorization|x-api-key|api[_-]?key|token|secret)[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9._~+/=-]{8,}"
     r"|\b(?:sk|nvapi|xai|gsk|hf|pk|rk|ghp|gho)[-_][A-Za-z0-9._-]{12,}"
     r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})"
 )
-_SECRET_NAMES = ("access_token", "refresh_token", "api_key", "agent_key", "id_token", "key")
+# Fields of Hermes' auth.json and credential pool that are NOT secrets (read from
+# hermes_cli/auth.py and agent/credential_pool.py: PooledCredential and _EXTRA_KEYS).
+# Everything else that is a string of 16+ characters is treated as one, so a field
+# this list has never heard of is redacted rather than echoed.
+_NOT_SECRET = frozenset(
+    {
+        "id", "label", "auth_type", "source", "provider", "base_url", "inference_base_url",
+        "portal_base_url", "client_id", "scope", "token_type", "tls", "failure_reason",
+        "secret_source", "secret_fingerprint", "agent_key_id", "last_refresh", "obtained_at",
+        "expires_at", "agent_key_expires_at", "agent_key_obtained_at", "last_status",
+        "last_status_at", "last_error_reason", "last_error_message", "last_error_code",
+        "version", "active_provider", "updated_at", "created_at",
+    }
+)  # fmt: skip
+_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]")
 
 
-def _walk_secrets(node, out: set[str]) -> None:
+def _walk_secrets(node, out: set[str], key: str = "") -> None:
     if isinstance(node, dict):
         for k, v in node.items():
-            if isinstance(v, str) and str(k).lower() in _SECRET_NAMES and len(v) >= 8:
-                out.add(v)
-            else:
-                _walk_secrets(v, out)
+            _walk_secrets(v, out, str(k).lower())
     elif isinstance(node, list):
         for v in node:
-            _walk_secrets(v, out)
+            _walk_secrets(v, out, key)
+    elif (
+        isinstance(node, str)
+        and len(node) >= 16
+        and key not in _NOT_SECRET
+        and not node.startswith(("http://", "https://"))
+        and not _TIMESTAMP.match(node)
+    ):
+        out.add(node)
 
 
 def secrets_in_env() -> set[str]:
@@ -99,11 +131,21 @@ def secrets_in_env() -> set[str]:
     return found
 
 
+def _variants(secret: str) -> list[str]:
+    """The secret as it may appear in a message: plain, URL-encoded two ways."""
+    from urllib.parse import quote, quote_plus
+
+    return list({secret, quote(secret, safe=""), quote_plus(secret)})
+
+
 def scrub(text: str, secrets: set[str]) -> str:
-    """`text` with every known secret and every credential-shaped string replaced
-    by `***`, whitespace collapsed, cut at 300."""
+    """`text` with every known secret (plain, URL-encoded, or split across a line
+    break) and every credential-shaped string replaced by `***`, whitespace
+    collapsed, cut at 300."""
     for secret in sorted(secrets, key=len, reverse=True):
-        text = text.replace(secret, "***")
+        for form in _variants(secret):
+            text = text.replace(form, "***")
+        text = re.sub(r"\s*".join(map(re.escape, secret)), "***", text)
     text = _SHAPES.sub("***", text)
     return " ".join(text.split())[:300]
 
@@ -202,20 +244,33 @@ def describe() -> dict:
     }
 
 
+def _expected_parent() -> int:
+    """The pid that started us: the bridge passes its own (ATTEST_PARENT_PID) so a
+    parent that died before this process even began is still noticed; else the
+    parent we had at import."""
+    try:
+        return int(os.environ.get("ATTEST_PARENT_PID", ""))
+    except ValueError:
+        return _PARENT
+
+
+WATCHDOG_INTERVAL = 1.0
+
+
 def _exit_with_parent() -> None:
     """Exit when the process that started us is gone (it was killed, so no atexit
     ran): poll the parent pid. A helper stuck in a model call cannot see EOF on
-    stdin, so this runs on its own thread."""
-    parent = os.getppid()
+    stdin, and one still importing Hermes has not started reading it, so this runs
+    on its own thread from the very start of main()."""
+    parent = _expected_parent()
     while True:
-        time.sleep(1.0)
         if os.getppid() != parent:
             os._exit(0)
+        time.sleep(WATCHDOG_INTERVAL)
 
 
 def serve(call_llm) -> None:
     """Answer JSON-line requests on stdin until it closes."""
-    threading.Thread(target=_exit_with_parent, daemon=True).start()
     for line in sys.stdin:
         if not line.strip():
             continue
@@ -233,6 +288,8 @@ def serve(call_llm) -> None:
 
 def main() -> int:
     """Load Hermes, announce readiness (or why not), then serve."""
+    _init_protocol()
+    threading.Thread(target=_exit_with_parent, daemon=True).start()
     try:
         call_llm, version = load_hermes()
     except Exception as exc:  # noqa: BLE001 -- an import failure inside Hermes
