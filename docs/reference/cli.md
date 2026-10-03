@@ -395,6 +395,22 @@ options:
   --user USER  one persona (default: every persona with signal)
 ```
 
+## attest library dashboard
+
+```
+usage: attest library dashboard [-h] [--out OUT] [--persona PERSONA]
+                                [--limit LIMIT]
+
+options:
+  -h, --help         show this help message and exit
+  --out OUT          output path (default: $ATTEST_LIBRARY_DASHBOARD, else the
+                     Research Desk's workspace/research-
+                     desk/library/library.json)
+  --persona PERSONA  whose saved papers to mark (default: $ATTEST_DESK_USER,
+                     else owner)
+  --limit LIMIT      max references listed (default and maximum: 5000)
+```
+
 ## attest library export
 
 ```

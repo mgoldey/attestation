@@ -2,7 +2,6 @@
 
 import hashlib
 import logging
-import os
 import re
 import sqlite3
 import time
@@ -11,7 +10,7 @@ from pathlib import Path
 
 import feedparser
 
-from attestation.ports import backend_unreachable
+from attestation.ports import backend_unreachable, embedding_backend_hint
 
 log = logging.getLogger(__name__)
 
@@ -418,17 +417,13 @@ def run_ingest(
                 if not already_down:
                     # No `attestation.llm` import here -- domain modules may not
                     # name the concrete client (test_domain_reaches_models_only_
-                    # through_ports). So this cannot resolve the URL the way
-                    # cli.py's sibling message does via base_url(); it names the
-                    # env var honestly instead of guessing at a default.
-                    var = "EMBED_BASE_URL" if os.environ.get("EMBED_BASE_URL") else "LLM_BASE_URL"
-                    configured = os.environ.get(var)
-                    where = f"{var}={configured}" if configured else f"{var} is unset"
+                    # through_ports). ports.embedding_backend_hint reads the
+                    # same two variables and says which one the URL came from.
                     log.warning(
-                        "embedding model unreachable (%s) -- is ollama"
+                        "embedding model unreachable (%s) -- is the embedding server"
                         " running? (`attest install --check` diagnoses this). Skipping"
                         " the remaining feeds; nothing can be embedded until it is back.",
-                        where,
+                        embedding_backend_hint(),
                     )
                 already_down = True
                 break

@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from attestation.db import SEED_USERS, get_db
 from attestation.explain import explain
 from attestation.llm import default_chat_fn, embed_base_url
+from attestation.ports import embedding_backend_hint
 from attestation.rank import (
     EmbedderUnavailable,
     autocreate_user,
@@ -142,9 +143,9 @@ ONBOARD_ARCHETYPES = [{"name": name, "interests": text} for name, text in SEED_U
 # used to be a bare "Internal Server Error" with a traceback in the log; this
 # says what `attest ingest` says for the same condition.
 EMBEDDER_DOWN = env.from_string("""<div id="feed">
-<p class="caveat">embedding model unreachable at {{ url }} -- is ollama running?
-(<code>attest install --check</code> diagnoses this.) The feed cannot be ranked
-until it is back; reload once it is.</p>
+<p class="caveat">embedding model unreachable at {{ url }} ({{ where }}) -- is the
+embedding server running? (<code>attest install --check</code> diagnoses this.)
+The feed cannot be ranked until it is back; reload once it is.</p>
 </div>""")
 
 FRAGMENT = env.from_string("""<div id="feed">
@@ -301,7 +302,7 @@ def create_app(db_path: str | Path, embedder=None, chat_fn=None) -> FastAPI:
         try:
             items = rank_items(conn, embedder, user["id"])[:LIST_LIMIT]
         except EmbedderUnavailable:
-            return EMBEDDER_DOWN.render(url=embed_base_url())
+            return EMBEDDER_DOWN.render(url=embed_base_url(), where=embedding_backend_hint())
         return FRAGMENT.render(
             items=items,
             user=user_name,
