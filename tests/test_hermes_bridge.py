@@ -375,7 +375,7 @@ def _pid_alive(pid):
 def _is_zombie(pid):
     """A zombie is dead for our purposes. /proc exists on Linux only; macOS has
     none, and treating 'cannot read it' as dead made every liveness assertion
-    pass vacuously there, so fall back to ps."""
+    pass vacuously there, so fall back to /bin/ps (absolute: the hermetic test PATH has no ps)."""
     stat = Path(f"/proc/{pid}/stat")
     if stat.parent.parent.is_dir():
         try:
@@ -383,7 +383,7 @@ def _is_zombie(pid):
         except OSError:
             return True  # gone between kill(0) and the read
     out = subprocess.run(
-        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False
+        ["/bin/ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False
     ).stdout.strip()
     return not out or out.startswith("Z")
 
