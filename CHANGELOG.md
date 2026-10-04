@@ -9,6 +9,53 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Added
+
+- **`ATTEST_LLM_FROM_HERMES=1`: chat on the model Hermes is connected to, whichever
+  provider that is.** A hosted machine embeds on a loopback server and chats
+  through the model the customer connected to Hermes, but Attestation never
+  learned what that model was: chat fell through to the built-in Ollama default
+  and asked the embedder-only server for `gemma4:e2b-it-q4_K_M` (a 404). With the
+  opt-in, the endpoint, model and key are read at call time from `HERMES_HOME`
+  (`config.yaml`, `.env`; the process environment only for a key variable `.env`
+  lacks, so the cron refresh works) and follow "Change model". Providers that speak chat-completions with a
+  key (NVIDIA NIM, OpenRouter, OpenAI, DeepSeek, custom endpoints, Ollama or
+  llama.cpp as Hermes runs them) are called by Attestation; ChatGPT sign-in,
+  Anthropic and anything else are called by Hermes' own runtime through a small
+  helper (`hermes_bridge.py`), so no OAuth token ever enters Attestation. Off by
+  default. Env vars always win; embeddings never follow it. See
+  `docs/guides/install.md`.
+- **`attest library dashboard`**: one atomic, 0600 `library.json` (schema 1:
+  totals, 26 zero-filled ISO weeks, top sources, one row per reference, capped and
+  sanitised) for a host page to read; `attest install`'s refresh script runs it as
+  a degraded step. See `docs/guides/library-dashboard.md`.
+- `attest install --check` prints a `backends` line: the resolved chat and
+  embedding backends (hosts only) and where each came from.
+
+### Fixed
+
+- Review round on this branch: a hung Hermes call is now killed at its deadline
+  (it used to hang the run and the refresh lock), the helper cannot orphan, runs
+  with a minimal environment and cannot be shadowed by `attestation/mcp`;
+  `OPENAI_API_KEY` is no longer sent to a custom host; keys are redacted from every
+  message; keys are refused over plain http to remote hosts or if not header-safe;
+  the dashboard is bounded at 6 MiB (byte caps, `--limit` max 5000) and is one
+  read snapshot that survives a bad byte; a 429/5xx is retried briefly.
+- Second review round: the helper's parent-death watchdog now starts before Hermes
+  is imported (a parent killed during start-up used to leave it running), fd 1 is a
+  private duplicate so nothing Hermes writes can forge or corrupt a reply, non-object
+  and glued replies are handled, every long string in `auth.json` is redacted whatever
+  its field is called, and a 429/5xx storm stops the run once instead of holding the
+  refresh lock for hours. New `ATTEST_LLM_TIMEOUT` (10-600 s).
+- **A chat backend that answers 401, 403, 404 or 410 now stops a tagging run
+  once, with its reason and where the url and model came from.** Only a dead
+  socket did; a model the server never had was retried twice per item, counted
+  `failed`, and printed nothing. The "is ollama running?" hints no longer name
+  Ollama for a hosted backend, and say which variable the URL came from.
+- `chat_json` retries without `reasoning_effort` on a 422 as well as a 400.
+- The default chat client is rebuilt when the model it resolves to changes (an MCP
+  server lives for a whole session).
+
 ## [0.3.1] - 2026-10-02
 
 The provenance skill tells an agent what to do without the tools and ships executed

@@ -24,6 +24,7 @@ swallowed or retried would take that decision away from the one place with
 enough context to make it.
 """
 
+import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -160,3 +161,172 @@ def backend_unreachable(exc: BaseException) -> bool:
     import httpx
 
     return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+
+
+class BackendNotConfigured(BackendUnreachable):
+    """There is no model target to call: the host asked for the one Hermes is
+    connected to and Hermes has none (or its credentials need renewing, or its
+    runtime cannot be found).
+
+    A kind of `BackendUnreachable` so every run that already stops once on a
+    dead backend stops once on this too, with the message it carries --
+    instead of asking the Ollama default for a model it never had.
+    """
+
+
+class BackendRejected(BackendUnreachable):
+    """A model backend that WAS reached refused the request for a reason that
+    holds for every request (401/403 key, 404 no such model, 410 retired).
+
+    Raised by clients that do not speak httpx themselves (the Hermes bridge),
+    so the domain's classifiers treat it exactly like the HTTP error a direct
+    client would have raised. `status` is the HTTP status, 0 when unknown.
+    """
+
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
+
+
+def _server_message(response) -> str:
+    """The reason a server gave in its error body (OpenAI/Ollama `error.message`,
+    NIM `detail`/`title`), else empty. Bounded: a body is not a log line."""
+    try:
+        body = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(body, dict):
+        return ""
+    err = body.get("error")
+    text = err.get("message") if isinstance(err, dict) else err
+    text = text or body.get("detail") or body.get("title") or body.get("message") or ""
+    return " ".join(str(text).split())[:200]
+
+
+def backend_rejected(exc: BaseException) -> bool:
+    """Whether a REACHABLE backend refused the request for a reason that holds
+    for every request: 401/403 (key), 404 (no such model or path), 410 (end of
+    life). Retrying per item cannot help, so a run stops once and says why.
+
+    400 and 422 are NOT here: those can be one item's problem (a schema the
+    server cannot satisfy), and the tagger's own retry owns them.
+    """
+    import httpx
+
+    if isinstance(exc, BackendRejected):
+        return True
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (
+        401,
+        403,
+        404,
+        410,
+    )
+
+
+def failure_detail(exc: BaseException) -> str:
+    """One line on why a backend call failed, safe to print.
+
+    Never `str(exc)` for an HTTP error: that carries the full request URL. The
+    status and the server's own reason are the useful part (a 404 from Ollama
+    reads `model 'x' not found`), and neither can contain a credential.
+    """
+    import httpx
+
+    if isinstance(exc, BackendUnreachable):  # carries its own message
+        return redact(str(exc))
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        # A rejected credential: the server's words are where an echo of it would
+        # be, and nothing in them is actionable beyond the status.
+        reason = "" if status in (401, 403) else redact(_server_message(exc.response))
+        return f"HTTP {status}" + (f": {reason}" if reason else "")
+    if isinstance(exc, httpx.TransportError):
+        return f"cannot connect ({type(exc).__name__})"
+    return redact(str(exc) or type(exc).__name__)
+
+
+def display_url(url: str) -> str:
+    """A URL safe to print: scheme, host, port and path -- no userinfo, no query."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return f"{parts.scheme}://{host}{parts.path}" if parts.scheme else url
+
+
+def embedding_backend_hint() -> str:
+    """Where the embedder's URL came from, for the "embedding model unreachable"
+    messages of the domain modules (which may not import `attestation.llm`).
+
+    Reads the same two variables `llm.embed_base_url` does and says which one
+    won, or that neither is set and the built-in Ollama default applies --
+    the old text named the variable but called an unset one "unset" and left
+    the reader to find out that meant Ollama on port 11434.
+    """
+    import os
+
+    if os.environ.get("EMBED_BASE_URL"):
+        return f"EMBED_BASE_URL={display_url(os.environ['EMBED_BASE_URL'])}"
+    if os.environ.get("LLM_BASE_URL"):
+        return (
+            f"LLM_BASE_URL={display_url(os.environ['LLM_BASE_URL'])};"
+            " EMBED_BASE_URL is unset, so embeddings use it too"
+        )
+    return (
+        "EMBED_BASE_URL and LLM_BASE_URL are unset, so this is the built-in Ollama default;"
+        " set EMBED_BASE_URL to change it"
+    )
+
+
+# --- credentials: never in a message -------------------------------------------------------
+
+_SECRETS: set[str] = set()
+_SHAPES = re.compile(
+    r"(?i)((?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"
+    r"|(?:authorization|x-api-key|api[_-]?key|token|secret)[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9._~+/=-]{8,}"
+    r"|\b(?:sk|nvapi|xai|gsk|hf|pk|rk|ghp|gho)[-_][A-Za-z0-9._-]{12,}"
+    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})"
+)
+_HEADER_SAFE = re.compile(r"[\x21-\x7e]+")
+PLACEHOLDER_KEYS = ("ollama", "no-key-required", "lm-studio", "none")
+
+
+def register_secret(value: str | None) -> None:
+    """Remember a credential so `redact` removes it from every message, whatever
+    shape it has. Called wherever a key is resolved; nothing is ever printed."""
+    if value and len(value) >= 6 and value.lower() not in PLACEHOLDER_KEYS:
+        _SECRETS.add(value)
+
+
+def redact(text: str) -> str:
+    """`text` with every registered secret and every credential-shaped string
+    (Bearer values, x-api-key, sk-/nvapi- keys, JWTs) replaced by `***`."""
+    from urllib.parse import quote, quote_plus
+
+    for secret in sorted(_SECRETS, key=len, reverse=True):
+        for form in {secret, quote(secret, safe=""), quote_plus(secret)}:
+            text = text.replace(form, "***")
+        text = re.sub(r"\s*".join(map(re.escape, secret)), "***", text)  # split across a line
+    return _SHAPES.sub("***", text)
+
+
+def key_is_header_safe(value: str) -> bool:
+    """Whether `value` can be an HTTP header value: printable ASCII, no spaces or
+    newlines. A key that is not fails every request in a way that names nothing."""
+    return bool(_HEADER_SAFE.fullmatch(value))
+
+
+def host_is_loopback(url: str) -> bool:
+    """Whether the URL's host is this machine (localhost, 127.0.0.0/8, ::1)."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(url).hostname or "").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False

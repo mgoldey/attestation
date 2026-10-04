@@ -42,6 +42,7 @@ dependencies = [
     "sympy>=1.13",
     "defusedxml>=0.7.1",
     "pypdf>=6.18.0",
+    "pyyaml>=6.0",
 ]
 
 [project.urls]

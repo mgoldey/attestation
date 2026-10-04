@@ -17,7 +17,12 @@ from typing import Any, Literal, cast
 import numpy as np
 from pydantic import BaseModel, Field, field_validator
 
-from attestation.ports import BackendUnreachable, backend_unreachable
+from attestation.ports import (
+    BackendUnreachable,
+    backend_rejected,
+    backend_unreachable,
+    failure_detail,
+)
 
 log = logging.getLogger(__name__)
 
@@ -448,14 +453,22 @@ def _ask_tags(chat_fn, messages: list[dict], what: str) -> ItemTags | None:
     Shared by items and references so the retry policy and the unreachable
     diagnosis exist once. A dead socket is not the record's fault and retrying
     it is pointless: it raises BackendUnreachable so the run can stop and say
-    so once.
+    so once. So is a REACHABLE backend that refuses every request -- a 404 for a
+    model it never had (the Ollama default asked for gemma4 on a box whose only
+    server is an embedder), a 401/403 for a bad key, a 410 for a retired
+    model: measured 2026-10-02, those were retried twice per item, counted as
+    `failed`, and never explained, because only a dead socket was recognised.
+    The exception carries `failure_detail` (status + the server's own reason)
+    for the caller to print beside WHERE the url and model came from.
     """
     for _ in range(2):  # one retry, per spec
         try:
             return ItemTags.model_validate(chat_fn(messages, ItemTags.model_json_schema()))
+        except BackendUnreachable:  # incl. NotConfigured/Rejected: already worded
+            raise
         except Exception as exc:
-            if backend_unreachable(exc):
-                raise BackendUnreachable(str(exc)) from exc
+            if backend_unreachable(exc) or backend_rejected(exc):
+                raise BackendUnreachable(failure_detail(exc)) from exc
             log.debug("tagging attempt failed for %s", what, exc_info=True)
     return None
 
@@ -567,13 +580,15 @@ def run_tagging(conn, chat_fn, model: str, limit: int | None = None) -> dict:
             before = conn.total_changes
             try:
                 tagged = tag_one_item(conn, item, chat_fn, vocab, model_name, prompt)
-            except BackendUnreachable:
+            except BackendUnreachable as exc:
                 # One dead socket would otherwise cost a retry per item for the
                 # whole batch and print `failed: N` with the cause -- Ollama is
                 # not running -- nowhere in sight. Stop, and say so once.
                 stats["chat_down"] = True
+                stats["chat_error"] = str(exc)
                 log.warning(
-                    "chat model unreachable; stopping -- untagged items wait for the next run"
+                    "chat backend unusable (%s); stopping -- untagged items wait for the next run",
+                    exc,
                 )
                 break
             if tagged:
@@ -629,9 +644,10 @@ def run_reference_tagging(conn, chat_fn, model: str, limit: int | None = None) -
         messages = tag_messages(row["title"], row["summary"], vocab, prompt)
         try:
             parsed = _ask_tags(chat_fn, messages, f"reference {row['id']}")
-        except BackendUnreachable:
+        except BackendUnreachable as exc:
             stats["chat_down"] = True
-            log.warning("chat model unreachable; stopping -- untagged references wait")
+            stats["chat_error"] = str(exc)
+            log.warning("chat backend unusable (%s); stopping -- untagged references wait", exc)
             break
         if parsed is None:
             stats["failed"] += 1
