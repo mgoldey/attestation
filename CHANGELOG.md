@@ -9,6 +9,11 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-05
+
+Chat on whichever model Hermes runs (opt-in), and a library dashboard export for
+AgentMarkit's Files tab.
+
 ### Added
 
 - **`ATTEST_LLM_FROM_HERMES=1`: chat on the model Hermes is connected to, whichever
@@ -516,7 +521,8 @@ this is the repo's first public artifact despite the number.
   the first green CI run needed a stubbed daemon test plus a Python build
   that can load the `sqlite-vec` extension (`d4ea750`).
 
-[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/mgoldey/attestation/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/mgoldey/attestation/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/mgoldey/attestation/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/mgoldey/attestation/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/mgoldey/attestation/compare/v0.2.4...v0.2.5
