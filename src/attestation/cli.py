@@ -112,6 +112,7 @@ HELP: dict[str, str] = {
     "warmup": "pin chat + embedding models in VRAM",
     "reload": "restart running MCP servers so code edits take effect",
     "backup": "write a consistent copy of the database",
+    "reembed": "rebuild every vector with the configured embedder, keeping everything else",
     "emit": "agent configs generated from the tool surfaces",
     "manifest": "what a packager needs to know, derived from this package",
     "kg-report": "knowledge-graph health + topic clusters",
@@ -243,6 +244,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_db(sp)
     sp.add_argument("dest", help="path to write; must not already exist")
     sp.set_defaults(func=cmd_backup)
+
+    sp = sub.add_parser("reembed", help=HELP["reembed"])
+    add_db(sp)
+    sp.add_argument(
+        "--force",
+        action="store_true",
+        help="drop and rebuild even when the stored model and width already match",
+    )
+    sp.set_defaults(func=cmd_reembed)
 
     sp = sub.add_parser("emit", help=HELP["emit"])
     sp.add_argument(
@@ -675,6 +685,57 @@ def cmd_backup(args: argparse.Namespace) -> int:
     size = dest.stat().st_size / 1e6
     print(f"wrote {dest} ({size:.1f} MB) — restore by copying it back over {src}")
     return 0
+
+
+@_documented("reembed")
+def cmd_reembed(args: argparse.Namespace) -> int:
+    """Switch an existing database to the configured EMBED_MODEL/EMBED_DIMS
+    in place (spec 2026-10-06, decision 6). The new embedder must answer
+    before anything is dropped, and a backup is taken before the drop. On a
+    database that already matches, only the rows with no vector are filled,
+    so a run cut short is finished by running it again."""
+    import time
+
+    from attestation import library
+    from attestation.db import drop_vectors, get_db, resolve_db_path
+    from attestation.embed import Embedder
+    from attestation.ingest import embed_missing_items
+
+    path = resolve_db_path(args.db)
+    if not path.exists():
+        return fail(f"no database at {path}")
+    embedder = Embedder()
+    try:
+        embedder.embed_query("attest reembed check")
+    except Exception as exc:  # noqa: BLE001 -- any failure of the configured
+        # embedder (auth, EOL model, network, wrong shape) must stop this
+        # before the index is dropped; the message is the diagnosis.
+        print(f"reembed: the configured embedder did not answer, nothing changed ({exc})")
+        return 1
+    try:
+        get_db(path).close()
+        mismatched = None
+    except RuntimeError as exc:  # the dims/model guard in _ensure_vec_tables
+        mismatched = str(exc)
+    if mismatched or args.force:
+        backup = path.with_name(f"{path.stem}.pre-reembed-{time.strftime('%Y%m%d-%H%M%S')}.db")
+        drop_vectors(path, backup)
+        print(
+            f"backed up to {backup}; dropped the vector index"
+            + (f" ({mismatched})" if mismatched else "")
+        )
+    with open_db(args.db, need_vectors=True) as conn:
+        items = embed_missing_items(conn, embedder)
+        print(f"items: {items} re-embedded")
+        done, missing, error = library.embed_missing(conn, embedder, None)
+    print(
+        f"references: {done} re-embedded, {missing} still without a vector"
+        + (f" ({error})" if error else "")
+    )
+    # A live attest-mcp holds the OLD model's profile vectors in memory
+    # (rank._PROFILE_VEC_CACHE) and never reloads on its own.
+    print("run `attest reload` so live MCP servers pick up the new vectors")
+    return 1 if error else 0
 
 
 @_documented("manifest")

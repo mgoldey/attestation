@@ -486,7 +486,7 @@ def _hosted_probe(transport=None) -> StepResult:
     except BackendNotConfigured as exc:
         return StepResult("hosted_models", Status.BROKEN, str(exc))
     try:
-        vec = EmbeddingClient(transport=transport).embed("attest install check")
+        vec = EmbeddingClient(transport=transport).embed("attest install check", input_type="query")
     except Exception as exc:  # noqa: BLE001 -- every failure of a hosted
         # embedding call (auth, EOL model, network) is reported through the
         # same one-line detail; nothing here is a bug in this code.

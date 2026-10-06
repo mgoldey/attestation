@@ -11,6 +11,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -281,6 +282,22 @@ def describe_embedding() -> str:
     return f"{display_url(embed_base_url())} model {embed_model()} (url: {src}; model: {model_src})"
 
 
+def embed_input_types() -> bool:
+    """Whether the embedding server takes NIM's `input_type`/`truncate` fields.
+
+    EMBED_INPUT_TYPE (`1/true/on` or `0/false/off`) when set; otherwise on
+    exactly when EMBED_BASE_URL is NVIDIA's hosted API. MEASURED 2026-10-06:
+    nvidia/nemotron-3-embed-1b answers 200 without input_type and ranks at
+    AUC 0.625 on evals/reaction_cases.json against 0.962 with it -- a plain
+    OpenAI-shaped call passes every check and ranks barely above chance.
+    """
+    raw = (os.environ.get("EMBED_INPUT_TYPE") or "").strip().lower()
+    if raw:
+        return raw in ("1", "true", "on", "yes")
+    host = urlsplit(embed_base_url()).hostname or ""
+    return host == "api.nvidia.com" or host.endswith(".api.nvidia.com")
+
+
 def embed_model() -> str:
     """The configured embedding model name, resolved at call time -- see `base_url`."""
     return os.environ.get("EMBED_MODEL", DEFAULT_EMBED_MODEL)
@@ -461,6 +478,9 @@ class EmbeddingClient:
 
     def __init__(self, base_url=None, model=None, api_key=None, timeout=60, transport=None):
         self.model = model or embed_model()
+        # Read once, here, like every other client setting: NIM's asymmetric
+        # `input_type` plus `truncate`, which a >8192-token input needs.
+        self.typed = embed_input_types()
         self.client = httpx.Client(
             base_url=base_url or embed_base_url(),
             timeout=timeout,
@@ -468,14 +488,36 @@ class EmbeddingClient:
             transport=transport,
         )
 
-    def embed(self, text: str) -> list[float]:
-        """The raw embedding for `text`, untruncated and unnormalized --
-        `embed.truncate_normalize` is the caller's job, not this client's."""
-        resp = self.client.post("/embeddings", json={"model": self.model, "input": text})
-        resp.raise_for_status()
-        return resp.json()["data"][0]["embedding"]
+    def _body(self, input_, input_type: str | None) -> dict:
+        body = {"model": self.model, "input": input_}
+        if self.typed:
+            if input_type not in ("query", "passage"):
+                # No default: guessing a role is how the 0.625 ranking happens.
+                raise ValueError("this embedding server needs input_type='query' or 'passage'")
+            body["input_type"] = input_type
+            body["truncate"] = "END"
+        return body
 
-    def embed_many(self, texts: list[str]) -> list[list[float]]:
+    def _data(self, resp: httpx.Response) -> list:
+        """The `data` list, or a ValueError a person can act on. An
+        Ollama-native 200 ({"embedding": ...}) surfaced as `KeyError: 'data'`."""
+        body = resp.json()
+        if isinstance(body, dict) and isinstance(body.get("data"), list):
+            return body["data"]
+        raise ValueError(
+            f"{resp.request.url.host}: embedding response has no 'data' list"
+            f" (not OpenAI-shaped?): {json.dumps(body)[:200]}"
+        )
+
+    def embed(self, text: str, input_type: str | None = None) -> list[float]:
+        """The raw embedding for `text`, untruncated and unnormalized --
+        `embed.truncate_normalize` is the caller's job, not this client's.
+        `input_type` is required by, and only sent to, a NIM server."""
+        resp = self.client.post("/embeddings", json=self._body(text, input_type))
+        resp.raise_for_status()
+        return self._data(resp)[0]["embedding"]
+
+    def embed_many(self, texts: list[str], input_type: str | None = None) -> list[list[float]]:
         """Raw embeddings for `texts`, ONE HTTP request -- measured 7.2x
         faster than one call per item against live Ollama/embeddinggemma.
 
@@ -488,9 +530,9 @@ class EmbeddingClient:
         """
         if not texts:
             return []
-        resp = self.client.post("/embeddings", json={"model": self.model, "input": texts})
+        resp = self.client.post("/embeddings", json=self._body(texts, input_type))
         resp.raise_for_status()
-        data = resp.json()["data"]
+        data = self._data(resp)
         return [d["embedding"] for d in sorted(data, key=lambda d: d["index"])]
 
 

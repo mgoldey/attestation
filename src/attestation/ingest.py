@@ -317,6 +317,28 @@ def _embed_entries(embedder, new_entries: list) -> list:
     ]
 
 
+def embed_missing_items(conn, embedder) -> int:
+    """Embed every item with no vector, `EMBED_BATCH_SIZE` at a time, one
+    short commit per batch; returns how many were embedded. `attest reembed`
+    fills a freshly dropped index with it. A failed batch raises: what was
+    committed stays, and running it again resumes from there."""
+    sql = (
+        "SELECT i.id, i.title, i.summary FROM items i WHERE NOT EXISTS"
+        " (SELECT 1 FROM item_vectors v WHERE v.rowid = i.id) ORDER BY i.id"
+    )
+    rows = conn.execute(sql).fetchall()
+    for start in range(0, len(rows), EMBED_BATCH_SIZE):
+        chunk = rows[start : start + EMBED_BATCH_SIZE]
+        vectors = embedder.embed_documents([(r["title"], r["summary"]) for r in chunk])
+        for row, vec in zip(chunk, vectors, strict=True):
+            conn.execute(
+                "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+                (row["id"], vec.tobytes()),
+            )
+        conn.commit()
+    return len(rows)
+
+
 def run_ingest(
     conn, embedder, feeds_path: str | Path, parse=feedparser.parse, *, clients=None
 ) -> dict:

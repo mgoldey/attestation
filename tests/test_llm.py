@@ -317,3 +317,82 @@ def test_embeddings_can_come_from_their_own_server_without_the_chat_key(monkeypa
     monkeypatch.setenv("EMBED_API_KEY", "embed-key")
     EmbeddingClient(transport=httpx.MockTransport(handler)).embed("x")
     assert seen[-1] == ("127.0.0.1", "Bearer embed-key")
+
+
+# --- NVIDIA NIM (docs/superpowers/specs/2026-10-06-nim-embeddings-design.md) ---
+
+
+def _nim_transport(captured, body=None):
+    def handler(request):
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json=body or {"data": [{"index": 0, "embedding": [0.5]}]})
+
+    return httpx.MockTransport(handler)
+
+
+def test_nim_host_sends_input_type_and_truncate(monkeypatch):
+    """MEASURED 2026-10-06: nvidia/nemotron-3-embed-1b answers 200 WITHOUT
+    input_type and ranks at AUC 0.625 on reaction_cases (0.962 with it), and a
+    >8192-token input is a 400 unless truncate=END. Both must be sent, and the
+    NIM host alone must be enough to turn them on."""
+    from attestation.llm import embed_input_types
+
+    monkeypatch.delenv("EMBED_INPUT_TYPE", raising=False)
+    monkeypatch.setenv("EMBED_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    assert embed_input_types() is True
+    captured = []
+    client = EmbeddingClient(model="nvidia/nemotron-3-embed-1b", transport=_nim_transport(captured))
+    client.embed("q", input_type="query")
+    client.embed_many(["a"], input_type="passage")
+    assert captured[0] == {
+        "model": "nvidia/nemotron-3-embed-1b",
+        "input": "q",
+        "input_type": "query",
+        "truncate": "END",
+    }
+    assert captured[1]["input_type"] == "passage" and captured[1]["truncate"] == "END"
+
+
+def test_input_type_is_never_sent_to_an_openai_style_server(monkeypatch):
+    """Ollama and OpenAI do not know these fields; OpenAI rejects unknown ones."""
+    monkeypatch.delenv("EMBED_INPUT_TYPE", raising=False)
+    monkeypatch.setenv("EMBED_BASE_URL", "http://127.0.0.1:11434/v1")
+    captured = []
+    EmbeddingClient(model="m", transport=_nim_transport(captured)).embed("x", input_type="query")
+    assert captured[0] == {"model": "m", "input": "x"}
+
+
+def test_embed_input_type_env_overrides_the_host(monkeypatch):
+    """A self-hosted NIM is not on api.nvidia.com; EMBED_INPUT_TYPE says so."""
+    from attestation.llm import embed_input_types
+
+    monkeypatch.setenv("EMBED_BASE_URL", "http://nim.lan:8000/v1")
+    monkeypatch.setenv("EMBED_INPUT_TYPE", "1")
+    assert embed_input_types() is True
+    monkeypatch.setenv("EMBED_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    monkeypatch.setenv("EMBED_INPUT_TYPE", "off")
+    assert embed_input_types() is False
+
+
+def test_a_typed_client_refuses_a_call_without_a_role(monkeypatch):
+    """Defaulting the role would make the silent 0.625 path reachable again."""
+    monkeypatch.delenv("EMBED_INPUT_TYPE", raising=False)
+    monkeypatch.setenv("EMBED_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    client = EmbeddingClient(model="m", transport=_nim_transport([]))
+    with pytest.raises(ValueError, match="input_type"):
+        client.embed("x")
+
+
+def test_a_reply_without_data_names_the_server_not_keyerror(monkeypatch):
+    """The research assistant's ingest died on `KeyError: 'data'`: a 200 that
+    was not OpenAI-shaped (Ollama's native {"embedding": ...}). Say what came back."""
+    monkeypatch.delenv("EMBED_INPUT_TYPE", raising=False)
+    client = EmbeddingClient(
+        base_url="http://127.0.0.1:11434/api",
+        model="m",
+        transport=_nim_transport([], body={"embedding": [0.1, 0.2]}),
+    )
+    with pytest.raises(ValueError, match=r"127\.0\.0\.1.*no 'data'.*embedding"):
+        client.embed("x")
+    with pytest.raises(ValueError, match="no 'data'"):
+        client.embed_many(["x"])
