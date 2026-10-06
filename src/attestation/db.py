@@ -847,6 +847,31 @@ SEED_USERS = {
 }
 
 
+def drop_vectors(path: str | Path, backup: str | Path) -> Path:
+    """Back the database up to `backup`, then drop both vec0 tables and their
+    `embedding_model` rows, so the next `get_db` recreates them at the
+    configured EMBED_DIMS and EMBED_MODEL. Nothing relational is touched.
+
+    Opens its own connection: `get_db` is the thing refusing this database,
+    so it cannot be the way in. `attest reembed` is the only caller, and only
+    after the new embedder has answered (spec 2026-10-06, decision 6).
+    """
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        dest = backup_db(conn, backup)
+        for table in ("item_vectors", "reference_vectors"):
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'embedding_model'").fetchone():
+            conn.execute("DELETE FROM embedding_model")
+        conn.commit()
+    finally:
+        conn.close()
+    return dest
+
+
 def backup_db(conn: sqlite3.Connection, dest: str | Path) -> Path:
     """Write a consistent single-file copy of the database to `dest`.
 

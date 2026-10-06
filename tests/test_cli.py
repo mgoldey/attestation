@@ -1656,6 +1656,127 @@ def test_desk_refresh_reports_a_refused_publish(tmp_path, fake_embedder, monkeyp
     assert "desk: published" not in out
 
 
+class _WideEmbedder:
+    """A stand-in for the NEW embedder: a distinct, recognisable vector per
+    text at a different width from the conftest fake."""
+
+    def __init__(self, dims, fail=False):
+        self.dims, self.fail = dims, fail
+
+    def _v(self, text):
+        import numpy as np
+
+        if self.fail:
+            raise OSError("embedder down")
+        v = np.full(self.dims, float(len(text) % 7 + 1), dtype=np.float32)
+        return v / np.linalg.norm(v)
+
+    def embed_document(self, title, text):
+        return self._v(f"{title}{text}")
+
+    def embed_documents(self, pairs):
+        return [self.embed_document(t, x) for t, x in pairs]
+
+    def embed_query(self, text):
+        return self._v(text)
+
+
+def _old_db(tmp_path, fake_embedder, monkeypatch):
+    """A database built by the OLD embedder (model 'old', 256 dims), with a
+    persona, a click, two items and a reference -- what an installed machine has."""
+    monkeypatch.setenv("EMBED_MODEL", "old")
+    monkeypatch.setenv("EMBED_DIMS", "256")
+    db = tmp_path / "t.db"
+    conn = seeded_db(db)
+    ids = []
+    for title in ("alpha", "beta"):
+        cur = conn.execute(
+            "INSERT INTO items(feed_id, title, url, summary, content_hash)"
+            " VALUES (NULL, ?, 'https://example.org/x', 's', ?)",
+            (title, title),
+        )
+        conn.execute(
+            "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+            (cur.lastrowid, fake_embedder.embed_document(title, "s").tobytes()),
+        )
+        ids.append(cur.lastrowid)
+    conn.execute(
+        'INSERT INTO "references"(id, identity, title, abstract, first_seen, updated)'
+        " VALUES (7, 'doi:x', 'Ref', 'abs', '2026-09-05', '2026-09-05')"
+    )
+    conn.execute(
+        "INSERT INTO reference_vectors(rowid, embedding) VALUES (7, ?)",
+        (fake_embedder.embed_document("Ref", "abs").tobytes(),),
+    )
+    user = conn.execute("SELECT id FROM users WHERE name = 'researcher'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO clicks(user_id, item_id, useful, source) VALUES (?, ?, 1, 'ui')",
+        (user, ids[0]),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("ATTEST_DB", str(db))
+    return db, ids
+
+
+def test_reembed_switches_model_and_width_in_place(tmp_path, fake_embedder, monkeypatch, capsys):
+    """Spec 2026-10-06 decision 6: a model/width change used to mean "re-ingest
+    into a fresh database", losing personas, clicks and the library."""
+    db, ids = _old_db(tmp_path, fake_embedder, monkeypatch)
+    monkeypatch.setenv("EMBED_MODEL", "nvidia/nemotron-3-embed-1b")
+    monkeypatch.setenv("EMBED_DIMS", "64")
+    with pytest.raises(RuntimeError):
+        get_db(db)  # the guard this command exists to get past
+    monkeypatch.setattr("attestation.embed.Embedder", lambda *a, **k: _WideEmbedder(64))
+
+    assert main(["reembed"]) == 0
+
+    out = capsys.readouterr().out
+    assert "items: 2 re-embedded" in out and "references: 1 re-embedded" in out
+    conn = get_db(db)  # opens: model and width now match
+    assert conn.execute("SELECT COUNT(*) FROM item_vectors").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM reference_vectors").fetchone()[0] == 1
+    models = {r["model"] for r in conn.execute("SELECT model FROM embedding_model")}
+    assert models == {"nvidia/nemotron-3-embed-1b"}
+    assert len(conn.execute("SELECT embedding FROM item_vectors").fetchone()[0]) == 64 * 4
+    assert conn.execute("SELECT COUNT(*) FROM clicks").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 3
+    assert list(tmp_path.glob("t.pre-reembed-*.db")), "no backup was taken"
+
+
+def test_reembed_refuses_before_touching_anything_when_the_embedder_is_down(
+    tmp_path, fake_embedder, monkeypatch, capsys
+):
+    """Dropping the index first and failing second would leave an empty
+    index behind a dead endpoint -- exactly the machine this is for."""
+    db, _ = _old_db(tmp_path, fake_embedder, monkeypatch)
+    monkeypatch.setenv("EMBED_MODEL", "new")
+    monkeypatch.setattr("attestation.embed.Embedder", lambda *a, **k: _WideEmbedder(256, True))
+    assert main(["reembed"]) == 1
+    assert "embedder down" in capsys.readouterr().out
+    monkeypatch.setenv("EMBED_MODEL", "old")
+    conn = get_db(db)
+    assert conn.execute("SELECT COUNT(*) FROM item_vectors").fetchone()[0] == 2
+    assert not list(tmp_path.glob("t.pre-reembed-*.db"))
+
+
+def test_reembed_on_a_matching_database_only_fills_what_is_missing(
+    tmp_path, fake_embedder, monkeypatch, capsys
+):
+    """Resumable: a run cut short leaves the new model recorded and some rows
+    unembedded; running it again finishes the job instead of starting over."""
+    db, ids = _old_db(tmp_path, fake_embedder, monkeypatch)
+    conn = get_db(db)
+    conn.execute("DELETE FROM item_vectors WHERE rowid = ?", (ids[1],))
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr("attestation.embed.Embedder", lambda *a, **k: _WideEmbedder(256))
+    assert main(["reembed"]) == 0
+    assert "items: 1 re-embedded" in capsys.readouterr().out
+    assert not list(tmp_path.glob("t.pre-reembed-*.db")), "nothing was dropped, nothing to back up"
+    assert get_db(db).execute("SELECT COUNT(*) FROM item_vectors").fetchone()[0] == 2
+
+
 def test_desk_import_records_verdicts(tmp_path, fake_embedder, monkeypatch, capsys):
     db, item_id = _desk_db(tmp_path, fake_embedder, monkeypatch)
     state = _state_file(

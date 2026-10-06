@@ -129,6 +129,20 @@ options:
               (if it exists) > ./hermes.db
 ```
 
+## attest reembed
+
+```
+usage: attest reembed [-h] [--db DB] [--force]
+
+options:
+  -h, --help  show this help message and exit
+  --db DB     DB path. Resolution order if omitted: ATTEST_DB (or RSS_DB) env
+              var > ~/.hermes/skills/science-recommendations/data/hermes.db
+              (if it exists) > ./hermes.db
+  --force     drop and rebuild even when the stored model and width already
+              match
+```
+
 ## attest emit
 
 ```

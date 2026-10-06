@@ -1886,6 +1886,31 @@ def _hosted_transport(embed_status=200, chat_status=200, dims=2048, body=None):
     return httpx.MockTransport(handler), calls
 
 
+def test_hosted_probe_makes_the_request_ingest_will_make(monkeypatch):
+    """Spec 2026-10-06 decision 7: against NIM the probe sends input_type and
+    truncate, so it checks the call ingest makes -- an untyped probe "passed"
+    against nemotron-3-embed-1b while ranking at AUC 0.625."""
+    import json
+
+    import httpx
+
+    monkeypatch.setenv("LLM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    monkeypatch.delenv("EMBED_BASE_URL", raising=False)
+    monkeypatch.delenv("EMBED_INPUT_TYPE", raising=False)
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    bodies = []
+
+    def handler(request):
+        if request.url.path.endswith("/embeddings"):
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.1] * 2048}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    r = install._hosted_probe(transport=httpx.MockTransport(handler))
+    assert r.status is install.Status.OK, r.detail
+    assert bodies[0]["input_type"] == "query" and bodies[0]["truncate"] == "END"
+
+
 def test_hosted_models_skipped_for_ollama(monkeypatch):
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     r = install.step_hosted_models()

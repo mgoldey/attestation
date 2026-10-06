@@ -155,3 +155,27 @@ def test_embed_documents_empty_list_returns_empty():
     emb = make_batch_embedder(captured)
     assert emb.embed_documents([]) == []
     assert captured == []
+
+
+def test_a_nim_embedder_sends_raw_text_with_roles(monkeypatch):
+    """Spec 2026-10-06 decision 3: gemma's task prefixes are not NIM's
+    asymmetry; input_type is. Documents are "title\\ntext", queries raw."""
+    monkeypatch.setenv("EMBED_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    monkeypatch.delenv("EMBED_INPUT_TYPE", raising=False)
+    captured = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        captured.append(body)
+        n = len(body["input"]) if isinstance(body["input"], list) else 1
+        return httpx.Response(
+            200, json={"data": [{"embedding": [1.0] * 768, "index": i} for i in range(n)]}
+        )
+
+    emb = Embedder(client=EmbeddingClient(model="m", transport=httpx.MockTransport(handler)))
+    emb.embed_document("My Title", "body text")
+    emb.embed_query("protein folding")
+    emb.embed_documents([("T2", "b2")])
+    assert (captured[0]["input"], captured[0]["input_type"]) == ("My Title\nbody text", "passage")
+    assert (captured[1]["input"], captured[1]["input_type"]) == ("protein folding", "query")
+    assert (captured[2]["input"], captured[2]["input_type"]) == (["T2\nb2"], "passage")

@@ -586,7 +586,9 @@ def embed_missing(conn, embedder, limit: int | None) -> tuple[int, int, str | No
     for row in rows:
         try:
             vec = embedder.embed_document(row["title"], row["abstract"] or "")
-        except (httpx.HTTPError, OSError) as exc:
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            # ValueError: a reply with no `data` (EmbeddingClient._data) or a
+            # width under EMBED_DIMS -- the server's answer, not a bug here.
             error = f"{type(exc).__name__}: {exc}"
             break
         conn.execute(
