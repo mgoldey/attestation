@@ -339,6 +339,53 @@ def embed_missing_items(conn, embedder) -> int:
     return len(rows)
 
 
+class _EmbedFailed(Exception):
+    """The embedder answered but failed; the cause is `__cause__`."""
+
+
+def _embed_or_flag(embedder, new_entries):
+    """`_embed_entries`, with a failure that is not an unreachable backend
+    re-raised as `_EmbedFailed`, so it is never reported as a broken feed."""
+    try:
+        return _embed_entries(embedder, new_entries)
+    except Exception as exc:
+        # Re-raised either way: an unreachable backend keeps its own type for
+        # run_ingest's handler; anything else is tagged as the embedder's fault.
+        if backend_unreachable(exc):
+            raise
+        raise _EmbedFailed() from exc
+
+
+def _embed_failure(
+    outcomes: list[dict], url: str, exc: _EmbedFailed, last: str | None
+) -> tuple[bool, str]:
+    """Record one feed's embedding failure; (stop, this error).
+
+    The first is named per feed ("embedding failed for <url>"), never "feed
+    failed": MEASURED 2026-10-06, an Ollama-native reply failed every feed of
+    an AgentMarkit machine with `KeyError: 'data'` and the log read as N broken
+    RSS feeds. A second feed failing with the same error means the embedder,
+    not the feeds, so it is said once and the rest are skipped -- the same
+    shortcut an unreachable backend takes, latched the same way.
+    """
+    cause = exc.__cause__ or exc
+    error = f"{type(cause).__name__}: {cause}"
+    repeated = error == last
+    outcomes.append(
+        {"feed": url, "new": 0, "skipped": 0, "error": error, "embedder_down": repeated}
+    )
+    if repeated:
+        log.warning(
+            "embedding failed the same way for a second feed (%s) -- the embedder is"
+            " the problem, not the feeds; skipping the remaining feeds"
+            " (`attest install --check` diagnoses this)",
+            error,
+        )
+    else:
+        log.warning("embedding failed for %s -- %s", url, error)
+    return repeated, error
+
+
 def run_ingest(
     conn, embedder, feeds_path: str | Path, parse=feedparser.parse, *, clients=None
 ) -> dict:
@@ -362,6 +409,7 @@ def run_ingest(
         clients = research.clients_from_env()  # the flag is read here, once per run
     outcomes: list[dict] = []
     already_down = False
+    last_embed_error: str | None = None
     for feed in conn.execute("SELECT * FROM feeds").fetchall():
         try:
             parsed = _fetch_feed(feed, parse, clients)
@@ -371,7 +419,7 @@ def run_ingest(
 
             new_entries, skipped = _new_entries(conn, feed["id"], parsed.entries)
 
-            embedded = _embed_entries(embedder, new_entries)
+            embedded = _embed_or_flag(embedder, new_entries)
 
             # Pass 3: short write transaction -- just the inserts + last_fetched
             # update. `added_here` is counted locally and folded into the
@@ -420,6 +468,13 @@ def run_ingest(
             # an unreachable embedding backend (fatal for every feed, so stop
             # and say so once) versus this feed being broken (report and go on).
             conn.rollback()
+            if isinstance(exc, _EmbedFailed):
+                stop, last_embed_error = _embed_failure(
+                    outcomes, feed["url"], exc, last_embed_error
+                )
+                if stop:
+                    break
+                continue
             # An unreachable embedder is not a broken feed, and reporting it as
             # one sends a new user to debug their network or feeds.toml while
             # the actual cause is that Ollama is not running. Measured: with the

@@ -408,6 +408,46 @@ def test_a_dead_embedder_is_named_once_not_blamed_on_every_feed(tmp_path, caplog
     assert stats.get("embedder_down") is True, "the caller cannot tell this apart from bad feeds"
 
 
+class _WrongShapeEmbedder:
+    """Reachable but useless: every call fails the same way. MEASURED
+    2026-10-06 on an AgentMarkit machine: an Ollama-native reply read as
+    OpenAI-shaped failed every feed with `KeyError: 'data'`, and the log read
+    as N broken RSS feeds."""
+
+    calls = 0
+
+    def embed_documents(self, pairs):
+        type(self).calls += 1
+        raise ValueError("127.0.0.1: embedding response has no 'data' list")
+
+
+def test_an_embedder_failing_every_feed_alike_is_said_once(tmp_path, caplog):
+    import logging
+
+    conn = get_db(tmp_path / "t.db")
+    feeds = tmp_path / "feeds.toml"
+    feeds.write_text(
+        "".join(f'[[feeds]]\nurl = "http://{n}.example/f"\ntitle = "{n}"\n' for n in "abcde")
+    )
+
+    def parse(url):
+        return SimpleNamespace(
+            entries=[{"title": "t", "summary": "s", "id": f"{url}#1", "link": f"{url}#1"}],
+            feed=SimpleNamespace(title="T"),
+        )
+
+    _WrongShapeEmbedder.calls = 0
+    with caplog.at_level(logging.WARNING):
+        stats = run_ingest(conn, _WrongShapeEmbedder(), feeds, parse=parse)
+
+    text = caplog.text
+    assert "feed failed" not in text, f"an embedder fault read as RSS failures:\n{text}"
+    assert "no 'data' list" in text and "embedding" in text.lower()
+    assert _WrongShapeEmbedder.calls == 2, "stop once two feeds fail at the embedder alike"
+    assert "skipping the remaining feeds" in text
+    assert stats.get("embedder_down") is True
+
+
 def test_one_broken_feed_still_reports_per_feed(tmp_path, caplog, fake_embedder):
     """The embedder shortcut must not swallow ordinary per-feed failures --
     a 404 on one feed is still that feed's problem and the others must run."""

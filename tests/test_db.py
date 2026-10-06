@@ -226,6 +226,24 @@ def test_dims_mismatch_refuses_to_open(tmp_path, monkeypatch):
         get_db(tmp_path / "t.db")
 
 
+def test_both_refusals_name_the_command_that_fixes_them(tmp_path, monkeypatch):
+    """They said "re-ingest into a fresh database", which loses personas,
+    clicks and the library; `attest reembed` (2026-10-06) switches in place."""
+    import pytest
+
+    monkeypatch.delenv("EMBED_DIMS", raising=False)
+    monkeypatch.setenv("EMBED_MODEL", "old")
+    get_db(tmp_path / "t.db").close()
+    monkeypatch.setenv("EMBED_DIMS", "512")
+    with pytest.raises(RuntimeError, match="attest reembed") as dims:
+        get_db(tmp_path / "t.db")
+    monkeypatch.delenv("EMBED_DIMS")
+    monkeypatch.setenv("EMBED_MODEL", "new")
+    with pytest.raises(RuntimeError, match="attest reembed") as model:
+        get_db(tmp_path / "t.db")
+    assert "fresh database" not in str(dims.value) + str(model.value)
+
+
 def test_embedding_model_is_recorded_on_fresh_db(tmp_path, monkeypatch):
     """A freshly created vec table records the EMBED_MODEL that will populate
     it, at creation time -- the table is empty until embed.py writes to it, so
