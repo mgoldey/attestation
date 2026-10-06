@@ -9,6 +9,45 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-06
+
+Hosted NVIDIA NIM embeddings that rank correctly, `attest reembed` to switch a
+database's embedder in place, and an install that pins the database the agent
+actually used.
+
+### Added
+
+- **NVIDIA NIM embeddings.** `EMBED_BASE_URL=https://integrate.api.nvidia.com/v1`
+  with `EMBED_MODEL=nvidia/nemotron-3-embed-1b` now sends NIM's `input_type`
+  (query or passage) and `truncate: END`. Without them `nemotron-3-embed-1b`
+  still answers 200 but ranks `evals/reaction_cases.json` at AUC 0.625, against
+  0.994 at 1024 dims with them (measured 2026-10-06). `EMBED_INPUT_TYPE=1` turns
+  this on for a self-hosted NIM. The `Embedder` sends raw text plus the role
+  instead of gemma's task prefixes. (#43)
+- **`attest reembed`.** Switches an existing database to the configured
+  `EMBED_MODEL` / `EMBED_DIMS` in place, keeping personas, clicks and the
+  library: it checks the new embedder answers before touching anything, backs
+  up, and rebuilds only the two vector tables. It is resumable and takes
+  `--force`. Measured on a copy of a live 20,013-item database: 23 minutes
+  through NIM. (#43)
+
+### Fixed
+
+- **A non-OpenAI-shaped embedding reply** (for example, Ollama's native API)
+  raised `KeyError: 'data'`. It now raises an error that names the host and
+  quotes the body. (#43)
+- **Ingest no longer reports an embedder fault as N broken feeds.** A failure
+  is logged as "embedding failed for <url>". A second feed failing the same way
+  is reported once, and the remaining feeds are skipped. (#45)
+- **The model and width mismatch refusals** name `attest reembed` instead of
+  "re-ingest into a fresh database". (#45)
+- **`attest install` pins `ATTEST_DB` to the database that holds the data.**
+  Before v0.2.2 the agent's tools wrote `~/hermes.db` while ingest wrote the
+  checkout's, and v0.2.2's pin chose the checkout's, which would have orphaned
+  130 references on one AgentMarkit machine. The install now pins the one
+  candidate holding data. It refuses when two candidates hold data, and reports
+  an existing pin to an empty database while another one holds data. (#44)
+
 ## [0.4.0] - 2026-10-05
 
 Chat on whichever model Hermes runs (opt-in), and a library dashboard export for
