@@ -802,7 +802,8 @@ def _ensure_vec_tables(conn: sqlite3.Connection) -> None:
             if stored is not None and stored != dims:
                 raise RuntimeError(
                     f"database has float[{stored}] vectors in {table} but EMBED_DIMS={dims}"
-                    " — re-ingest into a fresh database or set matching dims"
+                    " — `attest reembed` rebuilds the vectors at the new width in place"
+                    " (personas, clicks and the library are kept), or set matching dims"
                 )
         else:
             conn.execute(_vec_schema(dims, table))
@@ -826,8 +827,8 @@ def _ensure_vec_tables(conn: sqlite3.Connection) -> None:
         elif recorded["model"] != model:
             raise RuntimeError(
                 f"database has {table} vectors recorded from model={recorded['model']!r} but"
-                f" EMBED_MODEL={model} — re-ingest into a fresh database or set matching"
-                " EMBED_MODEL"
+                f" EMBED_MODEL={model} — `attest reembed` rebuilds the vectors with it in"
+                " place (personas, clicks and the library are kept), or set matching EMBED_MODEL"
             )
 
 
