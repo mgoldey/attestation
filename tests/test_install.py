@@ -309,6 +309,78 @@ def test_env_file_leaves_a_path_that_is_already_fixed(monkeypatch, tmp_path):
     assert env_path.read_text() == before + "ATTEST_DB=/data/mine.db\n"
 
 
+def _db_with_references(path, n):
+    """A database at `path` holding `n` library references and nothing else."""
+    from attestation.db import get_db
+
+    conn = get_db(path)
+    for i in range(n):
+        conn.execute(
+            'INSERT INTO "references"(identity, title, first_seen, updated)'
+            " VALUES (?, 't', '2026-10-01', '2026-10-01')",
+            (f"doi:10.1/{i}",),
+        )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def _home_elsewhere(monkeypatch, tmp_path):
+    """The autouse fixture's fake home, which is where Hermes started attest-mcp."""
+    home = install.Path.home()
+    monkeypatch.setenv("HERMES_HOME", str(home / ".hermes"))
+    return home
+
+
+def test_env_file_pins_the_database_an_old_agent_already_filled(monkeypatch, tmp_path):
+    """Spec 2026-10-06 split database: before v0.2.2 the agent's tools wrote
+    ~/hermes.db (Hermes starts attest-mcp in ~). Pinning the checkout's empty
+    database would orphan 130 references, measured on an AgentMarkit machine."""
+    home = _home_elsewhere(monkeypatch, tmp_path)
+    _db_with_references(home / "hermes.db", 3)
+
+    checked = install.step_env_file(check=True)
+    assert checked.status == "BROKEN" and str(home / "hermes.db") in checked.detail
+
+    fixed = install.step_env_file(check=False)
+    assert fixed.status == "FIXED", fixed.detail
+    assert (tmp_path / ".env").read_text().splitlines()[-1] == f"ATTEST_DB={home / 'hermes.db'}"
+    assert "3 references" in fixed.detail
+
+
+def test_env_file_refuses_to_choose_between_two_databases_with_data(monkeypatch, tmp_path):
+    home = _home_elsewhere(monkeypatch, tmp_path)
+    _db_with_references(home / "hermes.db", 2)
+    _db_with_references(tmp_path / "hermes.db", 1)
+    env_path = tmp_path / ".env"
+    before = env_path.read_text()
+
+    for check in (True, False):
+        result = install.step_env_file(check=check)
+        assert result.status == "BROKEN", result.detail
+        assert str(home / "hermes.db") in result.detail
+        assert str(tmp_path / "hermes.db") in result.detail
+        assert "ATTEST_DB" in result.detail
+    assert env_path.read_text() == before, "nothing is pinned while it is ambiguous"
+
+
+def test_env_file_reports_a_pin_that_orphaned_the_data(monkeypatch, tmp_path):
+    """A machine already upgraded past v0.2.2: the pin points at the empty
+    checkout database while ~/hermes.db holds the agent's library. Report it;
+    an explicit ATTEST_DB is never rewritten."""
+    home = _home_elsewhere(monkeypatch, tmp_path)
+    _db_with_references(home / "hermes.db", 4)
+    env_path = tmp_path / ".env"
+    pinned = env_path.read_text() + f"ATTEST_DB={tmp_path / 'hermes.db'}\n"
+    env_path.write_text(pinned)
+
+    for check in (True, False):
+        result = install.step_env_file(check=check)
+        assert result.status == "BROKEN", result.detail
+        assert str(home / "hermes.db") in result.detail and "4 references" in result.detail
+    assert env_path.read_text() == pinned
+
+
 def test_env_file_present_untouched(monkeypatch, tmp_path):
     db_path = _db_with_items(tmp_path, n_items=1)
     monkeypatch.setenv("RSS_DB", str(db_path))

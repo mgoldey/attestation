@@ -557,6 +557,110 @@ def _db_needs_pinning(env_path: Path) -> bool:
     return not skill_data_db().exists()
 
 
+_DATA_TABLES = ("items", "references", "clicks")
+
+
+def _db_rows(path: Path) -> dict[str, int]:
+    """Row counts of the tables that hold a reader's data, read-only.
+
+    A missing table or an unreadable file counts as zero: this asks "is
+    anything here worth keeping", and `get_db` would CREATE tables.
+    """
+    import sqlite3
+
+    counts = dict.fromkeys(_DATA_TABLES, 0)
+    try:
+        conn = sqlite3.connect(f"{path.absolute().as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return counts
+    try:
+        for table in _DATA_TABLES:
+            try:
+                counts[table] = conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            except sqlite3.Error:
+                pass
+    finally:
+        conn.close()
+    return counts
+
+
+def _describe(path: Path, rows: dict[str, int]) -> str:
+    return (
+        f"{path} ({rows['items']} items, {rows['references']} references, {rows['clicks']} clicks)"
+    )
+
+
+def _databases_with_data(root: Path) -> list[tuple[Path, dict[str, int]]]:
+    """Every candidate database holding data (spec 2026-10-06 split database).
+
+    Before v0.2.2 nothing pinned the path, and Hermes starts attest-mcp in its
+    own cwd, so the agent's tools wrote ~/hermes.db while ingest wrote the
+    checkout's. Measured on an AgentMarkit machine: 130 references in
+    ~/hermes.db, an empty checkout database.
+    """
+    from attestation.paths import hermes_home
+
+    seen: list[Path] = []
+    for path in (root / "hermes.db", Path.home() / "hermes.db", hermes_home() / "hermes.db"):
+        resolved = path.resolve()
+        if resolved.is_file() and resolved not in seen:
+            seen.append(resolved)
+    found = [(p, _db_rows(p)) for p in seen]
+    return [(p, rows) for p, rows in found if any(rows.values())]
+
+
+def _pinned_db(env_path: Path) -> Path | None:
+    """The ATTEST_DB (or RSS_DB) path this install resolves to, if one is set."""
+    for key in ("ATTEST_DB", "RSS_DB"):
+        if os.environ.get(key):
+            return Path(os.environ[key]).expanduser()
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            key, sep, value = line.strip().partition("=")
+            if sep and key in ("ATTEST_DB", "RSS_DB") and value.strip():
+                return Path(value.strip()).expanduser()
+    return None
+
+
+def _orphaned(env_path: Path, root: Path) -> str | None:
+    """An explicit pin to an empty database while another one holds data."""
+    pinned = _pinned_db(env_path)
+    if pinned is None or (pinned.is_file() and any(_db_rows(pinned).values())):
+        return None
+    others = [(p, r) for p, r in _databases_with_data(root) if p != pinned.resolve()]
+    if not others:
+        return None
+    return (
+        f"ATTEST_DB points at {pinned}, which holds nothing, while "
+        + "; ".join(_describe(p, r) for p, r in others)
+        + " does. Set ATTEST_DB in "
+        + str(env_path)
+        + " to the database the agent should use (it is never rewritten for you)"
+    )
+
+
+def _pin_target(root: Path, env_path: Path) -> tuple[Path, str] | StepResult:
+    """Where to pin ATTEST_DB, and why; a BROKEN result when the data is split.
+
+    The checkout's database unless exactly one candidate already holds data
+    (spec 2026-10-06 split database). Two with data is never guessed at.
+    """
+    with_data = _databases_with_data(root)
+    if len(with_data) > 1:
+        return StepResult(
+            "env_file",
+            Status.BROKEN,
+            "the agent's data is split across "
+            + "; ".join(_describe(p, r) for p, r in with_data)
+            + f" -- set ATTEST_DB in {env_path} to the one to keep"
+            " (`attest backup` the other first); install will not choose",
+        )
+    if not with_data:
+        return root / "hermes.db", ""
+    db, rows = with_data[0]
+    return db, f" ({rows['items']} items, {rows['references']} references already there)"
+
+
 def step_env_file(check: bool = False) -> StepResult:
     """Does `.env` exist; create it from `.env.sample` if not (skipped
     entirely outside a checkout, where there is no sample to copy). Pins
@@ -570,30 +674,43 @@ def step_env_file(check: bool = False) -> StepResult:
     existed = env_path.exists()
     pin = _db_needs_pinning(env_path)
     if existed and not pin:
-        return StepResult("env_file", Status.OK)
+        orphaned = _orphaned(env_path, root)
+        return (
+            StepResult("env_file", Status.BROKEN, orphaned)
+            if orphaned
+            else StepResult("env_file", Status.OK)
+        )
+    target = _pin_target(root, env_path) if pin else (root / "hermes.db", "")
+    if isinstance(target, StepResult):
+        return target
+    db, why = target
     if check:
-        if not existed:
-            return StepResult(
-                "env_file", Status.BROKEN, f"{env_path} missing — copy from .env.sample"
-            )
         return StepResult(
             "env_file",
             Status.BROKEN,
             "ATTEST_DB is unset, so the agent's tools open ./hermes.db in whatever"
-            " directory Hermes starts them from — run `attest install` to pin it",
+            f" directory Hermes starts them from — run `attest install` to pin it to {db}{why}"
+            if existed
+            else f"{env_path} missing — copy from .env.sample",
         )
+    return _write_env_file(env_path, sample_path, existed, db if pin else None, why)
+
+
+def _write_env_file(
+    env_path: Path, sample_path: Path, existed: bool, db: Path | None, why: str
+) -> StepResult:
+    """Create `.env` from the sample when absent, and append the ATTEST_DB pin."""
     done = []
     if not existed:
         env_path.write_text(sample_path.read_text())
         done.append(f"created {env_path} from .env.sample")
-    if pin:
-        db = root / "hermes.db"
+    if db is not None:
         text = env_path.read_text()
         sep = "" if not text or text.endswith("\n") else "\n"
         env_path.write_text(f"{text}{sep}ATTEST_DB={db}\n")
         # Later steps in this process (first_data) must agree with the pin.
         os.environ["ATTEST_DB"] = str(db)
-        done.append(f"pinned ATTEST_DB={db}")
+        done.append(f"pinned ATTEST_DB={db}{why}")
     return StepResult("env_file", Status.FIXED, "; ".join(done))
 
 
