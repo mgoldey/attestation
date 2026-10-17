@@ -9,6 +9,23 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Added
+
+- **`cite.support` / `attest support`: does the cited paper say what the
+  sentence says?** For each citing sentence in a Markdown or `.tex` draft
+  (Pandoc `[@key]`, a claim's `cite=`, `\cite{key}`), or one `--sentence`
+  with `--cite`, reads the best text the library holds (full text, else
+  abstract, else title, reported as `text_level`), ranks its sentences, and
+  returns `supported` / `partially_supported` / `contradicted` / `not_found` /
+  `source_unavailable` with a verbatim quote (checked to be a substring of the
+  source) and a reason. The judge is the local chat model with a
+  deterministic fallback; a number the draft keeps but attaches to something
+  else ("three orders of magnitude" vs "...fewer training data") is
+  `contradicted` by code even when the model says otherwise. Exits 1 on
+  `contradicted` (`--fail-on` widens it). 51 MCP tools. Spec:
+  `docs/superpowers/specs/2026-10-17-cite-support-design.md`; eval:
+  `evals/run_support_eval.py`.
+
 ## [0.5.0] - 2026-10-06
 
 Hosted NVIDIA NIM embeddings that rank correctly, `attest reembed` to switch a

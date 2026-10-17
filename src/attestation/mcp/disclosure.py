@@ -5,7 +5,7 @@ concern -- what a restricted agent tells a caller about the tools it is not
 showing -- and it kept four descriptions, one answer body and a registration
 condition tangled with the routers.
 
-Registered ONLY when ATTEST_TOOLS restricts the surface. With all 50 tools
+Registered ONLY when ATTEST_TOOLS restricts the surface. With all 51 tools
 served the specifics are visible, and four byte-identical tools claiming
 otherwise is a falsehood in the commonest configuration, for 676 chars.
 """
@@ -22,7 +22,7 @@ def _tools_doc(surface: str, expanded: bool) -> str:
     """The `<surface>.tools` description, which depends on what is registered.
 
     All four carried one byte-identical string saying the specifics were
-    hidden. True under ATTEST_TOOLS, false in the default 50-tool surface where
+    hidden. True under ATTEST_TOOLS, false in the default 51-tool surface where
     this tool sat beside every tool it called concealed -- and a model choosing
     between four identical descriptions has nothing to choose on.
     """
