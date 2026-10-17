@@ -2,7 +2,7 @@
 
 Split out of provenance.py, which hit its size cap. It is a real seam rather
 than a size dodge: the ledger reads experiment artifacts, while this reads
-Markdown prose and checks its numbers against what the ledger found. They
+Markdown and LaTeX prose and checks its numbers against what the ledger found. They
 share a workspace root and nothing else.
 
 The tools keep the `runs.*` namespace -- a claim is verified against runs, and
@@ -31,8 +31,11 @@ def _target(path: str | None) -> Path:
     return target
 
 
-def _citation_resolver():
+def _citation_resolver(target: Path):
     """The configured bibliographic sources, or None if they cannot be built.
+
+    For a LaTeX target the `.bib` files beside each paper are added, so a
+    `% claim: ... cite=<key>` resolves against the paper's own bibliography.
 
     Imported here rather than at module scope: `claims.check` takes the
     resolver as an argument precisely so the ledger does not depend on the
@@ -42,9 +45,9 @@ def _citation_resolver():
     the numeric verdicts, which are what this tool is chiefly for, still do.
     """
     try:
-        from attestation import citations
+        from attestation import citations, latex
 
-        return citations.Resolver.from_env()
+        return citations.Resolver.from_env(bib_paths=latex.resolver_bib_paths(target))
     except Exception:  # noqa: BLE001 -- an unbuildable resolver is an absent
         # lint, exactly as an absent Zotero is an absent source. Anything from
         # a missing optional dependency to an unreadable library means the same
@@ -59,7 +62,7 @@ def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
     # agrees but whose `cite=` key no source has is not `supported`, and this
     # is the tool whose name says it checks claims. Claims with no `cite=` are
     # untouched -- see claims.check_citations.
-    resolver = _citation_resolver()
+    resolver = _citation_resolver(target)
     out = claims.check(conn, target, resolver=resolver)
     # States the pairing with cite.check as data, not only in prose: a caller
     # comparing the two tools' payloads sees the scope difference directly.

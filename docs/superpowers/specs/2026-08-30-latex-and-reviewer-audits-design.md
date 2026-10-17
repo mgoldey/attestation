@@ -2,7 +2,10 @@
 
 **Date:** 2026-08-30
 **Status:** brainstorm — options with a recommendation, awaiting Matt's
-review before any spec is finalised or a plan written. Nothing here is built.
+review before any spec is finalised or a plan written. Part 1 Option A
+(parser parity: `% claim:` comments, the include walker, the LaTeX masker,
+`\cite` in `cite.check`) is built, in `src/attestation/latex.py`; Option B,
+Option C and Part 2 are not.
 **Depends on:** the claim checker (`2026-08-12-claim-checker-design.md`),
 citations (`2026-08-22-citations-domain-design.md`), the reaction/explanation
 prompt-as-data pattern (`2026-08-23-dspy-prompt-optimization-design.md`), and

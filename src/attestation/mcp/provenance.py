@@ -191,10 +191,11 @@ def register(mcp) -> None:
 
     @mcp.tool(name="runs.claims_coverage")
     def claims_coverage(path: str | None = None) -> dict:
-        """Numbers asserted in Markdown that no claim annotation covers.
+        """Numbers asserted in Markdown or LaTeX that no claim annotation covers.
 
-        Omit `path` to scan every Markdown file under the configured research
-        root.
+        Omit `path` to scan every Markdown and .tex file under the configured
+        research root. A .tex path is read with everything it `\\input`s, as
+        one document.
 
         The inverse of `runs.claims_check`: that verifies the claims that exist, this
         finds assertions nobody made checkable. A document with zero contradicted
@@ -204,22 +205,25 @@ def register(mcp) -> None:
         Only decimals count as measurements -- integers in prose are overwhelmingly
         versions, counts and dates. Versions, ISO dates, URLs, package pins and
         anything inside an HTML comment are excluded, since a comment renders as
-        nothing and asserts nothing to a reader.
+        nothing and asserts nothing to a reader. In LaTeX, table cells, `\\num{}`,
+        `\\SI{}{}` and a number alone in inline math count; `%` comments,
+        equations, `\\ref`/`\\cite` arguments and lengths do not.
 
         """
         return _coverage(path)
 
     @mcp.tool(name="runs.claims_check")
     def claims_check(path: str | None = None, verdict: Verdict = None) -> dict:
-        """Verify numeric claims written in Markdown against runs in the ledger.
+        """Verify numeric claims written in Markdown or LaTeX against runs in the ledger.
 
-        Omit `path` to check every Markdown file under the configured research
-        root.
+        Omit `path` to check every Markdown and .tex file under the configured
+        research root. A .tex path is checked with everything it `\\input`s.
 
-        A claim is an HTML comment beside the prose it describes, so it renders as
+        A claim is a comment beside the prose it describes, so it renders as
         nothing and the document reads exactly as before:
 
         <!-- claim: project/run metric=wer value=0.053 tol=0.001 as_of=2026-05-28 -->
+        % claim: project/run metric=wer value=0.053 tol=0.001    (in a .tex file)
 
         Six verdicts, and the differences matter. `supported`: a run agrees.
         `contradicted`: a run disagrees — the document or the run is wrong.

@@ -116,7 +116,7 @@ HELP: dict[str, str] = {
     "emit": "agent configs generated from the tool surfaces",
     "manifest": "what a packager needs to know, derived from this package",
     "kg-report": "knowledge-graph health + topic clusters",
-    "claims": "verify claims written in Markdown against runs",
+    "claims": "verify claims written in Markdown or LaTeX against runs",
     "browse": "open the ledger in Datasette (read-only)",
     "runs": "experiment ledger read from artifacts on disk",
     "runs.scan": "re-read runs from a workspace directory",
@@ -276,6 +276,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--coverage",
         action="store_true",
         help="instead: list numbers in prose that no claim covers",
+    )
+    sp.add_argument(
+        "--citations",
+        action="store_true",
+        help="instead: list citation keys (cite= and LaTeX \\cite) the bibliography lacks",
     )
     sp.set_defaults(func=cmd_claims)
 
@@ -837,8 +842,9 @@ def cmd_warmup(args: argparse.Namespace) -> int:
     return 0
 
 
-def _citation_resolver():
-    """The configured bibliographic sources.
+def _citation_resolver(target: Path):
+    """The configured bibliographic sources (plus, for a LaTeX target, the
+    `.bib` files beside each paper).
 
     Imported here rather than at module scope, matching
     `attestation.mcp.claims_tools._citation_resolver`: `claims.check` takes
@@ -849,9 +855,51 @@ def _citation_resolver():
     sqlite database until a lookup happens, so there is nothing here to guard
     against with a broad except.
     """
-    from attestation import citations
+    from attestation import citations, latex
 
-    return citations.Resolver.from_env()
+    return citations.Resolver.from_env(bib_paths=latex.resolver_bib_paths(target))
+
+
+def _print_coverage(target: Path) -> int:
+    """`attest claims --coverage`: the numbers no claim covers; always exit 0."""
+    from attestation import claims as claims_mod
+
+    cov = claims_mod.coverage(target)
+    for u in cov["uncovered"]:
+        where = f"{Path(u['file']).name}:{u['line']}"
+        print(f"  uncovered  {where:24s} {u['value']:<12g} {u['context'][:60]}")
+    print(
+        f"\n{cov['covered']}/{cov['numbers']} number(s) covered by a claim"
+        f" across {cov['files']} file(s)"
+    )
+    return 0
+
+
+def _print_citations(target: Path, db: str | None) -> int:
+    """`cite.check` from the shell: exit 1 when any key resolves to nothing."""
+    from attestation import citations, latex
+    from attestation import claims as claims_mod
+
+    with open_db(db) as conn:
+        resolver = citations.Resolver.from_env(
+            store=lambda: conn, bib_paths=latex.resolver_bib_paths(target)
+        )
+        out = claims_mod.check_citation_keys(target, resolver)
+    for v in out["uncited"]:
+        print(f"  uncited    {Path(v.claim.path).name}:{v.claim.line}  {v.claim.cite}  {v.message}")
+    for m in out["missing_keys"]:
+        unloaded = m.get("defined_in_unloaded")
+        note = f"  (defined in {unloaded}, not loaded)" if unloaded else ""
+        hint = f"  closest: {', '.join(m['closest'])}" if m["closest"] else ""
+        print(f"  missing    {m['where']}  {m['key']}{note}{hint}")
+    for name in out["unresolved_bib_resources"]:
+        print(f"  no-bib     {name}  (named by \\bibliography/\\addbibresource, not found)")
+    bad = len(out["uncited"]) + len(out["missing_keys"]) + len(out["unresolved_bib_resources"])
+    print(
+        f"\n{len(out['claims'])} claim(s), {out['citation_keys_used']} \\cite key(s):"
+        f" {bad} unresolved"
+    )
+    return 1 if bad else 0
 
 
 @_documented("claims")
@@ -867,18 +915,12 @@ def cmd_claims(args: argparse.Namespace) -> int:
         return fail(f"no such path: {target}")
 
     if args.coverage:
-        cov = claims_mod.coverage(target)
-        for u in cov["uncovered"]:
-            where = f"{Path(u['file']).name}:{u['line']}"
-            print(f"  uncovered  {where:24s} {u['value']:<12g} {u['context'][:60]}")
-        print(
-            f"\n{cov['covered']}/{cov['numbers']} number(s) covered by a claim"
-            f" across {cov['files']} file(s)"
-        )
-        return 0
+        return _print_coverage(target)
+    if args.citations:
+        return _print_citations(target, args.db)
 
     with open_db(args.db) as conn:
-        out = claims_mod.check(conn, target, resolver=_citation_resolver())
+        out = claims_mod.check(conn, target, resolver=_citation_resolver(target))
 
     for problem in out["malformed"]:
         print(f"  malformed  {problem}")
@@ -892,6 +934,8 @@ def cmd_claims(args: argparse.Namespace) -> int:
         print(f"no claims found under {target}")
         print("annotate one beside the prose it describes:")
         print("  <!-- claim: project/run metric=wer value=0.053 tol=0.001 -->")
+        print("or, in a .tex file, as a comment:")
+        print("  % claim: project/run metric=wer value=0.053 tol=0.001")
         return 0
 
     summary = ", ".join(f"{n} {k}" for k, n in sorted(out["counts"].items()))

@@ -179,7 +179,9 @@ options:
 ## attest claims
 
 ```
-usage: attest claims [-h] [--db DB] [--verdict VERDICT] [--coverage] [path]
+usage: attest claims [-h] [--db DB] [--verdict VERDICT] [--coverage]
+                     [--citations]
+                     [path]
 
 positional arguments:
   path               file or directory (default: $RESEARCH_ROOT)
@@ -192,6 +194,8 @@ options:
                      ./hermes.db
   --verdict VERDICT  show only this verdict
   --coverage         instead: list numbers in prose that no claim covers
+  --citations        instead: list citation keys (cite= and LaTeX \cite) the
+                     bibliography lacks
 ```
 
 ## attest browse
