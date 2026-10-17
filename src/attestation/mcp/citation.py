@@ -132,10 +132,11 @@ def _search(
 
 
 @tool(empty={"uncited": [], "n_claims": 0, "checked": []}, label="cite_check")
-def _check(conn, path: str) -> dict:
+def _check(conn, path: str, record: str | None = None) -> dict:
     from pathlib import Path
 
     from attestation import citations, claims
+    from attestation.mcp.run_record import cite_check_record
 
     root = Path(path)
     if not root.exists():
@@ -176,7 +177,7 @@ def _check(conn, path: str) -> dict:
         # States the same pairing runs.claims_check's "checked" states: this
         # tool only ever checked citation keys, never the numbers.
         "checked": ["citation"],
-    }
+    } | cite_check_record(root, found, uncited, record)
 
 
 @tool(empty={"sources": [], "store": {}}, label="cite_sources")
@@ -300,14 +301,16 @@ def register(mcp) -> None:
     @mcp.tool(name="cite.check")
     def cite_check(
         path: Annotated[str, Field(description="a Markdown file or a directory of them")],
+        record: Annotated[str | None, Field(description="also write a signed run record")] = None,
     ) -> dict:
         """Claims whose citation key no configured source can resolve.
 
         A lint: it reports that a key is unknown here, never that the cited
         work fails to support the claim. Pair with `runs.claims_check`, which
-        verifies the numbers against recorded runs.
+        verifies the numbers against recorded runs. With `record`, also writes
+        a signed run record of this check (see `runs.verify_record`).
         """
-        return _check(path)
+        return _check(path, record)
 
     @mcp.tool(name="cite.sources")
     def cite_sources() -> dict:

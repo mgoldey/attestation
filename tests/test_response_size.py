@@ -587,6 +587,7 @@ COMPOSITION_TOOLS = {
     "runs.compare": "one row per arm; size is a function of the family, not a choice",
     "runs.claims_check": "one verdict per claim in the document",
     "runs.claims_coverage": "one row per uncovered number",
+    "runs.verify_record": "one item per file the record names; the report is the answer",
     "kg.neighbors": "one row per adjacent concept",
     "kg.concepts": "the graph vocabulary, which is the answer",
     "feed.sources": "one row per subscribed feed",
@@ -655,6 +656,7 @@ def test_every_tool_is_either_budgeted_or_declared_a_composition_tool():
         "cite.check",
         "cite.sources",
         "cite.save",  # one entry and its one BibTeX record, never a list
+        "runs.attest",  # a path, a keyid and a run id
         "feed.persona_create",
         "feed.persona_update",
         "feed.persona_delete",

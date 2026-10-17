@@ -43,6 +43,9 @@ dependencies = [
     "defusedxml>=0.7.1",
     "pypdf>=6.18.0",
     "pyyaml>=6.0",
+    # Signs run records (ed25519). Already installed via mcp[crypto] -> pyjwt[crypto];
+    # declared directly because attestation.run_record imports it.
+    "cryptography>=44",
 ]
 
 [project.urls]

@@ -26,11 +26,22 @@ from attestation.mcp import (
     knowledge,
     provenance,
     research,
+    run_record,
     subscriptions,
     symbolic,
 )
 
-DOMAINS = (ask, citation, feed, knowledge, provenance, research, subscriptions, symbolic)
+DOMAINS = (
+    ask,
+    citation,
+    feed,
+    knowledge,
+    provenance,
+    research,
+    run_record,
+    subscriptions,
+    symbolic,
+)
 
 # Which namespaces (or individual tools) each agent may see.
 #
