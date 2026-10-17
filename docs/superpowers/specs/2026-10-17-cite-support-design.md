@@ -77,6 +77,17 @@ Verdicts: `supported`, `partially_supported`, `contradicted`, `not_found`,
   the worst case is measured under the 7000-char ceiling); tool count 50 -> 51. Its own
   module, `mcp/citation_support.py`: `citation.py` is at its size cap.
 
+## Router-only sessions
+
+A deployed Hermes session serves only `runs.ask`/`kg.ask` and the disclosure
+tool, so `mcp/routing_support.py` gives both routers a rule checked before their
+own tables: a support/say/back-up phrase plus a word naming a cited source
+(paper, source, citation, reference, sentence), or a quoted sentence plus a
+named key; never when the question mentions runs, the ledger or arms. `path=`
+checks a draft; otherwise the sentence and key come out of the question, and a
+question carrying neither is asked back. The skills name the routers, not
+`cite.support`, so the hidden-tool ratchet does not move.
+
 ## Measured (2026-10-17, evals/support_cases.json: 6 real arXiv abstracts, 20 sentences)
 
 | judge | exact verdict | contradicted recall | contradicted called supported | supported called contradicted |
@@ -94,7 +105,3 @@ read these as "the guards remove the dangerous error", not as an accuracy figure
   dependency or server.
 - Abstract-level `not_found` is weak evidence; nothing fetches full text on demand.
 - Multi-key sentences are judged per key, never "supported jointly".
-- The deployed router-only sessions (`ATTEST_TOOLS=provenance|knowledge` without
-  `ATTEST_EXPAND`) cannot reach `cite.support`: `runs.ask`/`kg.ask` do not route to it,
-  and the surface skills cannot name it (the hidden-tool ratchet in
-  `tests/test_skill_files.py`). The full surface and `ATTEST_EXPAND=1` serve it.

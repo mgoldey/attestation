@@ -25,6 +25,11 @@ commit that carries the reasoning rather than repeating it; `git log
   `contradicted` (`--fail-on` widens it). 51 MCP tools. Spec:
   `docs/superpowers/specs/2026-10-17-cite-support-design.md`; eval:
   `evals/run_support_eval.py`.
+- **`runs.ask` and `kg.ask` route citation-support questions to `cite.support`**,
+  so router-only Hermes sessions (`ATTEST_TOOLS=provenance|knowledge` without
+  `ATTEST_EXPAND`) reach it: `check my citations support the draft` with
+  `path=`, or `does batzner2022nequip support "<sentence>"`. The rule lives in
+  `mcp/routing_support.py` and runs before each router's own table.
 
 ## [0.5.0] - 2026-10-06
 

@@ -442,3 +442,122 @@ def test_cite_support_stays_under_the_ceiling_at_every_field_cap(tmp_path, monke
     out = citation_support._support(sentence="x", cite="y", judge="none")
     assert out["ok"] is True and len(out["results"]) == citation_support.MAX_SUPPORT_ROWS
     assert len(json.dumps(out)) < HARD_RESPONSE_CEILING, len(json.dumps(out))
+
+
+# ---------------------------------------------------------------------------
+# reachable from router-only sessions: runs.ask and kg.ask
+# ---------------------------------------------------------------------------
+
+from attestation.mcp import routing_support  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        'does batzner2022nequip support "NequIP outperforms invariant models"?',
+        "check my citations support the draft at paper.md",
+        "is this claim supported by its source?",
+        "does the cited paper actually say that?",
+        "did I misquote any of my references?",
+    ],
+)
+def test_support_questions_route_to_cite_support(question):
+    assert routing_support.asks_support(question)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "are my claims supported by the runs?",  # runs.claims_check
+        "check the numbers in my draft",  # runs.claims_check
+        "What articles support these claims about mixture of experts?",  # feed.search
+        "which arm won?",
+        "which numbers did I forget to cite?",  # runs.claims_coverage
+        "what do the papers I read say about equivariance?",  # kg, no sentence quoted
+    ],
+)
+def test_other_questions_keep_their_routes(question):
+    assert not routing_support.asks_support(question)
+
+
+@pytest.mark.parametrize(
+    ("question", "want"),
+    [
+        (f'does batzner2022nequip support "{WRONG_MEANING}"', (WRONG_MEANING, "batzner2022nequip")),
+        (f"is “{WRONG_MEANING}” supported by 2101.03164?", (WRONG_MEANING, "2101.03164")),
+        (f'does @kingma2015adam say "{WRONG_MEANING}"', (WRONG_MEANING, "kingma2015adam")),
+        (f'does 10.48550/arXiv.2101.03164 back up "{WRONG_MEANING}"?', None),
+        ("is this claim supported by its source?", (None, None)),
+    ],
+)
+def test_the_sentence_and_key_come_out_of_the_question(question, want):
+    sentence, key = routing_support.sentence_and_key(question)
+    if want is None:
+        assert sentence == WRONG_MEANING and key == "10.48550/arXiv.2101.03164"
+    else:
+        assert (sentence, key) == want
+
+
+def _served(monkeypatch, surface):
+    import asyncio
+    import importlib
+
+    from mcp.server.fastmcp import FastMCP
+
+    import attestation.mcp as mcp_pkg
+
+    monkeypatch.setenv("ATTEST_TOOLS", surface)
+    monkeypatch.delenv("ATTEST_EXPAND", raising=False)
+    importlib.reload(mcp_pkg)
+    server = FastMCP("deployed")
+    mcp_pkg.register_all(server)
+    names = {t.name for t in asyncio.run(server.list_tools())}
+    return server, names
+
+
+def _call(server, tool, args) -> dict:
+    import asyncio
+
+    result = asyncio.run(server.call_tool(tool, args))
+    first = result[1] if isinstance(result, tuple) else result
+    if isinstance(first, dict):
+        return first.get("result", first)
+    return json.loads(first[0].text)
+
+
+@pytest.mark.parametrize(
+    ("surface", "router"), [("provenance", "runs.ask"), ("knowledge", "kg.ask")]
+)
+def test_a_router_only_session_reaches_cite_support(
+    tmp_path, monkeypatch, offline_embedder, surface, router
+):
+    """The deployed session serves the router and nothing under it, so the
+    route is the only way there: cite.support itself must stay hidden."""
+    db = tmp_path / "t.db"
+    monkeypatch.setenv("ATTEST_DB", str(db))
+    monkeypatch.setattr(support.Judge, "active", property(lambda self: False))
+    _seed(db)
+    server, names = _served(monkeypatch, surface)
+    assert router in names and "cite.support" not in names
+    q = f'does batzner2022nequip support "{WRONG_MEANING}"'
+    out = _call(server, router, {"question": q})
+    assert out["ok"] is True and out["tool_used"] == "cite.support"
+    assert out["answer"].splitlines()[1].startswith("contradicted -- batzner2022nequip [abstract]")
+    assert "fewer training data" in out["answer"]
+
+
+def test_runs_ask_checks_a_draft_by_path_and_asks_back_without_one(
+    tmp_path, monkeypatch, offline_embedder
+):
+    db = tmp_path / "t.db"
+    monkeypatch.setenv("ATTEST_DB", str(db))
+    monkeypatch.setattr(support.Judge, "active", property(lambda self: False))
+    _seed(db)
+    draft = tmp_path / "draft.md"
+    draft.write_text(DRAFT)
+    out = routing_support.support_answer("check my citations support the draft", str(draft))
+    assert out["ok"] and out["tool_used"] == "cite.support"
+    assert "2 citation(s) checked" in out["answer"]
+    asked = routing_support.support_answer("is this claim supported by its source?")
+    assert asked["ok"] is False and asked["options"] == ["cite.support"]
+    assert routing_support.support_answer("which arm won?") is None

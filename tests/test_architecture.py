@@ -243,7 +243,11 @@ def test_mcp_domain_modules_stay_small():
         # with an item_id -- the deployed feed surface serves feed.ask only, so
         # a save it could only NAME would be unreachable, the month-without-
         # clicks failure again. The act itself lives in bibliography.keep.
-        "ask.py": 563,
+        # Raised 2026-10-17 (cite.support reachable from router-only sessions):
+        # +2: the import and the `support_answer(...) or` hooks in runs.ask
+        # and kg.ask. The rule, the argument extraction and the reply all live
+        # in mcp/routing_support.py; only the call sites are here.
+        "ask.py": 565,
         # Raised for runs.record (2026-09-01): a new tool plus its Arm
         # pydantic model in provenance.py, one new routing rule (with its
         # own ordering comment) in routing.py. Raised again the same day
