@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import subprocess
 import time
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from conftest import seeded_db
@@ -469,12 +470,25 @@ def test_feed_ask_imports_page_verdicts_before_ranking(tmp_path, fake_embedder, 
 
 
 def test_payload_carries_each_papers_publication_time_as_utc(tmp_path, fake_embedder):
+    # Relative to now: fixed dates fell out of the ranker's 14-day window and
+    # the test failed on every run from 2026-10-13.
+    now = datetime.now(UTC).replace(microsecond=0)
+    first, second = now - timedelta(days=1), now - timedelta(days=2)
     conn, uid, ids = ranked_db(tmp_path, fake_embedder, n=2)
-    conn.execute("UPDATE items SET published = '2026-09-29T17:06:45' WHERE id = ?", (ids[0],))
-    conn.execute("UPDATE items SET published = '2026-09-28 08:00:00' WHERE id = ?", (ids[1],))
+    conn.execute(
+        "UPDATE items SET published = ? WHERE id = ?",
+        (first.strftime("%Y-%m-%dT%H:%M:%S"), ids[0]),
+    )
+    conn.execute(
+        "UPDATE items SET published = ? WHERE id = ?",
+        (second.strftime("%Y-%m-%d %H:%M:%S"), ids[1]),
+    )
     conn.commit()
     got = {i["id"]: i["published"] for i in desk.desk_payload(conn, fake_embedder, uid)["items"]}
-    assert got == {ids[0]: "2026-09-29T17:06:45Z", ids[1]: "2026-09-28T08:00:00Z"}
+    assert got == {
+        ids[0]: first.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        ids[1]: second.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
 
 
 @pytest.mark.skipif(node is None, reason="node not installed")
