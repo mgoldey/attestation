@@ -53,6 +53,9 @@ CAP = {
     "key": 200,
     "id": 200,
     "arxiv": 40,
+    "abstract": 300,
+    "formatted": 600,
+    "bibtex": 1500,
 }
 _CHUNK = 500  # below SQLITE_LIMIT_VARIABLE_NUMBER, like features._SQL_VAR_CHUNK
 
@@ -68,17 +71,9 @@ def default_path() -> Path:
     configured = (os.environ.get(PATH_ENV) or "").strip()
     if configured:
         return Path(configured).expanduser()
-    raw = (os.environ.get("HERMES_HOME") or "").strip()
-    home = Path(raw).expanduser() if raw else Path.home() / paths.DEFAULT_HOME_DIRNAME
-    if home.parent.name == "profiles":
-        # A Hermes profile (<root>/profiles/<name>): the consumer reads the ROOT's
-        # workspace, not one beside the profiles directory.
-        root = home.parent.parent
-    elif raw:
-        root = home.parent / paths.DEFAULT_HOME_DIRNAME
-    else:
-        root = home
-    return root / "workspace/research-desk/library/library.json"
+    # A Hermes profile (<root>/profiles/<name>): the consumer reads the ROOT's
+    # workspace, not one beside the profiles directory (paths.hermes_root).
+    return paths.hermes_root() / "workspace/research-desk/library/library.json"
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +319,32 @@ def _saved_ids(conn: sqlite3.Connection, persona_id: int | None) -> set[int]:
     }
 
 
+def bibtex_block(text: str | None, limit: int = CAP["bibtex"]) -> str | None:
+    """A BibTeX entry for the file: control characters other than newline
+    removed, and None -- never a cut -- when it is over `limit` characters or
+    `2 * limit` UTF-8 bytes, because a truncated entry is not BibTeX."""
+    if not text:
+        return None
+    kept = "".join(
+        c if c == "\n" or not unicodedata.category(c).startswith("C") else " " for c in text
+    )
+    if len(kept) > limit or len(kept.encode()) > 2 * limit:
+        return None
+    return kept
+
+
+def _citation(r: sqlite3.Row, key: str, text: str | None, style: str, cited: list) -> dict:
+    """The citation manager's fields on one row (all added to schema 1)."""
+    from attestation import library
+
+    return {
+        "bibtex": bibtex_block(library.bibtex(r, key=key)),
+        "formatted": {style: clean(text, CAP["formatted"])} if text else {},
+        "abstract": clean_or_none(r["abstract"], CAP["abstract"]),
+        "cited_by": cited,
+    }
+
+
 def _row(r: sqlite3.Row, tags: list[str], sources: list[str], saved: bool, fulltext: bool) -> dict:
     year = r["year"] if isinstance(r["year"], int) and not isinstance(r["year"], bool) else None
     return {
@@ -343,13 +364,44 @@ def _row(r: sqlite3.Row, tags: list[str], sources: list[str], saved: bool, fullt
     }
 
 
-def _references(conn: sqlite3.Connection, persona_id: int | None, limit: int) -> tuple[list, bool]:
-    total = _scalar(conn, 'SELECT count(*) FROM "references"')
-    rows = conn.execute(
-        "SELECT id, identity, bib_key, title, authors, year, venue, doi, arxiv_id, url, first_seen"
-        ' FROM "references" ORDER BY first_seen DESC, id DESC LIMIT ?',
-        (limit,),
+def _newest(conn: sqlite3.Connection, limit: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        'SELECT * FROM "references" ORDER BY first_seen DESC, id DESC LIMIT ?', (limit,)
     ).fetchall()
+
+
+def _cite_keys(conn: sqlite3.Connection, persona_id: int | None) -> dict[int, str]:
+    """The persona's stable cite key per live entry: its BibTeX uses that key."""
+    if persona_id is None:
+        return {}
+    return {
+        r["reference_id"]: r["cite_key"]
+        for r in conn.execute(
+            "SELECT reference_id, cite_key FROM bibliography WHERE user_id = ?"
+            " AND removed_at IS NULL",
+            (persona_id,),
+        )
+    }
+
+
+def warm(conn: sqlite3.Connection, style: str, limit: int = DEFAULT_LIMIT) -> int:
+    """Render and cache the formatted citations `build` will list, so the
+    read-only build only reads them. Returns how many rows were listed.
+    The one write the dashboard command makes to the database."""
+    from attestation import cite_format
+
+    rows = _newest(conn, min(max(int(limit), 0), MAX_LIMIT))
+    cite_format.formatted(conn, rows, style, store=True)
+    return len(rows)
+
+
+def _references(
+    conn: sqlite3.Connection, persona_id: int | None, limit: int, style: str, cited: dict
+) -> tuple[list, bool]:
+    from attestation import cite_format, library
+
+    total = _scalar(conn, 'SELECT count(*) FROM "references"')
+    rows = _newest(conn, limit)
     ids = [r["id"] for r in rows]
     tags = _grouped(
         conn,
@@ -373,14 +425,25 @@ def _references(conn: sqlite3.Connection, persona_id: int | None, limit: int) ->
         )
     }
     saved = _saved_ids(conn, persona_id)
+    keys = _cite_keys(conn, persona_id)
+    texts = cite_format.cached(conn, rows, style)
     out = [
-        _row(
-            r,
-            tags.get(r["id"], []),
-            sources.get(r["id"], []),
-            r["id"] in saved,
-            r["id"] in fulltext,
-        )
+        {
+            **_row(
+                r,
+                tags.get(r["id"], []),
+                sources.get(r["id"], []),
+                r["id"] in saved,
+                r["id"] in fulltext,
+            ),
+            **_citation(
+                r,
+                keys.get(r["id"]) or library.bibtex_key(r),
+                texts.get(r["id"]),
+                style,
+                cited.get(r["id"], []),
+            ),
+        }
         for r in rows
     ]
     return out, total > len(rows)
@@ -397,6 +460,8 @@ def build(
     persona: str = DEFAULT_PERSONA,
     limit: int = DEFAULT_LIMIT,
     now: datetime | None = None,
+    style: str | None = None,
+    workspace: Path | None = None,
 ) -> dict:
     """The v1 document for `persona` -- see docs/guides/library-dashboard.md.
 
@@ -410,7 +475,16 @@ def build(
     are still untagged or unembedded right now, which is a real count of work
     outstanding but is NOT a failure count -- a fresh sync has a backlog and
     no failures.
+
+    `style` (default `cite_format.default_style()`) is the one style
+    precomputed into every row's `formatted`, read from the cache `warm`
+    fills (a row `warm` has not rendered has `formatted: {}`); the others are
+    a CLI or MCP call away (`attest bib format`, `cite.format`). `workspace`
+    (default `paths.workspace_dir()`) is where `cited_by` looks for drafts.
     """
+    from attestation import cite_format
+
+    style = cite_format.style_id(style) if style else cite_format.default_style()
     limit = min(max(int(limit), 0), MAX_LIMIT)
     now = (now or datetime.now(UTC)).astimezone(UTC)
     # One snapshot: counts and rows from a single read transaction (a refresh may
@@ -421,7 +495,7 @@ def build(
         conn.execute("BEGIN")
     previous, conn.text_factory = conn.text_factory, _decode
     try:
-        return fit(_build(conn, persona, limit, now))
+        return fit(_build(conn, persona, limit, now, style, workspace))
     finally:
         conn.text_factory = previous
         if began:
@@ -432,7 +506,16 @@ def _decode(raw: bytes) -> str:
     return raw.decode("utf-8", "replace")
 
 
-def _build(conn: sqlite3.Connection, persona: str, limit: int, now: datetime) -> dict:
+def _build(
+    conn: sqlite3.Connection,
+    persona: str,
+    limit: int,
+    now: datetime,
+    style: str,
+    workspace: Path | None,
+) -> dict:
+    from attestation import citation_manager, cite_format
+
     persona_id = _persona_id(conn, persona)
     n_items = _scalar(conn, "SELECT count(*) FROM items")
     n_refs = _scalar(conn, 'SELECT count(*) FROM "references"')
@@ -440,7 +523,8 @@ def _build(conn: sqlite3.Connection, persona: str, limit: int, now: datetime) ->
     refs_tagged = _scalar(conn, "SELECT count(DISTINCT reference_id) FROM reference_tags")
     items_embedded = _vector_count(conn, "item_vectors")
     refs_embedded = _vector_count(conn, "reference_vectors")
-    references, truncated = _references(conn, persona_id, limit)
+    cited = citation_manager.cited_by(conn, workspace)
+    references, truncated = _references(conn, persona_id, limit, style, cited)
     saved = (
         _scalar(
             conn,
@@ -487,32 +571,75 @@ def _build(conn: sqlite3.Connection, persona: str, limit: int, now: datetime) ->
         "references": references,
         "references_truncated": truncated,
         "references_limit": limit,
+        "citation_styles": cite_format.styles(),
+        "default_style": style,
     }
 
 
+# What `fit` sheds from the OLDEST rows before it drops any row, in order:
+# the abstract first (the detail panel's), then the precomputed citation and
+# the BibTeX (both a CLI or MCP call away). A row keeps its title, authors,
+# ids and links whatever happens -- what search and the list need.
+_SHED: tuple[dict, ...] = ({"abstract": None}, {"formatted": {}, "bibtex": None})
+
+
+def _size(value) -> int:
+    return len(
+        json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+    )
+
+
+def _shed(doc: dict, max_bytes: int) -> dict:
+    """`doc` with the heavy optional fields emptied on the oldest rows, one
+    tier at a time, until it fits or there is nothing left to shed."""
+    refs = list(doc["references"])
+    total = _size(doc) + 1
+    trimmed: set[int] = set()
+    for empty in _SHED:
+        for i in range(len(refs) - 1, -1, -1):
+            if total <= max_bytes:
+                break
+            if all(refs[i].get(k) in (None, {}) for k in empty):
+                continue
+            slim = {**refs[i], **{k: v for k, v in empty.items() if k in refs[i]}}
+            total -= _size(refs[i]) - _size(slim)
+            refs[i] = slim
+            trimmed.add(i)
+    return {**doc, "references": refs, "references_trimmed": len(trimmed)}
+
+
 def fit(doc: dict, max_bytes: int = MAX_BYTES) -> dict:
-    """`doc` guaranteed to render in at most `max_bytes`, by dropping the OLDEST
-    references (the list is newest first) and saying so: `references_truncated`
-    true, `references_limit` the number kept. Totals are not touched -- they stay
-    the database's. Character and byte caps per field make the common case fit;
-    this is the guarantee for the worst case."""
-    refs = doc["references"]
+    """`doc` guaranteed to render in at most `max_bytes`.
+
+    First the OLDEST references (the list is newest first) lose their
+    abstract, then their precomputed citation and BibTeX
+    (`references_trimmed` counts the rows that lost anything). Only if every
+    row stripped that far still does not fit are the oldest references
+    dropped, and said so: `references_truncated` true, `references_limit` the
+    number kept -- and the rows that remain get their detail back, newest
+    first, as far as the budget allows. Totals are not touched -- they stay
+    the database's. Character and byte caps per field make the common case
+    fit; this is the guarantee for the worst case."""
+    doc = {**doc, "references_trimmed": doc.get("references_trimmed", 0)}
     if len(render(doc).encode()) <= max_bytes:
         return doc
-    base = len(render({**doc, "references": []}).encode())
-    sizes = [
-        len(json.dumps(r, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()) + 1
-        for r in refs
-    ]
+    slim = _shed(doc, max_bytes)
+    if len(render(slim).encode()) <= max_bytes:
+        return slim
+    base = len(render({**slim, "references": []}).encode())
     keep, used = 0, base
-    for size in sizes:
+    for size in (_size(r) + 1 for r in slim["references"]):
         if used + size > max_bytes:
             break
         used += size
         keep += 1
-    while keep and len(render(_cut(doc, keep)).encode()) > max_bytes:
+    while keep:
+        # The original rows, cut, then shed only as far as this budget needs.
+        out = _shed(_cut(doc, keep), max_bytes)
+        if len(render(out).encode()) <= max_bytes:
+            return out
         keep -= 1
-    return _cut(doc, keep)
+    return _cut(doc, 0)
 
 
 def _cut(doc: dict, keep: int) -> dict:
@@ -521,6 +648,7 @@ def _cut(doc: dict, keep: int) -> dict:
         "references": doc["references"][:keep],
         "references_truncated": True,
         "references_limit": keep,
+        "references_trimmed": 0,
     }
 
 

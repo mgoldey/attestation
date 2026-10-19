@@ -180,6 +180,7 @@ def _check(conn, path: str) -> dict:
         ],
         "missing_keys": out["missing_keys"][:25],
         "unresolved_bib_resources": out["unresolved_bib_resources"],
+        "repeated_keys": out["repeated_keys"][:25],
         "citation_keys_used": out["citation_keys_used"],
         "bib_files": out["bib_files"],
         # States the same pairing runs.claims_check's "checked" states: this

@@ -417,7 +417,7 @@ options:
 
 ```
 usage: attest library dashboard [-h] [--out OUT] [--persona PERSONA]
-                                [--limit LIMIT]
+                                [--limit LIMIT] [--style STYLE]
 
 options:
   -h, --help         show this help message and exit
@@ -427,6 +427,8 @@ options:
   --persona PERSONA  whose saved papers to mark (default: $ATTEST_DESK_USER,
                      else owner)
   --limit LIMIT      max references listed (default and maximum: 5000)
+  --style STYLE      the citation style precomputed into each row (default:
+                     $ATTEST_CITATION_STYLE, else apa)
 ```
 
 ## attest library export
@@ -443,6 +445,116 @@ options:
   --tag TAG
   --source SOURCE  reference_sources.source prefix, e.g. zotero,
                    research:arxiv
+  --force
+```
+
+## attest bib search
+
+```
+usage: attest bib search [-h] [--author AUTHOR] [--year YEAR] [--tag TAG]
+                         [--limit LIMIT]
+                         [query]
+
+positional arguments:
+  query
+
+options:
+  -h, --help       show this help message and exit
+  --author AUTHOR  surname filter
+  --year YEAR
+  --tag TAG
+  --limit LIMIT
+```
+
+## attest bib show
+
+```
+usage: attest bib show [-h] [--style STYLE] [--json] key
+
+positional arguments:
+  key            citation key, DOI, arXiv id, or library identity
+
+options:
+  -h, --help     show this help message and exit
+  --style STYLE  citation style (default: $ATTEST_CITATION_STYLE, else apa)
+  --json         print the record as JSON
+```
+
+## attest bib format
+
+```
+usage: attest bib format [-h] [--style STYLE] [--bibtex] keys [keys ...]
+
+positional arguments:
+  keys           citation keys, DOIs or arXiv ids
+
+options:
+  -h, --help     show this help message and exit
+  --style STYLE  apa, ieee, chicago-author-date, nature or vancouver
+  --bibtex       print BibTeX instead
+```
+
+## attest bib import
+
+```
+usage: attest bib import [-h] [--zotero] [path]
+
+positional arguments:
+  path        a .bib file (or zotero.sqlite with --zotero)
+
+options:
+  -h, --help  show this help message and exit
+  --zotero    read a local zotero.sqlite (default: ~/Zotero)
+```
+
+## attest bib edit
+
+```
+usage: attest bib edit [-h] [--set FIELD=VALUE] [--note NOTE] [--tag TAG]
+                       [--untag UNTAG] [--user USER]
+                       key
+
+positional arguments:
+  key                citation key, DOI or arXiv id
+
+options:
+  -h, --help         show this help message and exit
+  --set FIELD=VALUE  title, authors (A and B), year, venue, doi, arxiv, url,
+                     abstract, type, volume, pages, or any other BibTeX field;
+                     an empty value clears it
+  --note NOTE        the owner's note (empty clears it)
+  --tag TAG          add a tag
+  --untag UNTAG      remove a tag
+  --user USER        whose .bib it goes to (default: $ATTEST_DESK_USER, else
+                     owner)
+```
+
+## attest bib merge
+
+```
+usage: attest bib merge [-h] [--all] [keep] [drop]
+
+positional arguments:
+  keep        the reference to keep
+  drop        the duplicate folded into it
+
+options:
+  -h, --help  show this help message and exit
+  --all       merge every listed duplicate pair
+```
+
+## attest bib export
+
+```
+usage: attest bib export [-h] [--out OUT] [--style STYLE] [--force] [keys ...]
+
+positional arguments:
+  keys           references to export (default: the whole library)
+
+options:
+  -h, --help     show this help message and exit
+  --out OUT      write to this file (refuses to overwrite without --force)
+  --style STYLE  formatted text in this style instead of BibTeX
   --force
 ```
 

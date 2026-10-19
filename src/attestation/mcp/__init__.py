@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from attestation.mcp import (
     ask,
     citation,
+    citation_format,
     feed,
     knowledge,
     provenance,
@@ -30,7 +31,17 @@ from attestation.mcp import (
     symbolic,
 )
 
-DOMAINS = (ask, citation, feed, knowledge, provenance, research, subscriptions, symbolic)
+DOMAINS = (
+    ask,
+    citation,
+    citation_format,
+    feed,
+    knowledge,
+    provenance,
+    research,
+    subscriptions,
+    symbolic,
+)
 
 # Which namespaces (or individual tools) each agent may see.
 #

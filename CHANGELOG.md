@@ -11,6 +11,33 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **A local citation manager (no hosted Zotero).** `attest bib
+  search|show|format|import|edit|merge|export` and the MCP tool `cite.format`
+  (51 tools). Formatting is citeproc-py (BSD) over five bundled CSL styles
+  (CC BY-SA 3.0, with their license file): APA 7th (default, or
+  `ATTEST_CITATION_STYLE`), IEEE, Chicago author-date, Nature and Vancouver,
+  each reference rendered alone, deterministic, offline, cached per row and
+  style. BibTeX is read and written by bibtexparser v2 (MIT), now the one `.bib`
+  parser: unbraced values and `@string` macros parse, entry types, volume,
+  pages and every other field round-trip (`file` paths are dropped). Owner
+  edits (fields, notes, tags) change the store, are logged, and reach the
+  owner's generated `.bib`; uploaded `.bib` files are never written. Duplicates
+  (same DOI, arXiv id, or title and year, or an id a sync refused) merge into
+  one row that keeps the other's names as aliases, so `\cite` keys and
+  re-syncs still land. `attest bib import` validates a `.bib` and reports
+  counts, unreadable entries and key clashes. Store migration 014.
+  `cite.search` rows carry `arxiv`. See docs/guides/citation-manager.md.
+- **library.json citation fields (schema 1, additive).** Per reference
+  `bibtex`, `formatted` (`{style: text}`, the default style only), `abstract`
+  (300 characters) and `cited_by` (`[{path, line}]` from the workspace's
+  `.tex`/`.md` drafts, `ATTEST_WORKSPACE`); top level `citation_styles`,
+  `default_style` and `references_trimmed`. Over the 6 MiB budget the oldest
+  rows shed abstract, then citation and BibTeX, before any row is dropped:
+  5,000 synthetic references land at 6.00 MiB with all 5,000 listed.
+- **`repeated_keys` in the LaTeX citation check.** A key two loaded `.bib` files
+  both define (an upload and the generated owner `.bib`, typically) is reported
+  by `cite.check` and printed by `attest claims --citations`, without failing.
+  Ported from AgentMarkit's latex-paper check so it can retire its copy.
 - **OpenAlex as a research client, and arXiv's fallback.** `openalex` joins
   arxiv/pubmed/crossref in `research:` topics, `feed.research` and
   `attest research --sources`. Abstracts are rebuilt from OpenAlex's inverted

@@ -267,7 +267,15 @@ CREATE TABLE IF NOT EXISTS "references"(
   bib_key TEXT,
   title_key TEXT,
   first_seen TEXT NOT NULL,
-  updated TEXT NOT NULL
+  updated TEXT NOT NULL,
+  -- The citation manager's fields (migration 014): the BibTeX entry type, and
+  -- volume/pages for formatting. `extra` is a JSON object of every other
+  -- BibTeX field a source carried (publisher, number, booktitle, ...), kept
+  -- so an imported entry renders back with the fields it came with.
+  entry_type TEXT,
+  volume TEXT,
+  pages TEXT,
+  extra TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_references_doi ON "references"(doi);
 CREATE INDEX IF NOT EXISTS idx_references_arxiv ON "references"(arxiv_id);
@@ -329,6 +337,45 @@ CREATE TABLE IF NOT EXISTS bibliography(
 );
 """
 
+# The citation manager's side tables (citation_manager.py, migration 014),
+# single-sourced like the library. Owner edits never touch an uploaded .bib:
+# they change the store row, are logged in reference_edits, and reach the
+# owner's generated .bib through bibliography.write.
+_CITATION_MANAGER_SCHEMA = """
+-- A merged-away row's names (identity, DOI/arXiv forms, its .bib keys), so a
+-- \\cite key or a re-sync that still uses one lands on the row that was kept.
+CREATE TABLE IF NOT EXISTS reference_aliases(
+  alias TEXT PRIMARY KEY,
+  reference_id INTEGER NOT NULL REFERENCES "references"(id) ON DELETE CASCADE,
+  merged_from TEXT NOT NULL,
+  merged_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS reference_notes(
+  reference_id INTEGER PRIMARY KEY REFERENCES "references"(id) ON DELETE CASCADE,
+  note TEXT NOT NULL,
+  updated TEXT NOT NULL
+);
+-- What the owner changed, and when: field edits, tag changes, notes, merges.
+CREATE TABLE IF NOT EXISTS reference_edits(
+  id INTEGER PRIMARY KEY,
+  reference_id INTEGER NOT NULL REFERENCES "references"(id) ON DELETE CASCADE,
+  field TEXT NOT NULL,
+  old TEXT,
+  new TEXT,
+  at TEXT NOT NULL
+);
+-- Formatted citations, cached: `digest` hashes the CSL-JSON and the style
+-- file, so an edited row or an updated style renders again and nothing else
+-- does (APA costs ~20 ms a reference in citeproc-py).
+CREATE TABLE IF NOT EXISTS reference_formatted(
+  reference_id INTEGER NOT NULL REFERENCES "references"(id) ON DELETE CASCADE,
+  style TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  text TEXT NOT NULL,
+  PRIMARY KEY (reference_id, style)
+);
+"""
+
 # Its own constant because _split_statements splits on ';' and a trigger body
 # holds one: migration 007 executes this whole, SCHEMA embeds it verbatim.
 # reference_vectors is a vec0 table created by _ensure_vec_tables before SCHEMA
@@ -346,6 +393,8 @@ SCHEMA = SCHEMA.format(
     library_schema=_LIBRARY_SCHEMA.strip()
     + "\n"
     + _BIBLIOGRAPHY_SCHEMA.strip()
+    + "\n"
+    + _CITATION_MANAGER_SCHEMA.strip()
     + "\n"
     + _LIBRARY_TRIGGER.strip(),
 )
@@ -606,6 +655,27 @@ def _migration_013_add_bibliography(conn: sqlite3.Connection) -> None:
     conn.execute(_BIBLIOGRAPHY_SCHEMA)
 
 
+_REFERENCE_COLUMNS_014 = (
+    ("entry_type", "TEXT"),
+    ("volume", "TEXT"),
+    ("pages", "TEXT"),
+    ("extra", "TEXT NOT NULL DEFAULT '{}'"),
+)
+
+
+def _migration_014_add_citation_manager(conn: sqlite3.Connection) -> None:
+    """The citation manager: entry type, volume, pages and the other BibTeX
+    fields on `references`, plus aliases, notes, the edit log and the
+    formatted-citation cache. Existing rows get NULL/`{}` and fill on the next
+    sync; nothing is backfilled because the old .bib reader never kept them."""
+    cols = {r["name"] for r in conn.execute('PRAGMA table_info("references")')}
+    for name, decl in _REFERENCE_COLUMNS_014:
+        if name not in cols:
+            conn.execute(f'ALTER TABLE "references" ADD COLUMN {name} {decl}')
+    for statement in _split_statements(_CITATION_MANAGER_SCHEMA):
+        conn.execute(statement)
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -627,6 +697,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (11, _migration_011_add_persona_aliases),
     (12, _migration_012_add_feedback_since),
     (13, _migration_013_add_bibliography),
+    (14, _migration_014_add_citation_manager),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]

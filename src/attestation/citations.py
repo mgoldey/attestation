@@ -35,7 +35,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from attestation import paths
+from attestation import bibtex_io, paths
 
 DEFAULT_ZOTERO = Path.home() / "Zotero" / "zotero.sqlite"
 
@@ -163,36 +163,28 @@ def _year(value: str | None) -> int | None:
 # readers
 # ---------------------------------------------------------------------------
 
-_ENTRY = re.compile(r"@(\w+)\s*\{\s*([^,\s]+)\s*,(.*?)\n\}", re.DOTALL)
-_ENTRY_BOUNDARY = re.compile(r"\n(?=@\w+\s*\{)")
-_FIELD = re.compile(r"(\w+)\s*=\s*[{\"](.*?)[}\"]\s*,?\s*$", re.MULTILINE | re.DOTALL)
-
 
 def _parse_bib_entries(text: str) -> Iterator[tuple[str, dict]]:
     """(key, {lowercased field: single-spaced value}) for each entry with a title.
 
-    The ONE `.bib` parser: `BibtexReader` (the cite.* lookup path) and
-    `library_readers.BibtexRecords` (the library sync) both read through it,
-    so a grammar fix lands in both.
+    `BibtexReader` (the cite.* lookup path) and `library_readers.BibtexRecords`
+    (the library sync) both read through this, and this reads through
+    `bibtex_io.parse` -- bibtexparser v2, the one `.bib` parser -- so a grammar
+    fix lands in every reader. A truncated entry is skipped and the entries
+    around it still parse.
     """
-    # Split at entry boundaries before matching: `_ENTRY`'s lazy body would
-    # otherwise rescan to end-of-file for every entry whose closing brace is
-    # not alone on a line -- quadratic, 3.6 s for 3,000 such entries
-    # (review round 1). Per chunk, a bad entry costs only its own length.
-    for chunk in _ENTRY_BOUNDARY.split(text):
-        for _kind, key, body in _ENTRY.findall(chunk):
-            fields = {k.lower(): " ".join(v.split()) for k, v in _FIELD.findall(body)}
-            if fields.get("title"):
-                yield key, fields
+    for entry in bibtex_io.parse(text).entries:
+        if entry.fields.get("title"):
+            yield entry.key, entry.fields
 
 
 class BibtexReader:
     """`.bib` files on disk.
 
-    A hand-rolled reader rather than a dependency: the grammar used here is
-    `@type{key, field = {value},}`, which is what every tool emits, and this
-    codebase has a standing preference against pulling a parser in for a
-    machine-generated format (see ledger_adapters/generic._config_shape).
+    Reads through `_parse_bib_entries`, i.e. bibtexparser v2. This was a
+    hand-rolled regex reader until the citation manager needed entry types,
+    unbraced values and a writer that round-trips fields it does not know;
+    one real parser for both directions replaced it (bibtex_io.py).
 
     A truncated entry yields nothing rather than raising: a `.bib` killed
     mid-write is the commonest way one ends, and losing the whole file for one

@@ -123,6 +123,17 @@ has been fetched, `full_text` as a window (`text`, `offset`, `chars`,
 which is never returned. Papers found by the feed's research tools sit in
 the same library under `research:<client>` sources.
 
+**Formatted citations.** `cite.format(keys, style)` returns, for up to five
+keys, a ready-to-paste `text` in APA (the default), IEEE,
+`chicago-author-date`, Nature or Vancouver style, the `cite_key` for
+`\cite{}`, and the entry's `bibtex`; `missing` names keys the library does
+not hold. Use it for "cite this in APA", "give me the BibTeX" or a reference
+list, instead of writing a citation out yourself -- it is rendered locally
+from the library row, so the authors, year and venue are the ones on record.
+To correct a field, add a note or tag, or merge two duplicate records, run
+`attest bib edit` / `attest bib merge` (see `attest bib --help`) on the
+reader's word: edits go to their generated `.bib`, never to an uploaded file.
+
 **The reader's own bibliography.** Papers they rated useful, read in full,
 asked about, or asked to save (through the feed) are kept in one generated
 `.bib` per reader, each entry with a stable citation key and the reason it
@@ -133,7 +144,9 @@ edited; the generated file sits apart from them.
 `cite.check(path)` lints a draft's citation keys: `cite=<key>` annotations
 in Markdown or LaTeX, and in a `.tex` paper every `\cite`-family key against
 the `.bib` files the paper names (`missing_keys`, with `defined_in_unloaded`
-when another `.bib` has the key but the paper does not load it). It is a lint -- the key is unknown
+when another `.bib` has the key but the paper does not load it; `repeated_keys`
+when two loaded files both define one -- usually an upload and the generated
+`.bib`, so cite from one). It is a lint -- the key is unknown
 here -- never "the cited work does not support this".
 
 **Everything above is local.** The exceptions are `ATTEST_CITATION_WEB`

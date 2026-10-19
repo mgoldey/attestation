@@ -629,6 +629,8 @@ def test_every_tool_is_either_budgeted_or_declared_a_composition_tool():
         "kg.communities",
         # Bounded in tests/test_research_tools.py at MAX_RESEARCH_LIMIT.
         "feed.research",
+        # Bounded in tests/test_citation_manager.py at MAX_KEYS, worst-case rows.
+        "cite.format",
     }
     # Routers bound their own answers via _summarise's label cap.
     routers = {n for n in names if n.endswith(".ask") or n.endswith(".tools")}

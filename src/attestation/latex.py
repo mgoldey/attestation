@@ -333,6 +333,22 @@ def _defined(paths: list[Path]) -> dict[str, str]:
     return out
 
 
+def repeated_keys(paths: list[Path]) -> dict[str, list[str]]:
+    """key -> the names of the files that each define it, for keys defined in
+    more than one of `paths` (a key twice in ONE file counts once).
+
+    Saving a paper that came from an uploaded .bib puts the same key in the
+    owner's generated .bib too; a paper that loads both makes BibTeX report a
+    repeated entry, so cite from one of the two files. Ported from
+    AgentMarkit's latex-paper check so the two cannot disagree.
+    """
+    where: dict[str, list[str]] = {}
+    for path in paths:
+        for key in dict.fromkeys(bib_keys(path)):
+            where.setdefault(key, []).append(path.name)
+    return {k: sorted(v) for k, v in sorted(where.items()) if len(v) > 1}
+
+
 def _uses(paper: Path, files: list[Path]) -> dict[str, str]:
     """key -> where it is first cited, as `file:line` relative to the paper's folder."""
     out: dict[str, str] = {}
@@ -395,6 +411,8 @@ def check_paper(paper: Path, *, extra_bibs: Iterable[Path] = (), lookup: Lookup 
     With no `\\bibliography`/`\\addbibresource`, any candidate or `lookup`
     (the library store, Zotero) resolves a key. With one, only the named
     files do, and a key found elsewhere is reported `defined_in_unloaded`.
+    `repeated_keys` names each key two LOADED files both define (nothing when
+    the paper names no .bib: then BibTeX loads none).
     """
     paper = Path(paper).resolve()
     files = tree(paper)
@@ -410,6 +428,7 @@ def check_paper(paper: Path, *, extra_bibs: Iterable[Path] = (), lookup: Lookup 
         "bib_files": [p.name for p in (loaded if named else candidates)],
         "missing_keys": [m for m in found if m is not None],
         "unresolved_bib_resources": unresolved,
+        "repeated_keys": repeated_keys(loaded) if named else {},
     }
 
 
@@ -421,7 +440,16 @@ def _merge(reports: list[dict]) -> dict:
         "bib_files": sorted({b for r in reports for b in r["bib_files"]}),
         "missing_keys": missing,
         "unresolved_bib_resources": [n for r in reports for n in r["unresolved_bib_resources"]],
+        "repeated_keys": _repeated_rows(reports),
     }
+
+
+def _repeated_rows(reports: list[dict]) -> list[dict]:
+    return [
+        {"key": k, "files": files, "paper": r["paper"]}
+        for r in reports
+        for k, files in r["repeated_keys"].items()
+    ]
 
 
 def check_citations(
