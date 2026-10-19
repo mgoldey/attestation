@@ -32,7 +32,7 @@ Relative to the repo root (`run.sh` does `cd "$(dirname "$0")/../.."` first).
 ## What it prints
 
 ```
-14 calls, 0 failed
+16 calls, 0 failed
 ```
 
 Abridged — `attest install --check` prints one aligned `[ok]`/`[BROKEN]`/
