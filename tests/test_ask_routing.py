@@ -656,6 +656,77 @@ def test_battery_feed_routes(question, tool):
     assert route_feed(question).tool == tool
 
 
+# --- 2026-10-17: asking for papers is a search, never a clarifier --------------
+# A Research Desk rehearsal asked feed.ask for papers on "equivariant versus
+# invariant interatomic potentials" and got "your feed or the archive?" back --
+# which a one-shot or Discord turn cannot relay, so the turn produced nothing.
+
+
+@pytest.mark.parametrize(
+    ("question", "query"),
+    [
+        (
+            "find papers on equivariant versus invariant interatomic potentials",
+            "equivariant versus invariant interatomic potentials",
+        ),
+        (
+            "Find papers on equivariant versus invariant interatomic potentials.",
+            "equivariant versus invariant interatomic potentials",
+        ),
+        ("search for papers about graph neural networks", "graph neural networks"),
+        ("find me recent papers on equivariant potentials", "equivariant potentials"),
+        # No search verb at all -- these fell through to the clarifier.
+        (
+            "papers comparing equivariant and invariant interatomic potentials",
+            "equivariant and invariant interatomic potentials",
+        ),
+        (
+            "What papers discuss equivariant versus invariant interatomic potentials?",
+            "equivariant versus invariant interatomic potentials",
+        ),
+        # "papers on X" names X outright, so one word is a subject.
+        ("find papers on GNNs", "GNNs"),
+    ],
+)
+def test_asking_for_papers_on_a_subject_searches(question, query):
+    decision = route_feed(question)
+    assert decision.tool == "feed.search", decision
+    assert decision.kwargs["query"].lower() == query.lower()
+
+
+def test_whats_new_on_a_subject_stays_the_feed():
+    """Unchanged: "what's new" is the ranked feed, as it was before."""
+    assert route_feed("what's new on protein folding").tool == "feed.list"
+    assert route_feed("what's new in equivariant potentials").tool == "feed.list"
+
+
+@pytest.mark.parametrize("question", ["find papers", "search for papers", "find me papers"])
+def test_asking_for_papers_with_no_topic_still_asks(question):
+    """With no subject there is nothing to search; asking back is necessary."""
+    decision = route_feed(question)
+    assert decision.tool is None and decision.question and decision.options
+
+
+def test_a_search_answer_says_what_it_searched_and_how_to_narrow(monkeypatch):
+    """The answer replaces the clarifier, so it must carry what the clarifier
+    offered: where it looked, and how to ask for the ranked feed instead."""
+    from attestation.mcp import feed as feed_mod
+    from attestation.mcp.ask import _feed_ask
+
+    seen = {}
+
+    def fake_search(user, query):
+        seen["query"] = query
+        return {"ok": True, "message": "1 item(s) searched, best first", "items": []}
+
+    monkeypatch.setattr(feed_mod, "_search_feed", fake_search)
+    out = _feed_ask("ana", "find papers on equivariant versus invariant interatomic potentials")
+    assert out["tool_used"] == "feed.search" and out["options"] == [], out
+    assert seen["query"] == "equivariant versus invariant interatomic potentials"
+    assert 'for "equivariant versus invariant interatomic potentials"' in out["answer"]
+    assert "whole archive" in out["answer"] and '"my feed"' in out["answer"], out["answer"]
+
+
 @pytest.mark.parametrize(
     ("question", "route", "tool"),
     [

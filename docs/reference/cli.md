@@ -36,7 +36,7 @@ options:
                         RSS_DB) env var > ~/.hermes/skills/science-
                         recommendations/data/hermes.db (if it exists) >
                         ./hermes.db
-  --sources SOURCES     comma-separated: arxiv,pubmed,crossref
+  --sources SOURCES     comma-separated: arxiv,pubmed,crossref,openalex
   --journal JOURNAL     pubmed/crossref only
   --since-days SINCE_DAYS
   --limit LIMIT
@@ -180,7 +180,7 @@ options:
 
 ```
 usage: attest claims [-h] [--db DB] [--verdict VERDICT] [--coverage]
-                     [--record OUT.json] [--force-record]
+                     [--record OUT.json] [--force-record] [--citations]
                      [path]
 
 positional arguments:
@@ -196,6 +196,8 @@ options:
   --coverage         instead: list numbers in prose that no claim covers
   --record OUT.json  also write a signed run record
   --force-record     replace an existing record
+  --citations        instead: list citation keys (cite= and LaTeX \cite) the
+                     bibliography lacks
 ```
 
 ## attest browse

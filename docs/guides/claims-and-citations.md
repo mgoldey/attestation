@@ -1,7 +1,7 @@
 # Verifiable claims and citations
 
-Can it check my draft? Yes — a claim is an HTML comment beside the prose it
-describes, checked against the run ledger for one of five verdicts, and a
+Can it check my draft? Yes, in Markdown or LaTeX — a claim is a comment beside
+the prose it describes, checked against the run ledger for one of five verdicts, and a
 citation key is linted against your configured bibliography the same way.
 
 ## Verifiable claims
@@ -42,6 +42,47 @@ claim". See `examples/citations/` for a worked run of both linters together.
 with zero contradicted claims can still assert a dozen unverifiable numbers.
 Only decimals count as measurements — on a real index, 212 numbers reduce to 30
 decimals and the decimals are the results.
+
+## LaTeX papers
+
+A `.tex` source is a first-class document. A claim is a `%` comment with the
+same body, on its own line or trailing the table row it backs; it compiles to
+nothing and needs no package:
+
+```latex
+The best student reaches a WER of \num{0.0642}.
+% claim: speech/kdsweep_t4 metric=wer value=0.0642
+$T=2$ & 0.0701 & 0.023 \\ % claim: speech/kdsweep_t2 metric=wer value=0.0701
+```
+
+```bash
+uv run attest claims paper/main.tex              # the five verdicts, exit 1 on a contradiction
+uv run attest claims paper/main.tex --coverage   # numbers no claim covers
+uv run attest claims paper/main.tex --citations  # \cite keys the bibliography lacks
+```
+
+Pass the root file: `\input`, `\include` and `\subfile` are followed (a
+cycle is read once), the whole tree is one document, and every finding names
+its own file. `\%` is a percent sign, never a comment.
+
+Coverage reads prose and table cells, `\num{}`, `\SI{}{}` and `\qty{}{}`, a
+number alone in inline math (`$0.021$`, `$12.2\%$`), and `1{,}234.5` as
+1234.5. It skips comments, equations and display math, math with a symbol in
+it (`$\alpha = 0.5$`), `\label`/`\ref`/`\cite` arguments, package options,
+and lengths (`0.48\textwidth`, `2pt`).
+
+`cite.check` (and `attest claims --citations`) reads every `*cite*` command —
+`\cite`, `\citep[see][p.~3]{a,b}`, `\citet`, `\citealp`, `\parencite`,
+`\textcite`, `\autocite`, `\footcite`, `\cites{a}{b}` — skipping natbib's
+`\setcitestyle`/`\citestyle`. The candidate `.bib` files are those beside
+the paper, `ATTEST_BIB_PATHS`, and the owner bibliography in `ATTEST_BIB_OUT`.
+Once the paper names its files (`\bibliography{refs}`, `\addbibresource{refs.bib}`)
+a key resolves only in those, as BibTeX would read it; a key some other file
+or the library defines is reported in `missing_keys` with
+`defined_in_unloaded`, and a named file that does not exist in
+`unresolved_bib_resources`. With no named file, any candidate, the library
+store or Zotero resolves a key. These rules match AgentMarkit's `latex-paper`
+skill. `tests/fixtures/latex/` is a three-file paper exercising all of it.
 
 ## The library
 

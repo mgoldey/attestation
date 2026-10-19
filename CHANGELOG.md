@@ -11,6 +11,30 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **OpenAlex as a research client, and arXiv's fallback.** `openalex` joins
+  arxiv/pubmed/crossref in `research:` topics, `feed.research` and
+  `attest research --sources`. Abstracts are rebuilt from OpenAlex's inverted
+  index; a work carries its arXiv id (from arXiv's DataCite DOI or an arxiv.org
+  location) so it dedups against arXiv's own record. When the arXiv export API
+  fails (406 to 9 of 9 requests from this machine on 2026-09-28; a read timeout
+  on 2026-10-16), `fetch_topic` reruns the query through OpenAlex restricted to
+  `indexed_in:arxiv` and notes it in the arXiv error, unless the topic already
+  names openalex. Hits from several clients are deduped by DOI and arXiv id
+  before they reach a `feed.research` page. Without `OPENALEX_API_KEY` every
+  caller on one IP shares OpenAlex's free daily budget (~100 searches);
+  `OPENALEX_MAILTO` is sent when set. `openalex` does not take `journal=`.
+- **LaTeX parity for claims and citations.** `attest claims`,
+  `runs.claims_check` and `runs.claims_coverage` read `.tex`: a claim is a
+  `% claim: <project>/<run> metric=... value=...` comment (same grammar, same
+  verdicts, same exit codes as the Markdown form), the root file's
+  `\input`/`\include`/`\subfile` tree is one document, and coverage reads
+  table cells, `\num{}`, `\SI{}{}`, numbers alone in inline math and `1{,}234`
+  while skipping comments, equations, `\ref`/`\cite` arguments and lengths.
+  `cite.check` (and the new `attest claims --citations`) checks every
+  `\cite`-family key against the `.bib` files the paper names, reporting
+  `missing_keys` with `defined_in_unloaded` and `unresolved_bib_resources`,
+  under the same rules as AgentMarkit's `latex-paper` skill. A folder scan
+  now reads `*.tex` alongside `*.md`. Tool names are unchanged.
 - **Signed run records.** A run record is one JSON file (an in-toto Statement
   v1 in a DSSE envelope, RFC 8785 canonical payload, ed25519 signature) holding
   the run id and times, tool, Attestation version and git sha, models used,

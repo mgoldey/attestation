@@ -41,6 +41,7 @@ _RESEARCH_SOURCES = (
     ("pubmed", "pubmed"),
     ("arxiv", "arxiv"),
     ("crossref", "crossref"),
+    ("openalex", "openalex"),
 )
 _RESEARCH_PHRASES = (
     "on arxiv",
@@ -50,6 +51,7 @@ _RESEARCH_PHRASES = (
     "search arxiv",
     "search pubmed",
     "crossref",
+    "openalex",
     "in the literature",
     "published on",
     "published about",
@@ -91,7 +93,7 @@ _TRACK_STOPLIST = (
 )
 
 _RESEARCH_NOISE = re.compile(
-    r"\b(on|from|in|via|search|the)\s+(arxiv|pubmed|crossref|the literature)\b"
+    r"\b(on|from|in|via|search|the)\s+(arxiv|pubmed|crossref|openalex|the literature)\b"
     r"|\b(recent|new)\s+papers?\b|\bpapers?\s+(on|about|in)\b|\bfor me\b|\bwhat has been\b"
     r"|\bpublished\s+(on|about|in)\b|\blook up\b|\bresearch\b"
     r"|^(search|track|follow|watch|monitor)\b",
