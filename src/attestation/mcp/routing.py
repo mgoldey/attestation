@@ -46,10 +46,12 @@ def _strip_topic(text: str) -> str:
     should search for the topic, not for the whole sentence.
     """
     cleaned = re.sub(
-        r"^\s*(is there |are there |do you have |show me |find me |"
-        r"anything |any )?(new |recent |good )?(on|about|for|regarding)?\s*",
+        r"^\s*(is there |are there |do you have |show me |find me |find |"
+        r"search for |search |look for |get me )?(anything |any )?"
+        r"(new |recent |good )?(papers? |articles? |preprints? |work )?"
+        r"(?:(on|about|for|regarding)\b)?\s*",
         "",
-        text.strip().rstrip("?").lower(),
+        text.strip().rstrip("?.!").lower(),
     )
     return cleaned.strip() or text.strip().rstrip("?")
 
@@ -324,16 +326,35 @@ def _before_source_rules(q: str) -> Decision | None:
 def _search_decision(q: str, question: str) -> Decision | None:
     """feed.search when the question names a subject; None otherwise.
 
-    An explicit introducer ("known about", "latest in") wins over the looser
-    search phrases, because its subject is exactly the text that follows it.
+    An explicit introducer ("known about", "latest in", "papers on") wins over
+    the looser search phrases, because its subject is exactly the text that
+    follows it.
     """
     if (subject := _subject_after(question)) is not None:
         return Decision("feed.search", {"query": subject})
+    # "papers on X" names X outright, so one word is enough ("papers on GNNs").
+    if (m := _PAPERS_ABOUT.search(question)) is not None:
+        if subject := question[m.end() :].strip().rstrip("?.! ").strip():
+            return Decision("feed.search", {"query": subject})
     if _has(q, *_SEARCH_PHRASES):
         topic = _strip_topic(question)
         if topic and len(topic.split()) >= 2:
             return Decision("feed.search", {"query": topic})
     return None
+
+
+# Asking for papers with a subject is a search, whatever verb carries it.
+# MEASURED 2026-10-17 (Research Desk rehearsal): papers on "equivariant versus
+# invariant interatomic potentials" got "your feed or the archive?" back --
+# "papers comparing X" / "what papers discuss X" have no search verb -- and a
+# one-shot or Discord turn cannot relay a question. The archive search covers
+# every stored feed item; feed.ask's answer says so and how to narrow.
+_PAPERS_ABOUT = re.compile(
+    r"\b(papers?|articles?|preprints?|publications?|studies)\s+"
+    r"(?:(?:that|which)\s+)?(?:on|about|regarding|covering|comparing|compare|"
+    r"discussing|discuss|discusses|examining|evaluating|benchmarking)\s+",
+    re.IGNORECASE,
+)
 
 
 # "I work on X" sets what the ranker starts from. Anchored at the start of the
