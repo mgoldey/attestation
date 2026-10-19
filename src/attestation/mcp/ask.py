@@ -195,8 +195,9 @@ def _feed_ask(user: str, question: str, item_id: int | None = None, url: str | N
         return early
 
     if decision.tool == "feed.search":
-        out = feed_mod._search_feed(user, decision.kwargs.get("query", question))
-    elif decision.tool == "feed.digest":
+        query = decision.kwargs.get("query", question)
+        return _with_search_note(_compose(feed_mod._search_feed(user, query), "feed.search"), query)
+    if decision.tool == "feed.digest":
         out = feed_mod._digest(user)
     elif decision.tool in {"feed.sources", "feed.source_suggest"}:
         from attestation.mcp import subscriptions as subs
@@ -223,6 +224,21 @@ def _feed_ask(user: str, question: str, item_id: int | None = None, url: str | N
     else:
         out = feed_mod._list_feed(user)
     return _compose(out, decision.tool)
+
+
+def _with_search_note(answer: dict, query: str) -> dict:
+    """Say what a search covered, so nobody has to be asked first.
+
+    feed.ask used to answer "find papers on X"-shaped questions it could not
+    place with "your current feed, or the whole archive?" -- a question a
+    one-shot or Discord turn cannot relay. It searches instead and names the
+    narrower reading the reader can still ask for.
+    """
+    note = (
+        f'Searched the whole archive (every stored feed item) for "{query}"; '
+        'say "my feed" for just your ranked feed.'
+    )
+    return {**answer, "answer": f"{answer['answer']}\n{note}".strip()}
 
 
 def _refs(out: dict) -> list[dict]:
@@ -745,8 +761,10 @@ def register(mcp) -> None:
         guessing -- and returns a line to relay VERBATIM plus the ids needed
         to act. Reads `caveat` before trusting the order.
 
-        If the question is ambiguous it asks back and names the alternatives
-        in `options` rather than picking a default.
+        A request for papers on a subject is searched across the whole
+        archive, never asked about; the answer says so. Otherwise, if the
+        question is ambiguous it asks back and names the alternatives in
+        `options` rather than picking a default.
 
         To act on ONE item from a list you showed, pass its `item_id` (from
         `refs`): question="useful" or "not useful" records the reader's
