@@ -55,3 +55,8 @@ def skills_dir() -> Path:
 def scripts_dir() -> Path:
     """`~/.hermes/scripts` -- where the scheduled-refresh script is written."""
     return hermes_home() / "scripts"
+
+
+def record_keys_dir() -> Path:
+    """`~/.hermes/attestation/keys` -- the run-record signing key (`run_record.keys`)."""
+    return hermes_home() / "attestation" / "keys"

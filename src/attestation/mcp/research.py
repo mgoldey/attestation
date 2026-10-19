@@ -1,6 +1,6 @@
 """Ad hoc paper research: the `feed.research` tool.
 
-Searches arXiv, PubMed and CrossRef by query and stores the hits in the
+Searches arXiv, PubMed, CrossRef and OpenAlex by query and stores the hits in the
 reference library -- NOT the feed. The feed is what arrives on a schedule
 (a standing topic is a `research:` feed, registered with feed.source_add);
 the library is what the reader keeps, and an ad hoc question is the second
@@ -118,7 +118,7 @@ def register(mcp) -> None:
     def research_papers(
         query: Annotated[str, Field(min_length=2, description="what the papers are about")],
         sources: Annotated[
-            str, Field(description="comma-separated subset of arxiv, pubmed, crossref")
+            str, Field(description="comma-separated subset of arxiv, pubmed, crossref, openalex")
         ] = "arxiv,pubmed",
         journal: Annotated[
             str | None, Field(description="journal name; pubmed/crossref only", max_length=120)
@@ -127,14 +127,15 @@ def register(mcp) -> None:
         limit: Limit = DEFAULT_RESEARCH_LIMIT,
         store: bool = True,
     ) -> dict:
-        """Search arXiv, PubMed and/or CrossRef for papers on a topic, and keep them.
+        """Search arXiv, PubMed, CrossRef and/or OpenAlex for papers on a topic, and keep them.
 
         Goes to the network (unlike feed.search, which searches what already
         arrived). Hits are stored in the reference library -- cite.lookup and
         cite.search find them afterwards by DOI, arXiv id or topic -- and are
         NOT added to the feed; to follow a topic on the hourly schedule, call
         feed.source_add with `research:arxiv,pubmed?q=<topic>`. `store=false`
-        previews. `limit` is capped at 8. **Show the reader each `url`.**
+        previews. When arXiv fails, its papers come through OpenAlex instead
+        (the arXiv error is still listed). `limit` is capped at 8. **Show the reader each `url`.**
         `offline: true` means the clients are disabled, not that nothing matched.
         """
         return _research(query, sources, journal, since_days, limit, store)

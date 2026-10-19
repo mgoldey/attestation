@@ -131,21 +131,32 @@ def _search(
     }
 
 
-@tool(empty={"uncited": [], "n_claims": 0, "checked": []}, label="cite_check")
-def _check(conn, path: str) -> dict:
+@tool(empty={"uncited": [], "missing_keys": [], "n_claims": 0, "checked": []}, label="cite_check")
+def _check(conn, path: str, record: str | None = None) -> dict:
+    """cite.check: `claims.check_citation_keys` over a Markdown or LaTeX path.
+
+    The store answers first: a key synced from Zotero resolves even when no
+    .bib sits in the working directory. For a LaTeX paper the .bib files
+    beside it count too (`resolver_bib_paths` is None for Markdown, which
+    leaves that check exactly as it was). `missing_keys` is LaTeX only:
+    `\\cite` keys the paper's own bibliography lacks, each with `where`,
+    `closest`, and `defined_in_unloaded` when another .bib (or the library)
+    has the key but the paper does not load that file. With `record`, also
+    signs a run record of the check (its `cite=` claims; not `\\cite` keys).
+    """
     from pathlib import Path
 
-    from attestation import citations, claims
+    from attestation import citations, claims, latex
+    from attestation.mcp.run_record import cite_check_record
 
-    root = Path(path)
+    root = Path(path).expanduser()
     if not root.exists():
         raise ToolError(f"no such path: {path}")
 
-    found, problems = claims.find_claims(root)
-    # The store answers first: a key synced from Zotero resolves here even when
-    # no .bib sits in the working directory.
-    resolver = citations.Resolver.from_env(store=lambda: conn)
-    uncited = claims.check_citations(found, resolver)
+    resolver = citations.Resolver.from_env(
+        store=lambda: conn, bib_paths=latex.resolver_bib_paths(root)
+    )
+    out = claims.check_citation_keys(root, resolver)
     # The message states this tool's SCOPE, not just its result. It returned
     # ok=true with an empty message on a document holding a contradicted claim,
     # and gemma4:e2b reported that verbatim as "OK: true (meaning all claims
@@ -156,27 +167,27 @@ def _check(conn, path: str) -> dict:
     # The docstring already says "pair with runs.claims_check". A model reads
     # that when CHOOSING and then reasons from the payload, so the payload has
     # to carry it too.
-    verdict = (
-        f"{len(uncited)} claim(s) cite a key no source can resolve"
-        if uncited
-        else "every cited key resolves"
-    )
+    scanned, verdict = claims.describe_citation_keys(out)
     return {
         "message": (
-            f"{len(found)} claim(s) scanned for CITATION KEYS only -- {verdict}."
+            f"{scanned} scanned for CITATION KEYS only -- {verdict}."
             " This says nothing about whether the numbers are right:"
             " call runs.claims_check for that."
         ),
-        "n_claims": len(found),
-        "malformed": problems[:5],
+        "n_claims": len(out["claims"]),
+        "malformed": out["malformed"][:5],
         "uncited": [
             {"key": v.claim.cite, "where": f"{v.claim.path}:{v.claim.line}", "why": v.message}
-            for v in uncited
+            for v in out["uncited"]
         ],
+        "missing_keys": out["missing_keys"][:25],
+        "unresolved_bib_resources": out["unresolved_bib_resources"],
+        "citation_keys_used": out["citation_keys_used"],
+        "bib_files": out["bib_files"],
         # States the same pairing runs.claims_check's "checked" states: this
         # tool only ever checked citation keys, never the numbers.
         "checked": ["citation"],
-    }
+    } | cite_check_record(root, out["claims"], out["uncited"], record)
 
 
 @tool(empty={"sources": [], "store": {}}, label="cite_sources")
@@ -299,15 +310,24 @@ def register(mcp) -> None:
 
     @mcp.tool(name="cite.check")
     def cite_check(
-        path: Annotated[str, Field(description="a Markdown file or a directory of them")],
+        path: Annotated[str, Field(description="a Markdown or .tex file, or a folder of them")],
+        record: Annotated[str | None, Field(description="also write a signed run record")] = None,
     ) -> dict:
-        """Claims whose citation key no configured source can resolve.
+        """Citation keys that resolve to nothing, in a Markdown or LaTeX draft.
+
+        Checks claims' `cite=<key>` fields and, in a `.tex` paper (with
+        everything it `\\input`s), every `\\cite`/`\\citep`/`\\parencite`/...
+        key against the paper's bibliography. Once the paper names its .bib
+        files (`\\bibliography{}`/`\\addbibresource{}`) only those count;
+        `missing_keys[].defined_in_unloaded` names the file that has a key
+        the paper does not load.
 
         A lint: it reports that a key is unknown here, never that the cited
         work fails to support the claim. Pair with `runs.claims_check`, which
-        verifies the numbers against recorded runs.
+        verifies the numbers against recorded runs. With `record`, also writes
+        a signed run record of this check (see `runs.verify_record`).
         """
-        return _check(path)
+        return _check(path, record)
 
     @mcp.tool(name="cite.sources")
     def cite_sources() -> dict:

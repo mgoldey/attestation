@@ -27,6 +27,7 @@ from attestation.mcp import (
     knowledge,
     provenance,
     research,
+    run_record,
     subscriptions,
     symbolic,
 )
@@ -39,6 +40,7 @@ DOMAINS = (
     knowledge,
     provenance,
     research,
+    run_record,
     subscriptions,
     symbolic,
 )
@@ -63,7 +65,7 @@ DOMAINS = (
 #   with no way to reach the items is a dead end.
 #
 #   Claims live with `runs`, not with the graph. `runs.claims_check` verifies
-#   numbers in Markdown AGAINST recorded runs; separating them would put a
+#   numbers in Markdown or LaTeX AGAINST recorded runs; separating them would put a
 #   claim checker in a session that cannot see what it checks against. By the
 #   same rule `cite.check` -- a claim checker for citation keys -- is in
 #   `provenance` as well as `knowledge`: a session that can lint uncited claims

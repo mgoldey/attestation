@@ -1,0 +1,27 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{siunitx}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage[numbers]{natbib}
+\setcitestyle{square}
+
+% The headline number is defined once and used everywhere.
+\newcommand{\bestwer}{0.0642} % claim: speech/kdsweep_t4 metric=wer value=0.0642 cite=hinton2015distilling
+
+\begin{document}
+\title{Distilling Whisper for Edge Devices}
+\author{A. Researcher}
+\maketitle
+
+\begin{abstract}
+A distilled student reaches a word error rate of \bestwer{} on held-out speech.
+\end{abstract}
+
+\input{sections/intro}
+\include{sections/results}
+% \input{sections/unfinished} is commented out and never read
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+\end{document}

@@ -36,7 +36,7 @@ options:
                         RSS_DB) env var > ~/.hermes/skills/science-
                         recommendations/data/hermes.db (if it exists) >
                         ./hermes.db
-  --sources SOURCES     comma-separated: arxiv,pubmed,crossref
+  --sources SOURCES     comma-separated: arxiv,pubmed,crossref,openalex
   --journal JOURNAL     pubmed/crossref only
   --since-days SINCE_DAYS
   --limit LIMIT
@@ -179,7 +179,9 @@ options:
 ## attest claims
 
 ```
-usage: attest claims [-h] [--db DB] [--verdict VERDICT] [--coverage] [path]
+usage: attest claims [-h] [--db DB] [--verdict VERDICT] [--coverage]
+                     [--record OUT.json] [--force-record] [--citations]
+                     [path]
 
 positional arguments:
   path               file or directory (default: $RESEARCH_ROOT)
@@ -192,6 +194,10 @@ options:
                      ./hermes.db
   --verdict VERDICT  show only this verdict
   --coverage         instead: list numbers in prose that no claim covers
+  --record OUT.json  also write a signed run record
+  --force-record     replace an existing record
+  --citations        instead: list citation keys (cite= and LaTeX \cite) the
+                     bibliography lacks
 ```
 
 ## attest browse
@@ -501,6 +507,47 @@ options:
   --db DB     DB path. Resolution order if omitted: ATTEST_DB (or RSS_DB) env
               var > ~/.hermes/skills/science-recommendations/data/hermes.db
               (if it exists) > ./hermes.db
+```
+
+## attest record create
+
+```
+usage: attest record create [-h] --spec SPEC --out OUT [--root ROOT] [--force]
+
+options:
+  -h, --help   show this help message and exit
+  --spec SPEC  the run, as JSON (see the design spec)
+  --out OUT    where to write the record
+  --root ROOT  where the spec's paths resolve (default: cwd)
+  --force      replace an existing record
+```
+
+## attest record verify
+
+```
+usage: attest record verify [-h] [--root ROOT] [--key KEY | --keyid KEYID]
+                            [--json]
+                            record
+
+positional arguments:
+  record         the run record (a DSSE envelope .json)
+
+options:
+  -h, --help     show this help message and exit
+  --root ROOT    where the record's file names resolve (default: cwd)
+  --key KEY      require this ed25519 public key (PEM)
+  --keyid KEYID  require this key id (hex sha256)
+  --json         print the report as JSON
+```
+
+## attest record key
+
+```
+usage: attest record key [-h] [--export PUB.pem]
+
+options:
+  -h, --help        show this help message and exit
+  --export PUB.pem  also write the public key here
 ```
 
 ## attest install

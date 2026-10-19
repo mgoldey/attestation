@@ -1,0 +1,12 @@
+\section{Introduction}\label{sec:intro}
+Knowledge distillation~\citep{hinton2015distilling} compresses a teacher into a
+student. Following \citet[Sec.~3]{sanh2019distilbert} and the architecture of
+\citealp{vaswani2017attention}, we train students at temperature $T = 4$ with
+$\alpha = 0.5$, which in earlier sweeps cost 1{,}234.5 GPU hours.
+Whisper~\parencite[see][p.~4]{radford2023whisper} and \textcite{gandhi2023distilwhisper}
+motivate the setting; distillation itself is older \autocite{hinton2015distilling,
+sanh2019distilbert}.
+The student uses 3.5\% of the teacher's compute.% a trailing note, not prose: 9.99
+% \cite{commentedout2000} was cut in revision.
+Gradient-based learning dates back further\footcite{lecun1998gradient}, and one
+reference was never added to any bibliography \cite{missing2020ghost}.

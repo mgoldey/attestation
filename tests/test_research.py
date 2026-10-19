@@ -422,3 +422,145 @@ def test_crossref_unresolved_journal_falls_back_to_venue_match():
     assert client.search("force fields", journal="Nature", limit=5) == []
     assert len(client.search("force fields", limit=5)) == 4, "no journal: nothing dropped"
     assert "rows=5" in asked[-1] and "journals" not in asked[-1]
+
+
+def test_reconstruct_abstract_places_words_at_their_positions():
+    index = {"potentials": [2, 7], "Machine": [0], "learning": [1], "are": [3], "fast.": [4]}
+    index |= {"We": [5], "train": [6], "faster.": [8]}
+    assert research.reconstruct_abstract(index) == (
+        "Machine learning potentials are fast. We train potentials faster."
+    )
+    assert research.reconstruct_abstract(None) == research.reconstruct_abstract({}) == ""
+
+
+def test_parse_openalex():
+    papers = research.parse_openalex((FIX / "openalex_works.json").read_bytes())
+    # paratext and the titleless work are skipped
+    assert [p.external_id for p in papers] == ["W4414644745", "W4225000001"]
+    pre, art = papers
+    assert pre.client == "openalex" and pre.published == "2025-04-22"
+    assert pre.title.startswith("High-performance training and inference")
+    assert pre.abstract.startswith("Machine learning potentials are fast. We train potentials")
+    assert pre.authors == ("Tan, Chuin Wei", "Kozinsky, Boris")
+    # arXiv's DataCite DOI becomes the arXiv id, never the DOI -- as the library does it
+    assert pre.arxiv_id == "2504.16068" and pre.doi is None
+    assert pre.url == "https://arxiv.org/abs/2504.16068"
+    assert pre.pdf_url == "https://arxiv.org/pdf/2504.16068" and pre.venue is None
+    # a journal article OpenAlex merged with its preprint: journal DOI, arXiv id from a location
+    assert art.doi == "10.1038/s41467-022-29939-5" and art.arxiv_id == "2101.03164"
+    assert art.venue == "Nature Communications" and art.abstract == ""
+    assert art.url == "https://doi.org/10.1038/s41467-022-29939-5"
+    assert art.pdf_url == "https://www.nature.com/articles/s41467-022-29939-5.pdf"
+
+
+def test_openalex_search_builds_the_query(monkeypatch):
+    monkeypatch.setattr(research, "_today", lambda: date(2026, 10, 16))
+    fetch, asked = _fetcher({"api.openalex.org/works": "openalex_works.json"})
+    client = research.OpenalexSearch(fetch=fetch)
+    assert len(client.search("equivariant potentials", limit=1)) == 1
+    assert "search=equivariant+potentials" in asked[0] and "per_page=1" in asked[0]
+    assert "filter=to_publication_date%3A2026-10-16" in asked[0]
+    assert "api_key" not in asked[0] and "mailto" not in asked[0]
+
+    keyed = research.OpenalexSearch(fetch=fetch, api_key="K", mailto="me@example.org")
+    keyed.search("x", since=date(2026, 1, 1), arxiv_only=True)
+    assert (
+        "filter=from_publication_date%3A2026-01-01%2Cto_publication_date%3A2026-10-16"
+        "%2Cindexed_in%3Aarxiv"
+    ) in asked[1]
+    assert "api_key=K" in asked[1] and "mailto=me%40example.org" in asked[1]
+
+
+def test_openalex_refuses_a_journal():
+    with pytest.raises(research.TopicError, match="does not scope by journal"):
+        research.parse_topic("research:crossref,openalex?q=x&journal=Nature")
+
+
+def test_clients_from_env_reads_the_openalex_settings(monkeypatch):
+    monkeypatch.delenv("ATTEST_RESEARCH_WEB", raising=False)
+    monkeypatch.setenv("OPENALEX_API_KEY", "K")
+    monkeypatch.delenv("OPENALEX_MAILTO", raising=False)
+    oa = research.clients_from_env()["openalex"]
+    assert isinstance(oa, research.OpenalexSearch) and oa.api_key == "K" and oa.mailto is None
+
+
+def test_fetch_topic_drops_openalex_copies_of_arxiv_records():
+    """A topic naming both: OpenAlex's copies of the two arXiv papers are dropped
+    (one by its arXiv id alone, one by DOI and arXiv id), arXiv's records win."""
+    fetch, _ = _fetcher(
+        {"export.arxiv.org": "arxiv_search.xml", "api.openalex.org": "openalex_works.json"}
+    )
+    clients = {
+        "arxiv": research.ArxivSearch(fetch=fetch),
+        "openalex": research.OpenalexSearch(fetch=fetch),
+    }
+    out = research.fetch_topic(research.Topic(("arxiv", "openalex"), "x"), clients)
+    assert [(p.client, p.external_id) for p in out.papers] == [
+        ("arxiv", "2101.03164"),
+        ("arxiv", "2206.07697"),
+        ("openalex", "W4414644745"),
+    ]
+    assert len(out.entries) == 3 and out.errors == []
+
+
+def test_dedup_papers_matches_doi_case_insensitively():
+    a = _paper(client="crossref", doi="10.1/ABC", arxiv_id=None)
+    b = _paper(client="openalex", external_id="W1", doi="10.1/abc", arxiv_id=None)
+    c = _paper(client="openalex", external_id="W2", doi=None, arxiv_id=None)
+    assert research.dedup_papers([a, b, c]) == [a, c]
+
+
+class _Refusing:
+    """An arXiv client that answers the way the export API answers this machine."""
+
+    name, offline = "arxiv", False
+
+    def search(self, *a, **k):
+        req = research.httpx.Request("GET", "https://export.arxiv.org/api/query")
+        resp = research.httpx.Response(406, request=req)
+        raise research.httpx.HTTPStatusError("406 Not Acceptable", request=req, response=resp)
+
+
+def test_arxiv_failure_falls_back_to_openalex_arxiv_works():
+    fetch, asked = _fetcher({"api.openalex.org": "openalex_works.json"})
+    clients = {"arxiv": _Refusing(), "openalex": research.OpenalexSearch(fetch=fetch)}
+    out = research.fetch_topic(research.Topic(("arxiv",), "equivariant potentials"), clients)
+    assert len(asked) == 1 and "indexed_in%3Aarxiv" in asked[0]
+    assert [p.arxiv_id for p in out.papers] == ["2504.16068", "2101.03164"]
+    assert {p.client for p in out.papers} == {"openalex"}
+    # the arXiv failure is still reported, with what the fallback did
+    [err] = out.errors
+    assert err.startswith("arxiv: HTTPStatusError: 406")
+    assert err.endswith("; fell back to openalex (2 arXiv paper(s))")
+    assert not out.offline
+
+
+def test_arxiv_fallback_skipped_when_openalex_named_offline_or_failing():
+    fetch, asked = _fetcher({"api.openalex.org": "openalex_works.json"})
+    oa = research.OpenalexSearch(fetch=fetch)
+    # named as a peer: it runs once, as itself, without the arXiv filter
+    out = research.fetch_topic(
+        research.Topic(("arxiv", "openalex"), "x"), {"arxiv": _Refusing(), "openalex": oa}
+    )
+    assert len(asked) == 1 and "indexed_in" not in asked[0] and len(out.papers) == 2
+    assert "fell back" not in out.errors[0]
+    # offline (the flag) or absent: no request, the arXiv error alone
+    for clients in (
+        {"arxiv": _Refusing(), "openalex": research.NullClient("openalex")},
+        {"arxiv": _Refusing()},
+    ):
+        out = research.fetch_topic(research.Topic(("arxiv",), "x"), clients)
+        assert out.papers == [] and len(out.errors) == 1 and "fell back" not in out.errors[0]
+    assert len(asked) == 1
+
+    class Down:
+        name, offline = "openalex", False
+
+        def search(self, *a, **k):
+            raise research.httpx.ConnectError("down")
+
+    out = research.fetch_topic(
+        research.Topic(("arxiv",), "x"), {"arxiv": _Refusing(), "openalex": Down()}
+    )
+    assert out.papers == []
+    assert out.errors[0].endswith("; openalex fallback also failed: ConnectError: down")

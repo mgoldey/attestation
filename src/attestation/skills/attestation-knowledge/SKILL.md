@@ -130,8 +130,10 @@ is there. Their own uploaded `.bib` files -- an export from Zotero, Mendeley,
 EndNote or Paperpile -- are read as sources like any other, and are never
 edited; the generated file sits apart from them.
 
-`cite.check(path)` lints a Markdown draft's `cite=<key>` annotations for
-keys no configured source resolves. It is a lint -- the key is unknown
+`cite.check(path)` lints a draft's citation keys: `cite=<key>` annotations
+in Markdown or LaTeX, and in a `.tex` paper every `\cite`-family key against
+the `.bib` files the paper names (`missing_keys`, with `defined_in_unloaded`
+when another `.bib` has the key but the paper does not load it). It is a lint -- the key is unknown
 here -- never "the cited work does not support this". To ask whether a
 paper does support a sentence, ask `kg.ask` with the sentence quoted and
 the key named: `does vaswani2017attention support "<the sentence>"`.

@@ -22,7 +22,7 @@ commit that carries the reasoning rather than repeating it; `git log
   deterministic fallback; a number the draft keeps but attaches to something
   else ("three orders of magnitude" vs "...fewer training data") is
   `contradicted` by code even when the model says otherwise. Exits 1 on
-  `contradicted` (`--fail-on` widens it). 51 MCP tools. Spec:
+  `contradicted` (`--fail-on` widens it). 53 MCP tools. Spec:
   `docs/superpowers/specs/2026-10-17-cite-support-design.md`; eval:
   `evals/run_support_eval.py`.
 - **`runs.ask` and `kg.ask` route citation-support questions to `cite.support`**,
@@ -30,6 +30,43 @@ commit that carries the reasoning rather than repeating it; `git log
   `ATTEST_EXPAND`) reach it: `check my citations support the draft` with
   `path=`, or `does batzner2022nequip support "<sentence>"`. The rule lives in
   `mcp/routing_support.py` and runs before each router's own table.
+- **OpenAlex as a research client, and arXiv's fallback.** `openalex` joins
+  arxiv/pubmed/crossref in `research:` topics, `feed.research` and
+  `attest research --sources`. Abstracts are rebuilt from OpenAlex's inverted
+  index; a work carries its arXiv id (from arXiv's DataCite DOI or an arxiv.org
+  location) so it dedups against arXiv's own record. When the arXiv export API
+  fails (406 to 9 of 9 requests from this machine on 2026-09-28; a read timeout
+  on 2026-10-16), `fetch_topic` reruns the query through OpenAlex restricted to
+  `indexed_in:arxiv` and notes it in the arXiv error, unless the topic already
+  names openalex. Hits from several clients are deduped by DOI and arXiv id
+  before they reach a `feed.research` page. Without `OPENALEX_API_KEY` every
+  caller on one IP shares OpenAlex's free daily budget (~100 searches);
+  `OPENALEX_MAILTO` is sent when set. `openalex` does not take `journal=`.
+- **LaTeX parity for claims and citations.** `attest claims`,
+  `runs.claims_check` and `runs.claims_coverage` read `.tex`: a claim is a
+  `% claim: <project>/<run> metric=... value=...` comment (same grammar, same
+  verdicts, same exit codes as the Markdown form), the root file's
+  `\input`/`\include`/`\subfile` tree is one document, and coverage reads
+  table cells, `\num{}`, `\SI{}{}`, numbers alone in inline math and `1{,}234`
+  while skipping comments, equations, `\ref`/`\cite` arguments and lengths.
+  `cite.check` (and the new `attest claims --citations`) checks every
+  `\cite`-family key against the `.bib` files the paper names, reporting
+  `missing_keys` with `defined_in_unloaded` and `unresolved_bib_resources`,
+  under the same rules as AgentMarkit's `latex-paper` skill. A folder scan
+  now reads `*.tex` alongside `*.md`. Tool names are unchanged.
+- **Signed run records.** A run record is one JSON file (an in-toto Statement
+  v1 in a DSSE envelope, RFC 8785 canonical payload, ed25519 signature) holding
+  the run id and times, tool, Attestation version and git sha, models used,
+  queries per source with hit counts, papers read and at what depth, the
+  sha256 of every input and output, and every verdict as a generic check
+  result. `attest claims --record out.json` and `cite.check(record=...)` write
+  one; `attest record create --spec run.json` and the `runs.attest` tool
+  record any other run; `attest record verify` and `runs.verify_record` check
+  the signature, the check summaries and every file found under `--root`, and
+  need no database. The default key is generated per install under
+  `$HERMES_HOME/attestation/keys/` (mode 0600); `ATTEST_RECORD_KEY` names
+  another. `cryptography` is now a direct dependency (it was already installed
+  through `mcp`). See `docs/superpowers/specs/2026-10-17-run-record-design.md`.
 
 ## [0.5.0] - 2026-10-06
 

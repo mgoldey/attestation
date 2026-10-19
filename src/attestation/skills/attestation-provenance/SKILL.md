@@ -1,6 +1,6 @@
 ---
 name: attestation-provenance
-description: "Verify a manuscript you are handed against the experiment runs on disk: rank the arms of a sweep with their caveats, check every numeric claim in an existing Markdown draft against the recorded run, list the numbers no claim covers, and lint citation keys that resolve to nothing. Reads artifacts and existing prose; never re-runs an experiment or edits the researcher's documents (it may save demo notebook copies to their workspace)."
+description: "Verify a manuscript you are handed against the experiment runs on disk: rank the arms of a sweep with their caveats, check every numeric claim in an existing Markdown or LaTeX draft against the recorded run, list the numbers no claim covers, and lint citation keys that resolve to nothing. Reads artifacts and existing prose; never re-runs an experiment or edits the researcher's documents (it may save demo notebook copies to their workspace)."
 version: 2.0.0
 author: attestation project
 license: MIT
@@ -126,10 +126,16 @@ hypothesis and the single changed variable are written down.
 
 ## "Is this number in my draft right?"
 
-A claim is an HTML comment beside the prose it describes, so the document
-renders unchanged:
+A claim is a comment beside the prose it describes, so the document
+renders unchanged -- an HTML comment in Markdown, a `%` comment in LaTeX
+(trailing a table row is fine):
 
     <!-- claim: project/run metric=wer value=0.053 tol=0.001 as_of=2026-05-28 -->
+    & 0.053 & 0.021 \\ % claim: project/run metric=wer value=0.053 tol=0.001
+
+Give a `.tex` path as the paper's root file (`main.tex`): everything it
+`\input`s or `\include`s is read as one document, and each finding names
+the file it came from.
 
 All three linters when the reader asks about a whole manuscript, because
 each catches what the others cannot:
@@ -139,6 +145,12 @@ runs.claims_check(path="paper.md")     # do the numbers match the runs?
 runs.claims_coverage(path="paper.md")  # which numbers nothing covers
 cite.check(path="paper.md")            # which citation keys resolve to nothing
 ```
+
+The same three take `path="main.tex"`. On LaTeX, `cite.check` also checks
+every `\cite`/`\citep`/`\parencite`/... key against the `.bib` files the
+paper names; report `missing_keys` with their `where`, and say which file
+holds a key when `defined_in_unloaded` is set (the fix is loading that file
+or copying the entry, not inventing one).
 
 Five verdicts from `runs.claims_check`, and the distinctions are the point.
 `supported`: a run agrees within tolerance. `contradicted`: a run disagrees

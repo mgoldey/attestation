@@ -213,6 +213,7 @@ name = "attestation"
 version = "0.5.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "defusedxml" },
     { name = "fastapi" },
     { name = "feedparser" },
@@ -264,6 +265,7 @@ optimize = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=44" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "feedparser", specifier = ">=6.0" },

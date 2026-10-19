@@ -14,7 +14,7 @@ metadata:
 # attestation: setup and repair
 
 **attestation** is a local research-provenance engine: an experiment ledger
-read from artifacts on disk, a claim checker for Markdown, a citation
+read from artifacts on disk, a claim checker for Markdown and LaTeX, a citation
 resolver over Zotero and `.bib` files, a knowledge graph of the reader's own
 items, sandboxed symbolic algebra, and a personalised science feed. Every
 part of it runs on this machine. The tools reach an agent as native MCP

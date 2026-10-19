@@ -1,0 +1,18 @@
+\section{Results}\label{sec:results}
+Table~\ref{tab:results} reports every arm. The best student reaches a WER of
+\num{0.0642} against \num{0.0731} for the undistilled baseline.
+% claim: speech/baseline metric=wer value=0.0731 as_of=2020-01-01
+The sweep as a whole is summarised by % claim: speech/kdsweep_* metric=wer value=0.0642
+a relative reduction of \SI{12.2}{\percent} over the baseline.
+
+\begin{equation}
+  \mathcal{L} = 0.5\,\mathcal{L}_{\mathrm{CE}} + 0.5\,\mathcal{L}_{\mathrm{KD}}
+\end{equation}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.48\textwidth]{fig/wer-by-temperature.pdf}
+  \caption{WER by temperature.}\label{fig:wer}
+\end{figure}
+
+\input{tables/results}

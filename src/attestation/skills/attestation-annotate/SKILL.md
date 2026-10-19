@@ -56,6 +56,19 @@ The distilled model reaches **0.053 WER** on the held-out set.
 <!-- claim: speech-distill/kdsweep_t4 metric=wer value=0.053 tol=0.001 -->
 ```
 
+**In a LaTeX draft**, the same body goes in a `%` comment -- on its own line
+beside the sentence, or trailing the table row it backs. Same fields, same
+verdicts; `\%` is a percent sign, not a comment, so it never starts one:
+
+```latex
+The distilled model reaches \num{0.053} WER on the held-out set.
+% claim: speech-distill/kdsweep_t4 metric=wer value=0.053 tol=0.001
+$T=4$ & 0.053 & 0.021 \\ % claim: speech-distill/kdsweep_t4 metric=wer value=0.053 tol=0.001
+```
+
+Point the checkers at the paper's root file (`main.tex`); every file it
+`\input`s or `\include`s is read with it.
+
 **If the run records that metric on more than one split or step, name
 which one.** `wer` on a `train` split and a `test` split, or `bleu` logged
 at step 18000 and step 22000, are two different rows for the same metric --
@@ -133,6 +146,8 @@ full of unverifiable numbers:
 runs.claims_coverage(path="paper.md")   # decimals with no claim beside them
 runs.claims_check(path="paper.md")      # do the claims that exist check out
 ```
+
+(or `path="main.tex"` for a LaTeX paper.)
 
 These dotted names are for you to read, not a literal call string: some MCP
 clients rewrite `runs.claims_coverage` to something like
