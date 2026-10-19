@@ -163,7 +163,10 @@ def default_key_path() -> Path:
 
 def resolve_key_source() -> KeySource:
     """`ATTEST_RECORD_KEY` if set, else the per-install key. Read at call time."""
-    configured = (os.environ.get(ENV_KEY) or "").strip()
+    # Named literally, not via ENV_KEY: tests/test_llm.py derives the set of
+    # settings the code reads from `environ.get("...")` call sites, so a
+    # constant here would hide this one from the .env.sample check.
+    configured = (os.environ.get("ATTEST_RECORD_KEY") or "").strip()
     if configured:
         return FileKeySource(Path(configured).expanduser())
     return LocalKeySource(default_key_path())
