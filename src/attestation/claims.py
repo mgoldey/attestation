@@ -1,4 +1,4 @@
-"""Check assertions written in Markdown against runs in the ledger.
+"""Check assertions written in Markdown or LaTeX against runs in the ledger.
 
 A README says "MAE 0.353 eV vs experiment @ aDZ". That number was transcribed
 by hand from an artifact, and nothing checks it: re-run the benchmark, and the
@@ -14,6 +14,14 @@ Markdown renderer, plain text so grep and git diff work on it, and adjacent to
 the claim rather than in a separate file that drifts. The prose is never
 touched; a claim is added *beside* an assertion that already exists, so
 annotating is incremental -- one claim is useful on its own.
+
+In a `.tex` source the same body sits in a LaTeX comment, for the same
+reasons (it compiles to nothing, and needs no package):
+
+    WER fell to \\num{0.0642}. % claim: speech/kdsweep_t4 metric=wer value=0.0642
+
+`attestation.latex` reads that form, follows `\\input`/`\\include`, and masks
+the structural numbers of a LaTeX source for `coverage`.
 
 Five verdicts, and the distinctions between them are the point:
 
@@ -33,9 +41,12 @@ import datetime as _dt
 import re
 import sqlite3
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+
+from attestation import latex
 
 # <!-- claim: project/run metric=wer value=0.053 tol=0.001 as_of=2026-05-28 -->
 CLAIM_RE = re.compile(r"<!--\s*claim:\s*(?P<body>.*?)\s*-->", re.DOTALL)
@@ -117,8 +128,57 @@ class Verdict:
     matched_step: int | None = None
 
 
+def _annotations(path: Path, text: str) -> Iterator[tuple[int, str]]:
+    """(line number, body) for every claim annotation in one document.
+
+    Markdown claims are HTML comments; LaTeX claims are `% claim:` comments
+    (see `attestation.latex`). Only the comment syntax differs -- the body
+    grammar, and everything downstream of it, is shared.
+    """
+    if latex.is_tex(path):
+        yield from latex.claim_annotations(text)
+        return
+    for match in CLAIM_RE.finditer(text):
+        yield text.count("\n", 0, match.start()) + 1, match.group("body").strip()
+
+
+def _parse_body(path: Path, line_no: int, body: str) -> Claim | str:
+    """One annotation body as a `Claim`, or the complaint about it."""
+    where = f"{path}:{line_no}"
+    ref = _REF_RE.match(body)
+    if not ref:
+        return f"{where}: expected 'project/run', got {body[:60]!r}"
+
+    fields = dict(_FIELD_RE.findall(body[ref.end() :]))
+    missing = [k for k in ("metric", "value") if k not in fields]
+    if missing:
+        return f"{where}: missing {', '.join(missing)}"
+
+    try:
+        value = float(fields["value"])
+        tol = float(fields.get("tol", DEFAULT_TOL))
+        step = int(fields["step"]) if "step" in fields else None
+    except ValueError:
+        return f"{where}: value/tol/step must be numbers, got {body[:60]!r}"
+
+    return Claim(
+        path=str(path),
+        line=line_no,
+        project=ref.group("project"),
+        run=ref.group("run"),
+        metric=fields["metric"].lower(),
+        value=value,
+        tol=tol,
+        as_of=fields.get("as_of"),
+        split=fields.get("split"),
+        step=step,
+        cite=fields.get("cite"),
+        raw=body,
+    )
+
+
 def parse_file(path: Path) -> tuple[list[Claim], list[str]]:
-    """Claims in one Markdown file, plus complaints about malformed ones.
+    """Claims in one Markdown or LaTeX file, plus complaints about malformed ones.
 
     A malformed annotation is reported, never skipped: silent skipping is how a
     claim disappears from review without anyone deciding to remove it.
@@ -126,60 +186,31 @@ def parse_file(path: Path) -> tuple[list[Claim], list[str]]:
     claims: list[Claim] = []
     problems: list[str] = []
     text = path.read_text(errors="replace")
-
-    for match in CLAIM_RE.finditer(text):
-        line_no = text.count("\n", 0, match.start()) + 1
-        body = match.group("body").strip()
-        where = f"{path}:{line_no}"
-
-        ref = _REF_RE.match(body)
-        if not ref:
-            problems.append(f"{where}: expected 'project/run', got {body[:60]!r}")
-            continue
-
-        fields = dict(_FIELD_RE.findall(body[ref.end() :]))
-        missing = [k for k in ("metric", "value") if k not in fields]
-        if missing:
-            problems.append(f"{where}: missing {', '.join(missing)}")
-            continue
-
-        try:
-            value = float(fields["value"])
-            tol = float(fields.get("tol", DEFAULT_TOL))
-            step = int(fields["step"]) if "step" in fields else None
-        except ValueError:
-            problems.append(f"{where}: value/tol/step must be numbers, got {body[:60]!r}")
-            continue
-
-        claims.append(
-            Claim(
-                path=str(path),
-                line=line_no,
-                project=ref.group("project"),
-                run=ref.group("run"),
-                metric=fields["metric"].lower(),
-                value=value,
-                tol=tol,
-                as_of=fields.get("as_of"),
-                split=fields.get("split"),
-                step=step,
-                cite=fields.get("cite"),
-                raw=body,
-            )
-        )
+    for line_no, body in _annotations(path, text):
+        parsed = _parse_body(path, line_no, body)
+        if isinstance(parsed, str):
+            problems.append(parsed)
+        else:
+            claims.append(parsed)
     return claims, problems
 
 
-def find_claims(root: Path) -> tuple[list[Claim], list[str]]:
-    """Every claim in every Markdown file under `root`."""
-    root = Path(root).expanduser()
+def _documents(root: Path) -> list[Path]:
+    """The files a check of `root` reads: a LaTeX root's whole `\\input` tree,
+    any other single file, or every Markdown and LaTeX file below a folder."""
     if root.is_file():
-        return parse_file(root)
+        return latex.tree(root) if latex.is_tex(root) else [root]
+    return sorted(_prose_files(root))
 
+
+def find_claims(root: Path) -> tuple[list[Claim], list[str]]:
+    """Every claim in `root`: one document (a `.tex` with everything it
+    includes), or every Markdown and LaTeX file under a folder."""
+    root = Path(root).expanduser()
     claims: list[Claim] = []
     problems: list[str] = []
-    for md in sorted(_prose_files(root)):
-        found, bad = parse_file(md)
+    for doc in _documents(root):
+        found, bad = parse_file(doc)
         claims.extend(found)
         problems.extend(bad)
     return claims, problems
@@ -387,7 +418,7 @@ def _masked_prose(text: str) -> str:
 
 
 def _prose_files(root: Path):
-    """Every `*.md` under `root`, skipping hidden and vendored directories
+    """Every `*.md` and `*.tex` under `root`, skipping hidden and vendored directories
     BELOW the root -- `.git/`, `.venv/`, `node_modules/`.
 
     Relative to the root, not the absolute path: judged on the absolute
@@ -396,11 +427,41 @@ def _prose_files(root: Path):
     example suite's coverage test failed there while passing in the main
     checkout.
     """
-    for md in root.rglob("*.md"):
-        parts = md.relative_to(root).parts
-        if any(p.startswith(".") or p == "node_modules" for p in parts):
+    for pattern in ("*.md", "*.tex"):
+        for doc in root.rglob(pattern):
+            parts = doc.relative_to(root).parts
+            if any(p.startswith(".") or p == "node_modules" for p in parts):
+                continue
+            yield doc
+
+
+def _uncovered(doc: Path, covered: list[tuple[float, float]]) -> tuple[list[dict], int]:
+    """The numbers in one document no claim covers, and how many numbers it has.
+
+    Line numbers come from the masked text, whose newlines match the source
+    line for line (the LaTeX masker keeps lines, not in-line offsets).
+    """
+    text = doc.read_text(errors="replace")
+    if latex.is_tex(doc):
+        prose = latex.masked_prose(text)
+        for pattern in _NOT_A_MEASUREMENT:
+            prose = pattern.sub(lambda m: " " * len(m.group(0)), prose)
+    else:
+        prose = _masked_prose(text)
+    lines = text.splitlines()
+    out: list[dict] = []
+    total = 0
+    for match in _NUMBER_RE.finditer(prose):
+        value = float(match.group(1).replace("−", "-").replace(",", ""))
+        total += 1
+        if any(abs(value - cv) <= max(ctol, 1e-9) for cv, ctol in covered):
             continue
-        yield md
+        line_no = prose.count("\n", 0, match.start()) + 1
+        line = lines[line_no - 1] if line_no <= len(lines) else ""
+        out.append(
+            {"file": str(doc), "line": line_no, "value": value, "context": line.strip()[:120]}
+        )
+    return out, total
 
 
 def coverage(root: Path) -> dict:
@@ -411,38 +472,25 @@ def coverage(root: Path) -> dict:
     contradicted claims looks healthy while asserting a dozen unverifiable
     numbers, and nothing surfaces the difference.
 
-    Reports a decimal as uncovered when no claim in the same file states that
-    value (within its own tolerance). Deliberately line-agnostic: a claim
+    Reports a decimal as uncovered when no claim in the same document states
+    that value (within its own tolerance). Deliberately line-agnostic: a claim
     annotation usually sits a line or two from the prose it describes, and
     requiring adjacency would produce false alarms for correctly-annotated
-    documents.
+    documents. A LaTeX root is ONE document across its `\\input` tree: a
+    results table in `tables/results.tex` is covered by a claim in `main.tex`.
     """
     root = Path(root).expanduser()
-    files = [root] if root.is_file() else sorted(_prose_files(root))
+    files = _documents(root)
+    shared = None
+    if root.is_file() and latex.is_tex(root):
+        shared = [(c.value, c.tol) for c in find_claims(root)[0]]
     out: list[dict] = []
     total_numbers = 0
-
-    for md in files:
-        text = md.read_text(errors="replace")
-        claims, _ = parse_file(md)
-        covered = [(c.value, c.tol) for c in claims]
-        prose = _masked_prose(text)
-
-        for match in _NUMBER_RE.finditer(prose):
-            value = float(match.group(1).replace("−", "-").replace(",", ""))
-            total_numbers += 1
-            if any(abs(value - cv) <= max(ctol, 1e-9) for cv, ctol in covered):
-                continue
-            line_no = text.count("\n", 0, match.start()) + 1
-            line = text.splitlines()[line_no - 1] if line_no <= text.count("\n") + 1 else ""
-            out.append(
-                {
-                    "file": str(md),
-                    "line": line_no,
-                    "value": value,
-                    "context": line.strip()[:120],
-                }
-            )
+    for doc in files:
+        covered = shared if shared is not None else [(c.value, c.tol) for c in parse_file(doc)[0]]
+        found, n = _uncovered(doc, covered)
+        out.extend(found)
+        total_numbers += n
 
     return {
         "numbers": total_numbers,
@@ -513,3 +561,38 @@ def check(conn: sqlite3.Connection, root: Path, *, resolver=None) -> dict:
         "verdicts": verdicts,
         "malformed": problems,
     }
+
+
+def check_citation_keys(root: Path, resolver) -> dict:
+    """`cite.check`'s whole act, shared with `attest claims --citations`.
+
+    Two lints, both about keys and neither about numbers: `cite=` fields on
+    claims (Markdown or LaTeX) that `resolver` cannot resolve, and every
+    `\\cite`-family key in a LaTeX paper that its bibliography does not define
+    (`attestation.latex.check_citations`, which consults `resolver.lookup`
+    only for a paper that names no `.bib` file). The resolver is injected,
+    as in `check`.
+    """
+    found, problems = find_claims(root)
+    return {
+        "claims": found,
+        "malformed": problems,
+        "uncited": check_citations(found, resolver),
+        **latex.check_citations(Path(root).expanduser(), lookup=resolver.lookup),
+    }
+
+
+def describe_citation_keys(out: dict) -> tuple[str, str]:
+    """(what was scanned, what is wrong) for a `check_citation_keys` result."""
+    problems = []
+    if out["uncited"]:
+        problems.append(f"{len(out['uncited'])} claim(s) cite a key no source can resolve")
+    if out["missing_keys"]:
+        n = len(out["missing_keys"])
+        problems.append(f"{n} \\cite key(s) the paper's bibliography does not define")
+    if out["unresolved_bib_resources"]:
+        problems.append(f"{len(out['unresolved_bib_resources'])} named .bib file(s) not found")
+    scanned = f"{len(out['claims'])} claim(s)"
+    if out["papers"]:
+        scanned += f" and {out['citation_keys_used']} \\cite key(s)"
+    return scanned, "; ".join(problems) if problems else "every cited key resolves"

@@ -23,6 +23,18 @@ commit that carries the reasoning rather than repeating it; `git log
   before they reach a `feed.research` page. Without `OPENALEX_API_KEY` every
   caller on one IP shares OpenAlex's free daily budget (~100 searches);
   `OPENALEX_MAILTO` is sent when set. `openalex` does not take `journal=`.
+- **LaTeX parity for claims and citations.** `attest claims`,
+  `runs.claims_check` and `runs.claims_coverage` read `.tex`: a claim is a
+  `% claim: <project>/<run> metric=... value=...` comment (same grammar, same
+  verdicts, same exit codes as the Markdown form), the root file's
+  `\input`/`\include`/`\subfile` tree is one document, and coverage reads
+  table cells, `\num{}`, `\SI{}{}`, numbers alone in inline math and `1{,}234`
+  while skipping comments, equations, `\ref`/`\cite` arguments and lengths.
+  `cite.check` (and the new `attest claims --citations`) checks every
+  `\cite`-family key against the `.bib` files the paper names, reporting
+  `missing_keys` with `defined_in_unloaded` and `unresolved_bib_resources`,
+  under the same rules as AgentMarkit's `latex-paper` skill. A folder scan
+  now reads `*.tex` alongside `*.md`. Tool names are unchanged.
 
 ## [0.5.0] - 2026-10-06
 

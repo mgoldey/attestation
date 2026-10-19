@@ -783,7 +783,7 @@ def register(mcp) -> None:
         """Ask about recorded experiment runs, or numbers written in a draft.
 
         Start here. `family` names a set of arms to compare; `path` names a
-        Markdown file to check. Pass `metric` when the question names one
+        Markdown or LaTeX file to check. Pass `metric` when the question names one
         ("compare by wer") -- your paraphrase of the question may not, and
         without it the comparison falls back to whichever metric most arms
         share, which can silently answer a different question. Caveats from
