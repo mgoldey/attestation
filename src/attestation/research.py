@@ -1,4 +1,4 @@
-"""Paper research: search clients over arXiv, PubMed and CrossRef, topics as feeds.
+"""Paper research: search clients over arXiv, PubMed, CrossRef and OpenAlex, topics as feeds.
 
 Spec: docs/superpowers/specs/2026-09-10-paper-research-design.md. A standing
 topic is a `feeds` row whose URL is `research:<clients>?q=<query>[&journal=]`;
@@ -10,6 +10,11 @@ model.
 
 `ATTEST_RESEARCH_WEB` (unset or 1 = on) is read once, in `clients_from_env`,
 never per call -- the offline guarantee's construction-time rule.
+
+OpenAlex is a peer client (`research:openalex?q=...`) AND arXiv's fallback:
+when the arXiv export API fails (406 throttling, 5xx, a dropped connection),
+`fetch_topic` asks OpenAlex for the same query restricted to works arXiv
+indexes, unless the topic already names openalex.
 """
 
 from __future__ import annotations
@@ -28,16 +33,22 @@ import httpx
 from defusedxml import DefusedXmlException
 from defusedxml import ElementTree as SafeET
 
-from attestation.library import ReferenceRecord, normalise_arxiv, upsert
+from attestation.library import (
+    ReferenceRecord,
+    arxiv_from_doi,
+    normalise_arxiv,
+    normalise_doi,
+    upsert,
+)
 from attestation.library_readers import _client, _crossref_abstract, _crossref_authors
 
-CLIENT_NAMES = ("arxiv", "pubmed", "crossref")
+CLIENT_NAMES = ("arxiv", "pubmed", "crossref", "openalex")
 SCHEME = "research:"
 DEFAULT_SINCE_DAYS = 365
 
 
 class TopicError(ValueError):
-    """A research URL the caller can fix: unknown client, no query, journal on arXiv."""
+    """A research URL the caller can fix: unknown client, no query, journal on arXiv/OpenAlex."""
 
 
 @dataclass(frozen=True)
@@ -92,9 +103,19 @@ def parse_topic(url: str) -> Topic:
             "a research topic needs q=<query>, e.g. research:arxiv?q=graph+neural+networks"
         )
     journal = " ".join(params.get("journal", [""])[0].split()) or None
-    if journal and "arxiv" in clients:
-        raise TopicError("arXiv has categories, not journals: drop journal= or drop arxiv")
+    if journal:
+        _check_journal_clients(clients)
     return Topic(clients, query, journal)
+
+
+def _check_journal_clients(clients) -> None:
+    """TopicError when a topic with `journal=` names a client that cannot scope by one."""
+    if "arxiv" in clients:
+        raise TopicError("arXiv has categories, not journals: drop journal= or drop arxiv")
+    if "openalex" in clients:
+        raise TopicError(
+            "the openalex client does not scope by journal: drop journal= or use pubmed/crossref"
+        )
 
 
 @dataclass(frozen=True)
@@ -224,7 +245,7 @@ def null_clients() -> dict:
 
 
 def clients_from_env(*, fetch=None) -> dict:
-    """The three clients, or NullClients when ATTEST_RESEARCH_WEB is off.
+    """The four clients, or NullClients when ATTEST_RESEARCH_WEB is off.
 
     The flag is read HERE, once, when the ingest run or the MCP server builds
     its clients -- a disabled client cannot be coaxed into a request later.
@@ -235,6 +256,11 @@ def clients_from_env(*, fetch=None) -> dict:
         "arxiv": ArxivSearch(fetch=fetch),
         "pubmed": PubmedSearch(fetch=fetch, api_key=os.environ.get("NCBI_API_KEY")),
         "crossref": CrossrefSearch(fetch=fetch),
+        "openalex": OpenalexSearch(
+            fetch=fetch,
+            api_key=os.environ.get("OPENALEX_API_KEY"),
+            mailto=os.environ.get("OPENALEX_MAILTO"),
+        ),
     }
 
 
@@ -631,6 +657,166 @@ class CrossrefSearch(_Client):
         return found
 
 
+def reconstruct_abstract(index: dict | None) -> str:
+    """OpenAlex's `abstract_inverted_index` ({word: [positions]}) back to text.
+
+    OpenAlex ships abstracts inverted for licensing reasons; the words are
+    placed at their positions and joined with single spaces, so the result
+    matches the original up to whitespace. None or {} -> ''.
+    """
+    slots: dict[int, str] = {}
+    for word, positions in (index or {}).items():
+        for pos in positions or ():
+            slots[pos] = word
+    return _collapse(" ".join(slots[i] for i in sorted(slots)))
+
+
+_ARXIV_URL = re.compile(r"arxiv\.org/(?:abs|pdf)/([^\s?#]+?)(?:\.pdf)?(?:[?#]|$)", re.IGNORECASE)
+
+
+def _openalex_arxiv_id(work: dict) -> str | None:
+    """The arXiv id a work carries: its DataCite `10.48550/arxiv.<id>` DOI, else any
+    location's arxiv.org landing or PDF URL -- a journal article OpenAlex merged
+    with its preprint keeps the journal DOI and lists arXiv only as a location."""
+    if aid := arxiv_from_doi(work.get("doi")):
+        return aid
+    for loc in work.get("locations") or ():
+        for key in ("landing_page_url", "pdf_url"):
+            if m := _ARXIV_URL.search((loc or {}).get(key) or ""):
+                return normalise_arxiv(m.group(1))
+    return None
+
+
+def _openalex_authors(work: dict) -> tuple[str, ...]:
+    """'Family, Given' per authorship that names an author; unnamed ones are skipped."""
+    names = (
+        ((a or {}).get("author") or {}).get("display_name") for a in work.get("authorships") or ()
+    )
+    return tuple(_family_first(n) for n in names if n)
+
+
+def _openalex_venue(work: dict) -> str | None:
+    """The primary location's source, unless it is a repository: an arXiv preprint
+    has venue None, like the arXiv client's own records."""
+    source = (work.get("primary_location") or {}).get("source") or {}
+    if source.get("type") == "repository":
+        return None
+    return _collapse(source.get("display_name")) or None
+
+
+def _openalex_url(work: dict, doi: str | None, aid: str | None) -> str | None:
+    """The DOI's resolver, else the arXiv abstract page, else the landing page or the work."""
+    if doi:
+        return f"https://doi.org/{doi}"
+    if aid:
+        return f"https://arxiv.org/abs/{aid}"
+    return (work.get("primary_location") or {}).get("landing_page_url") or work.get("id")
+
+
+def _openalex_paper(work: dict, wid: str, title: str) -> Paper:
+    """One `/works` result, already known to have an id and a title, as a Paper.
+
+    `doi` is the journal DOI only: `normalise_doi` drops arXiv's DataCite one,
+    as the library does, and `_openalex_arxiv_id` turns it into the arXiv id.
+    """
+    doi = normalise_doi(work.get("doi"))
+    aid = _openalex_arxiv_id(work)
+    best = work.get("best_oa_location") or {}
+    return Paper(
+        client="openalex",
+        external_id=wid,
+        title=title,
+        abstract=reconstruct_abstract(work.get("abstract_inverted_index")),
+        authors=_openalex_authors(work),
+        published=work.get("publication_date") or None,
+        doi=doi,
+        arxiv_id=aid,
+        url=_openalex_url(work, doi, aid),
+        venue=_openalex_venue(work),
+        pdf_url=best.get("pdf_url") or (work.get("open_access") or {}).get("oa_url") or None,
+    )
+
+
+# Work types that are not a paper, as `_CROSSREF_NOT_PAPERS` for CrossRef:
+# `paratext` is front matter and tables of contents.
+_OPENALEX_NOT_PAPERS = frozenset({"paratext", "peer-review"})
+
+
+def parse_openalex(body: bytes) -> list[Paper]:
+    """`/works` results as Papers; a work with no title cannot name a paper and is skipped."""
+    out = []
+    for work in (json.loads(body) or {}).get("results") or ():
+        if work.get("type") in _OPENALEX_NOT_PAPERS:
+            continue
+        wid = (work.get("id") or "").rpartition("/")[2]
+        title = _collapse(work.get("title") or work.get("display_name"))
+        if wid and title:
+            out.append(_openalex_paper(work, wid, title))
+    return out
+
+
+OPENALEX_MAX_ROWS = 200  # OpenAlex's per-page ceiling
+# Only the fields `parse_openalex` reads: a full work is ~10 KB of concepts,
+# counts and references per row.
+_OPENALEX_SELECT = (
+    "id,doi,title,display_name,publication_date,type,authorships,abstract_inverted_index,"
+    "primary_location,best_oa_location,locations,open_access"
+)
+
+
+class OpenalexSearch(_Client):
+    """OpenAlex `/works`: arXiv, PubMed and CrossRef coverage behind one JSON API.
+
+    MEASURED 2026-10-16: without `api_key` a request draws on one free daily
+    budget shared by every caller on this IP ($0.10 at $0.001 per search, so
+    ~100 searches a day); `OPENALEX_API_KEY` gets a budget of its own.
+    `OPENALEX_MAILTO`, OpenAlex's older polite-pool contact, is sent when set.
+    """
+
+    name = "openalex"
+    pace_seconds = 0.1  # 10 requests/s is OpenAlex's stated ceiling
+
+    def __init__(self, fetch=None, api_key: str | None = None, mailto: str | None = None):
+        """Wrap `fetch`; `api_key` and `mailto` ride on every request when set."""
+        super().__init__(fetch)
+        self.api_key = api_key
+        self.mailto = mailto
+
+    def search(
+        self,
+        query,
+        *,
+        journal=None,
+        since: date | None = None,
+        limit: int = 50,
+        arxiv_only: bool = False,
+    ):
+        """Papers matching `query` by relevance, published since `since`.
+
+        `arxiv_only` keeps works arXiv indexes -- the fallback `fetch_topic`
+        uses when the arXiv export API fails. `to_publication_date` = today
+        keeps a mis-deposited future date out, as CrossRef's `until-pub-date`.
+        """
+        filters = []
+        if since:
+            filters.append(f"from_publication_date:{since.isoformat()}")
+        filters.append(f"to_publication_date:{_today().isoformat()}")
+        if arxiv_only:
+            filters.append("indexed_in:arxiv")
+        params: dict = {
+            "search": query,
+            "filter": ",".join(filters),
+            "per_page": max(1, min(limit, OPENALEX_MAX_ROWS)),
+            "select": _OPENALEX_SELECT,
+        }
+        if self.api_key:
+            params["api_key"] = self.api_key
+        if self.mailto:
+            params["mailto"] = self.mailto
+        url = "https://api.openalex.org/works?" + urlencode(params, quote_via=quote_plus)
+        return parse_openalex(self._get(url))[:limit]
+
+
 @dataclass
 class Fetched:
     """What one topic run produced: entries for ingest, papers for the library, and why not."""
@@ -659,8 +845,54 @@ def fetch_topic(
             )
         except FETCH_ERRORS as exc:
             errors.append(f"{name}: {type(exc).__name__}: {exc}")
+            if name == "arxiv":
+                papers.extend(_arxiv_fallback(topic, clients, since, limit, errors))
+    papers = dedup_papers(papers)
     offline = all(clients[n].offline for n in topic.clients)
     return Fetched(as_entries(papers), papers, errors, offline)
+
+
+def _arxiv_fallback(topic: Topic, clients: dict, since, limit: int, errors: list[str]):
+    """arXiv's papers through OpenAlex after the arXiv client failed.
+
+    Fallback, not a silent substitute: the arXiv error stays in `errors` with
+    what the fallback found appended, so ingest still logs it and feed.research
+    still counts a failed client. Skipped when the topic names openalex itself
+    (it already ran, or will) or when OpenAlex is offline/absent. The hits keep
+    client "openalex" -- their library source says where they really came from
+    -- and carry arXiv ids, so ingest and the library dedup them against
+    arXiv's own records once arXiv answers again (MEASURED 2026-09-28: the
+    export API answered 406 to 9 of 9 requests from this machine).
+    """
+    oa = clients.get("openalex")
+    if "openalex" in topic.clients or oa is None or oa.offline:
+        return []
+    try:
+        found = oa.search(topic.query, since=since, limit=limit, arxiv_only=True)
+    except FETCH_ERRORS as exc:
+        errors[-1] += f"; openalex fallback also failed: {type(exc).__name__}: {exc}"
+        return []
+    errors[-1] += f"; fell back to openalex ({len(found)} arXiv paper(s))"
+    return found
+
+
+def dedup_papers(papers) -> list[Paper]:
+    """Papers with a DOI or arXiv id an earlier paper already had dropped; order kept.
+
+    Client order decides the survivor, so the arXiv record of a preprint wins
+    over OpenAlex's copy of it when a topic names both. The library would
+    merge the pair anyway (`upsert` matches DOI then arXiv id); this keeps a
+    `feed.research` page from spending two of its eight rows on one paper.
+    """
+    seen: set[tuple[str, str]] = set()
+    out = []
+    for p in papers:
+        keys = {(k, v) for k, v in (("doi", (p.doi or "").lower()), ("arxiv", p.arxiv_id)) if v}
+        if keys & seen:
+            continue
+        seen |= keys
+        out.append(p)
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,66 @@
+{
+  "meta": {"count": 4, "page": 1, "per_page": 4},
+  "results": [
+    {
+      "id": "https://openalex.org/W4414644745",
+      "doi": "https://doi.org/10.48550/arxiv.2504.16068",
+      "title": "High-performance training and inference for deep equivariant interatomic potentials",
+      "display_name": "High-performance training and inference for deep equivariant interatomic potentials",
+      "publication_date": "2025-04-22",
+      "type": "preprint",
+      "authorships": [
+        {"author": {"display_name": "Chuin Wei Tan"}},
+        {"author": {"display_name": "Boris Kozinsky"}},
+        {"author": {"display_name": null}}
+      ],
+      "abstract_inverted_index": {"Machine": [0], "learning": [1], "potentials": [2, 7], "are": [3], "fast.": [4], "We": [5], "train": [6], "faster.": [8]},
+      "primary_location": {
+        "landing_page_url": "http://arxiv.org/abs/2504.16068",
+        "pdf_url": "https://arxiv.org/pdf/2504.16068",
+        "source": {"display_name": "arXiv (Cornell University)", "type": "repository"}
+      },
+      "best_oa_location": {"landing_page_url": "http://arxiv.org/abs/2504.16068", "pdf_url": "https://arxiv.org/pdf/2504.16068"},
+      "locations": [
+        {"landing_page_url": "http://arxiv.org/abs/2504.16068", "pdf_url": "https://arxiv.org/pdf/2504.16068"}
+      ],
+      "open_access": {"is_oa": true, "oa_url": "https://arxiv.org/pdf/2504.16068"}
+    },
+    {
+      "id": "https://openalex.org/W4225000001",
+      "doi": "https://doi.org/10.1038/S41467-022-29939-5",
+      "title": "E(3)-equivariant graph neural networks for data-efficient and accurate interatomic potentials",
+      "publication_date": "2022-05-04",
+      "type": "article",
+      "authorships": [
+        {"author": {"display_name": "Simon Batzner"}},
+        {"author": {"display_name": "Albert Musaelian"}}
+      ],
+      "abstract_inverted_index": null,
+      "primary_location": {
+        "landing_page_url": "https://doi.org/10.1038/s41467-022-29939-5",
+        "pdf_url": null,
+        "source": {"display_name": "Nature Communications", "type": "journal"}
+      },
+      "best_oa_location": {"landing_page_url": "https://www.nature.com/articles/s41467-022-29939-5", "pdf_url": "https://www.nature.com/articles/s41467-022-29939-5.pdf"},
+      "locations": [
+        {"landing_page_url": "https://doi.org/10.1038/s41467-022-29939-5", "pdf_url": null},
+        {"landing_page_url": "https://arxiv.org/abs/2101.03164v3", "pdf_url": null}
+      ],
+      "open_access": {"is_oa": true, "oa_url": "https://www.nature.com/articles/s41467-022-29939-5.pdf"}
+    },
+    {
+      "id": "https://openalex.org/W1000000003",
+      "doi": null,
+      "title": "Front matter",
+      "type": "paratext",
+      "authorships": []
+    },
+    {
+      "id": "https://openalex.org/W1000000004",
+      "doi": "https://doi.org/10.1/untitled",
+      "title": null,
+      "display_name": null,
+      "type": "article"
+    }
+  ]
+}

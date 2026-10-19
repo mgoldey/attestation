@@ -11,6 +11,18 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **OpenAlex as a research client, and arXiv's fallback.** `openalex` joins
+  arxiv/pubmed/crossref in `research:` topics, `feed.research` and
+  `attest research --sources`. Abstracts are rebuilt from OpenAlex's inverted
+  index; a work carries its arXiv id (from arXiv's DataCite DOI or an arxiv.org
+  location) so it dedups against arXiv's own record. When the arXiv export API
+  fails (406 to 9 of 9 requests from this machine on 2026-09-28; a read timeout
+  on 2026-10-16), `fetch_topic` reruns the query through OpenAlex restricted to
+  `indexed_in:arxiv` and notes it in the arXiv error, unless the topic already
+  names openalex. Hits from several clients are deduped by DOI and arXiv id
+  before they reach a `feed.research` page. Without `OPENALEX_API_KEY` every
+  caller on one IP shares OpenAlex's free daily budget (~100 searches);
+  `OPENALEX_MAILTO` is sent when set. `openalex` does not take `journal=`.
 - **LaTeX parity for claims and citations.** `attest claims`,
   `runs.claims_check` and `runs.claims_coverage` read `.tex`: a claim is a
   `% claim: <project>/<run> metric=... value=...` comment (same grammar, same

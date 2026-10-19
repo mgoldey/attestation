@@ -202,7 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_db(sp)
     sp.add_argument("query")
     sp.add_argument(
-        "--sources", default="arxiv,pubmed", help="comma-separated: arxiv,pubmed,crossref"
+        "--sources", default="arxiv,pubmed", help="comma-separated: arxiv,pubmed,crossref,openalex"
     )
     sp.add_argument("--journal", help="pubmed/crossref only")
     sp.add_argument("--since-days", type=int, default=365)
