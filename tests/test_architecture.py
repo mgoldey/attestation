@@ -304,7 +304,9 @@ def test_mcp_domain_modules_stay_small():
         # sentence -- the actual windowing lives in library.fulltext_window.
         # Raised 2026-09-30 for cite.save: the tool wrapper and its envelope
         # only -- resolve/fold/save/render live in bibliography.py.
-        "citation.py": 296,
+        # Raised 2026-10-17 for cite.check(record=...): one argument and one
+        # call into mcp/run_record.py, which holds the recording itself.
+        "citation.py": 302,
     }
     # Anything not named above still gets a cap. `if name not in limits:
     # continue` meant a module was exempt until someone remembered to enrol it

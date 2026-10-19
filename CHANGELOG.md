@@ -35,6 +35,19 @@ commit that carries the reasoning rather than repeating it; `git log
   `missing_keys` with `defined_in_unloaded` and `unresolved_bib_resources`,
   under the same rules as AgentMarkit's `latex-paper` skill. A folder scan
   now reads `*.tex` alongside `*.md`. Tool names are unchanged.
+- **Signed run records.** A run record is one JSON file (an in-toto Statement
+  v1 in a DSSE envelope, RFC 8785 canonical payload, ed25519 signature) holding
+  the run id and times, tool, Attestation version and git sha, models used,
+  queries per source with hit counts, papers read and at what depth, the
+  sha256 of every input and output, and every verdict as a generic check
+  result. `attest claims --record out.json` and `cite.check(record=...)` write
+  one; `attest record create --spec run.json` and the `runs.attest` tool
+  record any other run; `attest record verify` and `runs.verify_record` check
+  the signature, the check summaries and every file found under `--root`, and
+  need no database. The default key is generated per install under
+  `$HERMES_HOME/attestation/keys/` (mode 0600); `ATTEST_RECORD_KEY` names
+  another. `cryptography` is now a direct dependency (it was already installed
+  through `mcp`). See `docs/superpowers/specs/2026-10-17-run-record-design.md`.
 
 ## [0.5.0] - 2026-10-06
 
