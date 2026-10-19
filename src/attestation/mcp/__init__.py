@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from attestation.mcp import (
     ask,
     citation,
+    citation_support,
     feed,
     knowledge,
     provenance,
@@ -34,6 +35,7 @@ from attestation.mcp import (
 DOMAINS = (
     ask,
     citation,
+    citation_support,
     feed,
     knowledge,
     provenance,
@@ -68,7 +70,9 @@ DOMAINS = (
 #   same rule `cite.check` -- a claim checker for citation keys -- is in
 #   `provenance` as well as `knowledge`: a session that can lint uncited claims
 #   but cannot see the runs the other claims are checked against would report
-#   half a document's problems and look complete.
+#   half a document's problems and look complete. `cite.support` -- whether the
+#   cited paper says what the sentence says -- sits beside it for the same
+#   reason: "is what my draft says still true" is one question.
 #
 # `summary` and `rationale` are data rather than comments because
 # `attestation.emit` generates agent configs from this table, and prose that
@@ -112,7 +116,7 @@ AGENT_SURFACES: dict[str, Surface] = {
         ),
     ),
     "provenance": Surface(
-        prefixes=frozenset({"runs", "cite.check"}),
+        prefixes=frozenset({"runs", "cite.check", "cite.support"}),
         summary="Scan experiment runs, compare arms, and check claims against them.",
         rationale=(
             "Verification: a wrong answer reaches a manuscript, and the caveats are the product."

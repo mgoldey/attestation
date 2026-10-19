@@ -11,6 +11,25 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **`cite.support` / `attest support`: does the cited paper say what the
+  sentence says?** For each citing sentence in a Markdown or `.tex` draft
+  (Pandoc `[@key]`, a claim's `cite=`, `\cite{key}`), or one `--sentence`
+  with `--cite`, reads the best text the library holds (full text, else
+  abstract, else title, reported as `text_level`), ranks its sentences, and
+  returns `supported` / `partially_supported` / `contradicted` / `not_found` /
+  `source_unavailable` with a verbatim quote (checked to be a substring of the
+  source) and a reason. The judge is the local chat model with a
+  deterministic fallback; a number the draft keeps but attaches to something
+  else ("three orders of magnitude" vs "...fewer training data") is
+  `contradicted` by code even when the model says otherwise. Exits 1 on
+  `contradicted` (`--fail-on` widens it). 53 MCP tools. Spec:
+  `docs/superpowers/specs/2026-10-17-cite-support-design.md`; eval:
+  `evals/run_support_eval.py`.
+- **`runs.ask` and `kg.ask` route citation-support questions to `cite.support`**,
+  so router-only Hermes sessions (`ATTEST_TOOLS=provenance|knowledge` without
+  `ATTEST_EXPAND`) reach it: `check my citations support the draft` with
+  `path=`, or `does batzner2022nequip support "<sentence>"`. The rule lives in
+  `mcp/routing_support.py` and runs before each router's own table.
 - **OpenAlex as a research client, and arXiv's fallback.** `openalex` joins
   arxiv/pubmed/crossref in `research:` topics, `feed.research` and
   `attest research --sources`. Abstracts are rebuilt from OpenAlex's inverted

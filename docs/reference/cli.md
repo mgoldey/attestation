@@ -214,6 +214,35 @@ options:
   --open       open a browser window
 ```
 
+## attest support
+
+```
+usage: attest support [-h] [--db DB] [--sentence SENTENCE] [--cite CITE]
+                      [--judge {auto,llm,none}] [--verdict VERDICT]
+                      [--fail-on FAIL_ON] [--limit LIMIT] [--json]
+                      [path]
+
+positional arguments:
+  path                  a Markdown or .tex draft, or a directory of them
+
+options:
+  -h, --help            show this help message and exit
+  --db DB               DB path. Resolution order if omitted: ATTEST_DB (or
+                        RSS_DB) env var > ~/.hermes/skills/science-
+                        recommendations/data/hermes.db (if it exists) >
+                        ./hermes.db
+  --sentence SENTENCE   check one sentence instead of a draft (needs --cite)
+  --cite CITE           the citation key, DOI or arXiv id --sentence cites
+  --judge {auto,llm,none}
+                        auto: the local model, else the deterministic check;
+                        none: deterministic only
+  --verdict VERDICT     show only this verdict
+  --fail-on FAIL_ON     comma-separated verdicts that make the exit status 1
+                        (default: contradicted)
+  --limit LIMIT         check at most this many citations
+  --json                print the result as JSON
+```
+
 ## attest desk build
 
 ```

@@ -1,0 +1,183 @@
+{
+ "_note": "Real arXiv abstracts (metadata via the arXiv API, fetched 2026-10-17) and hand-labelled citing sentences. `label` is the verdict a careful reader would give from the ABSTRACT alone; `note` names what the case tests.",
+ "sources": [
+  {
+   "key": "batatia2022mace",
+   "arxiv_id": "2206.07697",
+   "title": "MACE: Higher Order Equivariant Message Passing Neural Networks for Fast and Accurate Force Fields",
+   "abstract": "Creating fast and accurate force fields is a long-standing challenge in computational chemistry and materials science. Recently, several equivariant message passing neural networks (MPNNs) have been shown to outperform models built using other approaches in terms of accuracy. However, most MPNNs suffer from high computational cost and poor scalability. We propose that these limitations arise because MPNNs only pass two-body messages leading to a direct relationship between the number of layers and the expressivity of the network. In this work, we introduce MACE, a new equivariant MPNN model that uses higher body order messages. In particular, we show that using four-body messages reduces the required number of message passing iterations to just two, resulting in a fast and highly parallelizable model, reaching or exceeding state-of-the-art accuracy on the rMD17, 3BPA, and AcAc benchmark tasks. We also demonstrate that using higher order messages leads to an improved steepness of the learning curves."
+  },
+  {
+   "key": "vaswani2017attention",
+   "arxiv_id": "1706.03762",
+   "title": "Attention Is All You Need",
+   "abstract": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks in an encoder-decoder configuration. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train. Our model achieves 28.4 BLEU on the WMT 2014 English-to-German translation task, improving over the existing best results, including ensembles by over 2 BLEU. On the WMT 2014 English-to-French translation task, our model establishes a new single-model state-of-the-art BLEU score of 41.8 after training for 3.5 days on eight GPUs, a small fraction of the training costs of the best models from the literature. We show that the Transformer generalizes well to other tasks by applying it successfully to English constituency parsing both with large and limited training data."
+  },
+  {
+   "key": "batzner2022nequip",
+   "arxiv_id": "2101.03164",
+   "title": "E(3)-Equivariant Graph Neural Networks for Data-Efficient and Accurate Interatomic Potentials",
+   "abstract": "This work presents Neural Equivariant Interatomic Potentials (NequIP), an E(3)-equivariant neural network approach for learning interatomic potentials from ab-initio calculations for molecular dynamics simulations. While most contemporary symmetry-aware models use invariant convolutions and only act on scalars, NequIP employs E(3)-equivariant convolutions for interactions of geometric tensors, resulting in a more information-rich and faithful representation of atomic environments. The method achieves state-of-the-art accuracy on a challenging and diverse set of molecules and materials while exhibiting remarkable data efficiency. NequIP outperforms existing models with up to three orders of magnitude fewer training data, challenging the widely held belief that deep neural networks require massive training sets. The high data efficiency of the method allows for the construction of accurate potentials using high-order quantum chemical level of theory as reference and enables high-fidelity molecular dynamics simulations over long time scales."
+  },
+  {
+   "key": "schutt2017schnet",
+   "arxiv_id": "1706.08566",
+   "title": "SchNet: A continuous-filter convolutional neural network for modeling quantum interactions",
+   "abstract": "Deep learning has the potential to revolutionize quantum chemistry as it is ideally suited to learn representations for structured data and speed up the exploration of chemical space. While convolutional neural networks have proven to be the first choice for images, audio and video data, the atoms in molecules are not restricted to a grid. Instead, their precise locations contain essential physical information, that would get lost if discretized. Thus, we propose to use continuous-filter convolutional layers to be able to model local correlations without requiring the data to lie on a grid. We apply those layers in SchNet: a novel deep learning architecture modeling quantum interactions in molecules. We obtain a joint model for the total energy and interatomic forces that follows fundamental quantum-chemical principles. This includes rotationally invariant energy predictions and a smooth, differentiable potential energy surface. Our architecture achieves state-of-the-art performance for benchmarks of equilibrium molecules and molecular dynamics trajectories. Finally, we introduce a more challenging benchmark with chemical and structural variations that suggests the path for further work."
+  },
+  {
+   "key": "hinton2015distilling",
+   "arxiv_id": "1503.02531",
+   "title": "Distilling the Knowledge in a Neural Network",
+   "abstract": "A very simple way to improve the performance of almost any machine learning algorithm is to train many different models on the same data and then to average their predictions. Unfortunately, making predictions using a whole ensemble of models is cumbersome and may be too computationally expensive to allow deployment to a large number of users, especially if the individual models are large neural nets. Caruana and his collaborators have shown that it is possible to compress the knowledge in an ensemble into a single model which is much easier to deploy and we develop this approach further using a different compression technique. We achieve some surprising results on MNIST and we show that we can significantly improve the acoustic model of a heavily used commercial system by distilling the knowledge in an ensemble of models into a single model. We also introduce a new type of ensemble composed of one or more full models and many specialist models which learn to distinguish fine-grained classes that the full models confuse. Unlike a mixture of experts, these specialist models can be trained rapidly and in parallel."
+  },
+  {
+   "key": "kingma2015adam",
+   "arxiv_id": "1412.6980",
+   "title": "Adam: A Method for Stochastic Optimization",
+   "abstract": "We introduce Adam, an algorithm for first-order gradient-based optimization of stochastic objective functions, based on adaptive estimates of lower-order moments. The method is straightforward to implement, is computationally efficient, has little memory requirements, is invariant to diagonal rescaling of the gradients, and is well suited for problems that are large in terms of data and/or parameters. The method is also appropriate for non-stationary objectives and problems with very noisy and/or sparse gradients. The hyper-parameters have intuitive interpretations and typically require little tuning. Some connections to related algorithms, on which Adam was inspired, are discussed. We also analyze the theoretical convergence properties of the algorithm and provide a regret bound on the convergence rate that is comparable to the best known results under the online convex optimization framework. Empirical results demonstrate that Adam works well in practice and compares favorably to other stochastic optimization methods. Finally, we discuss AdaMax, a variant of Adam based on the infinity norm."
+  }
+ ],
+ "cases": [
+  {
+   "id": "nequip-wrong-meaning",
+   "key": "batzner2022nequip",
+   "sentence": "NequIP outperforms invariant models by up to three orders of magnitude.",
+   "label": "contradicted",
+   "note": "the motivating case: the source's 'three orders of magnitude' is FEWER TRAINING DATA, not accuracy"
+  },
+  {
+   "id": "nequip-right-meaning",
+   "key": "batzner2022nequip",
+   "sentence": "NequIP outperforms existing models with up to three orders of magnitude fewer training data.",
+   "label": "supported",
+   "note": "the same number with its own meaning"
+  },
+  {
+   "id": "nequip-equivariant",
+   "key": "batzner2022nequip",
+   "sentence": "NequIP uses E(3)-equivariant convolutions for interactions of geometric tensors.",
+   "label": "supported",
+   "note": "paraphrase of one sentence"
+  },
+  {
+   "id": "nequip-massive-data",
+   "key": "batzner2022nequip",
+   "sentence": "NequIP shows that deep neural networks require massive training sets.",
+   "label": "contradicted",
+   "note": "inverts 'challenging the widely held belief'; no number to catch it"
+  },
+  {
+   "id": "transformer-bleu-de",
+   "key": "vaswani2017attention",
+   "sentence": "The Transformer achieves 28.4 BLEU on the WMT 2014 English-to-German translation task.",
+   "label": "supported",
+   "note": "number and task agree"
+  },
+  {
+   "id": "transformer-bleu-swapped",
+   "key": "vaswani2017attention",
+   "sentence": "The Transformer achieves 41.8 BLEU on the WMT 2014 English-to-German translation task.",
+   "label": "contradicted",
+   "note": "41.8 is the English-to-French score: number attached to another named task"
+  },
+  {
+   "id": "transformer-gpus",
+   "key": "vaswani2017attention",
+   "sentence": "Training the big Transformer took 3.5 days on eight GPUs.",
+   "label": "supported",
+   "note": "two numbers, both with their own units"
+  },
+  {
+   "id": "transformer-margin",
+   "key": "vaswani2017attention",
+   "sentence": "On English-to-German the Transformer improves over the previous best results by over 2 BLEU.",
+   "label": "supported",
+   "note": "'2' also appears as 'two machine translation tasks'; the other occurrence must win"
+  },
+  {
+   "id": "transformer-recurrence",
+   "key": "vaswani2017attention",
+   "sentence": "The Transformer relies on recurrence and convolutions to model sequences.",
+   "label": "contradicted",
+   "note": "inverts 'dispensing with recurrence and convolutions entirely'"
+  },
+  {
+   "id": "adam-tuning",
+   "key": "kingma2015adam",
+   "sentence": "Adam's hyper-parameters have intuitive interpretations and typically require little tuning.",
+   "label": "supported",
+   "note": "near-verbatim"
+  },
+  {
+   "id": "adam-second-order",
+   "key": "kingma2015adam",
+   "sentence": "Adam is a second-order gradient-based optimization method.",
+   "label": "contradicted",
+   "note": "'second-order' vs the source's 'first-order'"
+  },
+  {
+   "id": "adam-overclaim",
+   "key": "kingma2015adam",
+   "sentence": "Adam converges faster than every other optimizer on all benchmarks.",
+   "label": "partially_supported",
+   "note": "the source says only 'compares favorably'"
+  },
+  {
+   "id": "hinton-acoustic",
+   "key": "hinton2015distilling",
+   "sentence": "Distilling an ensemble into a single model significantly improves the acoustic model of a heavily used commercial system.",
+   "label": "supported",
+   "note": "paraphrase"
+  },
+  {
+   "id": "hinton-first",
+   "key": "hinton2015distilling",
+   "sentence": "Knowledge distillation was first shown to compress an ensemble into a single model by Hinton et al.",
+   "label": "contradicted",
+   "note": "the source credits Caruana and collaborators"
+  },
+  {
+   "id": "schnet-grid",
+   "key": "schutt2017schnet",
+   "sentence": "SchNet uses continuous-filter convolutional layers so that atom positions need not lie on a grid.",
+   "label": "supported",
+   "note": "paraphrase across two sentences"
+  },
+  {
+   "id": "schnet-benchmarks",
+   "key": "schutt2017schnet",
+   "sentence": "SchNet achieves state-of-the-art performance on the MD17 and QM9 benchmarks.",
+   "label": "partially_supported",
+   "note": "the source names no benchmark: MD17 and QM9 are the draft's"
+  },
+  {
+   "id": "mace-four-body",
+   "key": "batatia2022mace",
+   "sentence": "MACE uses four-body messages to reduce the number of message passing iterations to two.",
+   "label": "supported",
+   "note": "two numbers, both agree"
+  },
+  {
+   "id": "mace-three-body",
+   "key": "batatia2022mace",
+   "sentence": "MACE uses three-body messages to reduce the number of message passing iterations to two.",
+   "label": "contradicted",
+   "note": "'three-body' vs the source's 'four-body'"
+  },
+  {
+   "id": "mace-benchmarks",
+   "key": "batatia2022mace",
+   "sentence": "MACE reaches state-of-the-art accuracy on the rMD17, 3BPA and AcAc benchmarks.",
+   "label": "supported",
+   "note": "names agree"
+  },
+  {
+   "id": "wrong-paper",
+   "key": "kingma2015adam",
+   "sentence": "The Transformer achieves 28.4 BLEU on the WMT 2014 English-to-German translation task.",
+   "label": "not_found",
+   "note": "cites the wrong paper entirely"
+  }
+ ]
+}

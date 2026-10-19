@@ -118,6 +118,7 @@ HELP: dict[str, str] = {
     "kg-report": "knowledge-graph health + topic clusters",
     "claims": "verify claims written in Markdown or LaTeX against runs",
     "browse": "open the ledger in Datasette (read-only)",
+    "support": "check that each cited paper supports the sentence citing it",
     "runs": "experiment ledger read from artifacts on disk",
     "runs.scan": "re-read runs from a workspace directory",
     "runs.list": "runs in the ledger",
@@ -295,6 +296,27 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", type=int, default=8898)
     sp.add_argument("--open", action="store_true", help="open a browser window")
     sp.set_defaults(func=cmd_browse)
+
+    sp = sub.add_parser("support", help=HELP["support"])
+    add_db(sp)
+    sp.add_argument("path", nargs="?", help="a Markdown or .tex draft, or a directory of them")
+    sp.add_argument("--sentence", help="check one sentence instead of a draft (needs --cite)")
+    sp.add_argument("--cite", help="the citation key, DOI or arXiv id --sentence cites")
+    sp.add_argument(
+        "--judge",
+        choices=("auto", "llm", "none"),
+        default="auto",
+        help="auto: the local model, else the deterministic check; none: deterministic only",
+    )
+    sp.add_argument("--verdict", help="show only this verdict")
+    sp.add_argument(
+        "--fail-on",
+        default="contradicted",
+        help="comma-separated verdicts that make the exit status 1 (default: contradicted)",
+    )
+    sp.add_argument("--limit", type=int, default=None, help="check at most this many citations")
+    sp.add_argument("--json", action="store_true", help="print the result as JSON")
+    sp.set_defaults(func=cmd_support)
 
     sp = sub.add_parser("desk", help=HELP["desk"])
     add_db(sp)
@@ -870,9 +892,10 @@ def cmd_warmup(args: argparse.Namespace) -> int:
     return 0
 
 
-def _citation_resolver(target: Path):
+def _citation_resolver(target: Path | None = None):
     """The configured bibliographic sources (plus, for a LaTeX target, the
-    `.bib` files beside each paper).
+    `.bib` files beside each paper; no target, as for `attest support
+    --sentence`, is the configured sources alone).
 
     Imported here rather than at module scope, matching
     `attestation.mcp.claims_tools._citation_resolver`: `claims.check` takes
@@ -885,7 +908,8 @@ def _citation_resolver(target: Path):
     """
     from attestation import citations, latex
 
-    return citations.Resolver.from_env(bib_paths=latex.resolver_bib_paths(target))
+    bib_paths = latex.resolver_bib_paths(target) if target is not None else None
+    return citations.Resolver.from_env(bib_paths=bib_paths)
 
 
 def _print_coverage(target: Path) -> int:
@@ -976,6 +1000,77 @@ def cmd_claims(args: argparse.Namespace) -> int:
     # worth a non-zero exit so it can gate a commit if anyone wants it to
     bad = out["counts"].get("contradicted", 0) + len(out["malformed"]) + record_failed
     return 1 if bad else 0
+
+
+def _support_found(args: argparse.Namespace):
+    """The citing sentences `attest support` was asked about, or an exit code."""
+    from attestation import support_text
+
+    if args.sentence:
+        if not args.cite:
+            return fail("--sentence needs --cite KEY (a citation key, DOI or arXiv id)")
+        return [support_text.CitingSentence("<sentence>", 1, args.sentence, (args.cite,))]
+    if not args.path:
+        return fail("pass a draft (Markdown or .tex), or --sentence with --cite")
+    target = Path(args.path).expanduser()
+    if not target.exists():
+        return fail(f"no such path: {target}")
+    from attestation import support
+
+    return support.citing_sentences(target)
+
+
+def _print_support(out: dict, verdict: str | None) -> None:
+    from attestation import support
+
+    for r in support.by_severity(out["results"]):
+        if verdict and r.verdict != verdict:
+            continue
+        level = r.text_level or "no text"
+        print(f"  {r.verdict:20s} {Path(r.path).name}:{r.line}  {r.key} [{level}]  {r.reason}")
+        print(f"  {'':20s} sentence: {r.sentence[:110]}")
+        if r.quote:
+            print(f"  {'':20s} source:   {r.quote[:160]!r}")
+    summary = ", ".join(f"{n} {k}" for k, n in sorted(out["counts"].items())) or "none"
+    print(f"\n{len(out['results'])} citation(s) checked: {summary}")
+    print(f"judge: {', '.join(out['judges']) or '-'}; retrieval: {out['retrieval']}")
+    for note in out["notes"]:
+        print(f"note: {note}")
+    if out["n_skipped"]:
+        print(f"{out['n_skipped']} citation(s) not checked (--limit)")
+
+
+@_documented("support")
+def cmd_support(args: argparse.Namespace) -> int:
+    """Exits 1 when any verdict named in --fail-on occurs (default
+    `contradicted`, matching `attest claims`), so it can gate a commit."""
+    import json
+
+    from attestation import support
+
+    found = _support_found(args)
+    if isinstance(found, int):
+        return found
+    if not found:
+        print("no citing sentences found (Pandoc [@key], claim cite=, or \\cite{key})")
+        return 0
+    fail_on = {k.strip() for k in args.fail_on.split(",") if k.strip()}
+    unknown = fail_on - {str(k) for k in support.SupportKind}
+    if unknown:
+        return fail(f"--fail-on: unknown verdict(s) {', '.join(sorted(unknown))}")
+    with open_db(args.db) as conn:
+        checker = support.Checker(
+            conn=conn,
+            resolver=_citation_resolver(Path(args.path).expanduser() if args.path else None),
+            judge=support.Judge(args.judge),
+        )
+        out = support.run(checker, found, limit=args.limit)
+    if args.json:
+        rows = {**out, "results": [r.to_row() for r in support.by_severity(out["results"])]}
+        print(json.dumps(rows, indent=2))
+    else:
+        _print_support(out, args.verdict)
+    return 1 if support.failing(out["results"], fail_on) else 0
 
 
 def _record_clock() -> str:

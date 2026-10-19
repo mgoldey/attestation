@@ -24,9 +24,13 @@ picking a metric yourself.
 ## When NOT to use this
 
 - Launching or monitoring a training run: nothing here runs anything.
-- Whether a cited work *supports* a claim: `cite.check` says a key resolves
-  or does not, never that the paper agrees. Judging support needs a model
-  and is not what this does.
+- Whether a cited work *supports* a claim is NOT `cite.check`, which says a
+  key resolves or does not, never that the paper agrees. Ask `runs.ask`
+  instead: "check my citations support the draft" with `path=`, or
+  `does batzner2022nequip support "<the sentence>"`. It reads the paper's
+  stored text and answers per citation with a verdict, the text level read
+  (full, abstract or title) and a verbatim quote. Relay the level:
+  `not_found` against an abstract does not mean the paper never says it.
 - Finding papers, or what the reader has been reading about: the feed and
   knowledge agents (`attestation-feed`, `attestation-knowledge`).
 
@@ -235,6 +239,6 @@ you have not seen there.
 | Checking claims before the ledger holds the runs | `runs.list()`, scan if empty; an empty ledger makes every claim `unsupported` |
 | Running `attest claims_check` | The command is `attest claims <file>`; `claims_check` is the tool |
 | Reading `unsupported` as "wrong" | One needs a run, the other needs a correction |
-| Reading `cite.check` as "the paper does not support this" | It says the key does not resolve, nothing more |
+| Reading `cite.check` as "the paper does not support this" | It says the key does not resolve, nothing more; ask `runs.ask` whether the paper supports it |
 | Retrying a failed call with different arguments | Read the message -- it names the fix |
 | Concluding a missing tool is broken | It is hidden (`runs.tools`) or the server is stale (`attestation-setup`) |
