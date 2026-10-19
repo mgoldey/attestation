@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -712,3 +713,41 @@ def test_a_failing_client_is_one_feed_error_and_rss_still_ingests(tmp_path, fake
     }
     stats = run_ingest(conn, fake_embedder, feeds, parse=fake_parse, clients=clients)
     assert stats["failed_feeds"] == 1 and stats["added"] >= 1
+
+
+def test_an_arxiv_topic_survives_arxiv_failing_through_openalex(tmp_path, fake_embedder):
+    """arXiv answers 406 (this machine, 2026-09-28): the standing arXiv topic
+    still ingests, through OpenAlex, under a research:openalex library source.
+    When arXiv answers again, its record of the same paper is a duplicate."""
+    conn = get_db(tmp_path / "t.db")
+    feeds = write_feeds_toml(tmp_path, ["research:arxiv?q=x"])
+
+    class Boom:
+        name, offline = "arxiv", False
+
+        def search(self, *a, **k):
+            raise research.httpx.ConnectError("406")
+
+    class OpenAlex:
+        name, offline = "openalex", False
+
+        def search(self, query, *, since=None, limit=50, arxiv_only=False, journal=None):
+            assert arxiv_only
+            return [replace(_paper(), client="openalex", external_id="W1")]
+
+    clients = {
+        "arxiv": Boom(),
+        "pubmed": research.NullClient("pubmed"),
+        "crossref": research.NullClient("crossref"),
+        "openalex": OpenAlex(),
+    }
+    stats = run_ingest(conn, fake_embedder, feeds, parse=fake_parse, clients=clients)
+    assert stats == {"added": 1, "skipped": 0, "failed_feeds": 0}
+    assert conn.execute("SELECT guid FROM items").fetchone()["guid"] == "openalex:W1"
+    src = conn.execute("SELECT source, source_key FROM reference_sources").fetchone()
+    assert (src["source"], src["source_key"]) == ("research:openalex", "W1")
+
+    clients["arxiv"] = _topic_clients([_paper()])[1]  # arXiv answers again
+    stats2 = run_ingest(conn, fake_embedder, feeds, parse=fake_parse, clients=clients)
+    assert stats2["added"] == 0 and stats2["skipped"] == 1
+    assert conn.execute('SELECT COUNT(*) c FROM "references"').fetchone()["c"] == 1

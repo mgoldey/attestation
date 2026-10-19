@@ -36,7 +36,7 @@ options:
                         RSS_DB) env var > ~/.hermes/skills/science-
                         recommendations/data/hermes.db (if it exists) >
                         ./hermes.db
-  --sources SOURCES     comma-separated: arxiv,pubmed,crossref
+  --sources SOURCES     comma-separated: arxiv,pubmed,crossref,openalex
   --journal JOURNAL     pubmed/crossref only
   --since-days SINCE_DAYS
   --limit LIMIT
