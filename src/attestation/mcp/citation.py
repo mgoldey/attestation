@@ -132,7 +132,7 @@ def _search(
 
 
 @tool(empty={"uncited": [], "missing_keys": [], "n_claims": 0, "checked": []}, label="cite_check")
-def _check(conn, path: str) -> dict:
+def _check(conn, path: str, record: str | None = None) -> dict:
     """cite.check: `claims.check_citation_keys` over a Markdown or LaTeX path.
 
     The store answers first: a key synced from Zotero resolves even when no
@@ -141,11 +141,13 @@ def _check(conn, path: str) -> dict:
     leaves that check exactly as it was). `missing_keys` is LaTeX only:
     `\\cite` keys the paper's own bibliography lacks, each with `where`,
     `closest`, and `defined_in_unloaded` when another .bib (or the library)
-    has the key but the paper does not load that file.
+    has the key but the paper does not load that file. With `record`, also
+    signs a run record of the check (its `cite=` claims; not `\\cite` keys).
     """
     from pathlib import Path
 
     from attestation import citations, claims, latex
+    from attestation.mcp.run_record import cite_check_record
 
     root = Path(path).expanduser()
     if not root.exists():
@@ -186,7 +188,7 @@ def _check(conn, path: str) -> dict:
         # States the same pairing runs.claims_check's "checked" states: this
         # tool only ever checked citation keys, never the numbers.
         "checked": ["citation"],
-    }
+    } | cite_check_record(root, out["claims"], out["uncited"], record)
 
 
 @tool(empty={"sources": [], "store": {}}, label="cite_sources")
@@ -310,6 +312,7 @@ def register(mcp) -> None:
     @mcp.tool(name="cite.check")
     def cite_check(
         path: Annotated[str, Field(description="a Markdown or .tex file, or a folder of them")],
+        record: Annotated[str | None, Field(description="also write a signed run record")] = None,
     ) -> dict:
         """Citation keys that resolve to nothing, in a Markdown or LaTeX draft.
 
@@ -322,9 +325,10 @@ def register(mcp) -> None:
 
         A lint: it reports that a key is unknown here, never that the cited
         work fails to support the claim. Pair with `runs.claims_check`, which
-        verifies the numbers against recorded runs.
+        verifies the numbers against recorded runs. With `record`, also writes
+        a signed run record of this check (see `runs.verify_record`).
         """
-        return _check(path)
+        return _check(path, record)
 
     @mcp.tool(name="cite.sources")
     def cite_sources() -> dict:

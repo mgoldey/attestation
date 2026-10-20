@@ -28,6 +28,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _common
 
+# A run record over the committed workspace fixture: one input file, one check.
+_RECORD_CALL: dict = {
+    "spec": {
+        "tool": "mcp_e2e flow",
+        "inputs": [{"path": "speech-distill/FINDINGS.md", "role": "draft"}],
+        "checks": [{"check": "flow", "results": [{"subject": "kdsweep", "verdict": "supported"}]}],
+    },
+    "out": "$RECORD",
+    "root": "$WORKSPACE",
+}
+
 # (tool, arguments, expectation). Expectation: "ok", "refused", or "options"
 # (an .ask router that must return options rather than a default).
 CALLS: list[tuple[str, dict, str]] = [
@@ -101,6 +112,13 @@ CALLS: list[tuple[str, dict, str]] = [
     ("runs.ask", {"question": "which arm of kdsweep won?", "family": "kdsweep"}, "ok"),
     ("runs.ask", {"question": "check the claims in my draft", "path": "$FINDINGS"}, "ok"),
     ("runs.ask", {"question": "hmm"}, "options"),
+    # Signed run records. $RECORD is in the flow's temp dir and signed with a
+    # key generated there (ATTEST_RECORD_KEY, see main()), never the real
+    # ~/.hermes key. Two spawns serve these (provenance and full), so the
+    # first write forces; the second, unforced, must refuse to overwrite.
+    ("runs.attest", {**_RECORD_CALL, "force": True}, "ok"),
+    ("runs.attest", _RECORD_CALL, "refused"),
+    ("runs.verify_record", {"path": "$RECORD", "root": "$WORKSPACE"}, "ok"),
     # --- knowledge
     ("kg.concepts", {"limit": 10}, "ok"),
     ("kg.central", {"metric": "degree", "limit": 5}, "ok"),
@@ -124,6 +142,18 @@ CALLS: list[tuple[str, dict, str]] = [
     # cite.format of a key no library row holds refuses; it never invents a
     # citation. An unknown style is refused by the schema before the call.
     ("cite.format", {"keys": ["vaswani2017attention"], "style": "apa"}, "refused"),
+    # cite.support on a key no library row holds: ok, one source_unavailable
+    # row, and judge="none" keeps the flow model-free.
+    (
+        "cite.support",
+        {
+            "sentence": "Self-attention alone suffices for sequence transduction.",
+            "cite": "vaswani2017attention",
+            "judge": "none",
+        },
+        "ok",
+    ),
+    ("cite.support", {"sentence": "Self-attention alone suffices."}, "refused"),
     # --- symbolic (no database)
     ("sym.simplify", {"expr": "(x**2 - 1)/(x - 1)"}, "ok"),
     ("sym.solve", {"expr": "x**2 - 4", "symbol": "x"}, "ok"),
@@ -378,7 +408,12 @@ def main(argv: list[str] | None = None) -> int:
         prepared = persona_eval.prepare_db(db_path, url, chat, embed)
         _tag_and_click(db_path, url, chat, prepared["users"])
         workspace = _common.REPO_ROOT / "examples" / "workspace"
+        from attestation.run_record.keys import LocalKeySource
+
+        record_key = Path(tmp.name) / "record-key.pem"
+        LocalKeySource(record_key).signer()  # generate it before any spawn reads it
         ctx = {
+            "RECORD": str(Path(tmp.name) / "run-record.json"),
             "WORKSPACE": str(workspace),
             "FINDINGS": str(workspace / "speech-distill" / "FINDINGS.md"),
             "CORPUS_XML": str(_common.CORPUS_DIR / "labelled.xml"),
@@ -393,6 +428,9 @@ def main(argv: list[str] | None = None) -> int:
             # regression test, so it must not be the one call that reaches
             # arXiv/PubMed/CrossRef for real.
             "ATTEST_RESEARCH_WEB": "0",
+            # runs.attest signs with this throwaway key, not the per-install
+            # one under the user's real $HERMES_HOME.
+            "ATTEST_RECORD_KEY": str(record_key),
         }
         surfaces = [args.surface if args.surface != "full" else None] if args.surface else SURFACES
         for surface in surfaces:

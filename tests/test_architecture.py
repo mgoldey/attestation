@@ -247,7 +247,11 @@ def test_mcp_domain_modules_stay_small():
         # rather than asked about (a Research Desk turn got "your feed or the
         # archive?" back and could not relay it), so the answer names what it
         # searched and how to ask for the ranked feed instead.
-        "ask.py": 571,
+        # Raised again 2026-10-17 (cite.support reachable from router-only
+        # sessions): +2: the import and the `support_answer(...) or` hooks in
+        # runs.ask and kg.ask. The rule, the argument extraction and the reply
+        # all live in mcp/routing_support.py; only the call sites are here.
+        "ask.py": 573,
         # Raised for runs.record (2026-09-01): a new tool plus its Arm
         # pydantic model in provenance.py, one new routing rule (with its
         # own ordering comment) in routing.py. Raised again the same day
@@ -304,7 +308,9 @@ def test_mcp_domain_modules_stay_small():
         # sentence -- the actual windowing lives in library.fulltext_window.
         # Raised 2026-09-30 for cite.save: the tool wrapper and its envelope
         # only -- resolve/fold/save/render live in bibliography.py.
-        "citation.py": 296,
+        # Raised 2026-10-17 for cite.check(record=...): one argument and one
+        # call into mcp/run_record.py, which holds the recording itself.
+        "citation.py": 302,
     }
     # Anything not named above still gets a cap. `if name not in limits:
     # continue` meant a module was exempt until someone remembered to enrol it

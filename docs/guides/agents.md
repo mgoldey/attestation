@@ -61,7 +61,7 @@ mcp_servers:
 
 Verify with `hermes mcp list` — you should see `attestation ... ✓ enabled`.
 
-The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 51 tools.
+The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 54 tools.
 These counts move: re-measure rather than quoting this paragraph.
 
 ```bash
@@ -109,12 +109,15 @@ m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
 | `runs.list(project, family, limit)` | Recorded runs, and the families they group into | instant |
 | `runs.compare(family, metric)` | Rank the arms of a sweep, with provenance and caveats | instant |
 | `runs.detail(project, name)` | One run: config, every metric, source path, hypothesis header | instant |
+| `runs.attest(spec, out, root, force)` | Sign a run record: queries, papers read and at what depth, input hashes, verdicts | fast |
+| `runs.verify_record(path, root, keyid)` | Check a run record's signature, summaries and file hashes; says what it cannot check | fast |
 | `runs.claims_check(path, verdict)` | Verify Markdown claims against recorded runs | instant |
 | `runs.claims_coverage(path)` | Numbers asserted in prose that no claim covers | instant |
 | `feed.digest(user, days, per_topic, limit)` | Ranked unread feed grouped by topic, with a ranking-quality caveat | fast |
 | `cite.lookup(key)` | One bibliographic record, every source that contributed, and any field they disagreed on | fast |
 | `cite.search(query, limit, author, year, tag)` | Find references in the library: semantic when embedded, substring otherwise, and it says which | fast |
 | `cite.check(path)` | Claims whose citation key no configured source can resolve | fast |
+| `cite.support(path=None, sentence=None, cite=None, judge="auto")` | Whether each cited paper says what its citing sentence says: a verdict (supported, partially_supported, contradicted, not_found, source_unavailable), a verbatim quote, the text level read (full/abstract/title) and a reason; worst first, at most 20 citations judged | one local model call per citation |
 | `cite.sources()` | Which citation sources are configured, which can reach the network, and what the store holds | instant |
 | `cite.sync(sources, limit)` | Read Zotero, `.bib` files and the feed into the one deduplicated library; enrich from the web only if a flag armed it at start | slow: a model call per unembedded reference |
 | `cite.related(key)` | What a paper cites and what in the library cites it, from real reference lists; a cited paper not in the library is a stub, never fetched | fast |
@@ -416,9 +419,9 @@ restart. This holds ~4.4 GB of GPU memory permanently; `attest warmup`
 ## Restricted surfaces and generated agent configs
 
 A model that can see a tool will eventually call it wrong, so a Claude Code
-session does not need all 51: `ATTEST_TOOLS=feed|provenance|knowledge|symbolic`
+session does not need all 54: `ATTEST_TOOLS=feed|provenance|knowledge|symbolic`
 restricts what an `attest-mcp` process registers to one namespace (`feed.*`,
-`runs.*` + `cite.check`, `kg.*` + `feed.search`, or `sym.*`), and
+`runs.*` + `cite.check` + `cite.support`, `kg.*` + `feed.search`, or `sym.*`), and
 `ATTEST_EXPAND=1` reveals the specific tools underneath a surface's `.ask`
 router and one companion — without it, each restricted surface serves just
 those two, which is progressive disclosure, not a smaller surface. A typo in

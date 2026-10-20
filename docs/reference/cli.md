@@ -180,7 +180,7 @@ options:
 
 ```
 usage: attest claims [-h] [--db DB] [--verdict VERDICT] [--coverage]
-                     [--citations]
+                     [--record OUT.json] [--force-record] [--citations]
                      [path]
 
 positional arguments:
@@ -194,6 +194,8 @@ options:
                      ./hermes.db
   --verdict VERDICT  show only this verdict
   --coverage         instead: list numbers in prose that no claim covers
+  --record OUT.json  also write a signed run record
+  --force-record     replace an existing record
   --citations        instead: list citation keys (cite= and LaTeX \cite) the
                      bibliography lacks
 ```
@@ -210,6 +212,35 @@ options:
                (if it exists) > ./hermes.db
   --port PORT
   --open       open a browser window
+```
+
+## attest support
+
+```
+usage: attest support [-h] [--db DB] [--sentence SENTENCE] [--cite CITE]
+                      [--judge {auto,llm,none}] [--verdict VERDICT]
+                      [--fail-on FAIL_ON] [--limit LIMIT] [--json]
+                      [path]
+
+positional arguments:
+  path                  a Markdown or .tex draft, or a directory of them
+
+options:
+  -h, --help            show this help message and exit
+  --db DB               DB path. Resolution order if omitted: ATTEST_DB (or
+                        RSS_DB) env var > ~/.hermes/skills/science-
+                        recommendations/data/hermes.db (if it exists) >
+                        ./hermes.db
+  --sentence SENTENCE   check one sentence instead of a draft (needs --cite)
+  --cite CITE           the citation key, DOI or arXiv id --sentence cites
+  --judge {auto,llm,none}
+                        auto: the local model, else the deterministic check;
+                        none: deterministic only
+  --verdict VERDICT     show only this verdict
+  --fail-on FAIL_ON     comma-separated verdicts that make the exit status 1
+                        (default: contradicted)
+  --limit LIMIT         check at most this many citations
+  --json                print the result as JSON
 ```
 
 ## attest desk build
@@ -588,6 +619,47 @@ options:
   --db DB     DB path. Resolution order if omitted: ATTEST_DB (or RSS_DB) env
               var > ~/.hermes/skills/science-recommendations/data/hermes.db
               (if it exists) > ./hermes.db
+```
+
+## attest record create
+
+```
+usage: attest record create [-h] --spec SPEC --out OUT [--root ROOT] [--force]
+
+options:
+  -h, --help   show this help message and exit
+  --spec SPEC  the run, as JSON (see the design spec)
+  --out OUT    where to write the record
+  --root ROOT  where the spec's paths resolve (default: cwd)
+  --force      replace an existing record
+```
+
+## attest record verify
+
+```
+usage: attest record verify [-h] [--root ROOT] [--key KEY | --keyid KEYID]
+                            [--json]
+                            record
+
+positional arguments:
+  record         the run record (a DSSE envelope .json)
+
+options:
+  -h, --help     show this help message and exit
+  --root ROOT    where the record's file names resolve (default: cwd)
+  --key KEY      require this ed25519 public key (PEM)
+  --keyid KEYID  require this key id (hex sha256)
+  --json         print the report as JSON
+```
+
+## attest record key
+
+```
+usage: attest record key [-h] [--export PUB.pem]
+
+options:
+  -h, --help        show this help message and exit
+  --export PUB.pem  also write the public key here
 ```
 
 ## attest install

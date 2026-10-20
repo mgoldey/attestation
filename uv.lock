@@ -215,6 +215,7 @@ source = { editable = "." }
 dependencies = [
     { name = "bibtexparser" },
     { name = "citeproc-py" },
+    { name = "cryptography" },
     { name = "defusedxml" },
     { name = "fastapi" },
     { name = "feedparser" },
@@ -268,6 +269,7 @@ optimize = [
 requires-dist = [
     { name = "bibtexparser", specifier = ">=2.0.1" },
     { name = "citeproc-py", specifier = ">=0.11.1" },
+    { name = "cryptography", specifier = ">=44" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "feedparser", specifier = ">=6.0" },

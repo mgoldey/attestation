@@ -20,6 +20,7 @@ from attestation.mcp.routing import (
     route_runs,
     route_sym,
 )
+from attestation.mcp.routing_support import support_answer
 
 # --- the tools ------------------------------------------------------------
 
@@ -787,18 +788,22 @@ def register(mcp) -> None:
         ("compare by wer") -- your paraphrase of the question may not, and
         without it the comparison falls back to whichever metric most arms
         share, which can silently answer a different question. Caveats from
-        a comparison pass through unabridged -- report them.
+        a comparison pass through unabridged -- report them. Also answers
+        whether a cited paper supports a sentence ("does batzner2022nequip
+        support \"...\"", or "check my citations support the draft" with `path`).
         """
-        return Answer(**_runs_ask(question, family, path, metric))
+        cited = support_answer(question, path)
+        return Answer(**(cited or _runs_ask(question, family, path, metric)))
 
     @mcp.tool(name="kg.ask")
     def kg_ask(question: str, source: str | None = None, target: str | None = None) -> Answer:
         """Ask about the reading knowledge graph, in plain words.
 
         Start here. `source` and `target` name concepts when the question is
-        about how two topics connect.
+        about how two topics connect. Also answers whether a cited paper
+        supports a quoted sentence ("does vaswani2017attention say \"...\"").
         """
-        return Answer(**_kg_ask(question, source, target))
+        return Answer(**(support_answer(question) or _kg_ask(question, source, target)))
 
     @mcp.tool(name="sym.ask")
     def sym_ask(expr: str, question: str = "simplify") -> Answer:

@@ -38,6 +38,26 @@ claims`) as well as the `cite.check` / `runs.claims_check` MCP tools. It is a
 lint ("no source has this key"), never "the paper does not support this
 claim". See `examples/citations/` for a worked run of both linters together.
 
+## Does the cited paper say it?
+
+`attest support draft.md` (MCP: `cite.support`) is the check the lint is not.
+For every citing sentence -- Pandoc `[@key]`, a claim's `cite=<key>`, or LaTeX
+`\cite{key}` -- it finds the paper in the library, reads the best text held
+for it (full text from `attest library fulltext`, else the abstract, else the
+title; reported as `text_level`), ranks the source's sentences against the
+citing one, and returns `supported`, `partially_supported`, `contradicted`,
+`not_found` or `source_unavailable` with a verbatim quote and a reason.
+
+The judge is the local chat model (`--judge auto`, the default), falling back
+to a deterministic check when none answers (`--judge none` forces it). Either
+way, numbers are checked by code: a sentence that keeps the paper's number but
+attaches it to something else -- "outperforms invariant models by up to three
+orders of magnitude" against "up to three orders of magnitude fewer training
+data" -- is `contradicted` even when the model says it is supported. Every
+quote is checked to be an exact substring of the source. `attest support`
+exits 1 on any `contradicted` (`--fail-on` widens the gate), like `attest
+claims`; `--sentence ... --cite KEY` checks one sentence.
+
 `--coverage` is the inverse, and the more useful half for adoption: a document
 with zero contradicted claims can still assert a dozen unverifiable numbers.
 Only decimals count as measurements — on a real index, 212 numbers reduce to 30

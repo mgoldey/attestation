@@ -118,6 +118,7 @@ HELP: dict[str, str] = {
     "kg-report": "knowledge-graph health + topic clusters",
     "claims": "verify claims written in Markdown or LaTeX against runs",
     "browse": "open the ledger in Datasette (read-only)",
+    "support": "check that each cited paper supports the sentence citing it",
     "runs": "experiment ledger read from artifacts on disk",
     "runs.scan": "re-read runs from a workspace directory",
     "runs.list": "runs in the ledger",
@@ -153,6 +154,10 @@ HELP: dict[str, str] = {
     "desk.build": "render the page for a persona to a file (imports pending verdicts first)",
     "desk.import": "record the page's pending verdicts as clicks",
     "desk.refresh": "import, build and publish as configured in .env; no-op when unconfigured",
+    "record": "signed run records: what a run read, checked and concluded",
+    "record.create": "sign a run record from a JSON spec (for tools outside attest)",
+    "record.verify": "check a run record's signature and the files it names",
+    "record.key": "print this install's record-signing public key and key id",
 }
 
 
@@ -285,6 +290,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="instead: list numbers in prose that no claim covers",
     )
+    sp.add_argument("--record", metavar="OUT.json", help="also write a signed run record")
+    sp.add_argument("--force-record", action="store_true", help="replace an existing record")
     sp.add_argument(
         "--citations",
         action="store_true",
@@ -297,6 +304,27 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", type=int, default=8898)
     sp.add_argument("--open", action="store_true", help="open a browser window")
     sp.set_defaults(func=cmd_browse)
+
+    sp = sub.add_parser("support", help=HELP["support"])
+    add_db(sp)
+    sp.add_argument("path", nargs="?", help="a Markdown or .tex draft, or a directory of them")
+    sp.add_argument("--sentence", help="check one sentence instead of a draft (needs --cite)")
+    sp.add_argument("--cite", help="the citation key, DOI or arXiv id --sentence cites")
+    sp.add_argument(
+        "--judge",
+        choices=("auto", "llm", "none"),
+        default="auto",
+        help="auto: the local model, else the deterministic check; none: deterministic only",
+    )
+    sp.add_argument("--verdict", help="show only this verdict")
+    sp.add_argument(
+        "--fail-on",
+        default="contradicted",
+        help="comma-separated verdicts that make the exit status 1 (default: contradicted)",
+    )
+    sp.add_argument("--limit", type=int, default=None, help="check at most this many citations")
+    sp.add_argument("--json", action="store_true", help="print the result as JSON")
+    sp.set_defaults(func=cmd_support)
 
     sp = sub.add_parser("desk", help=HELP["desk"])
     add_db(sp)
@@ -460,12 +488,34 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("drop", nargs="+", help='duplicates to fold in, e.g. "Matthew Goldey"')
     sp.set_defaults(func=cmd_persona_merge)
 
+    _add_record_parser(sub)
+
     sp = sub.add_parser("install", help=HELP["install"])
     sp.add_argument("--check", action="store_true", help="detect only, change nothing")
     sp.add_argument("--yes", action="store_true", help="non-interactive consent")
     sp.add_argument("--now", action="store_true", help="also run the tag backfill inline")
     sp.set_defaults(func=cmd_install)
     return p
+
+
+def _add_record_parser(sub) -> None:
+    """`attest record create|verify|key` -- see `attestation.run_record`."""
+    from attestation.run_record import verify as record_verify
+
+    sp = sub.add_parser("record", help=HELP["record"])
+    rec_sub = sp.add_subparsers(dest="record_command", required=True)
+    rp = rec_sub.add_parser("create", help=HELP["record.create"])
+    rp.add_argument("--spec", required=True, help="the run, as JSON (see the design spec)")
+    rp.add_argument("--out", required=True, help="where to write the record")
+    rp.add_argument("--root", default=None, help="where the spec's paths resolve (default: cwd)")
+    rp.add_argument("--force", action="store_true", help="replace an existing record")
+    rp.set_defaults(func=cmd_record_create)
+    rp = rec_sub.add_parser("verify", help=HELP["record.verify"])
+    record_verify.add_arguments(rp)
+    rp.set_defaults(func=cmd_record_verify)
+    rp = rec_sub.add_parser("key", help=HELP["record.key"])
+    rp.add_argument("--export", metavar="PUB.pem", help="also write the public key here")
+    rp.set_defaults(func=cmd_record_key)
 
 
 def warmup() -> None:
@@ -859,9 +909,10 @@ def cmd_warmup(args: argparse.Namespace) -> int:
     return 0
 
 
-def _citation_resolver(target: Path):
+def _citation_resolver(target: Path | None = None):
     """The configured bibliographic sources (plus, for a LaTeX target, the
-    `.bib` files beside each paper).
+    `.bib` files beside each paper; no target, as for `attest support
+    --sentence`, is the configured sources alone).
 
     Imported here rather than at module scope, matching
     `attestation.mcp.claims_tools._citation_resolver`: `claims.check` takes
@@ -874,7 +925,8 @@ def _citation_resolver(target: Path):
     """
     from attestation import citations, latex
 
-    return citations.Resolver.from_env(bib_paths=latex.resolver_bib_paths(target))
+    bib_paths = latex.resolver_bib_paths(target) if target is not None else None
+    return citations.Resolver.from_env(bib_paths=bib_paths)
 
 
 def _print_coverage(target: Path) -> int:
@@ -940,8 +992,10 @@ def cmd_claims(args: argparse.Namespace) -> int:
     if args.citations:
         return _print_citations(target, args.db)
 
+    started = _record_clock()
     with open_db(args.db) as conn:
         out = claims_mod.check(conn, target, resolver=_citation_resolver(target))
+    record_failed = _record_claims(args, target, out, started)
 
     for problem in out["malformed"]:
         print(f"  malformed  {problem}")
@@ -965,8 +1019,160 @@ def cmd_claims(args: argparse.Namespace) -> int:
         print(f"{len(out['malformed'])} malformed")
     # a contradicted claim is a document asserting something false; that is
     # worth a non-zero exit so it can gate a commit if anyone wants it to
-    bad = out["counts"].get("contradicted", 0) + len(out["malformed"])
+    bad = out["counts"].get("contradicted", 0) + len(out["malformed"]) + record_failed
     return 1 if bad else 0
+
+
+def _support_found(args: argparse.Namespace):
+    """The citing sentences `attest support` was asked about, or an exit code."""
+    from attestation import support_text
+
+    if args.sentence:
+        if not args.cite:
+            return fail("--sentence needs --cite KEY (a citation key, DOI or arXiv id)")
+        return [support_text.CitingSentence("<sentence>", 1, args.sentence, (args.cite,))]
+    if not args.path:
+        return fail("pass a draft (Markdown or .tex), or --sentence with --cite")
+    target = Path(args.path).expanduser()
+    if not target.exists():
+        return fail(f"no such path: {target}")
+    from attestation import support
+
+    return support.citing_sentences(target)
+
+
+def _print_support(out: dict, verdict: str | None) -> None:
+    from attestation import support
+
+    for r in support.by_severity(out["results"]):
+        if verdict and r.verdict != verdict:
+            continue
+        level = r.text_level or "no text"
+        print(f"  {r.verdict:20s} {Path(r.path).name}:{r.line}  {r.key} [{level}]  {r.reason}")
+        print(f"  {'':20s} sentence: {r.sentence[:110]}")
+        if r.quote:
+            print(f"  {'':20s} source:   {r.quote[:160]!r}")
+    summary = ", ".join(f"{n} {k}" for k, n in sorted(out["counts"].items())) or "none"
+    print(f"\n{len(out['results'])} citation(s) checked: {summary}")
+    print(f"judge: {', '.join(out['judges']) or '-'}; retrieval: {out['retrieval']}")
+    for note in out["notes"]:
+        print(f"note: {note}")
+    if out["n_skipped"]:
+        print(f"{out['n_skipped']} citation(s) not checked (--limit)")
+
+
+@_documented("support")
+def cmd_support(args: argparse.Namespace) -> int:
+    """Exits 1 when any verdict named in --fail-on occurs (default
+    `contradicted`, matching `attest claims`), so it can gate a commit."""
+    import json
+
+    from attestation import support
+
+    found = _support_found(args)
+    if isinstance(found, int):
+        return found
+    if not found:
+        print("no citing sentences found (Pandoc [@key], claim cite=, or \\cite{key})")
+        return 0
+    fail_on = {k.strip() for k in args.fail_on.split(",") if k.strip()}
+    unknown = fail_on - {str(k) for k in support.SupportKind}
+    if unknown:
+        return fail(f"--fail-on: unknown verdict(s) {', '.join(sorted(unknown))}")
+    with open_db(args.db) as conn:
+        checker = support.Checker(
+            conn=conn,
+            resolver=_citation_resolver(Path(args.path).expanduser() if args.path else None),
+            judge=support.Judge(args.judge),
+        )
+        out = support.run(checker, found, limit=args.limit)
+    if args.json:
+        rows = {**out, "results": [r.to_row() for r in support.by_severity(out["results"])]}
+        print(json.dumps(rows, indent=2))
+    else:
+        _print_support(out, args.verdict)
+    return 1 if support.failing(out["results"], fail_on) else 0
+
+
+def _record_clock() -> str:
+    from attestation.run_record.build import now
+
+    return now()
+
+
+def _write_signed(recorder, out: str, force: bool) -> int:
+    """Sign `recorder` with the configured key and write it; 0 or 1."""
+    from attestation.run_record import build, keys
+
+    try:
+        envelope = recorder.sign(keys.resolve_key_source().signer())
+        path = build.write_record(envelope, Path(out), force=force)
+    except (keys.RecordKeyError, FileExistsError, ValueError, OSError) as exc:
+        return fail(f"run record not written: {exc}")
+    print(f"run record written: {path}", file=sys.stderr)
+    return 0
+
+
+def _record_claims(args: argparse.Namespace, target: Path, out: dict, started: str) -> int:
+    """`attest claims --record`: write what the check read and concluded."""
+    if not args.record:
+        return 0
+    from attestation import citations
+    from attestation.run_record import adapters
+
+    try:
+        recorder = adapters.record_claims_check(
+            target,
+            out["verdicts"],
+            out["malformed"],
+            bib_paths=citations.bib_paths_from_env(),
+            started_at=started,
+        )
+    except ValueError as exc:
+        return fail(f"run record not written: {exc}")
+    return _write_signed(recorder, args.record, args.force_record)
+
+
+@_documented("record.create")
+def cmd_record_create(args: argparse.Namespace) -> int:
+    """The generic entry point: any tool or agent describes its run as JSON
+    (tool, models, queries, papers, inputs, outputs, checks) and this hashes
+    the files, signs, and writes the record."""
+    from attestation.run_record import build
+
+    try:
+        spec = json.loads(Path(args.spec).expanduser().read_text(encoding="utf-8"))
+        root = Path(args.root).expanduser() if args.root else None
+        recorder = build.from_spec(spec, root=root)
+    except (OSError, ValueError) as exc:
+        return fail(f"cannot build a record from {args.spec}: {exc}")
+    return _write_signed(recorder, args.out, args.force)
+
+
+@_documented("record.verify")
+def cmd_record_verify(args: argparse.Namespace) -> int:
+    """Needs no database: the record and, optionally, its files."""
+    from attestation.run_record import verify as record_verify
+
+    return record_verify.run(args)
+
+
+@_documented("record.key")
+def cmd_record_key(args: argparse.Namespace) -> int:
+    """Generates the per-install key on first use (or reads ATTEST_RECORD_KEY)."""
+    from attestation.run_record import keys
+
+    try:
+        signer = keys.resolve_key_source().signer()
+    except keys.RecordKeyError as exc:
+        return fail(str(exc))
+    print(f"keyid {signer.keyid}")
+    print(f"source {signer.source}")
+    print(signer.public_pem(), end="")
+    if args.export:
+        Path(args.export).expanduser().write_text(signer.public_pem(), encoding="ascii")
+        print(f"public key written: {args.export}", file=sys.stderr)
+    return 0
 
 
 @_documented("browse")

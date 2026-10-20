@@ -8,7 +8,6 @@ making every socket connection fail.
 
 import json
 import socket
-import sqlite3
 
 import pytest
 
@@ -578,9 +577,7 @@ def test_cite_search_rows_carry_the_arxiv_id(lib):
 
 def test_a_version_13_database_gains_the_citation_manager_schema(tmp_path):
     path = tmp_path / "old.db"
-    conn = get_db(path)
-    conn.close()
-    raw = sqlite3.connect(path)
+    raw = get_db(path)  # the vec0 extension loaded: the delete trigger names it
     for table in ("reference_aliases", "reference_notes", "reference_edits", "reference_formatted"):
         raw.execute(f"DROP TABLE {table}")
     for col in ("entry_type", "volume", "pages", "extra"):

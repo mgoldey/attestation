@@ -82,3 +82,8 @@ def workspace_dir() -> Path:
     `library.json`'s `cited_by` scans the .tex and .md files under it."""
     configured = (os.environ.get("ATTEST_WORKSPACE") or "").strip()
     return Path(configured).expanduser() if configured else hermes_root() / "workspace"
+
+
+def record_keys_dir() -> Path:
+    """`~/.hermes/attestation/keys` -- the run-record signing key (`run_record.keys`)."""
+    return hermes_home() / "attestation" / "keys"

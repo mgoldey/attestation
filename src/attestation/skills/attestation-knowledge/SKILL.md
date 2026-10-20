@@ -147,7 +147,9 @@ the `.bib` files the paper names (`missing_keys`, with `defined_in_unloaded`
 when another `.bib` has the key but the paper does not load it; `repeated_keys`
 when two loaded files both define one -- usually an upload and the generated
 `.bib`, so cite from one). It is a lint -- the key is unknown
-here -- never "the cited work does not support this".
+here -- never "the cited work does not support this". To ask whether a
+paper does support a sentence, ask `kg.ask` with the sentence quoted and
+the key named: `does vaswani2017attention support "<the sentence>"`.
 
 **Everything above is local.** The exceptions are `ATTEST_CITATION_WEB`
 (CrossRef and the arXiv API) and `ATTEST_CITATION_SCHOLAR` (Semantic Scholar
