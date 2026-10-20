@@ -3,7 +3,7 @@
 Its own module rather than another tool in mcp/citation.py, which is at its
 size cap: the tool is a wrapper, and resolving keys, rendering (citeproc-py
 over the bundled CSL styles) and writing BibTeX all live in
-`citation_manager.format_keys`, `cite_format` and `library.bibtex`.
+`citation_manager.format_keys`, the cite_format module and `library.bibtex`.
 
 Served wherever `cite.*` is: the default surface and `knowledge`.
 """

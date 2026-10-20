@@ -1003,11 +1003,21 @@ def _ascii_word(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", normalise_title(text))
 
 
+def authors_of(row) -> list[str]:
+    """A row's authors; an unreadable `authors` column is no authors, never a
+    crash (the dashboard exports every hour and one bad row must not stop it)."""
+    try:
+        names = json.loads(row["authors"] or "[]")
+    except ValueError:
+        return []
+    return [n for n in names if isinstance(n, str)] if isinstance(names, list) else []
+
+
 def bibtex_key(row) -> str:
     """`bib_key` when a .bib or Zotero supplied one, else <family><year><first title word>."""
     if row["bib_key"]:
         return row["bib_key"]
-    authors = json.loads(row["authors"])
+    authors = authors_of(row)
     family = _ascii_word(authors[0].split(",")[0]) if authors else "anon"
     words = [w for w in normalise_title(row["title"]).split() if w not in ("a", "an", "the")]
     first = _ascii_word(words[0]) if words else "untitled"
@@ -1050,6 +1060,15 @@ def _tex(value: str | None) -> str | None:
     return value.translate(_BIB_ESCAPE)
 
 
+def extra_of(row) -> dict:
+    """A row's `extra` BibTeX fields; unreadable JSON is none."""
+    try:
+        extra = json.loads(_row_value(row, "extra") or "{}")
+    except ValueError:
+        return {}
+    return extra if isinstance(extra, dict) else {}
+
+
 def entry_type(row) -> str:
     """The BibTeX entry type a row renders as: its stored type, else @misc for
     a preprint (no venue, or a preprint server as venue), else @article."""
@@ -1067,9 +1086,9 @@ def _bib_fields(row) -> list[tuple[str, str | None]]:
     venue = row["venue"]
     preprint = not venue or bool(_PREPRINT_VENUE.match(venue))
     venue_field = _VENUE_FIELD.get(kind, "howpublished")
-    extra = json.loads(_row_value(row, "extra") or "{}")
+    extra = extra_of(row)
     fields: list[tuple[str, str | None]] = [
-        ("author", _tex(" and ".join(json.loads(row["authors"])))),
+        ("author", _tex(" and ".join(authors_of(row)))),
         ("title", _tex(row["title"])),
         (venue_field, None if preprint else _tex(venue)),
         ("year", str(row["year"]) if row["year"] else None),

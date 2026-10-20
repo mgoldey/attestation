@@ -123,7 +123,8 @@ has been fetched, `full_text` as a window (`text`, `offset`, `chars`,
 which is never returned. Papers found by the feed's research tools sit in
 the same library under `research:<client>` sources.
 
-**Formatted citations.** `cite.format(keys, style)` returns, for up to five
+**Formatted citations.** The citation-formatting tool (`kg.tools` lists it
+when this session hides it) returns, for up to five
 keys, a ready-to-paste `text` in APA (the default), IEEE,
 `chicago-author-date`, Nature or Vancouver style, the `cite_key` for
 `\cite{}`, and the entry's `bibtex`; `missing` names keys the library does

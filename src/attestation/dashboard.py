@@ -654,7 +654,7 @@ def _cut(doc: dict, keep: int) -> dict:
 
 def render(doc: dict) -> str:
     """The file's text: sorted keys, compact separators, UTF-8, trailing newline.
-    Compact, because a researcher with 5,000 references is ~2 MB and the host
+    Compact, because a researcher with 5,000 references is 4-6 MiB and the host
     page downloads it whole."""
     return json.dumps(doc, sort_keys=True, ensure_ascii=False, separators=(",", ":")) + "\n"
 

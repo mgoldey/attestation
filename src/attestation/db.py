@@ -268,15 +268,17 @@ CREATE TABLE IF NOT EXISTS "references"(
   title_key TEXT,
   first_seen TEXT NOT NULL,
   updated TEXT NOT NULL,
-  -- The citation manager's fields (migration 014): the BibTeX entry type, and
-  -- volume/pages for formatting. `extra` is a JSON object of every other
-  -- BibTeX field a source carried (publisher, number, booktitle, ...), kept
-  -- so an imported entry renders back with the fields it came with.
   entry_type TEXT,
   volume TEXT,
   pages TEXT,
   extra TEXT NOT NULL DEFAULT '{}'
 );
+-- entry_type, volume, pages and extra are the citation manager's (migration
+-- 014): the BibTeX entry type, volume/pages for formatting, and `extra`, a
+-- JSON object of every other BibTeX field a source carried (publisher,
+-- number, booktitle, ...), so an imported entry renders back with them. The
+-- note sits here, not inside the CREATE TABLE: SQLite rewrites that text on
+-- ALTER TABLE ... DROP COLUMN and a comment beside the dropped column broke it.
 CREATE INDEX IF NOT EXISTS idx_references_doi ON "references"(doi);
 CREATE INDEX IF NOT EXISTS idx_references_arxiv ON "references"(arxiv_id);
 -- idx_references_title_key is created by migration 008, which every database

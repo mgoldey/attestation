@@ -168,8 +168,8 @@ Measured 2026-10-19 on synthetic references shaped like a chemistry/ML library
 arXiv id or both, three tags, two sources, volume, pages and a publisher):
 1,000 references are 1.6 MiB and 3,000 are 4.7 MiB with every field; from about
 3,900 the oldest start losing detail. 5,000 would be 7.8 MiB in full, so the
-file sheds every abstract and the oldest rows' citation and BibTeX and lands at
-6.00 MiB with all 5,000 references listed. (Before the citation fields, 3,000
+file sheds every abstract and the citation and BibTeX of the oldest 528 rows and
+lands at 6,290,932 bytes (6.00 MiB) with all 5,000 references listed. (Before the citation fields, 3,000
 realistic references measured 1.4 MB.)
 
 There is deliberately no MCP tool for it: the dashboard is a file for a page, not

@@ -29,6 +29,8 @@ import sqlite3
 import warnings
 from pathlib import Path
 
+from attestation import library
+
 STYLE_DIR = Path(__file__).resolve().parent / "csl_styles"
 STYLE_ENV = "ATTEST_CITATION_STYLE"
 DEFAULT_STYLE = "apa"
@@ -181,7 +183,7 @@ def _people(raw) -> list[dict]:
 
 def _csl_people(item: dict, row, extra: dict) -> None:
     """author, editor and issued."""
-    if authors := _people(json.loads(row["authors"] or "[]")):
+    if authors := _people(library.authors_of(row)):
         item["author"] = authors
     if editors := _people((extra.get("editor") or "").split(" and ")):
         item["editor"] = editors
@@ -223,7 +225,7 @@ def to_csl(row) -> dict:
     number the arXiv id, the abs page as URL when the row has none). LaTeX in
     titles, names and venues is folded to plain text.
     """
-    extra = json.loads(_get(row, "extra") or "{}")
+    extra = library.extra_of(row)
     preprint = _is_preprint(row)
     item: dict = {"id": "ref", "type": _csl_type(row, preprint), "title": plain(row["title"])}
     _csl_people(item, row, extra)
