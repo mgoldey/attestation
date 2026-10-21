@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from attestation.mcp import (
     ask,
     citation,
+    citation_format,
     citation_support,
     feed,
     knowledge,
@@ -35,6 +36,7 @@ from attestation.mcp import (
 DOMAINS = (
     ask,
     citation,
+    citation_format,
     citation_support,
     feed,
     knowledge,

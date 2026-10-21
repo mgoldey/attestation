@@ -139,6 +139,9 @@ CALLS: list[tuple[str, dict, str]] = [
     ("cite.related", {"key": "vaswani2017attention"}, "refused"),
     # cite.save of a key no library row holds refuses rather than inventing one.
     ("cite.save", {"paper": "vaswani2017attention", "user": "bench-chemist"}, "refused"),
+    # cite.format of a key no library row holds refuses; it never invents a
+    # citation. An unknown style is refused by the schema before the call.
+    ("cite.format", {"keys": ["vaswani2017attention"], "style": "apa"}, "refused"),
     # cite.support on a key no library row holds: ok, one source_unavailable
     # row, and judge="none" keeps the flow model-free.
     (

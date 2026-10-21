@@ -57,6 +57,33 @@ def scripts_dir() -> Path:
     return hermes_home() / "scripts"
 
 
+def hermes_root() -> Path:
+    """The agent home a host page reads from, which for a Hermes profile
+    (`HERMES_HOME=<root>/profiles/<name>`) is the ROOT's, not the profile's.
+
+    The host installer's convention, without resolving symlinks: a
+    `HERMES_HOME` set to anything else names its parent's `.hermes`
+    (`/opt/hermes-data` -> `/opt/.hermes`); unset is `~/.hermes`.
+    `dashboard.default_path` and `workspace_dir` both hang off it.
+    """
+    raw = (os.environ.get("HERMES_HOME") or "").strip()
+    home = Path(raw).expanduser() if raw else Path.home() / DEFAULT_HOME_DIRNAME
+    if home.parent.name == "profiles":
+        return home.parent.parent
+    if raw:
+        return home.parent / DEFAULT_HOME_DIRNAME
+    return home
+
+
+def workspace_dir() -> Path:
+    """Where the agent's drafts live: `ATTEST_WORKSPACE`, else
+    `<hermes_root()>/workspace` -- the folder the host's Files page shows and
+    AgentMarkit's latex-paper skill builds papers in. Read at call time.
+    `library.json`'s `cited_by` scans the .tex and .md files under it."""
+    configured = (os.environ.get("ATTEST_WORKSPACE") or "").strip()
+    return Path(configured).expanduser() if configured else hermes_root() / "workspace"
+
+
 def record_keys_dir() -> Path:
     """`~/.hermes/attestation/keys` -- the run-record signing key (`run_record.keys`)."""
     return hermes_home() / "attestation" / "keys"

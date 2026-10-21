@@ -143,6 +143,11 @@ def merge(existing: dict, incoming: dict) -> tuple[dict, dict]:
         if kept in (None, "", [], {}):
             merged[name] = offered
             continue
+        if name == "extra":
+            merged[name], refused = _merge_extra(kept, offered)
+            if refused:
+                conflicts[name] = refused
+            continue
         if name == "authors" and _authors_extend(kept, offered):
             merged[name] = list(offered)
             continue
@@ -151,6 +156,16 @@ def merge(existing: dict, incoming: dict) -> tuple[dict, dict]:
         conflicts[name] = {"kept": kept, "offered": offered}
     _year_follows_venue(existing, incoming, merged, conflicts)
     return merged, conflicts
+
+
+def _merge_extra(kept: dict, offered: dict) -> tuple[dict, dict]:
+    """The other BibTeX fields, merged one field at a time by the same rule:
+    a field the row lacks is filled, a differing one is kept and recorded."""
+    merged = {**offered, **kept}
+    refused = {
+        k: {"kept": kept[k], "offered": v} for k, v in offered.items() if k in kept and kept[k] != v
+    }
+    return merged, refused
 
 
 def _year_follows_venue(existing: dict, incoming: dict, merged: dict, conflicts: dict) -> None:
@@ -197,6 +212,12 @@ class ReferenceRecord:
     fetched_at: str | None = None
     tags: list[str] = field(default_factory=list)
     cites: list[tuple[str, str | None]] = field(default_factory=list)
+    # BibTeX's own shape, for formatting and for writing an entry back: the
+    # entry type, volume and pages, and every other field the source carried.
+    entry_type: str | None = None
+    volume: str | None = None
+    pages: str | None = None
+    extra: dict[str, str] = field(default_factory=dict)
 
     def fields(self) -> dict:
         """The `references` columns this record can fill (empty ones omitted)."""
@@ -211,8 +232,12 @@ class ReferenceRecord:
             "url": self.url,
             "bib_key": self.bib_key,
             "pmcid": self.pmcid,
+            "entry_type": (self.entry_type or "").lower() or None,
+            "volume": self.volume,
+            "pages": self.pages,
+            "extra": dict(self.extra),
         }
-        return {k: v for k, v in out.items() if v not in (None, "", [])}
+        return {k: v for k, v in out.items() if v not in (None, "", [], {})}
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +255,13 @@ _COLUMNS = (
     "url",
     "bib_key",
     "pmcid",
+    "entry_type",
+    "volume",
+    "pages",
+    "extra",
 )
+# Columns stored as JSON text.
+_JSON_COLUMNS = {"authors": "[]", "extra": "{}"}
 
 
 def _now() -> str:
@@ -268,6 +299,30 @@ def _row_by_ids(
     for sql, params in ladder:
         if params[0] and (row := conn.execute(sql, params).fetchone()):
             return row
+    return _row_by_alias(conn, identity, doi, arxiv_id, bib_key)
+
+
+def _row_by_alias(conn: sqlite3.Connection, identity, doi, arxiv_id, bib_key):
+    """The row a merged-away row's name now points at (citation_manager.merge
+    records them): its identity, DOI or arXiv form, or a .bib key."""
+    names = [
+        n
+        for n in (
+            identity,
+            f"doi:{doi}" if doi else None,
+            f"arxiv:{arxiv_id}" if arxiv_id else None,
+            f"key:{bib_key.lower()}" if bib_key else None,
+        )
+        if n
+    ]
+    for name in names:
+        hit = conn.execute(
+            'SELECT r.* FROM reference_aliases a JOIN "references" r ON r.id = a.reference_id'
+            " WHERE a.alias = ?",
+            (name,),
+        ).fetchone()
+        if hit is not None:
+            return hit
     return None
 
 
@@ -299,8 +354,9 @@ def _row_this_source_made(conn: sqlite3.Connection, rec: ReferenceRecord):
 def _insert(conn: sqlite3.Connection, ident: str, fields: dict, now: str) -> int:
     cur = conn.execute(
         'INSERT INTO "references"(identity, doi, arxiv_id, title, authors, year, venue,'
-        " abstract, url, bib_key, pmcid, title_key, first_seen, updated)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " abstract, url, bib_key, pmcid, title_key, first_seen, updated,"
+        " entry_type, volume, pages, extra)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             ident,
             fields.get("doi"),
@@ -316,6 +372,10 @@ def _insert(conn: sqlite3.Connection, ident: str, fields: dict, now: str) -> int
             normalise_title(fields["title"]) or None,
             now,
             now,
+            fields.get("entry_type"),
+            fields.get("volume"),
+            fields.get("pages"),
+            json.dumps(fields.get("extra", {}), sort_keys=True),
         ),
     )
     if cur.lastrowid is None:  # pragma: no cover - sqlite always sets it after INSERT
@@ -350,8 +410,7 @@ def _upgrade_identity(conn, row, new_ident: str, changed: dict, conflicts: dict)
 
 def _update(conn: sqlite3.Connection, row, fields: dict, now: str) -> tuple[str, dict]:
     """Merge `fields` into `row`; returns (merged|unchanged, conflicts)."""
-    existing = {c: row[c] for c in _COLUMNS}
-    existing["authors"] = json.loads(row["authors"])
+    existing = row_fields(row)
     merged, conflicts = merge(existing, fields)
     changed = {c: merged[c] for c in _COLUMNS if merged.get(c) != existing.get(c)}
     new_ident = identity(
@@ -361,9 +420,27 @@ def _update(conn: sqlite3.Connection, row, fields: dict, now: str) -> tuple[str,
     if not changed:
         return "unchanged", conflicts
     sets = ", ".join(f"{c} = ?" for c in changed) + ", updated = ?"
-    vals = [json.dumps(v) if c == "authors" else v for c, v in changed.items()] + [now]
+    vals = [
+        json.dumps(v, sort_keys=True) if c in _JSON_COLUMNS else v for c, v in changed.items()
+    ] + [now]
     conn.execute(f'UPDATE "references" SET {sets} WHERE id = ?', (*vals, row["id"]))
     return "merged", conflicts
+
+
+def row_fields(row) -> dict:
+    """A stored row's mergeable columns as `merge()` takes them (JSON decoded)."""
+    out = {c: row[c] for c in _COLUMNS}
+    for c, empty in _JSON_COLUMNS.items():
+        out[c] = json.loads(row[c] or empty)
+    return out
+
+
+def fill(conn: sqlite3.Connection, row, fields: dict) -> dict:
+    """Merge `fields` into `row` by upsert's rule -- empty fields fill, a
+    differing value is refused -- and move the row's identity if its ids now
+    say so. Returns the refused fields. Used when a merge folds one row into
+    another; never overwrites."""
+    return _update(conn, row, fields, _now())[1]
 
 
 def _write_source_row(conn, rid: int, rec: ReferenceRecord, fields: dict, conflicts: dict) -> None:
@@ -632,6 +709,7 @@ class SearchHit:
     tags: list[str]
     n_tags: int
     similarity: float | None = None
+    arxiv_id: str | None = None
 
     def to_row(self) -> dict:
         """The wire projection: the same budgets as `Reference.to_row` and
@@ -650,6 +728,8 @@ class SearchHit:
             "n_authors": len(self.authors),
             "year": self.year,
             "doi": self.doi,
+            # The arXiv id, so a page can link the abs page beside the DOI.
+            "arxiv": self.arxiv_id,
             "url": _clip_field(self.url, MAX_URL_CHARS) if self.url else None,
             "venue": _clip_field(self.venue, MAX_SOURCE_CHARS) if self.venue else None,
             "sources": self.sources,
@@ -702,6 +782,7 @@ def _hit(conn: sqlite3.Connection, row, similarity: float | None = None) -> Sear
         tags=tags,
         n_tags=len(tags),
         similarity=similarity,
+        arxiv_id=row["arxiv_id"],
     )
 
 
@@ -922,46 +1003,117 @@ def _ascii_word(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", normalise_title(text))
 
 
+def authors_of(row) -> list[str]:
+    """A row's authors; an unreadable `authors` column is no authors, never a
+    crash (the dashboard exports every hour and one bad row must not stop it)."""
+    try:
+        names = json.loads(row["authors"] or "[]")
+    except ValueError:
+        return []
+    return [n for n in names if isinstance(n, str)] if isinstance(names, list) else []
+
+
 def bibtex_key(row) -> str:
     """`bib_key` when a .bib or Zotero supplied one, else <family><year><first title word>."""
     if row["bib_key"]:
         return row["bib_key"]
-    authors = json.loads(row["authors"])
+    authors = authors_of(row)
     family = _ascii_word(authors[0].split(",")[0]) if authors else "anon"
     words = [w for w in normalise_title(row["title"]).split() if w not in ("a", "an", "the")]
     first = _ascii_word(words[0]) if words else "untitled"
     return f"{family}{row['year'] or ''}{first}"
 
 
-def _bib_fields(row, preprint: bool) -> list[tuple[str, str | None]]:
-    """The (name, value) pairs `bibtex` may render, in BibTeX field order."""
+# Where a row's venue goes, by entry type. A type not named here writes it
+# as `howpublished` (a @misc with a venue), except a preprint server, which a
+# preprint carries as eprint fields instead.
+_VENUE_FIELD = {
+    "article": "journal",
+    "inproceedings": "booktitle",
+    "conference": "booktitle",
+    "incollection": "booktitle",
+    "inbook": "booktitle",
+}
+# Fields `bibtex` writes from columns; an `extra` field of the same name is
+# not written twice.
+_COLUMN_FIELDS = frozenset(
+    {"author", "title", "journal", "booktitle", "howpublished", "year", "volume", "pages"}
+    | {"doi", "url", "eprint", "archiveprefix"}
+)
+
+
+def _row_value(row, name: str):
+    """`row[name]`, or None when the row predates that column (a test fixture
+    or a `SELECT` that names its columns)."""
+    try:
+        return row[name]
+    except (IndexError, KeyError):
+        return None
+
+
+def _tex(value: str | None) -> str | None:
+    """Plain text made safe for BibTeX; a value that is already LaTeX (it holds
+    a backslash or a brace, as one read from a .bib does) is left alone, so
+    `Sch{\\"u}tt` and `\\&` are not escaped a second time."""
+    if not value or "\\" in value or "{" in value:
+        return value
+    return value.translate(_BIB_ESCAPE)
+
+
+def extra_of(row) -> dict:
+    """A row's `extra` BibTeX fields; unreadable JSON is none."""
+    try:
+        extra = json.loads(_row_value(row, "extra") or "{}")
+    except ValueError:
+        return {}
+    return extra if isinstance(extra, dict) else {}
+
+
+def entry_type(row) -> str:
+    """The BibTeX entry type a row renders as: its stored type, else @misc for
+    a preprint (no venue, or a preprint server as venue), else @article."""
+    stored = _row_value(row, "entry_type")
+    if stored:
+        return stored
     venue = row["venue"]
-    return [
-        ("author", " and ".join(json.loads(row["authors"])) or None),
-        ("title", row["title"]),
-        ("journal", None if preprint else venue),
+    return "misc" if not venue or _PREPRINT_VENUE.match(venue) else "article"
+
+
+def _bib_fields(row) -> list[tuple[str, str | None]]:
+    """The (name, value) pairs `bibtex` renders: columns in BibTeX order, then
+    every `extra` field (what the source carried that has no column), sorted."""
+    kind = entry_type(row)
+    venue = row["venue"]
+    preprint = not venue or bool(_PREPRINT_VENUE.match(venue))
+    venue_field = _VENUE_FIELD.get(kind, "howpublished")
+    extra = extra_of(row)
+    fields: list[tuple[str, str | None]] = [
+        ("author", _tex(" and ".join(authors_of(row)))),
+        ("title", _tex(row["title"])),
+        (venue_field, None if preprint else _tex(venue)),
         ("year", str(row["year"]) if row["year"] else None),
+        ("volume", _row_value(row, "volume")),
+        ("pages", _row_value(row, "pages")),
         ("doi", row["doi"]),
         ("url", row["url"]),
-        ("eprint", row["arxiv_id"] if preprint else None),
-        ("archivePrefix", "arXiv" if preprint and row["arxiv_id"] else None),
+        ("eprint", row["arxiv_id"]),
+        ("archivePrefix", "arXiv" if row["arxiv_id"] else None),
     ]
+    fields += [(k, v) for k, v in sorted(extra.items()) if k not in _COLUMN_FIELDS]
+    return fields
 
 
 def bibtex(row, *, key: str | None = None) -> str:
-    """One BibTeX entry for a library row: @article when the venue is a journal,
-    @misc with arXiv eprint fields for a preprint. Pure; the same row always
-    renders the same text, so an exported file is stable."""
-    venue = row["venue"]
-    preprint = not venue or bool(_PREPRINT_VENUE.match(venue))
-    fields = _bib_fields(row, preprint)
-    escaped = {"author", "title", "journal"}
-    body = "".join(
-        f"  {name} = {{{value.translate(_BIB_ESCAPE) if name in escaped else value}}},\n"
-        for name, value in fields
-        if value
-    )
-    return f"@{'misc' if preprint else 'article'}{{{key or bibtex_key(row)},\n{body}}}\n"
+    """One BibTeX entry for a library row, written by bibtexparser v2.
+
+    The entry type is the stored one (from the source's .bib), else @article
+    when the venue is a journal and @misc for a preprint. Fields a source
+    carried that have no column (`publisher`, `number`, `note`...) are written
+    back from `extra`, so an imported entry keeps them. Pure: the same row
+    always renders the same text, so an exported file is stable."""
+    from attestation import bibtex_io
+
+    return bibtex_io.write_entry(key or bibtex_key(row), entry_type(row), _bib_fields(row))
 
 
 def select_rows(conn: sqlite3.Connection, *, author=None, year=None, tag=None, source=None) -> list:

@@ -37,8 +37,14 @@ def _hermetic_env(tmp_path, monkeypatch):
         "ATTEST_DB",
         "ATTEST_FEEDS",
         "HERMES_HOME",
+        "ATTEST_CITATION_STYLE",
+        "ATTEST_DESK_USER",
+        "ATTEST_BIB_OUT",
     ):
         monkeypatch.delenv(var, raising=False)
+    # library.json's `cited_by` scans the workspace's drafts; unset, that is
+    # ~/.hermes/workspace -- the real machine's. Point it at an absent folder.
+    monkeypatch.setenv("ATTEST_WORKSPACE", str(tmp_path / "absent-workspace"))
     # Never the LIVE database. resolve_db_path falls through to the skill data
     # dir when that file exists, and on the author's machine it does: on
     # 2026-09-11 two cite.check tests opened it, found another session had

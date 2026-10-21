@@ -101,7 +101,11 @@ a key resolves only in those, as BibTeX would read it; a key some other file
 or the library defines is reported in `missing_keys` with
 `defined_in_unloaded`, and a named file that does not exist in
 `unresolved_bib_resources`. With no named file, any candidate, the library
-store or Zotero resolves a key. These rules match AgentMarkit's `latex-paper`
+store or Zotero resolves a key. A key two LOADED files both define is
+reported in `repeated_keys` (`{key, files, paper}`; `attest claims --citations`
+prints it as `repeated` without failing, since BibTeX builds with the first) --
+the usual cause is saving or editing a paper from an uploaded `.bib`, which
+puts the same key in the generated owner `.bib`. These rules match AgentMarkit's `latex-paper`
 skill. `tests/fixtures/latex/` is a three-file paper exercising all of it.
 
 ## The library
@@ -151,6 +155,10 @@ BibTeX rendered from the rows -- `@article` for a journal, `@misc` with
 `eprint`/`archivePrefix` for a preprint, the `.bib` key when one supplied it,
 else `<family><year><word>` -- refusing to overwrite without `--force`.
 `cite.lookup` returns the same `bibtex` for one record.
+
+Formatting (APA, IEEE, Chicago, Nature, Vancouver), owner edits, notes, tags,
+duplicate merging and `.bib` import are the citation manager's: `attest bib`
+and `cite.format`, in [The citation manager](citation-manager.md).
 
 References join the concept graph through their tags — from `attest library
 tag`, or from a `.bib` `keywords` field — and `attest library related KEY`

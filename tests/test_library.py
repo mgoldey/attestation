@@ -455,7 +455,8 @@ def test_bibtex_misc_for_a_preprint_and_bib_key_wins(tmp_path):
     )
     out = library.bibtex(_row(conn, rid))
     assert out.startswith("@misc{nequip,\n")
-    assert "  eprint = {2101.03164},\n  archivePrefix = {arXiv},\n" in out and "journal" not in out
+    # bibtexparser writes the last field without a trailing comma.
+    assert "  eprint = {2101.03164},\n  archivePrefix = {arXiv}\n}" in out and "journal" not in out
 
 
 def test_bibtex_key_is_ascii_and_export_suffixes_collisions(tmp_path):

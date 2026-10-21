@@ -26,7 +26,7 @@ import httpx
 from defusedxml import DefusedXmlException
 from defusedxml import ElementTree as SafeET
 
-from attestation import citations, paths
+from attestation import bibtex_io, citations, paths
 from attestation.library import (
     ReferenceRecord,
     arxiv_from_doi,
@@ -135,23 +135,64 @@ class BibtexRecords:
         for path in self.paths:
             if not path.is_file():
                 continue
-            for key, f in citations._parse_bib_entries(path.read_text(errors="replace")):
-                is_arxiv = f.get("archiveprefix", "").lower() == "arxiv"
-                yield ReferenceRecord(
-                    source=self.labels[path],
-                    source_key=key,
-                    title=f["title"],
-                    authors=_bib_authors(f.get("author", "")),
-                    year=citations._year(f.get("year") or f.get("date")),
-                    doi=f.get("doi"),
-                    arxiv_id=(f.get("eprint") if is_arxiv else None) or f.get("arxivid"),
-                    venue=f.get("journal") or f.get("booktitle"),
-                    abstract=f.get("abstract"),
-                    url=f.get("url"),
-                    bib_key=key,
-                    tags=_bib_tags(f.get("keywords", "")),
-                    cites=_bib_cites(f.get("cites", "")),
-                )
+            for entry in bibtex_io.parse(path.read_text(errors="replace")).entries:
+                rec = bib_record(entry, self.labels[path])
+                if rec is not None:
+                    yield rec
+
+
+# Fields a .bib entry's columns are read from; every other field is kept in
+# `extra` so the entry renders back with it. `file` is dropped outright: it is
+# a path on the machine that exported the .bib (Zotero, JabRef), and would put
+# that path into every export and every library.json row.
+_BIB_CONSUMED = frozenset(
+    {"title", "author", "year", "date", "doi", "eprint", "archiveprefix", "eprinttype"}
+    | {"arxivid", "journal", "journaltitle", "booktitle", "abstract", "url", "keywords"}
+    | {"cites", "volume", "pages", "file"}
+)
+_VENUE_FIELDS = ("journal", "journaltitle", "booktitle")
+
+
+def _bib_arxiv(f: dict) -> str | None:
+    kind = (f.get("archiveprefix") or f.get("eprinttype") or "").lower()
+    return (f.get("eprint") if kind == "arxiv" else None) or f.get("arxivid")
+
+
+def _bib_extra(f: dict, venue_field: str | None) -> dict[str, str]:
+    """The fields no column takes, plus a second venue field and a non-arXiv
+    eprint, which are kept rather than consumed."""
+    extra = {k: v for k, v in f.items() if k not in _BIB_CONSUMED}
+    extra.update({n: f[n] for n in _VENUE_FIELDS if f.get(n) and n != venue_field})
+    if f.get("eprint") and not _bib_arxiv(f):
+        extra.update({n: f[n] for n in ("eprint", "eprinttype", "archiveprefix") if f.get(n)})
+    return extra
+
+
+def bib_record(entry: bibtex_io.BibEntry, source: str) -> ReferenceRecord | None:
+    """One parsed .bib entry as a ReferenceRecord; None when it has no title."""
+    f = entry.fields
+    if not f.get("title"):
+        return None
+    venue_field = next((n for n in _VENUE_FIELDS if f.get(n)), None)
+    return ReferenceRecord(
+        source=source,
+        source_key=entry.key,
+        title=f["title"],
+        authors=_bib_authors(f.get("author", "")),
+        year=citations._year(f.get("year") or f.get("date")),
+        doi=f.get("doi"),
+        arxiv_id=_bib_arxiv(f),
+        venue=f[venue_field] if venue_field else None,
+        abstract=f.get("abstract"),
+        url=f.get("url"),
+        bib_key=entry.key,
+        tags=_bib_tags(f.get("keywords", "")),
+        cites=_bib_cites(f.get("cites", "")),
+        entry_type=entry.entry_type,
+        volume=f.get("volume"),
+        pages=f.get("pages"),
+        extra=_bib_extra(f, venue_field),
+    )
 
 
 class ZoteroRecords:
@@ -182,6 +223,13 @@ class ZoteroRecords:
                 abstract=data.get("abstractNote"),
                 url=data.get("url"),
                 bib_key=key,
+                volume=data.get("volume"),
+                pages=data.get("pages"),
+                extra={
+                    bib: data[z]
+                    for z, bib in (("issue", "number"), ("publisher", "publisher"))
+                    if data.get(z)
+                },
             )
 
 

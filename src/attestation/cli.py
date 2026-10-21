@@ -142,6 +142,14 @@ HELP: dict[str, str] = {
     "library.export": "write a filtered set of references as one .bib (new files only)",
     "library.dashboard": "write the library dashboard JSON (a host page's one input file)",
     "library.bib": "write each persona's bibliography .bib into ATTEST_BIB_OUT; no-op when unset",
+    "bib": "the citation manager: search, format, import, edit, merge and export references",
+    "bib.search": "search the library (semantic when embedded, keyword otherwise)",
+    "bib.show": "one reference in full: fields, sources, tags, note, BibTeX, citation",
+    "bib.format": "formatted citations in a bundled CSL style (APA, IEEE, Chicago, Nature...)",
+    "bib.import": "read a .bib file (or a local zotero.sqlite) into the library; files untouched",
+    "bib.edit": "edit a reference's fields, note or tags; the owner's .bib follows",
+    "bib.merge": "list duplicate references, or merge one into another (aliases kept)",
+    "bib.export": "write references as BibTeX or formatted text (new files only)",
     "desk": "the Reading desk page: today's ranked papers, verdicts taken back",
     "desk.build": "render the page for a persona to a file (imports pending verdicts first)",
     "desk.import": "record the page's pending verdicts as clicks",
@@ -447,6 +455,11 @@ def build_parser() -> argparse.ArgumentParser:
     lp.add_argument(
         "--limit", type=int, default=5000, help="max references listed (default and maximum: 5000)"
     )
+    lp.add_argument(
+        "--style",
+        help="the citation style precomputed into each row (default: $ATTEST_CITATION_STYLE,"
+        " else apa)",
+    )
     lp.set_defaults(func=cmd_library_dashboard)
     lp = lib_sub.add_parser("export", help=HELP["library.export"])
     lp.add_argument(
@@ -458,6 +471,10 @@ def build_parser() -> argparse.ArgumentParser:
     lp.add_argument("--source", help="reference_sources.source prefix, e.g. zotero, research:arxiv")
     lp.add_argument("--force", action="store_true")
     lp.set_defaults(func=cmd_library_export)
+
+    from attestation import cli_bib  # lazy: `attest --help` must stay fast
+
+    cli_bib.register(sub, add_db)
 
     sp = sub.add_parser("bootstrap-persona", help=HELP["bootstrap-persona"])
     add_db(sp)
@@ -946,6 +963,10 @@ def _print_citations(target: Path, db: str | None) -> int:
         print(f"  missing    {m['where']}  {m['key']}{note}{hint}")
     for name in out["unresolved_bib_resources"]:
         print(f"  no-bib     {name}  (named by \\bibliography/\\addbibresource, not found)")
+    # A repeated key builds (BibTeX keeps the first) but warns, and which
+    # entry wins depends on load order: reported, not counted as unresolved.
+    for r in out["repeated_keys"]:
+        print(f"  repeated   {r['key']}  (defined in {', '.join(r['files'])}; cite from one)")
     bad = len(out["uncited"]) + len(out["missing_keys"]) + len(out["unresolved_bib_resources"])
     print(
         f"\n{len(out['claims'])} claim(s), {out['citation_keys_used']} \\cite key(s):"
@@ -1798,13 +1819,18 @@ def cmd_library_bib(args: argparse.Namespace) -> int:
 
 @_documented("library.dashboard")
 def cmd_library_dashboard(args: argparse.Namespace) -> int:
-    """Read-only over the database; the one file it writes is replaced atomically.
-    The hourly refresh runs it as a degraded step, so it must be cheap and must
-    work on an empty database."""
+    """Read-only over the database except the formatted-citation cache it warms
+    first (a first 5,000-reference APA pass takes ~100 s, later ones only render
+    what changed); the one file it writes is replaced atomically. The hourly
+    refresh runs it as a degraded step, so it must work on an empty database."""
     from pathlib import Path
 
-    from attestation import dashboard
+    from attestation import cite_format, dashboard
 
+    try:
+        style = cite_format.style_id(args.style) if args.style else cite_format.default_style()
+    except ValueError as exc:
+        return fail(str(exc))
     if args.limit < 0:
         return fail("--limit must be 0 or more")
     if args.limit > dashboard.MAX_LIMIT:
@@ -1812,7 +1838,8 @@ def cmd_library_dashboard(args: argparse.Namespace) -> int:
     out = Path(args.out).expanduser() if args.out else dashboard.default_path()
     persona = args.persona or os.environ.get("ATTEST_DESK_USER") or dashboard.DEFAULT_PERSONA
     with open_db(args.db) as conn:
-        doc = dashboard.build(conn, persona=persona, limit=args.limit)
+        dashboard.warm(conn, style, args.limit)
+        doc = dashboard.build(conn, persona=persona, limit=args.limit, style=style)
     if out.is_dir():
         return fail(f"--out {out} is a directory; name the file, e.g. {out / 'library.json'}")
     try:

@@ -592,6 +592,8 @@ def describe_citation_keys(out: dict) -> tuple[str, str]:
         problems.append(f"{n} \\cite key(s) the paper's bibliography does not define")
     if out["unresolved_bib_resources"]:
         problems.append(f"{len(out['unresolved_bib_resources'])} named .bib file(s) not found")
+    if out.get("repeated_keys"):
+        problems.append(f"{len(out['repeated_keys'])} key(s) defined in two loaded .bib files")
     scanned = f"{len(out['claims'])} claim(s)"
     if out["papers"]:
         scanned += f" and {out['citation_keys_used']} \\cite key(s)"

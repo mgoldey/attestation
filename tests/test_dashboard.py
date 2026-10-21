@@ -567,7 +567,10 @@ def test_a_failure_while_serialising_writes_nothing(tmp_path, conn):
     assert not out.exists()
 
 
-def test_a_file_of_5000_references_is_well_under_3_mb(conn):
+def test_a_file_of_5000_references_fits_without_trimming(conn):
+    """Was "well under 3 MB" (measured ~2 MB) until each row carried its BibTeX
+    entry (2026-10-19): the same 5,000 rows now measure 3.7 MiB, every row
+    whole, inside the 6 MiB guarantee."""
     conn.executemany(
         'INSERT INTO "references"(identity, doi, title, authors, year, venue, url, first_seen,'
         " updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -590,7 +593,8 @@ def test_a_file_of_5000_references_is_well_under_3_mb(conn):
     doc = build(conn)
     validate(doc)
     size = len(dashboard.render(doc).encode())
-    assert len(doc["references"]) == 5000 and size < 3 * 1024 * 1024, size
+    assert len(doc["references"]) == 5000 and size < 4 * 1024 * 1024, size
+    assert doc["references_trimmed"] == 0 and all(r["bibtex"] for r in doc["references"])
 
 
 # --- the CLI and the path ----------------------------------------------------------------------
