@@ -294,7 +294,10 @@ def test_mcp_domain_modules_stay_small():
         # Raised 2026-10-17: _PAPERS_ABOUT ("papers comparing X", "what papers
         # discuss X" fell through to a clarifier an agent turn cannot relay)
         # and _strip_topic dropping "find papers on" from the query.
-        "routing.py": 481,
+        # Raised 2026-10-29: the call into mcp/routing_seed.py's "I like
+        # <paper>" rule from _first_rules (+4: the lazy import and the hook);
+        # the rule itself lives in routing_seed.py, split out for this cap.
+        "routing.py": 485,
         "provenance.py": 415,
         # Raised 2026-09-10 for Task 8 (BibTeX from a library row): `_lookup`
         # gained a `bibtex` field on both return branches and its `empty`,

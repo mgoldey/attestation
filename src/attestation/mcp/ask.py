@@ -211,7 +211,7 @@ def _feed_ask(user: str, question: str, item_id: int | None = None, url: str | N
     elif decision.tool == "feed.persona_status":
         out = feed_mod._profile_status(user)
     elif decision.tool == "feed.persona_update":
-        out = personas_mod._set_interests(user, decision.kwargs["interests"])
+        out = personas_mod.persona_from_ask(user, **decision.kwargs)
     elif decision.tool == "feed.research":
         from attestation.mcp import research as research_mod
 

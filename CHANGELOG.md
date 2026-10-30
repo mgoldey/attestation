@@ -11,6 +11,22 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **A first list from the reader's own field (seed.py).** From research
+  customer feedback: the first paper was off-topic and nothing said how to
+  steer. `feed.ask("I like <DOI | arXiv id | title>")` resolves the paper
+  (the library first, then OpenAlex or arXiv; a title only on a close match),
+  stores it as an item and in the library, records a useful click
+  (`source='agent'`) and an `engagement` row of kind `seed`, and folds its
+  title into the text the profile vector embeds, so one liked paper moves the
+  ranking before any "not useful" exists. `feed.ask("I like the papers in
+  refs.bib")` does the same for each entry of a .bib (up to 10 per call) or
+  the DOI/arXiv id on a PDF's first page, found as given or in the agent's
+  workspace. "I work on X" now also searches arXiv, PubMed and OpenAlex for X
+  over the list's 14-day window and stores the hits under a `research:` feed
+  ("Your field: X"), so the next "what should I read?" has papers from that
+  field; offline or failing, it is skipped with a caveat and the interests
+  still change. A persona reset drops seeds. "follow X" registers
+  `research:arxiv,pubmed,openalex?q=X` (OpenAlex added).
 - **A local citation manager (no hosted Zotero).** `attest bib
   search|show|format|import|edit|merge|export` and the MCP tool `cite.format`
   (54 tools). Formatting is citeproc-py (BSD) over five bundled CSL styles

@@ -703,7 +703,9 @@ def rank_items(
     if not rows:
         return []
     user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    profile_vec = _profile_vector(conn, embedder, user_id, user["interests"] or user["name"])
+    from attestation.seed import profile_text
+
+    profile_vec = _profile_vector(conn, embedder, user_id, profile_text(conn, user))
 
     ids = [r["id"] for r in rows]
     ctype: dict[int, str] = {}

@@ -317,6 +317,63 @@ def _embed_entries(embedder, new_entries: list) -> list:
     ]
 
 
+def _item_for(conn, paper, chash: str) -> int | None:
+    """The stored item that already is this paper: same DOI, arXiv id or content."""
+    for column, value in (("doi", paper.doi), ("arxiv_id", paper.arxiv_id)):
+        if value and (
+            row := conn.execute(f"SELECT id FROM items WHERE {column} = ?", (value,)).fetchone()
+        ):
+            return row["id"]
+    row = conn.execute("SELECT id FROM items WHERE content_hash = ?", (chash,)).fetchone()
+    return row["id"] if row else None
+
+
+def add_papers(conn, embedder, feed_id: int | None, papers) -> list[int]:
+    """The item id of each research `Paper`, inserting the ones not stored yet.
+
+    The one-shot form of a research feed's ingest, for papers a reader named
+    or a first search just found: the same dedup (DOI, arXiv id, content
+    hash), the same guid `<client>:<id>`, the paper's own date. Embedding runs
+    before the write, as in `run_ingest`; an embedder failure raises before
+    anything is stored. `feed_id` None stores items that belong to no feed --
+    a paper the reader liked arrived from them, not from a subscription.
+    """
+    out: list[int | None] = []
+    todo = []
+    for paper in papers:
+        summary = strip_boilerplate(paper.abstract)
+        chash = content_hash(paper.title, summary)
+        found = _item_for(conn, paper, chash)
+        out.append(found)
+        if found is None:
+            todo.append((len(out) - 1, paper, summary, chash))
+    vectors = embedder.embed_documents([(p.title, s) for _i, p, s, _c in todo]) if todo else []
+    for (index, paper, summary, chash), vec in zip(todo, vectors, strict=True):
+        cur = conn.execute(
+            "INSERT INTO items(feed_id, guid, title, url, summary, published,"
+            " content_hash, doi, arxiv_id)"
+            " VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?, ?, ?)",
+            (
+                feed_id,
+                f"{paper.client}:{paper.external_id}",
+                paper.title,
+                paper.url,
+                summary,
+                paper.published,
+                chash,
+                paper.doi,
+                paper.arxiv_id,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO item_vectors(rowid, embedding) VALUES (?, ?)",
+            (cur.lastrowid, vec.tobytes()),
+        )
+        out[index] = cur.lastrowid
+    conn.commit()
+    return [i for i in out if i is not None]
+
+
 def embed_missing_items(conn, embedder) -> int:
     """Embed every item with no vector, `EMBED_BATCH_SIZE` at a time, one
     short commit per batch; returns how many were embedded. `attest reembed`
