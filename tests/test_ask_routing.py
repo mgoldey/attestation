@@ -152,7 +152,9 @@ def test_research_and_track_decisions_carry_their_arguments():
     assert d.kwargs == {"query": "diffusion models for molecules", "sources": "arxiv,pubmed"}
     d = route_feed("track equivariant interatomic potentials for me")
     assert d.tool == "feed.source_add"
-    assert d.kwargs == {"url": "research:arxiv,pubmed?q=equivariant+interatomic+potentials"}
+    assert d.kwargs == {
+        "url": "research:arxiv,pubmed,openalex?q=equivariant+interatomic+potentials"
+    }
     # a URL keeps the old behaviour: no research kwargs, the caller supplies the url
     assert route_feed("follow https://example.com/rss").kwargs == {}
     # "papers on X" is still the local archive
@@ -1051,12 +1053,17 @@ def test_feed_ask_creates_a_first_time_reader_from_their_interests(tmp_path, mon
     """On a fresh hosted machine nothing is tagged, so a reader autocreated on
     first sight starts from the placeholder interests. "I work on X" must make
     X what the ranker starts from, whether or not the reader exists yet."""
+    from attestation import research
     from attestation.db import get_db
+    from attestation.mcp import research as research_tool
     from attestation.mcp.ask import _feed_ask
     from attestation.rank import get_user
 
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
     get_db(tmp_path / "t.db").close()
+    # "I work on X" also searches X (seed.first_search); offline here, so
+    # this test stays about the interests text and never reaches the network.
+    monkeypatch.setattr(research_tool, "CLIENTS", research.null_clients())
 
     out = _feed_ask("owner", "I work on perovskite solar cells")
     assert out["ok"] and out["tool_used"] == "feed.persona_update", out

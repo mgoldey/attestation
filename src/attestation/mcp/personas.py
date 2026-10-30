@@ -44,9 +44,50 @@ def _set_interests(conn, user_row, interests: str) -> dict:
     starts from. A reader seen for the first time is created first -- on a
     fresh hosted machine nothing is tagged yet, so autocreate alone would
     seed them with the placeholder STARTER_INTERESTS and rank against that."""
+    from attestation import seed
+    from attestation.mcp._shared import get_embedder
+    from attestation.mcp.research import _clients
+
     out = _write_interests(conn, user_row, interests)
-    out["message"] = f"ranking {user_row['name']!r}'s feed for: {interests}"
+    found = seed.first_search(conn, get_embedder(), _clients(), interests)
+    out["message"] = f"ranking {user_row['name']!r}'s feed for: {interests}" + (
+        f"; {found['found']} recent paper(s) on it added to the feed" if found["found"] else ""
+    )
+    if found["note"]:
+        out["caveat"] = found["note"]
     return out
+
+
+@tool(empty={"items": []}, needs_user=True, autocreate_user=True, label="like_papers")
+def _like_papers(conn, user_row, refs: list[str], problem: str | None = None) -> dict:
+    """feed.ask's "I like <paper>": seed the ranking with papers the reader names."""
+    from attestation import seed
+    from attestation.mcp._shared import get_embedder
+    from attestation.mcp.research import _clients
+
+    if problem and not refs:
+        raise ToolError(f"{problem}. Send a DOI, an arXiv id, a title, or a .bib or PDF file.")
+    done = seed.like(conn, get_embedder(), _clients(), user_row["id"], refs)
+    parts = [f"{len(done.seeded)} paper(s) added to what the ranking starts from"]
+    if done.unresolved:
+        parts.append("could not find " + "; ".join(done.unresolved))
+    if done.skipped:
+        parts.append(f"{done.skipped} more in the file were left out (max {seed.MAX_FILE_SEEDS})")
+    if not done.seeded:
+        raise ToolError("; ".join(parts[1:]) + ". Try the DOI or arXiv id, or the exact title.")
+    return {"message": "; ".join(parts), "items": done.seeded}
+
+
+def persona_from_ask(user: str, interests=None, liked=None, liked_file=None) -> dict:
+    """The `feed.persona_update` route of feed.ask: interests, a paper, or a file."""
+    from attestation import seed
+
+    if interests is not None:
+        return _set_interests(user, interests)
+    if liked_file is not None:
+        refs, problem = seed.refs_in_file(liked_file)
+        return _like_papers(user, refs, problem)
+    return _like_papers(user, [liked])
 
 
 def _write_interests(conn, user_row, interests: str) -> dict:
