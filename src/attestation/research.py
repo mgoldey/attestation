@@ -379,6 +379,12 @@ class ArxivSearch(_Client):
         url = "https://export.arxiv.org/api/query?" + urlencode(params, quote_via=quote_plus)
         return parse_arxiv(self._get(url))
 
+    def by_id(self, arxiv_id: str) -> list[Paper]:
+        """The one paper an arXiv id names (`id_list`), or [] when arXiv has none."""
+        params = {"id_list": arxiv_id, "max_results": 1}
+        url = "https://export.arxiv.org/api/query?" + urlencode(params, quote_via=quote_plus)
+        return parse_arxiv(self._get(url))
+
 
 def parse_pubmed_ids(body: bytes) -> list[str]:
     """PMIDs from an esearch response."""
@@ -809,6 +815,20 @@ class OpenalexSearch(_Client):
             "per_page": max(1, min(limit, OPENALEX_MAX_ROWS)),
             "select": _OPENALEX_SELECT,
         }
+        if self.api_key:
+            params["api_key"] = self.api_key
+        if self.mailto:
+            params["mailto"] = self.mailto
+        url = "https://api.openalex.org/works?" + urlencode(params, quote_via=quote_plus)
+        return parse_openalex(self._get(url))[:limit]
+
+    def works(self, filter_expr: str, *, limit: int = 5) -> list[Paper]:
+        """The works one OpenAlex `filter` names -- `doi:<url>` or `title.search:<text>`.
+
+        The lookup form of `search`, used by seed.py to resolve one paper the
+        reader named rather than to find papers on a topic.
+        """
+        params: dict = {"filter": filter_expr, "per_page": limit, "select": _OPENALEX_SELECT}
         if self.api_key:
             params["api_key"] = self.api_key
         if self.mailto:

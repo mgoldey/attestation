@@ -166,7 +166,7 @@ def _route_track(q: str, question: str) -> Decision | None:
     topic = _research_query(question)
     if _refused_track_topic(topic) or len(topic.split()) < 2:
         return None
-    url = f"research:arxiv,pubmed?q={quote_plus(topic)}"
+    url = f"research:arxiv,pubmed,openalex?q={quote_plus(topic)}"
     return Decision("feed.source_add", {"url": url})
 
 

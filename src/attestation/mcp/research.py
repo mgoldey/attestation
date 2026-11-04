@@ -133,7 +133,7 @@ def register(mcp) -> None:
         arrived). Hits are stored in the reference library -- cite.lookup and
         cite.search find them afterwards by DOI, arXiv id or topic -- and are
         NOT added to the feed; to follow a topic on the hourly schedule, call
-        feed.source_add with `research:arxiv,pubmed?q=<topic>`. `store=false`
+        feed.source_add with `research:arxiv,pubmed,openalex?q=<topic>`. `store=false`
         previews. When arXiv fails, its papers come through OpenAlex instead
         (the arXiv error is still listed). `limit` is capped at 8. **Show the reader each `url`.**
         `offline: true` means the clients are disabled, not that nothing matched.

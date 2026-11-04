@@ -181,6 +181,9 @@ def purge_feedback(conn: sqlite3.Connection, user_id: int, *, delete_user: bool 
     weak positive, and users.id is a rowid SQLite reuses."""
     conn.execute("DELETE FROM clicks WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM explanations WHERE user_id = ?", (user_id,))
+    # Papers the reader seeded are feedback too: left behind, implicit.harvest
+    # would turn each back into a click and the reset would not hold.
+    conn.execute("DELETE FROM engagement WHERE user_id = ? AND kind = 'seed'", (user_id,))
     if delete_user:
         # The bibliography is the reader's, so a reset keeps it; a deleted
         # persona's entries go, since users.id is a rowid SQLite reuses.

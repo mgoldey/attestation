@@ -123,7 +123,7 @@ m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
 | `cite.related(key)` | What a paper cites and what in the library cites it, from real reference lists; a cited paper not in the library is a stub, never fetched | fast |
 | `cite.save(paper, user, remove=False)` | Keep a paper (feed item_id, or key/DOI/arXiv id) in the reader's generated `.bib`, or take it out; returns its stable citation key and BibTeX. Papers rated useful, read or explained are added on their own | fast |
 | `cite.format(keys, style)` | Formatted citations (APA, IEEE, Chicago author-date, Nature, Vancouver) and BibTeX for up to 5 library references, rendered locally from bundled CSL styles; `missing` names keys the library lacks | fast |
-| `feed.ask(user, question)` | Route a plain-language feed question to the right tool | fast |
+| `feed.ask(user, question)` | Route a plain-language feed question to the right tool. "I work on X" sets interests and searches X for recent papers; "I like <DOI, arXiv id or title>" or "I like the papers in <file.bib or .pdf>" seeds the ranking with papers the reader likes | fast (network for a first search or a seed) |
 | `kg.ask(question, source, target)` | Route a plain-language graph question to the right tool | instant |
 | `runs.ask(question, family, path, metric)` | Route a plain-language ledger question to the right tool | instant |
 | `sym.ask(expr, question)` | Route a plain-language math question to the right tool | fast |

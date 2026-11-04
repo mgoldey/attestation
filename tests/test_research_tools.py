@@ -109,5 +109,5 @@ def test_feed_ask_executes_research_and_track(tmp_path, monkeypatch):
     row = (
         get_db(db).execute("SELECT url, added_by FROM feeds WHERE url LIKE 'research:%'").fetchone()
     )
-    assert row["url"] == "research:arxiv,pubmed?q=equivariant+interatomic+potentials"
+    assert row["url"] == "research:arxiv,pubmed,openalex?q=equivariant+interatomic+potentials"
     assert row["added_by"] is not None

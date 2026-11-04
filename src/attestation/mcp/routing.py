@@ -367,11 +367,16 @@ _INTERESTS = re.compile(
 
 
 def _first_rules(q: str, question: str) -> Decision | None:
-    """The two rules that must beat every table: setting interests (start-
-    anchored) and suggesting sources the reader does not have yet."""
+    """The rules that must beat every table: setting interests and naming a
+    liked paper (both start-anchored), and suggesting sources the reader does
+    not have yet."""
     if m := _INTERESTS.match(q):
         interests = question.strip()[m.end() :].strip(" .")
         return Decision("feed.persona_update", {"interests": interests})
+    from attestation.mcp.routing_seed import route_liked
+
+    if (liked := route_liked(q, question)) is not None:
+        return liked
     if "http" not in q and _has(q, *_SUGGEST_PHRASES) and not _has(q, *_OWNED_SOURCE_MARKERS):
         return Decision("feed.source_suggest", {})
     return None
