@@ -297,6 +297,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="instead: list citation keys (cite= and LaTeX \\cite) the bibliography lacks",
     )
+    sp.add_argument(
+        "--figures",
+        action="store_true",
+        help="instead: check each included figure against the files it was drawn from",
+    )
     sp.set_defaults(func=cmd_claims)
 
     sp = sub.add_parser("browse", help=HELP["browse"])
@@ -944,6 +949,42 @@ def _print_coverage(target: Path) -> int:
     return 0
 
 
+def _print_figures(target: Path, verdict: str | None) -> int:
+    """`attest claims --figures`: exit 1 on a stale or missing figure or a malformed note."""
+    from attestation import figures
+
+    report = figures.check(target)
+    for problem in report["malformed"]:
+        print(f"  malformed  {problem}")
+    for fig in report["figures"]:
+        if verdict and fig.verdict != verdict:
+            continue
+        where = f"{Path(fig.file).name}:{fig.line}"
+        print(f"  {fig.verdict:8s} {where:24s} {fig.path}  {fig.message}")
+    if not report["total"]:
+        print(f"no figures found under {target}")
+        return 1 if report["malformed"] else 0
+    summary = ", ".join(f"{n} {k}" for k, n in sorted(report["counts"].items()))
+    skipped = f" ({report['skipped']} remote or macro path(s) skipped)" if report["skipped"] else ""
+    print(f"\n{report['total']} figure(s): {summary}{skipped}")
+    print(f"note: {figures.NOTE}")
+    if report["counts"].get("orphan"):
+        print("annotate one beside the figure it describes:")
+        print("  <!-- figure: figs/loss.png from=results/a.json -->    (% figure: in .tex)")
+    return 1 if figures.failing(report) else 0
+
+
+def _claims_instead(args: argparse.Namespace, target: Path) -> int | None:
+    """The `--coverage`/`--citations`/`--figures` modes, which replace the check."""
+    if args.coverage:
+        return _print_coverage(target)
+    if args.citations:
+        return _print_citations(target, args.db)
+    if args.figures:
+        return _print_figures(target, args.verdict)
+    return None
+
+
 def _print_citations(target: Path, db: str | None) -> int:
     """`cite.check` from the shell: exit 1 when any key resolves to nothing."""
     from attestation import citations, latex
@@ -987,10 +1028,9 @@ def cmd_claims(args: argparse.Namespace) -> int:
     if not target.exists():
         return fail(f"no such path: {target}")
 
-    if args.coverage:
-        return _print_coverage(target)
-    if args.citations:
-        return _print_citations(target, args.db)
+    instead = _claims_instead(args, target)
+    if instead is not None:
+        return instead
 
     started = _record_clock()
     with open_db(args.db) as conn:

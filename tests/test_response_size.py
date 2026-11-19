@@ -918,3 +918,36 @@ def test_a_message_that_counts_must_count_what_shipped(stocked):
             assert "not shown" in message or "more available" in message, (
                 f"{name} says {claimed} and ships {shipped} without saying so: {message!r}"
             )
+
+
+def test_figures_block_of_a_fifty_figure_draft_fits_the_ceiling(tmp_path):
+    """`runs.claims_check` is a composition tool, but its `figures` block is
+    capped by constants. Worst case: 50 stale figures with long paths, long
+    messages and more malformed annotations than the cap allows."""
+    import os
+
+    from attestation import figures
+
+    deep = tmp_path / ("very-long-directory-name-" * 3)
+    (deep / "figs").mkdir(parents=True)
+    src = deep / "results" / ("source-with-a-long-name-" * 3 + ".json")
+    src.parent.mkdir()
+    src.write_text("{}")
+    os.utime(src, (2_000_000_000, 2_000_000_000))
+    lines = []
+    for i in range(50):
+        name = f"figs/{'long-figure-name-' * 3}{i}.png"
+        (deep / name).write_text("x")
+        os.utime(deep / name, (1_000_000_000, 1_000_000_000))
+        rel = src.relative_to(deep)
+        lines.append(f"![f]({name})\n<!-- figure: {name} from={rel} -->\n")
+    lines += [f"<!-- figure: nothing{i} -->\n" for i in range(20)]
+    doc = deep / "draft.md"
+    doc.write_text("".join(lines))
+
+    out = figures.block(figures.check(doc))
+
+    assert out["total"] == 50
+    assert len(out["findings"]) == figures.MAX_FIGURE_FINDINGS
+    assert len(out["malformed"]) == figures.MAX_FIGURE_MALFORMED
+    assert emitted(out) <= HARD_RESPONSE_CEILING // 2, f"figures block is {emitted(out)} chars"

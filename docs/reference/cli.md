@@ -181,6 +181,7 @@ options:
 ```
 usage: attest claims [-h] [--db DB] [--verdict VERDICT] [--coverage]
                      [--record OUT.json] [--force-record] [--citations]
+                     [--figures]
                      [path]
 
 positional arguments:
@@ -198,6 +199,8 @@ options:
   --force-record     replace an existing record
   --citations        instead: list citation keys (cite= and LaTeX \cite) the
                      bibliography lacks
+  --figures          instead: check each included figure against the files it
+                     was drawn from
 ```
 
 ## attest browse
