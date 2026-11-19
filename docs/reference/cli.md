@@ -278,11 +278,16 @@ options:
 
 ```
 usage: attest runs scan [-h] [--root ROOT] [--project PROJECT]
+                        [--strict | --no-strict]
 
 options:
-  -h, --help         show this help message and exit
-  --root ROOT        workspace dir (default: $RESEARCH_ROOT)
-  --project PROJECT  scan only this project
+  -h, --help            show this help message and exit
+  --root ROOT           workspace dir (default: $RESEARCH_ROOT)
+  --project PROJECT     scan only this project
+  --strict, --no-strict
+                        exit 1 when any record is QUARANTINED (fails
+                        conformance); --no-strict still lists them and exits 0
+                        (default: strict)
 ```
 
 ## attest runs list
@@ -331,7 +336,7 @@ options:
 usage: attest runs record [-h] --arm NAME [METRIC=VALUE ...] [--corpus CORPUS]
                           [--direction METRIC=lower_is_better|higher_is_better]
                           [--config KEY=VALUE] [--root ROOT] [--dry-run]
-                          [--force] [--scan]
+                          [--force] [--scan] [--strict | --no-strict]
                           family
 
 positional arguments:
@@ -351,6 +356,10 @@ options:
   --dry-run             print the manifest, write nothing
   --force               overwrite existing files/entries
   --scan                also run `runs scan` and print `runs compare`
+  --strict, --no-strict
+                        with --scan, exit 1 when any record is QUARANTINED
+                        (fails conformance); --no-strict still lists them and
+                        exits 0 (default: strict)
 ```
 
 ## attest library sync

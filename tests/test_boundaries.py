@@ -96,14 +96,28 @@ def test_schema_package_imports_nothing_from_attestation():
     )
 
 
+# The ONE module allowed past the standard library: the conformance suite's
+# pytest plugin, behind the `[conformance]` extra and loaded only with `-p`
+# (docs/superpowers/specs/2026-11-19-conformance-suite-design.md). Everything
+# else -- the checker it wraps included -- stays stdlib, so a producer that
+# writes records installs nothing.
+PYTEST_PLUGIN = SCHEMA_SRC / "pytest_plugin.py"
+
+
 def test_schema_package_is_standard_library_only():
-    offenders = _offenders(
-        _modules(SCHEMA_SRC), lambda s: non_stdlib_imports(s, ("attestation_schema",))
-    )
+    stdlib_only = [p for p in _modules(SCHEMA_SRC) if p != PYTEST_PLUGIN]
+    assert SCHEMA_SRC / "conformance.py" in stdlib_only
+    offenders = _offenders(stdlib_only, lambda s: non_stdlib_imports(s, ("attestation_schema",)))
     assert not offenders, "attestation_schema is stdlib-only:\n  " + "\n  ".join(offenders)
+    plugin = _offenders(
+        [PYTEST_PLUGIN], lambda s: non_stdlib_imports(s, ("attestation_schema", "pytest"))
+    )
+    assert not plugin, "the plugin may import pytest and nothing else:\n  " + "\n  ".join(plugin)
     project = tomllib.loads((SCHEMA_PKG / "pyproject.toml").read_text())["project"]
     assert project["dependencies"] == [], "attestation-schema declares no dependencies"
-    assert not project.get("optional-dependencies"), "no extras either"
+    assert project.get("optional-dependencies") == {"conformance": ["pytest>=7.2"]}, (
+        "the only extra is the conformance plugin's pytest"
+    )
 
 
 def test_boundary_detectors_can_fail():

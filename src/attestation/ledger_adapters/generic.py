@@ -20,11 +20,14 @@ as `score`, and `compare` will refuse to rank it until someone declares which
 direction is better, because guessing ranks ablations backwards.
 """
 
+import contextlib
+import contextvars
 import hashlib
 import json
 import math
 import re
 import statistics
+from collections.abc import Iterator
 from pathlib import Path
 
 from attestation_schema import layout
@@ -122,6 +125,34 @@ def _split_from(stem: str) -> str | None:
     return f"{m.group(1).lower()}{m.group(2)}" if m else None
 
 
+# What the readers skip as non-finite (NaN/inf), so the scan can say so. The
+# readers drop such values on purpose ("not measured", below), and they are
+# ported unchanged (ledger spec), so they cannot attribute a skipped leaf to
+# the run it came from; a scan-scoped collector reports them per project and
+# reader instead of not at all (conformance spec, Decision 4).
+_SKIPPED: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "skipped_non_finite", default=None
+)
+
+
+def _skip(name: str) -> None:
+    """Record that a non-finite value named `name` was not read as a metric."""
+    skipped = _SKIPPED.get()
+    if skipped is not None:
+        skipped.append(name)
+
+
+@contextlib.contextmanager
+def skipped_non_finite() -> Iterator[list[str]]:
+    """Collect the names of non-finite values the readers skip inside the block."""
+    collected: list[str] = []
+    token = _SKIPPED.set(collected)
+    try:
+        yield collected
+    finally:
+        _SKIPPED.reset(token)
+
+
 def _numeric_items(obj: dict) -> list[tuple[str, float]]:
     """Numeric fields of a result object, excluding non-finite ones.
 
@@ -137,14 +168,15 @@ def _numeric_items(obj: dict) -> list[tuple[str, float]]:
     on a NaN and the traceback escaped `scan()` -- one such file took down
     every project in the workspace.
     """
-    return [
-        (k.lower(), float(v))
-        for k, v in obj.items()
-        if isinstance(v, (int, float))
-        and not isinstance(v, bool)
-        and k.lower() not in _SKIP_KEYS
-        and math.isfinite(v)
-    ]
+    out = []
+    for k, v in obj.items():
+        if not isinstance(v, (int, float)) or isinstance(v, bool) or k.lower() in _SKIP_KEYS:
+            continue
+        if not math.isfinite(v):
+            _skip(k.lower())
+            continue
+        out.append((k.lower(), float(v)))
+    return out
 
 
 # How deep to follow nested result structures. Deep enough for the shapes that
@@ -802,6 +834,7 @@ def _mlflow_metric(path: Path) -> tuple[float, int | None] | None:
         # worse than reporting nothing. The run diverged; "not measured" is
         # what happened.
         if not math.isfinite(value):
+            _skip(path.name)
             return None
         step = None
         if len(parts) > 2:
@@ -892,11 +925,10 @@ def _sacred_metrics(metrics_path: Path) -> list[FoundMetric]:
         if not isinstance(values, list) or not values:
             continue
         value = values[-1]
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-        ):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if not math.isfinite(value):
+            _skip(name)
             continue
         steps = series.get("steps")
         step = (
@@ -915,11 +947,10 @@ def _sacred_result_metric(run_json: dict) -> FoundMetric | None:
     so this is the one place it can be picked up at all.
     """
     result = run_json.get("result")
-    if (
-        isinstance(result, bool)
-        or not isinstance(result, (int, float))
-        or not math.isfinite(result)
-    ):
+    if isinstance(result, bool) or not isinstance(result, (int, float)):
+        return None
+    if not math.isfinite(result):
+        _skip("result")
         return None
     return FoundMetric("result", float(result))
 

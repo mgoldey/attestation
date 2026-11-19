@@ -260,7 +260,11 @@ def _nothing_listed(conn, project: str | None, family: str | None) -> str:
     )
 
 
-@tool(empty={"scanned": {}, "empty": [], "diagnostics": {}}, needs_db=False, label="runs_scan")
+@tool(
+    empty={"scanned": {}, "empty": [], "diagnostics": {}, "quarantined": [], "lossy": {}},
+    needs_db=False,
+    label="runs_scan",
+)
 def _scan(root: str | None = None, project: str | None = None, confirm: bool = False) -> dict:
     if not confirm:
         raise ToolError(
@@ -283,13 +287,25 @@ def _scan(root: str | None = None, project: str | None = None, confirm: bool = F
             f"{out['message']} -- set RESEARCH_ROOT or pass root= to a directory that exists"
         )
     total = sum(out["scanned"].values())
+    quarantined = out.get("quarantined", [])
+    message = f"{total} run(s) across {len(out['scanned'])} project(s)"
+    if quarantined:
+        # Leads the message: a model summarising this envelope reads the
+        # message first, and a refusal buried in a list is the silence the
+        # conformance spec (Decision 3) removed.
+        message = (
+            f"QUARANTINED {len(quarantined)} record(s) that failed conformance (not imported;"
+            f" see quarantined). {message}"
+        )
     return {
-        "message": f"{total} run(s) across {len(out['scanned'])} project(s)",
+        "message": message,
         "scanned": out["scanned"],
         "empty": out.get("empty", []),
         # why each empty project was empty: the caller is a model, and a bare
         # "0 run(s)" gives it nothing to tell the user or act on
         "diagnostics": out.get("diagnostics", {}),
+        "quarantined": quarantined,
+        "lossy": out.get("lossy", {}),
     }
 
 

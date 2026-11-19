@@ -12,17 +12,21 @@ from pathlib import Path
 
 import attestation_schema as schema
 import pytest
+from attestation_schema import layout
 
-from attestation import ledger
+from attestation import cli, ledger, mcp_server
 from attestation.db import get_db
 from attestation.ledger_adapters import (
     ADAPTERS,
     IMPORT_NAMESPACE,
     LEGACY_ADAPTERS,
+    Imported,
     generic,
     import_project,
 )
 from attestation.ledger_adapters.core import MAX_DEPTH
+from attestation.ledger_adapters.found import Found, FoundMetric
+from attestation.ledger_adapters.trackers import found_to_core
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORDS = ROOT / "examples" / "mlflow-records" / "records"
@@ -314,3 +318,198 @@ def test_a_nan_config_cell_becomes_a_string_not_a_refusal(tmp_path):
     result = import_project(proj)
     assert result.refused == []
     assert result.imported[0].record.config["note"] == "nan"
+
+
+# ---- conformance: quarantine, loudly; coerce nothing silently (roadmap 15) ----
+# Spec: docs/superpowers/specs/2026-11-19-conformance-suite-design.md,
+# Decisions 3 and 4. Each mutant is a record the bare reader ACCEPTS (the
+# ledger imported it before): what makes these bite is that the core adapter
+# now runs the whole conformance suite, not just `read`.
+
+FIXTURES = ROOT / "packages" / "attestation-schema" / "tests" / "data" / "conformance"
+
+
+def _qrecord(run_id: str, **over) -> schema.RunRecord:
+    base = {
+        "schema": schema.SCHEMA,
+        "run_id": run_id,
+        "family": "sweep",
+        "arm": None,
+        "status": "complete",
+        "started_at": None,
+        "finished_at": None,
+        "producer": {"name": "test", "version": None},
+        "code": {
+            "git_sha": None,
+            "dirty": None,
+            "repo": None,
+            "version": None,
+            "provenance": "unknown",
+            "evidence": None,
+        },
+        "config": {"lr": 0.1},
+        "data": [],
+        "metrics": [
+            {
+                "name": "wer",
+                "value": 0.2,
+                "direction": None,
+                "step": None,
+                "split": "test",
+                "unit": None,
+                "labels": {},
+            }
+        ],
+        "history": None,
+        "seeds": None,
+        "dependencies": None,
+        "ext": {},
+    }
+    base.update(over)
+    return schema.from_dict(base)
+
+
+def _non_canonical(rd: Path) -> None:
+    p = rd / layout.RUN_JSON
+    p.write_text(json.dumps(json.loads(p.read_text()), indent=2))
+
+
+def _credential(rd: Path) -> None:
+    (rd / layout.RUN_JSON).unlink()
+    schema.write(_qrecord("bad", config={"uri": "https://ci:" + "hunter2@example.invalid/x"}), rd)
+
+
+def _stray_sidecar(rd: Path) -> None:
+    (rd / layout.HISTORY_JSONL).write_text('{"schema":"attestation.history/1"}\n')
+
+
+def _terminal_disagrees(rd: Path) -> None:
+    shutil.rmtree(rd)
+    shutil.copytree(FIXTURES / "valid" / "job-complete", rd)
+    p = rd / layout.RUN_JSON
+    p.write_text(p.read_text().replace('"status":"complete"', '"status":"failed"'))
+
+
+def _unbound_manifest(rd: Path) -> None:
+    (rd / "out.txt").write_text("x")
+    (rd / layout.DIGESTS_JSON).write_bytes(schema.canonical.canonicalize(layout.build_manifest(rd)))
+
+
+MUTANTS = {
+    "canonical": _non_canonical,
+    "credentials": _credential,
+    "history": _stray_sidecar,
+    "terminal": _terminal_disagrees,
+    "manifest": _unbound_manifest,
+}
+
+
+def _workspace(tmp_path: Path, mutant=None) -> Path:
+    ws = tmp_path / "ws"
+    schema.write(_qrecord("good"), ws / "p" / "runs" / "good")
+    bad = ws / "p" / "runs" / "bad"
+    schema.write(_qrecord("bad"), bad)
+    if mutant is not None:
+        mutant(bad)
+    return ws
+
+
+def test_the_unmutated_workspace_imports_both(conn, tmp_path):
+    out = ledger.scan(conn, _workspace(tmp_path))
+    assert out["scanned"] == {"p": 2} and out["quarantined"] == []
+
+
+@pytest.mark.parametrize("rule", sorted(MUTANTS))
+def test_a_record_the_reader_accepts_but_conformance_refuses_is_quarantined(conn, tmp_path, rule):
+    ws = _workspace(tmp_path, MUTANTS[rule])
+    bad = ws / "p" / "runs" / "bad"
+    # The bare reader accepts it -- the old ledger imported it.
+    if rule != "terminal":
+        assert schema.read(bad).run_id == "bad"
+    out = ledger.scan(conn, ws)
+    assert out["scanned"] == {"p": 1}
+    (q,) = out["quarantined"]
+    assert q["path"] == str(bad) and q["project"] == "p" and q["adapter"] == "core"
+    assert rule in q["rules"], q
+    assert any(f"[{rule}]" in r for r in q["reasons"]), q
+    names = {r["name"] for r in conn.execute("SELECT name FROM runs")}
+    assert names == {"good"}, "a quarantined record never enters the ledger"
+    assert conn.execute("SELECT COUNT(*) FROM run_metrics").fetchone()[0] == 1
+
+
+def test_cli_prints_quarantined_and_exits_1_unless_no_strict(tmp_path, monkeypatch, capsys):
+    ws = _workspace(tmp_path, _credential)
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "cli.db"))
+    assert cli.main(["runs", "scan", "--root", str(ws)]) == 1
+    out = capsys.readouterr().out
+    assert "QUARANTINED (1 record(s)" in out
+    assert str(ws / "p" / "runs" / "bad") in out
+    assert "attestation/run.json at $.config.uri: [credentials]" in out
+    assert cli.main(["runs", "scan", "--root", str(ws), "--no-strict"]) == 0
+    assert "QUARANTINED" in capsys.readouterr().out
+    clean = _workspace(tmp_path / "clean")
+    assert cli.main(["runs", "scan", "--root", str(clean)]) == 0
+    assert "QUARANTINED" not in capsys.readouterr().out
+
+
+def test_mcp_scan_returns_the_quarantine_and_leads_with_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    get_db(tmp_path / "t.db").close()
+    monkeypatch.setenv("RESEARCH_ROOT", str(_workspace(tmp_path, _non_canonical)))
+    out = mcp_server._runs_scan_impl(confirm=True)
+    assert out["ok"] is True
+    assert out["message"].startswith("QUARANTINED 1 record(s)")
+    assert out["quarantined"][0]["rules"] == ["canonical"]
+
+
+def test_a_failed_record_carrying_the_importer_namespace_keeps_its_caveat():
+    """ext.ledger-import's status word replaces the column's; it used to
+    silence the did-not-complete caveat as well."""
+    rec = _qrecord(
+        "r",
+        status="failed",
+        ext={IMPORT_NAMESPACE: {"status": "recorded", "adapter": "generic"}},
+    )
+    row = ledger.row_from_core("p", Imported(rec, "r", "x", "core"))
+    assert row.status == "recorded"
+    assert any("has status failed" in c for c in row.run_caveats), row.run_caveats
+
+
+def test_the_converters_lossy_steps_are_run_caveats():
+    found = Found(
+        project="p",
+        name="r",
+        source_path="x",
+        started="not a time",
+        config={"alpha": float("nan"), "nested": [1.0, float("inf")]},
+        metrics=[FoundMetric("wer", 0.2), FoundMetric("wer", 0.3)],
+    )
+    rec = found_to_core(found, adapter="wandb", caveats=[], run_caveats=[], started_is_utc=True)
+    caveats = rec.ext[IMPORT_NAMESPACE]["run_caveats"]
+    assert any("config.alpha" in c and "config.nested[1]" in c for c in caveats), caveats
+    assert any("duplicate metric" in c and "wer=0.3" in c for c in caveats), caveats
+    assert any("'not a time'" in c for c in caveats), caveats
+    assert [m.value for m in rec.metrics] == [0.2]
+    clean = Found(project="p", name="r", source_path="x", metrics=[FoundMetric("wer", 0.2)])
+    assert (
+        found_to_core(clean, adapter="generic", caveats=[], run_caveats=[]).ext[IMPORT_NAMESPACE][
+            "run_caveats"
+        ]
+        == []
+    )
+
+
+def test_non_finite_values_a_legacy_reader_skips_are_reported_lossy(
+    conn, tmp_path, monkeypatch, capsys
+):
+    ws = tmp_path / "ws"
+    results = ws / "proj" / "results"
+    results.mkdir(parents=True)
+    (results / "eval.json").write_text('{"wer": 0.2, "loss": NaN}')
+    out = ledger.scan(conn, ws)
+    assert out["scanned"] == {"proj": 1}
+    (note,) = out["lossy"]["proj"]
+    assert "generic reader skipped 1 non-finite value" in note and "loss" in note
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "cli.db"))
+    assert cli.main(["runs", "scan", "--root", str(ws)]) == 0
+    assert "LOSSY (proj):" in capsys.readouterr().out

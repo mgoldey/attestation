@@ -11,6 +11,36 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **A conformance suite for core run records (attestation-schema
+  `conformance` + an opt-in pytest plugin, roadmap 15).**
+  `attestation_schema.conformance.check_run_dir` (stdlib) checks every rule a
+  run directory keeps -- the frozen reader, canonical bytes, the manifest and
+  its binding, the history sidecar, `state.json` and its transitions, a
+  record for every terminal state, the `JobSpec`, the `source` vocabulary,
+  credentials anywhere in the schema-owned files, `ext` namespaces -- and
+  reports every violation with its file and JSON path.
+  `-p attestation_schema.pytest_plugin --attestation-runs 'runs/*'` makes
+  one test per run (a pattern matching nothing fails), and the
+  `attestation_conformance` fixture checks a record made in-test. pytest is
+  the `[conformance]` extra; the core install still depends on nothing.
+  Golden fixtures (valid, and one broken per rule) under
+  `packages/attestation-schema/tests/data/conformance/`, tested through
+  `pytester`, also on Python 3.11. No format changed.
+- **`attest runs scan` quarantines non-conforming records loudly.** The core
+  adapter runs the conformance suite (outputs are not re-hashed) instead of
+  the bare reader; a record that fails it, or a legacy run the converter
+  cannot express, is never imported, is listed in a `QUARANTINED` section
+  with its path and reasons, and makes the scan exit 1 (`--no-strict` to
+  exit 0; `runs record --scan` the same). Before, a refused record in a
+  project with other runs printed nothing and exited 0. MCP `runs.scan`
+  returns `quarantined` and leads its message with the count. The
+  converter's lossy steps (a duplicate metric dropped, a NaN config value
+  stringified, an unreadable start time dropped) are now run caveats, a
+  failed/cancelled record keeps its caveat even when `ext.ledger-import`
+  carries a status word, and NaN/inf values a legacy reader skips are listed
+  in a `LOSSY` section. attestation's own pytest runs the plugin over
+  `examples/mlflow-records/records`, and CI's `schema-py311` job runs it from
+  the installed wheel. Spec: `2026-11-19-conformance-suite-design.md`.
 - **`attestation.run/1` is frozen (attestation-schema 0.1.0).** The last
   producer findings were decided first: `dependencies[].source` gains
   `url:<url>` (direct-URL archives; query strings and `url:file:` refused)

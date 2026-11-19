@@ -25,10 +25,12 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import tomllib
 from pathlib import Path
 
 import pytest
 from attestation_schema import HISTORY_PATH, dumps, layout, loads, read, read_history
+from attestation_schema.conformance import check_run_dir, find_targets
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "mlflow-records"
@@ -391,3 +393,37 @@ def test_timestamps_and_credentials():
     assert strip("https://token@example.org/x.git") == "https://example.org/x.git"
     assert strip("git@example.org:lab/x.git") == "git@example.org:lab/x.git"
     assert strip("") is None
+
+
+# ---- the conformance suite runs over these records (roadmap 15, Decision 5) ----
+# A deleted ini line or CI step would stop the suite with nothing going red,
+# so the wiring itself is asserted. Spec:
+# docs/superpowers/specs/2026-11-19-conformance-suite-design.md.
+CONFORMANCE_RECORDS = "examples/mlflow-records/records"
+
+
+def test_the_plugin_is_loaded_in_this_session(pytestconfig):
+    assert pytestconfig.pluginmanager.has_plugin("attestation_schema.pytest_plugin")
+
+
+def test_pyproject_loads_the_plugin_and_lists_the_records():
+    ini = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["pytest"]["ini_options"]
+    assert "-p attestation_schema.pytest_plugin" in ini["addopts"]
+    assert ini["attestation_runs"] == [CONFORMANCE_RECORDS]
+
+
+def test_the_listed_records_exist_and_conform():
+    """The ini list is not vacuous: it names four records, all conforming."""
+    dirs, empty = find_targets([CONFORMANCE_RECORDS], ROOT)
+    assert empty == [] and len(dirs) == 4
+    for d in dirs:
+        report = check_run_dir(d)
+        assert report.ok, report.format()
+
+
+def test_ci_runs_the_plugin_from_the_installed_wheel_on_311():
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    job = ci.split("schema-py311:", 1)[1].split("\n  flows:", 1)[0]
+    assert "[conformance]" in job
+    assert "-p attestation_schema.pytest_plugin" in job
+    assert f"--attestation-runs '{CONFORMANCE_RECORDS}/*'" in job
