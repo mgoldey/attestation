@@ -31,7 +31,7 @@ cp -R ../flows/training/mlruns "$STORE/mlruns"
 for run in "$STORE"/mlruns/*/*/; do mkdir -p "${run}artifacts"; done
 uv run --group examples python export_records.py --tracking-uri "$STORE/mlruns" --out "$STORE/records" --arm-param C --seed-param seed --direction auc=max
 diff -r records "$STORE/records" && echo "byte-identical to the committed records/"
-uv run python -c "import attestation_schema as s; r = s.read('records/run-06f405c125804496876ebfa098ad4c94'); print(r.schema, r.family, r.arm, [(m.name, m.value, m.direction) for m in r.metrics if m.name == 'auc'], len(r.history[-1].points), 'train_loss points')"
+uv run python -c "import attestation_schema as s; r = s.read('records/run-06f405c125804496876ebfa098ad4c94'); print(r.schema, r.family, r.arm, [(m.name, m.value, m.direction) for m in r.metrics if m.name == 'auc'], len(s.read_history('records/run-06f405c125804496876ebfa098ad4c94', r)[-1].points), 'train_loss points')"
 ```
 
 Relative to this directory (`run.sh` does `cd "$(dirname "$0")"` first).
@@ -54,7 +54,7 @@ Above those lines, one per run:
 **The mapping, with nothing special-cased.** `export_records.py`'s docstring
 is the table: experiment name → `family`; params → `config` verbatim, as the
 strings MLflow stored (`"C": "10.0"`, never re-typed); every logged point →
-`history`; MLflow's own "latest" point per metric → `metrics`; the
+the history sidecar; MLflow's own "latest" point per metric → `metrics`; the
 `mlflow.source.git.commit` tag → `code.git_sha` with `dirty: null`; artifacts
 → `data` by sha256; dataset inputs → `data` with `sha256: null`; everything
 MLflow-specific (experiment id, run name, every tag, every dataset input
@@ -66,23 +66,31 @@ unless they name the params that define one (`--arm-param C`); no run has
 seeds unless they name the params that hold them (`--seed-param seed`). The
 committed sweep was scrubbed of its git tags before it was committed, so its
 records honestly carry `git_sha: null`. MLflow records no client or library
-version for a run, so `mlflow` is listed with `provenance: "unknown"`.
+version for a run, so `dependencies` is `null`: the exporter could not
+observe the run's environment (`[]` would claim it saw one with nothing in it).
 
-**History is part of the record.** `train_loss` was logged at ten steps; the
-record keeps all ten points with their timestamps under `history`, while
-`metrics` carries the final value at `step: 9`. The ledger's MLflow reader
-keeps only the last line; a record keeps the curve.
+**History is kept, beside the record.** `train_loss` was logged at ten steps;
+all ten points, with their timestamps, go to `attestation/history.jsonl` (one
+canonical JSON line per series declaration and per point), and `run.json`
+carries only `history: {path, sha256, series: 5, points: 14}` -- so a record
+stays the same size however long the run, `read` never opens the curves, and
+`read_history` checks their sha256 before parsing. `metrics` carries the final
+value at `step: 9`. The ledger's MLflow reader keeps only the last line; a
+run directory keeps the curve.
 
 **The run directory layout.** Each `records/run-<run_id>/` holds
-`attestation/digests.json` (written first) and `attestation/run.json`
-(written last, listing the manifest's sha256 with `role: "manifest"`).
+`attestation/history.jsonl` (written first), `attestation/digests.json` and
+`attestation/run.json` (written last, binding the sidecar by `history.sha256`
+and listing the manifest's sha256 with `role: "manifest"`; the manifest does
+not list the sidecar, so it is bound once).
 MLflow's artifacts stay in MLflow's store and are bound by digest, not
 copied, so these manifests list no files.
 
 **What MLflow forced into the schema** is the "Producer findings" section of
 `docs/superpowers/specs/2026-11-19-core-run-record-design.md`: metric history
-as a core field, NaN/infinite metric values, data named without a digest, and
-one spelling per timestamp.
+as a core field (since moved to the sidecar), NaN/infinite metric values,
+data named without a digest, and one spelling per timestamp (now fixed-width:
+`22:33:46.024000Z`).
 
 ## When it goes wrong
 

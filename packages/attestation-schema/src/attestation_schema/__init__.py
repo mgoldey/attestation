@@ -2,9 +2,18 @@
 
 Standard library only, and imports nothing from `attestation`: producers
 depend on this package to write records without depending on the observer.
+Curves live in a sidecar (`history.py`), bound to the record by sha256.
 Spec: docs/superpowers/specs/2026-11-19-core-run-record-design.md.
 """
 
+from attestation_schema.history import (
+    HISTORY_SCHEMA,
+    HistoryWriter,
+    Point,
+    Series,
+    read_history,
+    write_history,
+)
 from attestation_schema.jobs import (
     TERMINAL,
     TRANSITIONS,
@@ -20,21 +29,26 @@ from attestation_schema.jobs import (
     can_transition,
 )
 from attestation_schema.record import (
+    HISTORY_PATH,
     NON_FINITE,
     READERS,
     SCHEMA,
     SCHEMA_STATUS,
+    SOURCE_KINDS,
     CodeIdentity,
     DataDigest,
     Dependency,
+    HistoryDigestError,
+    HistoryError,
+    HistoryFormatError,
+    HistoryMissingError,
+    HistoryRef,
     InvalidFieldError,
     Metric,
     MissingFieldError,
-    Point,
     Producer,
     RecordError,
     RunRecord,
-    Series,
     UnknownFieldError,
     UnsupportedSchemaError,
     dumps,
@@ -44,10 +58,13 @@ from attestation_schema.record import (
     read,
     record_digest,
     record_path,
+    spell_value,
     write,
 )
 
 __all__ = [
+    "HISTORY_PATH",
+    "HISTORY_SCHEMA",
     "NON_FINITE",
     "READERS",
     "SCHEMA",
@@ -57,6 +74,12 @@ __all__ = [
     "CodeIdentity",
     "DataDigest",
     "Dependency",
+    "HistoryDigestError",
+    "HistoryError",
+    "HistoryFormatError",
+    "HistoryMissingError",
+    "HistoryRef",
+    "HistoryWriter",
     "InvalidFieldError",
     "JobBackend",
     "JobError",
@@ -73,6 +96,7 @@ __all__ = [
     "Producer",
     "RecordError",
     "RunRecord",
+    "SOURCE_KINDS",
     "Series",
     "UnknownFieldError",
     "UnsupportedSchemaError",
@@ -82,7 +106,10 @@ __all__ = [
     "from_dict",
     "loads",
     "read",
+    "read_history",
     "record_digest",
     "record_path",
+    "spell_value",
     "write",
+    "write_history",
 ]

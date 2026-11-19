@@ -118,7 +118,7 @@ jobs:
           python3 -m venv /tmp/schema-venv
           /tmp/schema-venv/bin/pip install --quiet --no-deps dist-schema/*.whl
           /tmp/schema-venv/bin/python -c "
-          import importlib.metadata as m, importlib.resources as r, json, tempfile
+          import dataclasses, importlib.metadata as m, importlib.resources as r, json, tempfile
           import attestation_schema as s
           assert m.requires('attestation-schema') is None, 'attestation-schema must declare no dependencies'
           assert r.files('attestation_schema').joinpath('py.typed').is_file()
@@ -126,11 +126,15 @@ jobs:
           assert schema['properties']['schema']['const'] == s.SCHEMA
           rec = s.RunRecord(run_id='smoke', family=None, arm=None, status='complete',
               started_at=None, finished_at=None, producer=s.Producer('ci', None),
-              code=s.CodeIdentity(None, None, None, None, 'unknown', None), config={}, data=[], metrics=[], history=[],
-              seeds=None, dependencies=[], ext={'x': {'y': 1}})
+              code=s.CodeIdentity(None, None, None, None, 'unknown', None), config={}, data=[], metrics=[], history=None,
+              seeds=None, dependencies=None, ext={'x': {'y': 1}})
           d = tempfile.mkdtemp()
+          curve = [s.Series('loss', None, {}, [s.Point(0, float('nan'), None), s.Point(1, 0.5, None)])]
+          rec = dataclasses.replace(rec, history=s.write_history(d, curve))
           s.write(rec, d)
           assert s.read(d) == rec
+          assert s.read_history(d)[0].points[1] == s.Point(1, 0.5, None)
+          assert r.files('attestation_schema').joinpath('schemas/history-1.schema.json').is_file()
           print('attestation-schema wheel OK:', s.SCHEMA, s.SCHEMA_STATUS)
           "
 

@@ -79,15 +79,15 @@ knowledge is. Unknown keys are refused everywhere except inside `config` and
 | `family` | string, nullable | The comparison group (an MLflow experiment, a smeltery campaign). `null` = the run belongs to no comparison. |
 | `arm` | string, nullable | The variant within the family. |
 | `status` | `"complete"` \| `"failed"` \| `"cancelled"` | Terminal states only: a record is written once, when the run ends. In-flight state lives in `state.json` (below). |
-| `started_at`, `finished_at` | RFC 3339 UTC `YYYY-MM-DDTHH:MM:SS[.f]Z`, nullable | `Z` only, no offsets, and a fraction of 1-6 digits with **no trailing zero** (`.25`, never `.250000`; `:00Z`, never `:00.000Z`), so one instant has one spelling. `format_timestamp(datetime)` produces it. `finished_at >= started_at` when both are known. |
+| `started_at`, `finished_at` | RFC 3339 UTC `YYYY-MM-DDTHH:MM:SS.ffffffZ`, nullable | `Z` only, no offsets, and **always exactly six fraction digits** (`:37.500000Z`, `:37.000000Z`), so one instant has one spelling *and* timestamps sort as text in time order (smeltery finding 10). `format_timestamp(datetime)` produces it. The same spelling is used for history points' `at`. `finished_at >= started_at` when both are known. |
 | `producer` | `{name, version}` | What wrote this file (`smeltery 0.4.0`, `attestation mlflow-import 0.6.0`). `version` nullable. Not the code that ran — that is `code`. |
-| `code` | `{git_sha, dirty, repo, version, provenance, evidence}` | The experiment code's identity, on the same ladder as a dependency. `git_sha` 40 or 64 lowercase hex, nullable; `dirty` bool, nullable (unknown ≠ clean); `repo` nullable string, refused if it carries `user:password@` credentials; `version` the code's own version, nullable (a non-editable install may have only this; `producer.version` is not it when converting old runs); `provenance` `"verified"` \| `"inferred"` \| `"unknown"`, `verified` requiring `git_sha` or `version`; `evidence` nullable free text. |
+| `code` | `{git_sha, dirty, repo, version, provenance, evidence}` | The experiment code's identity, on the same ladder as a dependency. `git_sha` 40 or 64 lowercase hex, nullable; `dirty` bool, nullable (unknown ≠ clean); `repo` nullable string, refused if it carries `user:password@` credentials; `version` the code's own version, nullable (a non-editable install may have only this; `producer.version` is not it when converting old runs); `provenance` `"verified"` \| `"inferred"` \| `"unknown"`, `verified` requiring `git_sha` or `version`, `unknown` requiring `git_sha: null` (a sha held but not vouched for is `inferred`); `evidence` nullable free text. **Mixed code** (results from more than one commit): `provenance: "unknown"`, `git_sha: null`, `dirty: null`, `version` only if every commit shares it, `evidence` naming each commit and how many result rows it produced (`mixed: <sha> (412 rows), <sha> (88 rows)`) — the dependency rule, applied to the code (smeltery finding 9). |
 | `config` | JSON object | The run's configuration, verbatim. Opaque to attestation. Numbers are JSON numbers: JCS writes `2.0` as `2` and the reader returns an int, so there is no int/float distinction in `config` or `ext`. A producer digest over these values is checkable from the record only if it was taken over their JCS bytes (`attestation_schema.canonical.canonicalize`); a digest over another serialization is the producer's claim, carried in `ext` and bound to its source file through `data`. |
 | `data` | list of `{name, sha256, role}` | Data the run read or produced. `sha256` 64 lowercase hex of the bytes, nullable: `null` = the producer knows the run read or wrote this but could not digest its bytes (never a digest in another algorithm — that belongs in `ext`). `role` a free non-empty string (suggested: `input`, `train`, `eval`, `test`, `output`, `manifest`). Names unique. |
-| `metrics` | list of `{name, value, direction, step, split, unit, labels}` | Final values, not curves (curves are `history`). `value` a finite JSON number, or one of the strings `"NaN"`, `"Infinity"`, `"-Infinity"` (read as the Python float; a JSON `true` or any other string is refused); `direction` `"min"` \| `"max"` \| `null` (null = the producer did not say; **never inferred**); `step` int ≥ 0, nullable; `split` string, nullable; `unit` nullable free string (UCUM suggested, e.g. `kcal/mol`); `labels` an object `{string: string}`, `{}` for none — what the value is *about* (an analogue, a model), so a reader groups without parsing names. `(name, step, split, labels)` unique; one `direction` and one `unit` per `name`. **Absence**: a metric that is not in the list was not reported; `"NaN"` means computed and undefined (the SEM of one sample). There is no null value and no boolean value (a flag is not a metric: it belongs in `ext`). |
-| `history` | list of `{name, split, labels, points: [{step, value, at}]}` | Logged curves. One series per `(name, split, labels)`; `points` non-empty, in the order the producer logged them; `step` int ≥ 0 (steps may repeat and need not increase — it is a log, not a map); `value` as in `metrics`; `at` timestamp, nullable. `[]` = no curve carried. A series need not have a `metrics` entry or vice versa; direction is a property of the metric name, as is unit, so both live on `metrics` only. |
+| `metrics` | list of `{name, value, direction, step, split, unit, labels}` | Final values, not curves (curves are in the `history` sidecar). `value` a finite JSON number, or one of the strings `"NaN"`, `"Infinity"`, `"-Infinity"` (read as the Python float; a JSON `true` or any other string is refused); `direction` `"min"` \| `"max"` \| `null` (null = the producer did not say; **never inferred**); `step` int ≥ 0, nullable; `split` string, nullable; `unit` nullable free string (UCUM suggested, e.g. `kcal/mol`); `labels` an object `{string: string}`, `{}` for none — what the value is *about* (an analogue, a model), so a reader groups without parsing names. `(name, step, split, labels)` unique; one `direction` and one `unit` per `name`. **Absence**: a metric that is not in the list was not reported; `"NaN"` means computed and undefined (the SEM of one sample). There is no null value and no boolean value (a flag is not a metric: it belongs in `ext`). |
+| `history` | `{path, sha256, series, points}`, nullable | A **reference** to the logged curves, never the curves: `path` is always `"attestation/history.jsonl"` (the sidecar, below), `sha256` 64 lowercase hex of its bytes, `series` int ≥ 1 and `points` int ≥ `series` its counts, so a reader can size it without opening it. `null` = no curve was recorded. Each series is `(name, split, labels)` with points `{step, value, at}` in logging order (steps may repeat and need not increase — it is a log, not a map; `value` as in `metrics`; `at` nullable). A series need not have a `metrics` entry or vice versa; direction and unit are properties of the metric name, so both live on `metrics` only. Producer findings 3. |
 | `seeds` | object `{name: int \| [int, ...]}`, nullable | Named RNG seeds (`{"python": 0, "numpy": 0}`); a non-empty list is one stage run once per seed, in order (`{"docking": [7]}`). `null` = unknown; `{}` = the producer states no seed was set. |
-| `dependencies` | list of `{name, version, build_sha, dirty, provenance, evidence, source}` | Identity of what the code ran on. `provenance` is `"verified"` \| `"inferred"` \| `"unknown"`; `verified` requires `version` or `build_sha`. `evidence` nullable free text naming how the identity was established (`ferric.__build__`, `direct_url.json`). `source` nullable: where it was installed from (`pypi`, `git+https://...`, `conda-forge`, `file`), credentials refused as for `code.repo`. Names unique: one identity per dependency; a run that mixed builds of one dependency records it `unknown`, its `evidence` saying so (deferred until a reader needs per-scope identities). |
+| `dependencies` | list of `{name, version, build_sha, dirty, provenance, evidence, source}`, nullable | Identity of what the code ran on. `null` = the producer could not observe the environment; `[]` = it did, and there is nothing to name (the `seeds` convention; Producer findings 3). `provenance` is `"verified"` \| `"inferred"` \| `"unknown"`; `verified` requires `version` or `build_sha`. `evidence` nullable free text naming how the identity was established (`ferric.__build__`, `direct_url.json`). `source` nullable: where it was installed from, in a closed, prefixed vocabulary — `index` or `index:<name or url>` (`index:pypi`), `git+<url>`, `file` (a local path or wheel; the path is machine-specific, so not recorded), `conda` or `conda:<channel>` (`conda:conda-forge`), `system` (the OS or interpreter provided it); any URL in it credential-free, as for `code.repo` (`git+https://token@...` included). `null` = not known (smeltery finding 12). Names unique: one identity per dependency; a run that mixed builds of one dependency records it `unknown` with `build_sha: null` (enforced: `unknown` claims no sha), its `evidence` naming each build (deferred until a reader needs per-scope identities). |
 | `ext` | object `{namespace: object}` | Producer extensions. Namespace `^[a-z][a-z0-9_-]*(\.[a-z0-9_-]+)*$`; `attestation` and `attestation.*` reserved for this schema. |
 
 Lists keep the producer's order (the writer never sorts them: order can mean
@@ -161,7 +161,8 @@ the newest version.
 ├── attestation/                 owned by this schema; nothing else writes here
 │   ├── run.json                 the core record; written ONCE, at a terminal state, last
 │   ├── state.json               in-flight job state; rewritten atomically by the backend
-│   └── digests.json             manifest: sha256 of every file outside attestation/
+│   ├── digests.json             manifest: sha256 of every file outside attestation/
+│   └── history.jsonl            logged curves (optional); bound by run.json's history.sha256
 ├── steps/
 │   ├── 00-<name>/               one directory per step / tier, in execution order
 │   └── 01-<name>/               index is 2+ digits; name ^[a-z0-9][a-z0-9._-]*$
@@ -171,7 +172,7 @@ the newest version.
 ```
 
 `attestation_schema.layout` owns these names (`RUN_JSON`, `STATE_JSON`,
-`DIGESTS_JSON`, `step_dir(run_dir, index, name)`, `step_log(...)`,
+`DIGESTS_JSON`, `HISTORY_JSONL`, `step_dir(run_dir, index, name)`, `step_log(...)`,
 `find_runs(root)`), so neither a producer nor the scanner spells a path by
 hand. `find_runs(root)` yields every directory under `root` that has
 `attestation/run.json` *or* `attestation/state.json` — a run in flight is
@@ -184,8 +185,11 @@ its artifacts in MLflow's store. When a producer has steps or logs, these are
 their names. The manifest covers every file wherever it is; an empty
 directory has no bytes and is invisible to it.
 
-**Write order** is what makes a half-written directory honest: steps and logs
-→ `digests.json` → `run.json`. A directory with `run.json` is complete; one
+**Write order** is what makes a half-written directory honest: steps, logs and
+`history.jsonl` (streamed during the run, finalized when its writer closes) →
+`digests.json` → `run.json`. `write` refuses a record whose `history` names a
+sidecar that is missing or has other bytes, and the history writer refuses to
+start or finish once `run.json` exists. A directory with `run.json` is complete; one
 with only `state.json` is in flight (or died — `state.json`'s `updated_at`
 says how long ago); one with neither is not a run.
 
@@ -197,6 +201,70 @@ would make the manifest describe someone else's file). `run.json` lists the
 manifest in `data` with `role: "manifest"`, which binds every output to the
 record through one digest without listing thousands of files in it.
 `build_manifest(run_dir)` and `write_manifest(run_dir)` are provided.
+`history.jsonl` sits under `attestation/`, so the manifest never lists it: it
+is bound exactly once, by the record's `history.sha256`. Listing it in both
+would let the two disagree (a sidecar rewritten between the manifest and the
+record) and leave a reader to decide which binding wins.
+
+### The history sidecar: `attestation/history.jsonl`
+
+Owned by `attestation_schema.history`; `"attestation.history/1"`. JSON Lines:
+each line is one object in RFC 8785 canonical form followed by `\n` — the
+last line too, so a file cut short mid-line is detectable even before its
+digest is compared.
+
+```
+{"schema":"attestation.history/1"}                                   line 1, always
+{"labels":{},"name":"loss","series":0,"split":"train"}               declares series 0
+{"at":"2026-11-19T10:00:01.5Z","series":0,"step":0,"value":0.9}      a point of series 0
+{"labels":{},"name":"loss","series":1,"split":"eval"}                declares series 1
+{"at":null,"series":1,"step":0,"value":"NaN"}
+{"at":null,"series":0,"step":1,"value":0.8}                          series interleave
+```
+
+- **One point per line**, not a chunk of points per line. A chunk size is a
+  free parameter: the same points chunked twice would be two files with two
+  digests. With one point per line the bytes are a pure function of the
+  sequence of writer calls, and a producer appends a line per logged value
+  with nothing to buffer.
+- **Series declared inline**, once, immediately before their first point,
+  with ids `0, 1, 2...` in order; every point names its series by id. Series
+  may interleave because training loops log `train/loss` and `eval/loss`
+  alternately — requiring each series to be contiguous would make a
+  long-running producer hold every curve in memory until the end, which is
+  the cost the sidecar exists to remove. One series per `(name, split,
+  labels)`, every declared series has at least one point.
+- **Values** are spelled as in `metrics` (`"NaN"`, `"Infinity"`,
+  `"-Infinity"` for non-finite), parsed with the record's strict parser
+  (duplicate keys, bare `NaN`, integers past ±2^53 refused).
+- **Writing.** `HistoryWriter(run_dir)` streams lines to a temporary file in
+  `attestation/` (`series(name, split, labels) -> handle`, `point(handle,
+  step, value, at)`, `flush()`), validating each value as the reader will;
+  `close()` fsyncs it, links it into place without clobbering, and returns the
+  `HistoryRef` for the record — or `None` when no point was logged (a series
+  declared and never logged writes nothing), which is the record's `null`. An
+  exception inside `with HistoryWriter(...)`, or `abort()`, leaves no
+  sidecar. `write_history(run_dir, series)` writes whole curves at once
+  (each series in order, its points in order) and gives the same bytes as
+  the same calls made one at a time.
+- **Reading.** `read`/`loads` never open the sidecar: a record is small
+  however long the run. `read_history(run_dir, ref=None)` (ref a record or its
+  `history`; omitted, `run.json` is read for it) returns `None` for a `null`
+  reference, else checks the sha256 before parsing a line and raises
+  `HistoryMissingError`, `HistoryDigestError` or `HistoryFormatError`
+  (malformed or truncated line, out-of-order or undeclared series, series
+  and point counts other than the reference's), all subclasses of
+  `HistoryError(RecordError)`; a line error's `.path` is
+  `attestation/history.jsonl:<line>[.<field>]`.
+- **`metrics` and history are not cross-checked**, and were not before this
+  change: a final value need not be a curve's last point (MLflow's final value
+  is its greatest `(step, timestamp, value)`, which with two values at one step
+  in one millisecond is not the last one logged), and smeltery reports metrics
+  with no curve. Checking "agreement" would need one producer's notion of
+  "final" in the schema.
+- `schemas/history-1.schema.json` describes one line (header, series or
+  point) for other languages; ordering, ids, the final newline and the digest
+  are the Python reader's.
 
 **`state.json`** (`"schema": "attestation.state/1"`, backend-owned):
 `{"schema", "run_id", "backend", "job_id", "state", "updated_at", "message",
@@ -325,7 +393,7 @@ inputs MLflow names identically, an artifact, a killed run, a run still
 | `FINISHED`/`FAILED`/`KILLED` | `complete`/`failed`/`cancelled` | `RUNNING`/`SCHEDULED` get no record (terminal-only); a deleted run gets none (the ledger's rule: the user removed it). |
 | `start_time`/`end_time` (epoch ms) | `started_at`/`finished_at` | Via `format_timestamp`; see change 4. |
 | params | `config`, verbatim strings | `"C": "10.0"`, never re-typed — MLflow stores strings and the producer must not guess. |
-| every logged point | `history` | Change 1. One series per (metric key, linked dataset). |
+| every logged point | `attestation/history.jsonl` via `write_history`; `history` = its reference | Change 1, moved out of the record by finding 3. One series per (metric key, linked dataset). |
 | MLflow's latest point | `metrics` | MLflow's own key: greatest step, then latest timestamp, then largest value; tested equal to MLflow's own `run.data.metrics` value for every metric. A first version broke ties by logging order and disagreed with MLflow whenever two values at one step landed in the same millisecond -- caught only because the test compares against MLflow, not against a reimplementation. |
 | metric direction | `null` unless `--direction NAME=min\|max` | MLflow records none; declared, never inferred. |
 | linked dataset (`log_metric(dataset=...)`, MLflow 3) | `split` | MLflow's own "which data this value is on". |
@@ -334,7 +402,7 @@ inputs MLflow names identically, an artifact, a killed run, a run still
 | artifacts | `data`, role `output`, sha256 of the stored bytes | Hashed, not copied: the bytes stay in MLflow's store, bound by digest. |
 | dataset inputs | `data`, `datasets/<name>@<mlflow digest>`, `sha256: null`, role = `mlflow.data.context` (`input` if absent) | Change 2. MLflow's digest disambiguates the name (two inputs both named `data` are real) and stays verbatim in `ext.mlflow.datasets`. |
 | params named by `--seed-param` | `seeds` | `null` unless declared; a declared param that is not an integer is refused. |
-| (no environment recorded) | `dependencies`: `mlflow`, `provenance: "unknown"` | A run's store records no client or library version; open questions 2-3 below. |
+| (no environment recorded) | `dependencies`: `null` | A run's store records no client or library version. Was `[mlflow, unknown]` until finding 3 made `null` sayable; open question 2 below. |
 | experiment id, run name, all tags, dataset inputs | `ext.mlflow` | MLflow's own identifiers and vocabulary, carried untouched. |
 
 **Schema changes MLflow forced:**
@@ -352,7 +420,8 @@ inputs MLflow names identically, an artifact, a killed run, a run still
    because MLflow really does log two values at one step (both kept, in
    order); `at` keeps MLflow's per-point timestamp, nullable for producers
    with none. Cost: a long run makes a large record (100k points ≈ 6 MB);
-   open question 1.
+   open question 1. **Superseded by finding 3**: the curves keep this shape
+   but live in a sidecar the record references by digest.
 2. **`data[].sha256` nullable.** The walk-through called putting MLflow's
    dataset inputs only in `ext.mlflow.datasets` "the extension mechanism
    working". Re-examined against a real store, it is a workaround: with no
@@ -387,6 +456,8 @@ inputs MLflow names identically, an artifact, a killed run, a run still
    (refusing a naive datetime rather than assuming UTC). Python's
    `isoformat()` always writes six digits, so a producer using it directly is
    refused whenever the microseconds end in zero — the helper is the fix.
+   **Superseded by smeltery finding 10**: still one spelling per instant, but
+   always six digits (`:46.024000Z`), so that text order is time order.
 
 **Not schema changes (and why):**
 
@@ -412,27 +483,21 @@ inputs MLflow names identically, an artifact, a killed run, a run still
   present key, and `null` separated "MLflow did not say" (`dirty`,
   `direction`, `seeds`, dataset `sha256`) from a value each time. One gap it
   exposed: `dependencies: []` cannot separate "ran on nothing" from "the
-  producer cannot see the environment"; the producer lists `mlflow` as
-  `unknown` instead (open question 3).
+  producer cannot see the environment"; the producer listed `mlflow` as
+  `unknown` instead, until finding 3 made `dependencies` nullable.
 - *Decision 5 (terminal-only status).* Held up: a `RUNNING` run is skipped
   and reported; a killed run is `cancelled`.
 - *Decision 1 (freeze criteria).* Unchanged; MLflow is one of three.
 
 **Open questions from MLflow (not decided):**
 
-1. *History size.* In-record history is simple and digest-bound, but a long
-   run (100k steps × several metrics) makes a multi-megabyte record that the
-   strict reader parses slowly. The alternative is a schema-owned sidecar
-   under `attestation/` bound by digest; not built until a real producer
-   needs it.
+1. *History size.* **Decided by the user (finding 3):** the sidecar.
 2. *Dependencies a run can report.* MLflow records versions only for a logged
    model (`MLmodel`'s `mlflow_version`, `requirements.txt`,
    `python_env.yaml`). mlflow-skinny without pandas cannot log a model, so no
    real one exists here to map from; reading them waits until one does,
    rather than being parsed from documentation.
-3. *Nullable `dependencies`.* Should `null` mean "the producer cannot see the
-   environment", as it does for `seeds`? Deferred to the smeltery and third
-   producer evidence.
+3. *Nullable `dependencies`.* **Decided by the user (finding 3):** yes.
 
 ### 2. smeltery (roadmap 4, 2026-11-19)
 
@@ -504,6 +569,105 @@ needs per-scope identities, a run that mixed builds records that dependency
 `unknown` with `evidence` naming the mix. *Publishing to an index* (smeltery
 13) is Open decision 2.
 
+**Second round** (smeltery `000a335d`, against this package at `314e4ff`;
+smeltery then wrote `history: []`, `code.version/provenance/evidence`, metric
+`unit` and `labels`, seed lists, `dependencies[].source` and `"NaN"`). All four
+accepted; numbered on from the first round.
+
+9. **Mixed experiment code → `code` gets the dependency rule.** A real run
+   (danuglipron-halogen) has result rows from two smeltery commits, so `code`
+   claimed one of them as `inferred` — a single-identity field filled with a
+   workaround, which is a schema bug by this section's rule. The rule the
+   spec already had for a dependency built from several builds now applies to
+   the code: `provenance: "unknown"`, `git_sha: null`, `evidence` naming each
+   commit and its row count. **And the reader now enforces the half that can
+   be enforced**, for code and dependencies alike: `unknown` with a non-null
+   `git_sha` / `build_sha` is refused (a sha is an identity claim; one you
+   hold but cannot vouch for is `inferred`). Without it the danuglipron record
+   would have stayed writable as "unknown, but here is one of the commits".
+   `version` stays allowed under `unknown` (every ferric build reports 0.1.0:
+   a shared version is not an identity claim). *Rejected for now:* a
+   structured per-commit list in the core (`[{git_sha, rows}]`) — one
+   producer has needed it once, the dependency case defers the same thing,
+   and a producer can carry the breakdown in `ext.<namespace>` today; both are
+   revisited together when a reader needs per-scope identities.
+10. **Timestamps sort as text → fixed six-digit fraction.** MLflow finding 4
+    made one spelling per instant by forbidding trailing zeros, which made
+    `…:37.5Z` sort before `…:37Z` as a string — and records are sorted as
+    strings constantly (filenames, `sort`, SQL `ORDER BY` on a TEXT column,
+    the ledger). The alternative, "timestamps compare only after parsing", is
+    a rule every consumer must remember and that fails silently when one does
+    not. A fixed width keeps one spelling per instant (each instant has
+    exactly one six-digit fraction) and makes text order time order for years
+    0000-9999 at a cost of up to seven bytes per timestamp. Six, not three:
+    microseconds are what Python's `datetime` holds, and narrowing would round
+    a producer's value. `format_timestamp` now always writes them; a producer
+    using `isoformat()` directly is refused when microseconds are zero (it
+    drops the fraction) and for any offset other than `Z`, so the helper stays
+    the way to write one.
+11. **`from_dict` vs the model's NaN → a public wire spelling, `from_dict`
+    unchanged.** The dataclass holds `float('nan')`; `from_dict` takes only the
+    wire string. Making `from_dict` accept the float would make it accept a
+    dict that is not JSON (`json.dumps` would write a bare `NaN`, which every
+    strict parser, this one included, refuses), so the dict form would have
+    two spellings of one value. Instead the spelling is public and applied
+    where a dict is made: `RunRecord.to_dict()` now returns the wire form
+    (`from_dict(r.to_dict()) == r`; before, `to_dict` returned the float and
+    was not, as documented, "plain JSON values"), and
+    `attestation_schema.spell_value(x)` is exported for producers that build
+    dicts by hand. smeltery's duplicate of `_spell` can go.
+12. **`dependencies[].source` gets a closed, prefixed vocabulary**:
+    `index[:<name or url>]`, `git+<url>`, `file`, `conda[:<channel>]`,
+    `system` (`SOURCE_KINDS`, reader-enforced, also a JSON Schema pattern).
+    `source` was split from `evidence` (first round, 6) so a reader could
+    filter on it without parsing prose; free text loses that again as soon as
+    two producers write `pypi` and `PyPI` and `index`. smeltery's four cases
+    map onto it (`index`, `git+<url>`, `file`, `conda`); `system` covers the
+    interpreter and OS packages (Python itself, a system `xtb`). The prefixed
+    forms keep the detail without letting it fragment the kind: a reader
+    filters on the part before `:`/`+`. The credential check now also covers
+    `git+https://token@...` and `index:<url>`, which the URL-scheme test
+    missed before.
+
+### 3. User-directed changes (2026-11-19)
+
+Two changes the user decided, not a producer; both break draft records
+(MLflow's committed records were regenerated with `generate.sh`, as they were
+for finding 10's timestamps; smeltery, which pins this package by commit and
+writes `history: []`, re-pins).
+
+1. **Curves are isolated from the core record.** `history` was a required
+   list embedding every point, so a long run made a multi-megabyte `run.json`
+   that every reader — including one that wants only final values to compare
+   arms — had to parse in full (MLflow open question 1). Now `run.json` never
+   holds a point: `history` is `null` or `{path, sha256, series, points}`
+   referencing `attestation/history.jsonl` ("The history sidecar" above).
+   *Why a dedicated object and not a `data` entry with a reserved role:*
+   `data` is what the run read or produced, digested for provenance; the
+   history is part of the record's own content moved out for size, and has
+   a schema-owned format a reader must be able to find without scanning
+   `data` for a magic role. A reserved role would also make `role` — a free
+   string today — partly closed, would let a record list two history entries
+   that then need a rule, and could not carry the counts that let a reader
+   size the curves without opening them. `path` is in the reference so a
+   reader needs no layout knowledge, but is fixed to the one value so a
+   reference can never point out of the run directory; a later version may
+   widen it. *Why bound only by the record:* see `digests.json` above — one
+   binding, no contradiction to arbitrate. Measured: 100k points make a
+   ~6 MB sidecar and a `run.json` that is the same size as with ten
+   (`test_a_long_run_keeps_run_json_small`).
+2. **`dependencies` is nullable**, as `seeds` is: `null` = the producer could
+   not observe the environment, `[]` = it observed one with nothing to name.
+   *MLflow now writes `null`.* The training process did import mlflow, so
+   mlflow is a real dependency of the run — but the exporter did not observe
+   it: MLflow's store records no client version, and it records nothing about
+   numpy, scikit-learn or Python either. A list says "these are what the run
+   ran on"; `[mlflow (unknown)]` read as a list says the run ran on mlflow
+   *and nothing else*, which is false and less true than `null`. That the run
+   logged to MLflow is already said by `producer` and `ext.mlflow`. When a
+   logged model gives real versions (open question 2), the exporter lists
+   what it can read from it.
+
 ## Open decisions (for the user)
 
 1. **Freeze criteria.** Proposed: freeze `attestation.run/1` when the three
@@ -526,7 +690,17 @@ needs per-scope identities, a run that mixed builds records that dependency
 ## Testing
 
 `packages/attestation-schema/tests/test_attestation_schema.py` (on pytest's
-`testpaths`): round trip; history order and repeated steps; non-finite metric
+`testpaths`): round trip; the history sidecar (round trip in logging order with
+repeated steps; interleaved streaming writes finalized atomically; a failed
+producer leaves no sidecar; written before the record, never after; `write`
+refuses a missing or different sidecar; digest mismatch and missing file on
+read; every malformed or truncated line kind → `HistoryFormatError` naming
+the line, with an unmutated control; deterministic bytes, streaming = batch;
+100k points leave `run.json` under 2 KB; `read` never opens the sidecar; the
+manifest does not list it; the line JSON Schema agrees with the writer);
+`dependencies` null vs `[]`; `unknown` claiming no sha and a mixed-code
+record; timestamps sorting as text in time order; `to_dict` being the wire
+form and `spell_value` public; the `source` vocabulary; non-finite metric
 values spelled and read back; data named without a digest; timestamp
 spelling and `format_timestamp`; an unknown `ext` namespace preserved byte for byte;
 **every** required field, top-level and nested, removed in turn → the specific
@@ -540,7 +714,8 @@ machine. The wheel builds with `uv build --package attestation-schema` in CI's
 wheel smoke job, which installs it into a clean venv and reads a record.
 `tests/test_boundaries.py`: the import rules, with detector self-tests.
 `tests/test_mlflow_records.py`: the MLflow producer (Producer findings, 1) —
-the committed records validate, round-trip byte for byte and preserve every
-point of the raw MLflow metric files without mlflow installed; with mlflow,
+the committed records validate, round-trip byte for byte, bind their
+history sidecars by digest and preserve every point of the raw MLflow metric
+files without mlflow installed; with mlflow,
 re-export is byte-identical to the committed records and a fresh real store
 maps without workarounds.

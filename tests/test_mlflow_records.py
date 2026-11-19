@@ -28,7 +28,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from attestation_schema import dumps, layout, loads, read
+from attestation_schema import HISTORY_PATH, dumps, layout, loads, read, read_history
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "mlflow-records"
@@ -93,11 +93,24 @@ def test_committed_record_validates_and_round_trips_byte_for_byte(run_dir):
     assert entry.name == layout.DIGESTS_JSON
     assert entry.sha256 == hashlib.sha256(manifest_bytes).hexdigest()
     assert json.loads(manifest_bytes) == layout.build_manifest(run_dir)
+    # The curves are in the sidecar, bound by digest; run.json holds no point.
+    assert record.history is not None and record.history.path == HISTORY_PATH
+    sidecar = (run_dir / HISTORY_PATH).read_bytes()
+    assert record.history.sha256 == hashlib.sha256(sidecar).hexdigest()
+    assert json.loads(raw)["history"] == {
+        "path": HISTORY_PATH,
+        "sha256": record.history.sha256,
+        "series": 5,
+        "points": 14,
+    }
+    assert sidecar.count(b"\n") == 1 + 5 + 14  # header, one line per series and per point
 
 
 @pytest.mark.parametrize("run_dir", layout.find_runs(RECORDS), ids=lambda p: p.name[:12])
 def test_committed_record_preserves_mlflow_history_and_says_only_what_mlflow_said(run_dir):
     record = read(run_dir)
+    history = read_history(run_dir, record)
+    assert history is not None
     mlflow_dir = _mlflow_run_dirs()[record.run_id]
     experiment = _meta(mlflow_dir.parent / "meta.yaml")
     meta = _meta(mlflow_dir / "meta.yaml")
@@ -113,15 +126,15 @@ def test_committed_record_preserves_mlflow_history_and_says_only_what_mlflow_sai
 
     # Every logged point, in order, with its own step, value and timestamp.
     files = {f.name: f for f in (mlflow_dir / "metrics").iterdir()}
-    assert {s.name for s in record.history} == set(files)
-    for series in record.history:
+    assert {s.name for s in history} == set(files)
+    for series in history:
         logged = _logged(files[series.name])
         assert [(p.step, p.value) for p in series.points] == [(s, v) for _, v, s in logged]
         assert [p.at for p in series.points] == [
             _producer().timestamp_ms(ts) for ts, _, _ in logged
         ]
         assert series.split is None
-    assert len(next(s for s in record.history if s.name == "train_loss").points) == 10
+    assert len(next(s for s in history if s.name == "train_loss").points) == 10
 
     # Final values: the latest point; a direction only where one was declared.
     for metric in record.metrics:
@@ -133,7 +146,8 @@ def test_committed_record_preserves_mlflow_history_and_says_only_what_mlflow_sai
     assert (record.code.git_sha, record.code.dirty) == (None, None)
     assert (record.code.provenance, record.code.version) == ("unknown", None)
     assert all(m.unit is None and m.labels == {} for m in record.metrics)
-    assert [(d.name, d.provenance) for d in record.dependencies] == [("mlflow", "unknown")]
+    # MLflow recorded no environment, so the exporter says it could not observe one.
+    assert record.dependencies is None
 
 
 def test_history_is_what_the_ledger_reader_discards():
@@ -142,7 +156,7 @@ def test_history_is_what_the_ledger_reader_discards():
     multi-line file so a future importer cannot quietly drop the curve."""
     for run_dir in layout.find_runs(RECORDS):
         record = read(run_dir)
-        loss = next(s for s in record.history if s.name == "train_loss")
+        loss = next(s for s in read_history(run_dir, record) if s.name == "train_loss")
         final = next(m for m in record.metrics if m.name == "train_loss")
         assert (final.step, final.value) == (loss.points[-1].step, loss.points[-1].value)
         assert len({p.value for p in loss.points}) == 10
@@ -300,7 +314,10 @@ def test_a_fresh_real_store_maps_without_workarounds(tmp_path, fresh_store):
     assert "t0ken" not in stopped_json.read_text()
 
     # NaN and infinity are results, kept in history and as the final value.
-    loss = next(s for s in rec.history if s.name == "loss")
+    run_dir = tmp_path / "out" / f"run-{diverged}"
+    curves = read_history(run_dir, rec)
+    assert curves is not None
+    loss = next(s for s in curves if s.name == "loss")
     assert [p.step for p in loss.points] == [0, 1, 2, 3]
     assert loss.points[2].value == math.inf and math.isnan(loss.points[3].value)
     final = next(m for m in rec.metrics if m.name == "loss")
@@ -309,7 +326,7 @@ def test_a_fresh_real_store_maps_without_workarounds(tmp_path, fresh_store):
     # the later, unless both landed in one millisecond, when MLflow takes the
     # larger (test_latest_point_matches_mlflows_own_latest_value checks it
     # against MLflow itself).
-    scale = next(s for s in rec.history if s.name == "lr_scale")
+    scale = next(s for s in curves if s.name == "lr_scale")
     assert [(p.step, p.value) for p in scale.points] == [(0, 1.0), (0, 0.5)]
     same_ms = scale.points[0].at == scale.points[1].at
     assert next(m for m in rec.metrics if m.name == "lr_scale").value == (1.0 if same_ms else 0.5)
@@ -326,9 +343,14 @@ def test_a_fresh_real_store_maps_without_workarounds(tmp_path, fresh_store):
     assert artifact.name == "artifacts/model/weights.bin" and artifact.role == "output"
     assert artifact.sha256 == hashlib.sha256(b"\x00\x01weights").hexdigest()
 
-    # On the wire, the non-finite values are the schema's spellings.
-    wire = json.loads((tmp_path / "out" / f"run-{diverged}" / layout.RUN_JSON).read_bytes())
-    assert [p["value"] for p in wire["history"][0]["points"]][2:] == ["Infinity", "NaN"]
+    # On the wire (the sidecar's point lines), the non-finite values are the
+    # schema's spellings; the record itself carries no point and no mlflow
+    # dependency it could not observe.
+    lines = [json.loads(x) for x in (run_dir / HISTORY_PATH).read_bytes().splitlines()]
+    loss_id = next(x["series"] for x in lines if x.get("name") == "loss")
+    values = [x["value"] for x in lines if "step" in x and x["series"] == loss_id]
+    assert values[2:] == ["Infinity", "NaN"]
+    assert rec.dependencies is None and rec.history is not None
 
 
 def test_a_fresh_real_store_exports_deterministically(tmp_path, fresh_store):
@@ -360,9 +382,9 @@ def test_latest_point_matches_mlflows_own_latest_value(tmp_path, fresh_store):
 
 def test_timestamps_and_credentials():
     producer = _producer()
-    assert producer.timestamp_ms(1787956426024) == "2026-08-28T22:33:46.024Z"
-    assert producer.timestamp_ms(1787956426000) == "2026-08-28T22:33:46Z"
-    assert producer.timestamp_ms(1787956425990) == "2026-08-28T22:33:45.99Z"
+    assert producer.timestamp_ms(1787956426024) == "2026-08-28T22:33:46.024000Z"
+    assert producer.timestamp_ms(1787956426000) == "2026-08-28T22:33:46.000000Z"
+    assert producer.timestamp_ms(1787956425990) == "2026-08-28T22:33:45.990000Z"
     assert producer.timestamp_ms(None) is None
     strip = producer.strip_credentials
     assert strip("https://u:p@example.org:8443/x.git") == "https://example.org:8443/x.git"

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mgoldey/attestation/schemas/attestation.run/1",
   "title": "attestation.run/1 (v1-DRAFT, not frozen)",
-  "description": "Core run record. Necessary, not sufficient: the Python reader in attestation_schema.record is the reference and also enforces duplicate-key refusal, one direction and one unit per metric name, unique names/keys (including one series per (name, split, labels) in history and one metric per (name, step, split, labels)), finished_at >= started_at, integers within +/-2^53, credential-free repo and source URLs and 'verified' needing an identity to verify, in code and in each dependency.",
+  "description": "Core run record. Necessary, not sufficient: the Python reader in attestation_schema.record is the reference and also enforces duplicate-key refusal, one direction and one unit per metric name, unique names/keys (including one metric per (name, step, split, labels)), finished_at >= started_at, integers within +/-2^53, credential-free repo and source URLs and 'verified' needing an identity to verify and 'unknown' claiming no git_sha/build_sha, in code and in each dependency. The history sidecar (attestation/history.jsonl) is described line by line by history-1.schema.json; the record only references it.",
   "type": "object",
   "required": [
     "schema",
@@ -57,14 +57,14 @@
         "string",
         "null"
       ],
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{0,5}[1-9])?Z$"
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
     },
     "finished_at": {
       "type": [
         "string",
         "null"
       ],
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{0,5}[1-9])?Z$"
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
     },
     "producer": {
       "type": "object",
@@ -249,80 +249,39 @@
       }
     },
     "history": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "name",
-          "split",
-          "labels",
-          "points"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "split": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "minLength": 1
-          },
-          "labels": {
-            "type": "object",
-            "propertyNames": {
-              "minLength": 1
+      "description": "null = no curve was recorded; otherwise a reference to the sidecar, bound by sha256. The record never embeds points.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "path",
+            "sha256",
+            "series",
+            "points"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "const": "attestation/history.jsonl"
             },
-            "additionalProperties": {
+            "sha256": {
               "type": "string",
-              "minLength": 1
-            }
-          },
-          "points": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "object",
-              "required": [
-                "step",
-                "value",
-                "at"
-              ],
-              "additionalProperties": false,
-              "properties": {
-                "step": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "value": {
-                  "oneOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "enum": [
-                        "NaN",
-                        "Infinity",
-                        "-Infinity"
-                      ]
-                    }
-                  ]
-                },
-                "at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{0,5}[1-9])?Z$"
-                }
-              }
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "series": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "points": {
+              "type": "integer",
+              "minimum": 1
             }
           }
         }
-      }
+      ]
     },
     "seeds": {
       "type": [
@@ -348,7 +307,11 @@
       }
     },
     "dependencies": {
-      "type": "array",
+      "description": "null = the producer could not observe the environment; [] = observed, and none.",
+      "type": [
+        "array",
+        "null"
+      ],
       "items": {
         "type": "object",
         "required": [
@@ -405,7 +368,9 @@
               "string",
               "null"
             ],
-            "minLength": 1
+            "minLength": 1,
+            "pattern": "^(index(:.+)?|git\\+.+|file|conda(:.+)?|system)$",
+            "description": "index[:<name or url>] | git+<url> | file | conda[:<channel>] | system; credentials refused (reader only)."
           }
         }
       }

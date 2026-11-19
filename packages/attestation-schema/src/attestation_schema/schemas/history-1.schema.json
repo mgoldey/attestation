@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mgoldey/attestation/schemas/attestation.history/1",
+  "title": "attestation.history/1 line (v1-DRAFT, not frozen)",
+  "description": "ONE LINE of attestation/history.jsonl: JSON Lines, each line RFC 8785 canonical JSON plus a newline (the last line too). Line 1 is the header; then series declarations and points. Necessary, not sufficient: attestation_schema.history.read_history is the reference and also enforces the header on line 1 only, series ids declared 0, 1, 2... each immediately before its first point, every point naming a declared series, one series per (name, split, labels), every series having a point, a final newline, the sha256 the record binds, and the record's series/points counts.",
+  "oneOf": [
+    {
+      "title": "header",
+      "type": "object",
+      "required": [
+        "schema"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "attestation.history/1"
+        }
+      }
+    },
+    {
+      "title": "series",
+      "type": "object",
+      "required": [
+        "series",
+        "name",
+        "split",
+        "labels"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "series": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "split": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "labels": {
+          "type": "object",
+          "propertyNames": {
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "title": "point",
+      "type": "object",
+      "required": [
+        "series",
+        "step",
+        "value",
+        "at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "series": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "step": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "value": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "enum": [
+                "NaN",
+                "Infinity",
+                "-Infinity"
+              ]
+            }
+          ]
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+        }
+      }
+    }
+  ]
+}

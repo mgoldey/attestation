@@ -4,7 +4,7 @@
 A producer, not an adapter: it reads MLflow through MLflow's own client (so a
 file store, a sqlite store and a tracking server all read the same way) and
 writes ONLY through `attestation_schema` -- `layout.write_manifest` and
-`write`, never hand-rolled JSON. It imports nothing from `attestation`, the
+`write_history` and `write`, never hand-rolled JSON. It imports nothing from `attestation`, the
 way smeltery does not: a producer depends on the schema, not on the observer.
 
 The mapping, and why each line is what it is, is the "Producer findings"
@@ -19,7 +19,9 @@ section of docs/superpowers/specs/2026-11-19-core-run-record-design.md:
                                 RUNNING/SCHEDULED and deleted runs get no record
     start/end time (ms)      -> started_at/finished_at via format_timestamp
     params (strings)         -> config, verbatim -- never re-typed
-    every logged point       -> history, one series per (metric, linked dataset)
+    every logged point       -> attestation/history.jsonl, one series per (metric,
+                                linked dataset), via write_history; the record's
+                                `history` is its {path, sha256, series, points}
     MLflow's latest point    -> metrics (MLflow's key: step, timestamp, value);
                                 direction null unless --direction declares it;
                                 unit null (MLflow has none); labels {}
@@ -32,7 +34,8 @@ section of docs/superpowers/specs/2026-11-19-core-run-record-design.md:
                                 (MLflow's digest is not a sha256 of any bytes
                                 a reader can fetch; it stays in ext.mlflow)
     --seed-param NAME        -> seeds {NAME: int}; null when none is declared
-    (no environment recorded)-> dependencies: mlflow, provenance "unknown"
+    (no environment recorded)-> dependencies: null -- the exporter cannot observe
+                                the run's environment, and MLflow recorded none
     everything else          -> ext.mlflow (experiment id, run name, every tag --
                                 the repo URL tag with its credentials stripped
                                 too -- and every dataset input verbatim)
@@ -50,7 +53,7 @@ import os
 import sys
 import tempfile
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -59,7 +62,6 @@ from urllib.parse import urlsplit, urlunsplit
 from attestation_schema import (
     CodeIdentity,
     DataDigest,
-    Dependency,
     Metric,
     Point,
     Producer,
@@ -69,6 +71,7 @@ from attestation_schema import (
     layout,
     read,
     write,
+    write_history,
 )
 
 # mlflow-skinny 3.x refuses a `file:` tracking URI unless this is set (the
@@ -222,8 +225,12 @@ def _data(client: Any, run: Any) -> tuple[list[DataDigest], list[dict[str, Any]]
     return entries, datasets
 
 
-def record_for(client: Any, run: Any, experiment: Any, declared: Declared) -> RunRecord | None:
-    """The core record for one MLflow run, or None for a run that has not ended."""
+def record_for(
+    client: Any, run: Any, experiment: Any, declared: Declared
+) -> tuple[RunRecord, list[Series]] | None:
+    """The core record for one MLflow run and its curves, or None for a run
+    that has not ended. The record's `history` is None until `export` writes
+    the curves to the sidecar and puts its reference in."""
     info = run.info
     status = STATUS.get(info.status)
     if status is None or info.lifecycle_stage != "active":
@@ -262,7 +269,7 @@ def record_for(client: Any, run: Any, experiment: Any, declared: Declared) -> Ru
         )
 
     data, datasets = _data(client, run)
-    return RunRecord(
+    record = RunRecord(
         run_id=info.run_id,
         family=experiment.name,
         arm=_arm(params, declared.arm_params, info.run_id),
@@ -274,19 +281,12 @@ def record_for(client: Any, run: Any, experiment: Any, declared: Declared) -> Ru
         config=params,
         data=data,
         metrics=metrics,
-        history=series,
+        history=None,
         seeds=_seeds(params, declared.seed_params, info.run_id),
-        dependencies=[
-            Dependency(
-                name="mlflow",
-                version=None,
-                build_sha=None,
-                dirty=None,
-                provenance="unknown",
-                evidence="the run logged to MLflow; MLflow records no client version for a run",
-                source=None,
-            )
-        ],
+        # null, not [mlflow as unknown]: a list claims the environment was
+        # observed, and a run's store records no versions of anything it ran
+        # on -- mlflow included (spec, Producer findings 3).
+        dependencies=None,
         ext={
             "mlflow": {
                 "experiment_id": experiment.experiment_id,
@@ -296,6 +296,7 @@ def record_for(client: Any, run: Any, experiment: Any, declared: Declared) -> Ru
             }
         },
     )
+    return record, series
 
 
 def export(
@@ -307,8 +308,9 @@ def export(
     """Write one run directory per ended MLflow run under `out`.
 
     Returns (run directories written, ids of runs skipped as not ended).
-    Each directory gets `attestation/digests.json` and then
-    `attestation/run.json` -- the layout's write order.
+    Each directory gets `attestation/history.jsonl` (when a metric was
+    logged), `attestation/digests.json` and then `attestation/run.json` --
+    the layout's write order.
     """
     from mlflow.tracking import MlflowClient
 
@@ -320,22 +322,18 @@ def export(
             continue
         runs = client.search_runs([experiment.experiment_id], max_results=50000)
         for run in sorted(runs, key=lambda r: r.info.run_id):
-            record = record_for(client, run, experiment, declared)
-            if record is None:
+            mapped = record_for(client, run, experiment, declared)
+            if mapped is None:
                 if run.info.lifecycle_stage == "active":
                     skipped.append(run.info.run_id)
                 continue
+            record, series = mapped
             run_dir = out / f"run-{record.run_id}"
+            history = write_history(run_dir, series)
             manifest = layout.write_manifest(run_dir)
-            write(_with_manifest(record, manifest), run_dir)
+            write(replace(record, history=history, data=[*record.data, manifest]), run_dir)
             written.append(run_dir)
     return written, skipped
-
-
-def _with_manifest(record: RunRecord, manifest: DataDigest) -> RunRecord:
-    from dataclasses import replace
-
-    return replace(record, data=[*record.data, manifest])
 
 
 def _directions(pairs: Sequence[str]) -> dict[str, str]:
@@ -371,10 +369,10 @@ def main(argv: list[str] | None = None) -> int:
     written, skipped = export(_uri(args.tracking_uri), args.out, declared, args.experiment)
     for run_dir in written:
         rec = read(run_dir)
-        points = sum(len(s.points) for s in rec.history)
+        series, points = (rec.history.series, rec.history.points) if rec.history else (0, 0)
         print(
             f"{run_dir.name[:12]}  {rec.status:<9} family={rec.family} arm={rec.arm}"
-            f"  {len(rec.metrics)} metrics, {len(rec.history)} series, {points} points,"
+            f"  {len(rec.metrics)} metrics, {series} series, {points} points,"
             f" {len(rec.data)} data"
         )
     for run_id in skipped:

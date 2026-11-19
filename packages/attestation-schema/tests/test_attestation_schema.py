@@ -13,12 +13,18 @@ import pathlib
 
 import pytest
 from attestation_schema import (
+    HISTORY_PATH,
     READERS,
     SCHEMA,
     SCHEMA_STATUS,
     CodeIdentity,
     DataDigest,
     Dependency,
+    HistoryDigestError,
+    HistoryFormatError,
+    HistoryMissingError,
+    HistoryRef,
+    HistoryWriter,
     InvalidFieldError,
     JobBackend,
     JobState,
@@ -38,19 +44,17 @@ from attestation_schema import (
     layout,
     loads,
     read,
+    read_history,
     record_digest,
     write,
+    write_history,
 )
 from attestation_schema.canonical import canonicalize
 from attestation_schema.jobs import TERMINAL
 
-SCHEMA_FILE = (
-    pathlib.Path(__file__).resolve().parents[1]
-    / "src"
-    / "attestation_schema"
-    / "schemas"
-    / "run-1.schema.json"
-)
+SCHEMAS = pathlib.Path(__file__).resolve().parents[1] / "src" / "attestation_schema" / "schemas"
+SCHEMA_FILE = SCHEMAS / "run-1.schema.json"
+HISTORY_SCHEMA_FILE = SCHEMAS / "history-1.schema.json"
 FERRIC_SHA = "a" * 40
 
 
@@ -60,8 +64,8 @@ def _record(**changes) -> RunRecord:
         family="screen-campaign",
         arm="baseline",
         status="complete",
-        started_at="2026-11-19T10:00:00Z",
-        finished_at="2026-11-19T10:42:13.25Z",
+        started_at="2026-11-19T10:00:00.000000Z",
+        finished_at="2026-11-19T10:42:13.250000Z",
         producer=Producer(name="example-producer", version="0.1.0"),
         code=CodeIdentity(
             git_sha="0" * 40,
@@ -80,18 +84,9 @@ def _record(**changes) -> RunRecord:
             Metric("paired_ddE.mean", -1.2, "min", None, None, "kcal/mol", {"analogue": "4-F"}),
             Metric("paired_ddE.mean", -0.4, "min", None, None, "kcal/mol", {"analogue": "4-Cl"}),
         ],
-        history=[
-            Series(
-                name="loss",
-                split="train",
-                labels={},
-                points=[
-                    Point(step=0, value=0.9, at="2026-11-19T10:00:01.5Z"),
-                    Point(step=0, value=0.8, at="2026-11-19T10:00:02Z"),
-                    Point(step=1000, value=0.31, at=None),
-                ],
-            )
-        ],
+        # A reference only; tests that write() a record either write this
+        # sidecar first or pass history=None.
+        history=HistoryRef(path=HISTORY_PATH, sha256="2" * 64, series=1, points=3),
         seeds={"python": 0, "numpy": 7, "docking": [7, 8]},
         dependencies=[
             Dependency(
@@ -114,11 +109,25 @@ def _dict(**changes) -> dict:
     return json.loads(dumps(_record(**changes)))
 
 
+LOSS = Series(
+    name="loss",
+    split="train",
+    labels={},
+    points=[
+        Point(step=0, value=0.9, at="2026-11-19T10:00:01.500000Z"),
+        Point(step=0, value=0.8, at="2026-11-19T10:00:02.000000Z"),
+        Point(step=1000, value=0.31, at=None),
+    ],
+)
+
+
 # ---- round trip and determinism ---------------------------------------------
 
 
 def test_round_trip_through_bytes_and_files(tmp_path):
-    record = _record()
+    assert loads(dumps(_record())) == _record()
+    ref = write_history(tmp_path / "run-x", [LOSS])
+    record = _record(history=ref)
     assert loads(dumps(record)) == record
     path = write(record, tmp_path / "run-x")
     assert path == tmp_path / "run-x" / "attestation" / "run.json"
@@ -144,11 +153,11 @@ def test_writer_output_is_the_canonical_form_of_its_own_reading():
 
 
 def test_write_refuses_to_overwrite(tmp_path):
-    write(_record(), tmp_path)
+    write(_record(history=None), tmp_path)
     with pytest.raises(FileExistsError):
-        write(_record(arm="other"), tmp_path)
+        write(_record(arm="other", history=None), tmp_path)
     assert read(tmp_path).arm == "baseline"
-    write(_record(arm="other"), tmp_path, overwrite=True)
+    write(_record(arm="other", history=None), tmp_path, overwrite=True)
     assert read(tmp_path).arm == "other"
     assert sorted(p.name for p in (tmp_path / "attestation").iterdir()) == ["run.json"]
 
@@ -248,10 +257,10 @@ def test_the_required_field_inventory_is_complete():
     for nested in ("producer.version", "code.dirty", "data[0].role", "metrics[0].direction"):
         assert nested in ALL_PATHS
     assert "dependencies[0].evidence" in ALL_PATHS and "seeds" in ALL_PATHS
-    assert "history[0].points[0].at" in ALL_PATHS and "history[0].split" in ALL_PATHS
+    assert "history.sha256" in ALL_PATHS and "history.points" in ALL_PATHS
     assert "code.provenance" in ALL_PATHS and "metrics[0].labels" in ALL_PATHS
-    assert "dependencies[0].source" in ALL_PATHS and "history[0].labels" in ALL_PATHS
-    assert len(ALL_PATHS) == 16 + 2 + 6 + 3 + 7 + 4 + 3 + 7
+    assert "dependencies[0].source" in ALL_PATHS and "history.path" in ALL_PATHS
+    assert len(ALL_PATHS) == 16 + 2 + 6 + 3 + 7 + 4 + 7
 
 
 @pytest.mark.parametrize("path", ALL_PATHS)
@@ -270,8 +279,20 @@ def test_null_is_not_absent():
     obj["family"] = None
     obj["code"]["dirty"] = None
     obj["seeds"] = None
+    obj["history"] = None
+    obj["dependencies"] = None
     record = from_dict(obj)
     assert record.family is None and record.code.dirty is None and record.seeds is None
+    assert record.history is None and record.dependencies is None
+
+
+def test_dependencies_null_is_not_empty():
+    """null = the producer could not observe the environment; [] = it did and
+    the code ran on nothing worth naming (as seeds: null vs {})."""
+    unobserved, none = _record(dependencies=None), _record(dependencies=[])
+    assert loads(dumps(unobserved)).dependencies is None
+    assert loads(dumps(none)).dependencies == []
+    assert dumps(unobserved) != dumps(none)
 
 
 @pytest.mark.parametrize(
@@ -282,8 +303,7 @@ def test_null_is_not_absent():
         lambda d: d["code"],
         lambda d: d["data"][0],
         lambda d: d["metrics"][0],
-        lambda d: d["history"][0],
-        lambda d: d["history"][0]["points"][0],
+        lambda d: d["history"],
         lambda d: d["dependencies"][0],
     ],
 )
@@ -302,11 +322,13 @@ INVALID = [
     ("status", "running"),
     ("status", "COMPLETE"),
     ("started_at", "2026-11-19T10:00:00+00:00"),
-    ("started_at", "2026-13-19T10:00:00Z"),
+    ("started_at", "2026-13-19T10:00:00.000000Z"),
+    ("started_at", "2026-11-19T10:00:00Z"),
+    ("started_at", "2026-11-19T10:00:00.5Z"),
     ("started_at", "2026-11-19T10:00:00.500Z"),
-    ("started_at", "2026-11-19T10:00:00.000Z"),
+    ("started_at", "2026-11-19T10:00:00.0000000Z"),
     ("started_at", "2026-11-19T10:00:00.Z"),
-    ("finished_at", "2026-11-19T09:00:00Z"),
+    ("finished_at", "2026-11-19T09:00:00.000000Z"),
     ("code.git_sha", "ABC"),
     ("code.git_sha", "A" * 40),
     ("code.dirty", "no"),
@@ -323,15 +345,17 @@ INVALID = [
     ("metrics[0].step", -1),
     ("metrics[0].step", 1.0),
     ("metrics[0].split", ""),
-    ("history", {}),
-    ("history[0].name", ""),
-    ("history[0].split", ""),
-    ("history[0].points", []),
-    ("history[0].points[0].step", None),
-    ("history[0].points[0].step", -1),
-    ("history[0].points[0].value", True),
-    ("history[0].points[0].value", "NAN"),
-    ("history[0].points[0].at", "2026-11-19T10:00:00.100Z"),
+    ("history", []),
+    ("history", "attestation/history.jsonl"),
+    ("history.path", "attestation/curves.jsonl"),
+    ("history.path", "../elsewhere/history.jsonl"),
+    ("history.sha256", "2" * 63),
+    ("history.sha256", None),
+    ("history.series", 0),
+    ("history.series", True),
+    ("history.points", 0),
+    ("history.points", 1.5),
+    ("dependencies", {}),
     ("seeds", [1]),
     ("seeds", {"docking": []}),
     ("seeds", {"docking": [7, "8"]}),
@@ -341,9 +365,14 @@ INVALID = [
     ("metrics[0].labels", []),
     ("metrics[0].labels", {"analogue": 4}),
     ("metrics[0].labels", {"analogue": ""}),
-    ("history[0].labels", None),
     ("dependencies[0].source", ""),
     ("dependencies[0].source", "https://user:pw@example.org/x.git"),
+    ("dependencies[0].source", "pypi"),
+    ("dependencies[0].source", "git+https://user:pw@example.org/x.git"),
+    ("dependencies[0].source", "git+https://token@example.org/x.git"),
+    ("dependencies[0].source", "index:https://user:pw@pypi.example.org/simple"),
+    ("dependencies[0].source", "conda:"),
+    ("dependencies[0].source", "File"),
     ("seeds", {"python": True}),
     ("dependencies[0].provenance", "VERIFIED"),
     ("dependencies[0].build_sha", "xyz"),
@@ -418,21 +447,22 @@ def test_cross_field_rules():
         _record(dependencies=[Dependency("ferric", None, FERRIC_SHA, True, "verified", None, None)])
     )
     dumps(_record(dependencies=[Dependency("ferric", None, None, None, "unknown", None, None)]))
-
-
-def test_history_keeps_every_logged_point_in_order():
-    """A curve is a log: MLflow really does log two values at one step, and
-    both are kept, in logging order (spec, Producer findings)."""
-    record = loads(dumps(_record()))
-    (series,) = record.history
-    assert [(p.step, p.value) for p in series.points] == [(0, 0.9), (0, 0.8), (1000, 0.31)]
-    with pytest.raises(InvalidFieldError, match="duplicate series"):
-        dumps(_record(history=[series, series]))
-    other_split = Series(name="loss", split="eval", labels={}, points=series.points)
-    labelled = Series(name="loss", split="train", labels={"seed": "1"}, points=series.points)
-    assert len(loads(dumps(_record(history=[series, labelled]))).history) == 2
-    assert len(loads(dumps(_record(history=[series, other_split]))).history) == 2
-    assert loads(dumps(_record(history=[]))).history == []
+    # `unknown` claims no sha: a run whose rows came from two commits names
+    # both in `evidence`, not one of them in `git_sha` (smeltery, finding 2.9).
+    with pytest.raises(InvalidFieldError, match="'unknown' claims no git_sha"):
+        dumps(_record(code=CodeIdentity("0" * 40, None, None, None, "unknown", "mixed")))
+    with pytest.raises(InvalidFieldError, match="'unknown' claims no build_sha"):
+        dumps(
+            _record(
+                dependencies=[Dependency("f", "0.1.0", FERRIC_SHA, None, "unknown", None, None)]
+            )
+        )
+    mixed = CodeIdentity(
+        None, None, None, "0.4.0", "unknown", f"mixed: {'1' * 40} (412 rows), {'2' * 40} (88 rows)"
+    )
+    assert loads(dumps(_record(code=mixed))).code == mixed
+    with pytest.raises(InvalidFieldError, match="at least one point"):
+        dumps(_record(history=HistoryRef(HISTORY_PATH, "2" * 64, series=3, points=2)))
 
 
 def test_non_finite_metric_values_are_spelled_not_dropped():
@@ -446,15 +476,13 @@ def test_non_finite_metric_values_are_spelled_not_dropped():
             Metric("grad", math.inf, None, 3, None, None, {}),
             Metric("score", -math.inf, None, 3, None, None, {}),
         ],
-        history=[Series("loss", None, {}, [Point(0, 1.5, None), Point(3, math.nan, None)])],
     )
     b = dumps(record)
     wire = json.loads(b)
     assert [m["value"] for m in wire["metrics"]] == ["NaN", "Infinity", "-Infinity"]
-    assert wire["history"][0]["points"][1]["value"] == "NaN"
     back = loads(b)
     assert math.isnan(back.metrics[0].value) and back.metrics[1].value == math.inf
-    assert back.metrics[2].value == -math.inf and math.isnan(back.history[0].points[1].value)
+    assert back.metrics[2].value == -math.inf
     assert dumps(back) == b
     # The JSON form is the string: a raw float NaN handed to from_dict is refused,
     # and non-finite numbers stay refused outside metric values.
@@ -464,6 +492,51 @@ def test_non_finite_metric_values_are_spelled_not_dropped():
         from_dict(obj)
     with pytest.raises(InvalidFieldError, match="finite"):
         dumps(_record(config={"lr": math.nan}))
+
+
+def test_to_dict_is_the_wire_form_and_spell_value_is_public():
+    """The dataclass holds float('nan'); its dict, and only its dict, holds the
+    wire string -- so from_dict(to_dict(r)) == r with no private helper, and
+    from_dict still accepts only JSON (smeltery, finding 2.11)."""
+    import math
+
+    from attestation_schema import spell_value
+
+    record = _record(metrics=[Metric("loss", math.nan, "min", 3, None, None, {})])
+    obj = record.to_dict()
+    assert obj["metrics"][0]["value"] == "NaN"
+    back = from_dict(obj)
+    assert math.isnan(back.metrics[0].value) and dumps(back) == dumps(record)
+    assert [spell_value(v) for v in (math.nan, math.inf, -math.inf, 1.5, 2)] == [
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        1.5,
+        2,
+    ]
+    obj["metrics"][0]["value"] = math.nan
+    with pytest.raises(InvalidFieldError, match="finite"):
+        from_dict(obj)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "index",
+        "index:pypi",
+        "index:https://pypi.example.org/simple",
+        "git+https://example.org/lab/ferric.git@" + FERRIC_SHA,
+        "git+ssh://git@example.org/lab/ferric.git",
+        "file",
+        "conda",
+        "conda:conda-forge",
+        "system",
+        None,
+    ],
+)
+def test_dependency_source_vocabulary(source):
+    dep = Dependency("ferric", "0.1.0", None, None, "inferred", None, source)
+    assert loads(dumps(_record(dependencies=[dep]))).dependencies == [dep]
 
 
 def test_data_may_be_named_without_a_digest():
@@ -477,10 +550,18 @@ def test_data_may_be_named_without_a_digest():
 def test_format_timestamp_gives_the_one_accepted_spelling():
     from datetime import UTC, datetime, timedelta, timezone
 
-    assert format_timestamp(datetime(2026, 11, 19, 10, 0, tzinfo=UTC)) == "2026-11-19T10:00:00Z"
+    whole = format_timestamp(datetime(2026, 11, 19, 10, 0, tzinfo=UTC))
+    assert whole == "2026-11-19T10:00:00.000000Z"
     when = datetime(2026, 11, 19, 10, 0, 0, 250000, tzinfo=timezone(timedelta(hours=-5)))
-    assert format_timestamp(when) == "2026-11-19T15:00:00.25Z"
+    assert format_timestamp(when) == "2026-11-19T15:00:00.250000Z"
     assert format_timestamp(datetime(2026, 1, 1, 0, 0, 0, 1, tzinfo=UTC)).endswith(".000001Z")
+    assert format_timestamp(datetime(999, 1, 1, tzinfo=UTC)).startswith("0999-01-01T")
+    # Text order is time order (smeltery, finding 2.10): ":37.5" sorted before
+    # ":37" when the fraction had no fixed width.
+    instants = [
+        datetime(2026, 11, 19, 10, 0, 37, us, tzinfo=UTC) for us in (500000, 0, 999999, 1, 50)
+    ] + [datetime(2026, 11, 19, 9, 59, 59, 999999, tzinfo=UTC)]
+    assert sorted(map(format_timestamp, instants)) == list(map(format_timestamp, sorted(instants)))
     with pytest.raises(ValueError, match="aware"):
         format_timestamp(datetime(2026, 1, 1))
     # Whatever it produces, the reader accepts.
@@ -504,6 +585,276 @@ def test_strict_parse(text, match):
         loads(text)
     with pytest.raises(RecordError):
         loads(b"\xff\xfe")
+
+
+# ---- history sidecar ----------------------------------------------------------
+
+
+def _ref_for(run_dir: pathlib.Path, payload: bytes, series: int = 1, points: int = 1) -> HistoryRef:
+    """Put `payload` in place as the sidecar and bind it, as a (buggy)
+    producer would: the digest matches, so only the format can fail."""
+    path = run_dir / HISTORY_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    return HistoryRef(HISTORY_PATH, hashlib.sha256(payload).hexdigest(), series, points)
+
+
+def test_history_round_trips_through_the_sidecar_in_logging_order(tmp_path):
+    """A curve is a log: MLflow really does log two values at one step, and
+    both are kept, in logging order (spec, Producer findings)."""
+    eval_loss = Series("loss", "eval", {}, [Point(10, 0.5, None)])
+    labelled = Series("loss", "train", {"seed": "1"}, [Point(0, 1.0, None)])
+    ref = write_history(tmp_path, [LOSS, eval_loss, labelled])
+    assert ref == HistoryRef(HISTORY_PATH, ref.sha256, series=3, points=5)
+    assert ref.sha256 == hashlib.sha256((tmp_path / HISTORY_PATH).read_bytes()).hexdigest()
+    write(_record(history=ref), tmp_path)
+    assert read_history(tmp_path) == [LOSS, eval_loss, labelled]
+    assert read_history(tmp_path, ref) == read_history(tmp_path, read(tmp_path))
+    (series, *_) = read_history(tmp_path)
+    assert [(p.step, p.value) for p in series.points] == [(0, 0.9), (0, 0.8), (1000, 0.31)]
+    with pytest.raises(InvalidFieldError, match="duplicate series"):
+        write_history(tmp_path / "dup", [LOSS, LOSS])
+    with pytest.raises(InvalidFieldError, match="at least one point"):
+        write_history(tmp_path / "empty", [Series("loss", None, {}, [])])
+    assert not (tmp_path / "dup" / HISTORY_PATH).exists()
+
+
+def test_no_history_is_null_not_an_empty_file(tmp_path):
+    assert write_history(tmp_path, []) is None
+    with HistoryWriter(tmp_path) as hist:
+        hist.series("declared-but-never-logged")
+    assert hist.ref is None
+    assert not (tmp_path / HISTORY_PATH).exists()
+    write(_record(history=None), tmp_path)
+    assert read_history(tmp_path) is None
+
+
+def test_streaming_writer_interleaves_series_and_finalizes_atomically(tmp_path):
+    with HistoryWriter(tmp_path) as hist:
+        never = hist.series("never")
+        train = hist.series("loss", "train")
+        val = hist.series("loss", "eval", {"model": "a"})
+        for step in range(3):
+            hist.point(train, step, 1.0 / (step + 1), format_timestamp_at(step))
+            hist.flush()
+            assert not (tmp_path / HISTORY_PATH).exists()  # finalized only on close
+            hist.point(val, step, float("nan") if step == 2 else 0.5, None)
+        with pytest.raises(InvalidFieldError, match="value"):
+            hist.point(train, 3, True)
+        with pytest.raises(InvalidFieldError, match="at"):
+            hist.point(train, 3, 1.0, "2026-11-19T10:00:00.100Z")
+        with pytest.raises(InvalidFieldError, match="step"):
+            hist.point(train, -1, 1.0)
+        with pytest.raises(InvalidFieldError, match="series"):
+            hist.point(99, 0, 1.0)
+        with pytest.raises(InvalidFieldError, match="duplicate series"):
+            hist.series("loss", "train")
+    assert never == 0
+    assert hist.ref is not None and (hist.ref.series, hist.ref.points) == (2, 6)
+    lines = (tmp_path / HISTORY_PATH).read_bytes().splitlines()
+    assert lines[0] == b'{"schema":"attestation.history/1"}'
+    assert lines[1] == b'{"labels":{},"name":"loss","series":0,"split":"train"}'
+    assert lines[3] == b'{"labels":{"model":"a"},"name":"loss","series":1,"split":"eval"}'
+    assert lines[-1] == b'{"at":null,"series":1,"step":2,"value":"NaN"}'
+    train_s, val_s = read_history(tmp_path, hist.ref)
+    assert [p.step for p in train_s.points] == [0, 1, 2]
+    import math
+
+    assert math.isnan(val_s.points[-1].value) and val_s.labels == {"model": "a"}
+    assert sorted(p.name for p in (tmp_path / "attestation").iterdir()) == ["history.jsonl"]
+
+
+def format_timestamp_at(second: int) -> str:
+    from datetime import UTC, datetime
+
+    return format_timestamp(datetime(2026, 11, 19, 10, 0, second, 500000, tzinfo=UTC))
+
+
+def test_a_failed_producer_leaves_no_sidecar(tmp_path):
+    with pytest.raises(RuntimeError):
+        with HistoryWriter(tmp_path) as hist:
+            hist.point(hist.series("loss"), 0, 1.0)
+            raise RuntimeError("the run died")
+    assert list((tmp_path / "attestation").iterdir()) == []
+    hist = HistoryWriter(tmp_path)
+    hist.point(hist.series("loss"), 0, 1.0)
+    hist.abort()
+    assert list((tmp_path / "attestation").iterdir()) == []
+
+
+def test_history_is_written_before_the_record_never_after(tmp_path):
+    ref = write_history(tmp_path, [LOSS])
+    with pytest.raises(FileExistsError):
+        write_history(tmp_path, [LOSS])
+    assert write_history(tmp_path, [LOSS], overwrite=True) == ref
+    write(_record(history=ref), tmp_path)
+    with pytest.raises(layout.LayoutError, match="before the record"):
+        HistoryWriter(tmp_path, overwrite=True)
+    hist_dir = tmp_path / "late"
+    hist = HistoryWriter(hist_dir)
+    hist.point(hist.series("loss"), 0, 1.0)
+    write(_record(history=None), hist_dir)
+    with pytest.raises(layout.LayoutError, match="before the record"):
+        hist.close()
+    assert not (hist_dir / HISTORY_PATH).exists()
+
+
+def test_write_refuses_a_record_whose_sidecar_is_missing_or_different(tmp_path):
+    ref = HistoryRef(HISTORY_PATH, "2" * 64, 1, 3)
+    with pytest.raises(HistoryMissingError):
+        write(_record(history=ref), tmp_path)
+    real = write_history(tmp_path, [LOSS])
+    with pytest.raises(HistoryDigestError):
+        write(_record(history=ref), tmp_path)
+    assert not (tmp_path / layout.RUN_JSON).exists()
+    write(_record(history=real), tmp_path)
+
+
+def test_read_history_refuses_a_changed_or_missing_sidecar(tmp_path):
+    write(_record(history=write_history(tmp_path, [LOSS])), tmp_path)
+    sidecar = tmp_path / HISTORY_PATH
+    good = sidecar.read_bytes()
+    sidecar.write_bytes(good.replace(b"0.9", b"0.7"))
+    with pytest.raises(HistoryDigestError, match="changed"):
+        read_history(tmp_path)
+    sidecar.write_bytes(good[:-1])  # truncated: the digest catches it first
+    with pytest.raises(HistoryDigestError):
+        read_history(tmp_path)
+    sidecar.unlink()
+    with pytest.raises(HistoryMissingError) as exc:
+        read_history(tmp_path)
+    assert isinstance(exc.value, RecordError) and exc.value.path == HISTORY_PATH
+
+
+def test_loading_a_record_never_opens_the_sidecar(tmp_path, monkeypatch):
+    record = _record(history=write_history(tmp_path, [LOSS]))
+    write(record, tmp_path)
+    opened: list[str] = []
+    real_open = pathlib.Path.open
+
+    def spy(self, *args, **kwargs):
+        opened.append(self.name)
+        return real_open(self, *args, **kwargs)
+
+    (tmp_path / HISTORY_PATH).write_bytes(b"not even JSON")
+    monkeypatch.setattr(pathlib.Path, "open", spy)
+    assert read(tmp_path) == record
+    assert loads((tmp_path / layout.RUN_JSON).read_bytes()) == record
+    (tmp_path / HISTORY_PATH).unlink()
+    assert read(tmp_path) == record
+    assert "history.jsonl" not in opened and "run.json" in opened  # the spy saw the read
+
+
+HEADER = b'{"schema":"attestation.history/1"}\n'
+SERIES0 = b'{"labels":{},"name":"loss","series":0,"split":null}\n'
+POINT0 = b'{"at":null,"series":0,"step":0,"value":1}\n'
+
+
+@pytest.mark.parametrize(
+    "payload, line, match",
+    [
+        (b"", None, "empty"),
+        (HEADER + SERIES0 + POINT0[:-1], 3, "cut short"),
+        (HEADER + SERIES0 + POINT0[:20] + b"\n", 3, "not JSON"),
+        (b'{"schema":"attestation.history/2"}\n' + SERIES0 + POINT0, 1, "first line"),
+        (SERIES0 + POINT0, 1, "first line"),
+        (HEADER + POINT0, 2, "not declared"),
+        (HEADER + SERIES0.replace(b":0,", b":1,") + POINT0, 2, "in order"),
+        (HEADER + SERIES0, None, "no point"),
+        (HEADER + SERIES0 + SERIES0.replace(b":0,", b":1,") + POINT0, 3, "no point"),
+        (HEADER + SERIES0 + POINT0 + SERIES0.replace(b":0,", b":1,") + POINT0, 4, "duplicate"),
+        (HEADER + SERIES0 + POINT0.replace(b"1}", b"NaN}"), 3, "NaN"),
+        (HEADER + SERIES0 + POINT0.replace(b"1}", b'"nan"}'), 3, "value"),
+        (HEADER + SERIES0 + POINT0.replace(b'"at":null,', b""), 3, "at"),
+        (HEADER + SERIES0 + POINT0.replace(b"}", b',"x":1}'), 3, "x"),
+        (HEADER + SERIES0 + b"[1]\n", 3, "object"),
+        (HEADER + SERIES0 + b"\n", 3, "not JSON"),
+        (HEADER + SERIES0 + POINT0 + b"\xff\n", 4, "UTF-8"),
+        (HEADER + SERIES0 + POINT0 + POINT0, None, "says 1 / 1"),
+    ],
+)
+def test_malformed_or_truncated_sidecar_lines_are_refused(tmp_path, payload, line, match):
+    ref = _ref_for(tmp_path, payload)
+    with pytest.raises(HistoryFormatError, match=match) as exc:
+        read_history(tmp_path, ref)
+    where = HISTORY_PATH if line is None else f"{HISTORY_PATH}:{line}"
+    assert exc.value.path.startswith(where)
+
+
+def test_the_malformed_cases_start_from_a_valid_sidecar(tmp_path):
+    """The control for the parametrization above: unmutated, it reads."""
+    ref = _ref_for(tmp_path, HEADER + SERIES0 + POINT0)
+    assert read_history(tmp_path, ref) == [Series("loss", None, {}, [Point(0, 1, None)])]
+
+
+def test_history_bytes_are_deterministic(tmp_path):
+    a = write_history(tmp_path / "a", [LOSS])
+    b = write_history(tmp_path / "b", [LOSS])
+    assert a == b
+    assert (tmp_path / "a" / HISTORY_PATH).read_bytes() == (
+        tmp_path / "b" / HISTORY_PATH
+    ).read_bytes()
+    for raw in (tmp_path / "a" / HISTORY_PATH).read_bytes().splitlines(keepends=True):
+        assert raw == canonicalize(json.loads(raw)) + b"\n"
+    # Same points through the streaming writer: same bytes.
+    with HistoryWriter(tmp_path / "c") as hist:
+        h = hist.series(LOSS.name, LOSS.split, LOSS.labels)
+        for p in LOSS.points:
+            hist.point(h, p.step, p.value, p.at)
+    assert hist.ref == a
+
+
+def test_a_long_run_keeps_run_json_small(tmp_path):
+    """100k points: the record is the same size as with ten, the sidecar
+    holds the curve, and every point reads back."""
+    n = 100_000
+    with HistoryWriter(tmp_path) as hist:
+        loss = hist.series("loss", "train")
+        for step in range(n):
+            hist.point(loss, step, 1.0 / (step + 1), None)
+    record = _record(history=hist.ref)
+    write(record, tmp_path)
+    run_json = (tmp_path / layout.RUN_JSON).stat().st_size
+    assert run_json < 2_000, run_json
+    # Independent of the curve's size but for the digits of the count.
+    assert run_json == len(dumps(_record(history=HistoryRef(HISTORY_PATH, "2" * 64, 1, n))))
+    assert (tmp_path / HISTORY_PATH).stat().st_size > 3_000_000
+    (curve,) = read_history(tmp_path)
+    assert len(curve.points) == n and curve.points[-1] == Point(n - 1, 1.0 / n, None)
+
+
+def test_the_manifest_does_not_list_the_sidecar(tmp_path):
+    """history.jsonl lives under attestation/, so it is bound once -- by the
+    record's history.sha256 -- and never also by digests.json."""
+    (tmp_path / "out.txt").write_text("x")
+    ref = write_history(tmp_path, [LOSS])
+    entry = layout.write_manifest(tmp_path)
+    assert list(json.loads((tmp_path / layout.DIGESTS_JSON).read_bytes())["files"]) == ["out.txt"]
+    write(_record(history=ref, data=[entry]), tmp_path)
+    assert layout.HISTORY_JSONL == HISTORY_PATH
+
+
+def test_published_history_line_schema_agrees_with_the_writer(tmp_path):
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(HISTORY_SCHEMA_FILE.read_text())
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema)
+    write_history(tmp_path, [LOSS, Series("x", None, {"a": "b"}, [Point(1, float("inf"), None)])])
+    lines = (tmp_path / HISTORY_PATH).read_bytes().splitlines()
+    assert len(lines) == 1 + 2 + 4
+    for raw in lines:
+        assert validator.is_valid(json.loads(raw)), raw
+    for bad in (
+        {"schema": "attestation.history/2"},
+        {"series": 0, "step": 0, "value": "nan", "at": None},
+        {"series": 0, "step": -1, "value": 1, "at": None},
+        {"series": 0, "step": 0, "value": 1},
+        {"series": 0, "name": "", "split": None, "labels": {}},
+        {"series": 0, "name": "x", "split": None, "labels": {"a": 1}},
+        {"series": -1, "name": "x", "split": None, "labels": {}},
+        {"series": 0, "step": 0, "value": 1, "at": None, "x": 1},
+    ):
+        assert not validator.is_valid(bad), bad
 
 
 # ---- version dispatch -------------------------------------------------------
@@ -575,11 +926,13 @@ def test_published_json_schema_agrees_with_the_reader():
         _remove(obj, path)
         assert not validator.is_valid(obj), f"schema file accepts a record missing {path}"
     reader_only = {
-        ("finished_at", "'2026-11-19T09:00:00Z'"),  # finished_at >= started_at
+        ("finished_at", "'2026-11-19T09:00:00.000000Z'"),  # finished_at >= started_at
         ("code.repo", "'https://user:token@example.org/x.git'"),  # credentials
         ("code.repo", "'https://token@example.org/x.git'"),
-        ("dependencies[0].source", "'https://user:pw@example.org/x.git'"),
-        ("started_at", "'2026-13-19T10:00:00Z'"),  # well-formed, impossible date
+        ("dependencies[0].source", "'git+https://user:pw@example.org/x.git'"),
+        ("dependencies[0].source", "'git+https://token@example.org/x.git'"),
+        ("dependencies[0].source", "'index:https://user:pw@pypi.example.org/simple'"),
+        ("started_at", "'2026-13-19T10:00:00.000000Z'"),  # well-formed, impossible date
         ("metrics[0].step", "1.0"),  # JSON Schema's integer admits 1.0
     }
     checked = 0
@@ -610,7 +963,7 @@ def test_layout_paths_are_fixed(tmp_path):
 
 
 def test_find_runs_sees_finished_and_in_flight_runs(tmp_path):
-    write(_record(), tmp_path / "a" / "run-1")
+    write(_record(history=None), tmp_path / "a" / "run-1")
     (tmp_path / "b" / "run-2" / "attestation").mkdir(parents=True)
     (tmp_path / "b" / "run-2" / "attestation" / "state.json").write_text("{}")
     (tmp_path / "c" / "not-a-run" / "steps").mkdir(parents=True)
@@ -638,7 +991,7 @@ def test_manifest_binds_outputs_to_the_record(tmp_path):
     }
     assert entry.role == "manifest" and entry.name == layout.DIGESTS_JSON
     assert entry.sha256 == hashlib.sha256((run / layout.DIGESTS_JSON).read_bytes()).hexdigest()
-    write(_record(data=[entry]), run)
+    write(_record(data=[entry], history=None), run)
     with pytest.raises(layout.LayoutError, match="before the record"):
         layout.write_manifest(run)
 
@@ -721,6 +1074,7 @@ def test_wheel_builds_and_carries_the_schema_file(tmp_path):
         names = set(zf.namelist())
         metadata = next(zf.read(n) for n in names if n.endswith(".dist-info/METADATA"))
     assert "attestation_schema/schemas/run-1.schema.json" in names
+    assert "attestation_schema/schemas/history-1.schema.json" in names
     assert "attestation_schema/py.typed" in names
     assert not any(n.startswith("attestation/") for n in names)
     assert b"Requires-Dist" not in metadata

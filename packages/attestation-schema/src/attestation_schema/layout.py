@@ -3,14 +3,17 @@
     <run_dir>/attestation/run.json      core record, written once, last
     <run_dir>/attestation/state.json    in-flight job state (backend-owned)
     <run_dir>/attestation/digests.json  sha256 of every file outside attestation/
+    <run_dir>/attestation/history.jsonl logged curves; bound by the record's sha256
     <run_dir>/steps/NN-<name>/          one directory per step / tier, in order
     <run_dir>/logs/run.log              whole-run log
     <run_dir>/logs/NN-<name>.log        one per step
 
 Only attestation/ is required: steps/ and logs/ are optional, and outputs may
 live anywhere under the run directory (the manifest covers every file).
-Write order is steps and logs -> digests.json -> run.json, so a directory with
-run.json is complete and one with only state.json is in flight. Spec:
+Write order is steps, logs and history.jsonl -> digests.json -> run.json, so a
+directory with run.json is complete and one with only state.json is in
+flight. history.jsonl is under attestation/, so the manifest does not list it:
+the record binds it directly (`history.sha256`), once. Spec:
 docs/superpowers/specs/2026-11-19-core-run-record-design.md.
 """
 
@@ -23,12 +26,13 @@ from pathlib import Path
 from typing import Any
 
 from attestation_schema.canonical import canonicalize
-from attestation_schema.record import DataDigest
+from attestation_schema.record import HISTORY_PATH, DataDigest
 
 ATTESTATION_DIR = "attestation"
 RUN_JSON = f"{ATTESTATION_DIR}/run.json"
 STATE_JSON = f"{ATTESTATION_DIR}/state.json"
 DIGESTS_JSON = f"{ATTESTATION_DIR}/digests.json"
+HISTORY_JSONL = HISTORY_PATH  # attestation/history.jsonl, owned by history.py
 STEPS_DIR = "steps"
 LOGS_DIR = "logs"
 RUN_LOG = f"{LOGS_DIR}/run.log"

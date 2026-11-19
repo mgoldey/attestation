@@ -8,7 +8,10 @@ path on anything non-conforming -- nothing is defaulted, coerced or dropped.
 
 Every key is required; nullable keys must be spelled `null`. Unknown keys are
 refused everywhere except inside `config` and `ext.<namespace>`, which are
-carried verbatim. Spec: docs/superpowers/specs/2026-11-19-core-run-record-design.md.
+carried verbatim. Curves never live here: `history` is a reference to the
+sidecar `attestation/history.jsonl` (format and reader: `history.py`), bound by
+sha256, and reading a record never opens it.
+Spec: docs/superpowers/specs/2026-11-19-core-run-record-design.md.
 """
 
 from __future__ import annotations
@@ -40,15 +43,23 @@ PROVENANCES = ("verified", "inferred", "unknown")
 
 _SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
-# One instant, one spelling: UTC `Z`, and a fraction (if any) of at most six
-# digits with no trailing zero -- `.5`, never `.500` or `.000`. MLflow's
-# millisecond clocks made the second rule necessary (spec, Producer findings).
-_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{0,5}[1-9])?Z")
+# One instant, one spelling, and text order = time order: UTC `Z` and always
+# exactly six fraction digits (`:37.500000Z`, `:37.000000Z`). A variable-width
+# fraction sorted `:37.5Z` before `:37Z` (spec, Producer findings 2 and 4).
+_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
+# `dependencies[].source`: where a dependency was installed from, in a closed,
+# prefixed vocabulary so a reader can filter on it (spec, Producer findings 2).
+SOURCE_KINDS = ("index", "git+", "file", "conda", "system")
+_SOURCE = re.compile(r"index(?::.+)?|git\+.+|file|conda(?::.+)?|system", re.DOTALL)
 # Non-finite metric values have no JSON number; these strings spell them.
 NON_FINITE = {"NaN": math.nan, "Infinity": math.inf, "-Infinity": -math.inf}
 _NAMESPACE = re.compile(r"[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*")
 _SCHEMA_ID = re.compile(r"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*)/([1-9][0-9]*)")
 _RESERVED_NAMESPACE = "attestation"
+# The history sidecar, relative to the run directory. The record names it (so
+# a reader needs no layout knowledge) but may name nothing else: a reference
+# that could point anywhere could point out of the run directory.
+HISTORY_PATH = "attestation/history.jsonl"
 
 
 class RecordError(ValueError):
@@ -73,6 +84,24 @@ class InvalidFieldError(RecordError):
 
 class UnsupportedSchemaError(RecordError):
     """`schema` names a kind or version this reader does not know."""
+
+
+class HistoryError(RecordError):
+    """The history sidecar does not match the record that references it.
+    `path` locates it (`attestation/history.jsonl:17` for a line)."""
+
+
+class HistoryMissingError(HistoryError):
+    """The record references a sidecar that is not there."""
+
+
+class HistoryDigestError(HistoryError):
+    """The sidecar's bytes are not the ones the record bound by sha256."""
+
+
+class HistoryFormatError(HistoryError):
+    """A sidecar line that does not conform (malformed, truncated, out of order,
+    or counts that disagree with the reference)."""
 
 
 @dataclass(frozen=True)
@@ -124,23 +153,17 @@ class Metric:
 
 
 @dataclass(frozen=True)
-class Point:
-    """One logged value of a series, in the order the producer logged it."""
+class HistoryRef:
+    """Where the run's curves are and which bytes they are: the sidecar at
+    `path` (always `HISTORY_PATH`), its sha256, and how many series and points
+    it holds, so a reader can size it without opening it. The record holds
+    this, never the points (`history.write_history` / `HistoryWriter` make it,
+    `history.read_history` follows it)."""
 
-    step: int
-    value: int | float
-    at: str | None
-
-
-@dataclass(frozen=True)
-class Series:
-    """A metric's logged history (a curve). Steps may repeat and need not
-    increase: it is a log, not a map. Final values live in `metrics`."""
-
-    name: str
-    split: str | None
-    labels: dict[str, str]
-    points: list[Point]
+    path: str
+    sha256: str
+    series: int
+    points: int
 
 
 @dataclass(frozen=True)
@@ -171,15 +194,19 @@ class RunRecord:
     config: dict[str, Any]
     data: list[DataDigest]
     metrics: list[Metric]
-    history: list[Series]
+    history: HistoryRef | None
     seeds: dict[str, int | list[int]] | None
-    dependencies: list[Dependency]
+    dependencies: list[Dependency] | None
     ext: dict[str, dict[str, Any]]
     schema: str = SCHEMA
 
     def to_dict(self) -> dict[str, Any]:
-        """The record as plain JSON values (unvalidated; `dumps` validates)."""
-        return asdict(self)
+        """The record as plain JSON values, in their wire spelling (a NaN metric
+        value is `"NaN"`), so `from_dict(r.to_dict()) == r`. Unvalidated;
+        `dumps` and `from_dict` validate."""
+        obj = asdict(self)
+        _spell_values(obj)
+        return obj
 
 
 # ---- primitive checks -------------------------------------------------------
@@ -349,20 +376,51 @@ def _producer(value: Any, path: str) -> Producer:
     )
 
 
+def _no_credentials(location: str, path: str) -> None:
+    parts = urlsplit(location)
+    web = parts.scheme.rsplit("+", 1)[-1] in ("http", "https")  # git+https too
+    if parts.password is not None or (web and parts.username):
+        raise InvalidFieldError(path, "URL carries credentials; strip them")
+
+
 def _repo(value: Any, path: str) -> str | None:
-    """A nullable location string (a repo URL, a package source) with no
-    `user:password@` in it."""
+    """A nullable repo location with no `user:password@` in it."""
     repo = _opt_string(value, path)
     if repo is not None:
-        parts = urlsplit(repo)
-        if parts.password is not None or (parts.scheme in ("http", "https") and parts.username):
-            raise InvalidFieldError(path, "URL carries credentials; strip them")
+        _no_credentials(repo, path)
     return repo
+
+
+def _source(value: Any, path: str) -> str | None:
+    """`index[:<name or url>]`, `git+<url>`, `file`, `conda[:<channel>]` or
+    `system`; any URL in it free of credentials."""
+    source = _opt_string(value, path)
+    if source is None:
+        return None
+    if not _SOURCE.fullmatch(source):
+        raise InvalidFieldError(
+            path,
+            f"{source!r} is not index[:<name>], git+<url>, file, conda[:<channel>] or system",
+        )
+    _no_credentials(
+        source.partition(":")[2] if source[:6] in ("index:", "conda:") else source, path
+    )
+    return source
 
 
 def _verified_needs(identity: str | None, provenance: str, path: str, what: str) -> None:
     if provenance == "verified" and identity is None:
         raise InvalidFieldError(_at(path, "provenance"), f"'verified' needs {what} to verify")
+
+
+def _unknown_claims_no_sha(sha: str | None, provenance: str, path: str, field: str) -> None:
+    """A commit is an identity claim; `unknown` makes none. A sha held but not
+    vouched for is `inferred`; several (a run mixing builds or commits) is
+    `unknown` with `evidence` naming each (spec, Producer findings 2)."""
+    if provenance == "unknown" and sha is not None:
+        raise InvalidFieldError(
+            _at(path, field), f"'unknown' claims no {field}; a sha you hold is 'inferred'"
+        )
 
 
 def _code(value: Any, path: str) -> CodeIdentity:
@@ -377,6 +435,7 @@ def _code(value: Any, path: str) -> CodeIdentity:
         evidence=_opt_string(d["evidence"], _at(path, "evidence")),
     )
     _verified_needs(code.git_sha or code.version, code.provenance, path, "a git_sha or a version")
+    _unknown_claims_no_sha(code.git_sha, code.provenance, path, "git_sha")
     return code
 
 
@@ -448,37 +507,23 @@ def _metrics(value: Any, path: str) -> list[Metric]:
     return out
 
 
-def _point(value: Any, path: str) -> Point:
-    d = _object(value, path, ("step", "value", "at"))
-    return Point(
-        step=_integer(d["step"], _at(path, "step"), minimum=0),
-        value=_metric_value(d["value"], _at(path, "value")),
-        at=_timestamp(d["at"], _at(path, "at")),
+def _history_ref(value: Any, path: str) -> HistoryRef | None:
+    """`null` (no curve was recorded) or the sidecar reference. The points
+    themselves are never in the record (spec, Producer findings 3)."""
+    if value is None:
+        return None
+    d = _object(value, path, ("path", "sha256", "series", "points"))
+    if d["path"] != HISTORY_PATH:
+        raise InvalidFieldError(_at(path, "path"), f"expected {HISTORY_PATH!r}, got {d['path']!r}")
+    ref = HistoryRef(
+        path=HISTORY_PATH,
+        sha256=_string(d["sha256"], _at(path, "sha256"), pattern=_SHA256),
+        series=_integer(d["series"], _at(path, "series"), minimum=1),
+        points=_integer(d["points"], _at(path, "points"), minimum=1),
     )
-
-
-def _history(value: Any, path: str) -> list[Series]:
-    out = []
-    for i, item in enumerate(_list(value, path)):
-        p = _at(path, i)
-        d = _object(item, p, ("name", "split", "labels", "points"))
-        points = _list(d["points"], _at(p, "points"))
-        if not points:
-            raise InvalidFieldError(_at(p, "points"), "a series has at least one point")
-        out.append(
-            Series(
-                name=_string(d["name"], _at(p, "name")),
-                split=_opt_string(d["split"], _at(p, "split")),
-                labels=_labels(d["labels"], _at(p, "labels")),
-                points=[_point(pt, _at(_at(p, "points"), j)) for j, pt in enumerate(points)],
-            )
-        )
-    _unique(
-        [(s.name, s.split, _label_key(s.labels)) for s in out],
-        path,
-        "series (name, split, labels)",
-    )
-    return out
+    if ref.points < ref.series:
+        raise InvalidFieldError(_at(path, "points"), "every series has at least one point")
+    return ref
 
 
 def _seeds(value: Any, path: str) -> dict[str, int | list[int]] | None:
@@ -510,13 +555,18 @@ def _dependency(value: Any, path: str) -> Dependency:
         dirty=_bool(d["dirty"], _at(path, "dirty")),
         provenance=_choice(d["provenance"], _at(path, "provenance"), PROVENANCES),
         evidence=_opt_string(d["evidence"], _at(path, "evidence")),
-        source=_repo(d["source"], _at(path, "source")),
+        source=_source(d["source"], _at(path, "source")),
     )
     _verified_needs(dep.version or dep.build_sha, dep.provenance, path, "a version or a build_sha")
+    _unknown_claims_no_sha(dep.build_sha, dep.provenance, path, "build_sha")
     return dep
 
 
-def _dependencies(value: Any, path: str) -> list[Dependency]:
+def _dependencies(value: Any, path: str) -> list[Dependency] | None:
+    """`null` = the producer could not observe the environment; `[]` = it
+    did, and the code ran on nothing worth naming (as `seeds` null vs {})."""
+    if value is None:
+        return None
     out = [_dependency(item, _at(path, i)) for i, item in enumerate(_list(value, path))]
     _unique([d.name for d in out], path, "dependency name")
     return out
@@ -561,7 +611,7 @@ def _read_v1(obj: dict[str, Any]) -> RunRecord:
         config=_config(d["config"], "config"),
         data=_data(d["data"], "data"),
         metrics=_metrics(d["metrics"], "metrics"),
-        history=_history(d["history"], "history"),
+        history=_history_ref(d["history"], "history"),
         seeds=_seeds(d["seeds"], "seeds"),
         dependencies=_dependencies(d["dependencies"], "dependencies"),
         ext=_ext(d["ext"], "ext"),
@@ -655,44 +705,40 @@ def dumps(record: RunRecord) -> bytes:
     if not isinstance(record, RunRecord):
         raise TypeError(f"dumps() takes a RunRecord, got {type(record).__name__}")
     obj = record.to_dict()
-    _spell_values(obj)
     from_dict(obj)  # the reader's rules: a record that would not read cannot be written
     return canonicalize(obj)
 
 
 def _spell_values(obj: dict[str, Any]) -> None:
-    """Rewrite non-finite metric and history values as their wire strings,
-    wherever the shape is the expected one (anything else the reader refuses)."""
-    holders: list[Any] = list(obj["metrics"]) if isinstance(obj["metrics"], list) else []
-    for series in obj["history"] if isinstance(obj["history"], list) else []:
-        if isinstance(series, dict) and isinstance(series.get("points"), list):
-            holders += series["points"]
-    for holder in holders:
+    """Rewrite non-finite metric values as their wire strings, wherever the
+    shape is the expected one (anything else the reader refuses)."""
+    for holder in obj["metrics"] if isinstance(obj["metrics"], list) else []:
         if isinstance(holder, dict) and "value" in holder:
-            holder["value"] = _spell(holder["value"])
+            holder["value"] = spell_value(holder["value"])
 
 
-def _spell(value: Any) -> Any:
-    """A non-finite float as its `NON_FINITE` string; anything else unchanged
-    (the reader then judges it)."""
+def spell_value(value: Any) -> Any:
+    """A metric or point value in its wire spelling: a non-finite float as its
+    `NON_FINITE` string, anything else unchanged (the reader then judges it).
+    For a producer building record dicts by hand; `to_dict`, `dumps` and the
+    history writer already apply it. `from_dict` takes only the wire form, so
+    that a dict it accepts is always JSON."""
     if isinstance(value, float) and not math.isfinite(value):
         return "NaN" if math.isnan(value) else ("Infinity" if value > 0 else "-Infinity")
     return value
 
 
 def format_timestamp(when: datetime) -> str:
-    """The one spelling of an instant the record accepts: UTC, `Z`, and a
-    fraction only as long as it needs to be (`.25`, never `.250000`).
+    """The one spelling of an instant the record accepts: UTC, `Z`, and always
+    six fraction digits (`2026-11-19T10:00:37.500000Z`), so timestamps sort
+    as text in time order.
 
     A naive datetime is refused rather than assumed UTC.
     """
     if when.tzinfo is None:
         raise ValueError("format_timestamp needs an aware datetime; a naive one has no instant")
     utc = when.astimezone(UTC)
-    text = utc.strftime("%Y-%m-%dT%H:%M:%S")
-    if utc.microsecond:
-        text += f".{utc.microsecond:06d}".rstrip("0")
-    return text + "Z"
+    return f"{utc.year:04d}-{utc:%m-%dT%H:%M:%S}.{utc.microsecond:06d}Z"
 
 
 def record_digest(record: RunRecord) -> str:
@@ -710,8 +756,13 @@ def write(record: RunRecord, run_dir: str | os.PathLike[str], *, overwrite: bool
 
     Refuses an existing record unless `overwrite` (FileExistsError). The bytes
     are `dumps(record)`; a reader racing the write sees no file or the whole one.
+    A record whose `history` names a sidecar is written only if that sidecar is
+    already there with those bytes (`HistoryMissingError`, `HistoryDigestError`):
+    the history is finalized before the record, never after.
     """
     payload = dumps(record)
+    if record.history is not None:
+        check_history_digest(run_dir, record.history)
     target = record_path(run_dir)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
@@ -730,8 +781,32 @@ def write(record: RunRecord, run_dir: str | os.PathLike[str], *, overwrite: bool
     return target
 
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def check_history_digest(run_dir: str | os.PathLike[str], ref: HistoryRef) -> Path:
+    """The sidecar `ref` names exists under `run_dir` with `ref.sha256`; its path."""
+    path = Path(run_dir) / ref.path
+    if not path.is_file():
+        raise HistoryMissingError(ref.path, "the record references a history file that is missing")
+    actual = _sha256_file(path)
+    if actual != ref.sha256:
+        raise HistoryDigestError(
+            ref.path, f"sha256 is {actual}, the record binds {ref.sha256}: the file changed"
+        )
+    return path
+
+
 def read(path: str | os.PathLike[str]) -> RunRecord:
-    """Read a record file, or a run directory's `attestation/run.json`."""
+    """Read a record file, or a run directory's `attestation/run.json`.
+
+    Never opens the history sidecar: `history.read_history` does that, on request.
+    """
     p = Path(path)
     if p.is_dir():
         p = record_path(p)
