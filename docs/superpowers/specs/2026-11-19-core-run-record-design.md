@@ -941,13 +941,16 @@ All on 2026-11-19; the commit is the one that carried the change.
    identifier stayed `attestation.run/1` throughout, so drafts written before
    a draft change could stop reading; every committed record was regenerated
    at each change, and smeltery re-pins to the frozen commit.
-2. **Publishing the schema package -- still open.** Since roadmap 11
-   (2026-11-19) `attestation-schema` is a runtime dependency of attestation,
-   resolved from the workspace; attestation's wheel says `Requires-Dist:
-   attestation-schema>=0.1.0`, so it installs from an index only once the
-   schema package is published there. Recommended: publish it before the
-   next attestation release (`2026-11-19-ledger-reads-core-records-design.md`,
-   "Dependency"). Nothing has been published.
+2. **Publishing the schema package -- decided: publish to PyPI.** Release
+   tags are `schema-v<X.Y.Z>` (attestation keeps `v<X.Y.Z>`), both handled by
+   `.github/workflows/release.yml` through trusted publishing; the user
+   registered the pending publisher (repo mgoldey/attestation, workflow
+   `release.yml`, environment `pypi`). Since roadmap 11 (2026-11-19)
+   `attestation-schema` is a runtime dependency of attestation and its wheel
+   says `Requires-Dist: attestation-schema>=0.1.0`, so the schema is released
+   first and an attestation release fails fast while its floor is not on PyPI
+   (`2026-11-19-ledger-reads-core-records-design.md`, "Dependency"). Nothing
+   has been published yet.
 3. **Required-and-nullable vs optional keys.** Chosen: every key required.
    It makes hand-written records verbose; it makes absent-vs-null impossible.
 4. **`producer`** was added beyond the roadmap's field list: without it a bad

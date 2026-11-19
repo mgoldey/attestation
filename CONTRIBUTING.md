@@ -349,6 +349,31 @@ the change and passes after it is the easiest kind to merge. If you are
 unsure whether a change wants a spec, open the issue first — a paragraph
 there is cheaper than a spec nobody needed.
 
+## Releasing
+
+Two distributions are built from this repo and they version independently
+(attestation `pyproject.toml`; attestation-schema
+`packages/attestation-schema/pyproject.toml`). `.github/workflows/release.yml`
+publishes both through PyPI trusted publishing (OIDC, environment `pypi`, no
+token anywhere); the tag's form picks the package, and the build job refuses a
+tag that differs from that package's version.
+
+```
+# attestation-schema (tag schema-v<version>)
+# 1. bump version in packages/attestation-schema/pyproject.toml, merge to main
+git tag schema-v0.1.0 && git push origin schema-v0.1.0
+
+# attestation (tag v<version>) -- AFTER the schema when its floor is new
+# 1. bump version in pyproject.toml (and `attestation-schema>=X` if needed)
+git tag v0.5.0 && git push origin v0.5.0
+```
+
+An attestation release fails fast, before building, if the
+`attestation-schema>=X` floor in `pyproject.toml` is not on PyPI (or if PyPI
+cannot be reached: it will not pass unchecked), so release the schema first.
+The schema job runs the package's tests on CPython 3.11 against the built
+wheel before publishing. `tests/test_release_workflow.py` pins all of this.
+
 ## Changelog
 
 `CHANGELOG.md` follows Keep a Changelog: one line per change under

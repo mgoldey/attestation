@@ -67,6 +67,20 @@ curves = read_history(run_dir)          # verifies the sha256, then parses
   pinned by digest.
 - Package version 0.1.0: the formats are frozen; the Python API may still
   change in a 0.x minor release until the job-state API has a consumer.
+ 
+## Releasing
+
+Tag `schema-v<version>` (the version in this package's `pyproject.toml`, which
+the workflow checks), independent of attestation's `v<version>` tags:
+
+```
+git tag schema-v0.1.0 && git push origin schema-v0.1.0
+```
+
+`.github/workflows/release.yml` builds the sdist and wheel, runs this
+package's tests on CPython 3.11 against the wheel, and publishes to PyPI
+through trusted publishing (environment `pypi`, no token). Release it before
+an attestation release whose `attestation-schema>=X` floor is new.
 
 Design: `docs/superpowers/specs/2026-11-19-core-run-record-design.md` in the
 attestation repository.
