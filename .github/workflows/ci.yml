@@ -71,10 +71,26 @@ jobs:
       - name: Build wheel
         run: uv build --out-dir dist
 
+      - name: Build the attestation-schema wheel
+        # The second distribution built from this repo (packages/attestation-
+        # schema). attestation depends on it at runtime (the ledger reads core
+        # records) and it is not on an index yet, so the attestation wheel
+        # installs with it beside it -- see docs/superpowers/specs/
+        # 2026-11-19-ledger-reads-core-records-design.md, "Dependency".
+        run: uv build --package attestation-schema --out-dir dist-schema
+
       - name: Install wheel into a clean venv
         run: |
           python3 -m venv /tmp/wheel-venv
-          /tmp/wheel-venv/bin/pip install --quiet dist/*.whl
+          /tmp/wheel-venv/bin/pip install --quiet dist-schema/*.whl dist/*.whl
+
+      - name: the ledger imports a core record from the installed wheels
+        run: |
+          /tmp/wheel-venv/bin/python -c "
+          import attestation.ledger, attestation.ledger_adapters as a
+          assert [x.name for x in a.ADAPTERS][0] == 'core'
+          print('ledger adapters:', [x.name for x in a.ADAPTERS])
+          "
 
       - name: attest --help exits 0
         run: /tmp/wheel-venv/bin/attest --help
@@ -106,12 +122,6 @@ jobs:
           assert p.is_file(), 'attestation/py.typed missing from installed wheel'
           print('py.typed present in wheel:', p)
           "
-
-      - name: Build the attestation-schema wheel
-        # The second distribution built from this repo (packages/attestation-
-        # schema): stdlib only, so it installs into a clean venv with no
-        # dependencies and must write and read a record there.
-        run: uv build --package attestation-schema --out-dir dist-schema
 
       - name: attestation-schema installs alone and round-trips a record
         run: |

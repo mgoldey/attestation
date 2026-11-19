@@ -77,7 +77,7 @@ push.
 |---|---|---|
 | `src/attestation/` | the library: ledger, claims, citations, feed ranking, knowledge graph, symbolic math, entry points | `tests/test_architecture.py` (layering rules), `tests/test_docstring_ratchet.py` |
 | `src/attestation/mcp/` | the MCP tools, namespaced `feed.*`/`sym.*`/`kg.*`/`runs.*`/`cite.*`, and the four surfaces | `tests/test_mcp_server.py`, `tests/test_agent_surfaces.py`, `tests/test_tool_envelope.py` |
-| `src/attestation/ledger_adapters/` | readers for tracker directory conventions (W&B, MLflow, Sacred, DVC, Hydra) and nested result files | `tests/test_ledger_adapters.py` |
+| `src/attestation/ledger_adapters/` | the `Adapter` protocol and every adapter: native core records (`core.py`), readers for tracker directory conventions (W&B, MLflow, Sacred, DVC, Hydra) and nested result files, each ending in a core run record | `tests/test_ledger_adapters.py` |
 | `src/attestation/skills/` | five skills an agent installs to use the tools well: one per agent surface (`attestation-feed`, `-provenance`, `-knowledge`, `-symbolic`) plus `attestation-setup` | `tests/test_skill_files.py`, `tests/test_install_skills.py` |
 | `evals/` | labelled corpora and scorers for every model-driven prompt (tagging, reaction, explanation) | `tests/test_tagging_eval.py`, `tests/test_reaction_eval.py`, `tests/test_explanation_eval.py` |
 | `examples/` | golden paths: runnable, README-documented worked examples | `tests/test_golden_paths.py` |
@@ -88,10 +88,12 @@ push.
 
 ## Recipe: teach the ledger a tracker's layout
 
-The ledger reads five trackers' directories as conventions of their own —
-one reader each in `src/attestation/ledger_adapters/generic.py`
-(`_wandb_runs`, `_mlflow_runs`, `_sacred_runs`, `_dvc_runs`, `_hydra_runs`),
-appended in `discover()`. To add a sixth:
+The ledger reads only core run records (`attestation_schema.RunRecord`);
+each tracker layout is an adapter behind the `ledger_adapters.Adapter`
+protocol (`detect`, `scan`, `to_core_record`). The five tracker readers
+live in `src/attestation/ledger_adapters/generic.py` (`_wandb_runs`,
+`_mlflow_runs`, `_sacred_runs`, `_dvc_runs`, `_hydra_runs`) and are
+registered as adapters in `ledger_adapters/trackers.py`. To add a sixth:
 
 1. **Start from a real directory.** Write `examples/<tracker>/generate.py`
    (or `.sh`) that runs the real library, pinned to one version, on real
@@ -100,14 +102,18 @@ appended in `discover()`. To add a sixth:
    because hand-written fixtures encode what you *think* the tool writes.
    `examples/wandb/generate.py` is the model; it even decodes W&B's binary
    log because offline mode writes no summary file.
-2. **Write `_<tracker>_runs(root, seen)`** returning `RunRecord`s with final
+   If the tool can write a core record itself (`attestation_schema.write`),
+   prefer that: the built-in `core` adapter reads it with no adapter at all.
+2. **Write `_<tracker>_runs(root, seen)`** returning `Found`s with final
    metric values (not curves), no direction inference, and the `seen` set
-   respected so a directory is never read twice. Record what the format
-   cannot tell you in `ledger.py`'s `ADAPTER_CAVEATS` — `runs.compare`
-   surfaces those rather than guessing.
-3. **Append it in `discover()`** and add cases to
-   `tests/test_ledger_adapters.py` that read the fixture and assert the
-   arms, families and metrics you know are in it.
+   respected so a directory is never read twice.
+3. **Register a `TrackerAdapter`** in `ledger_adapters/trackers.py` (append
+   it to `LEGACY_ADAPTERS`), with the caveat text saying what the format
+   cannot tell you — it travels in every record the adapter makes, and
+   `runs.compare` surfaces it rather than guessing. Never name the tracker
+   outside `ledger_adapters/`: `tests/test_tracker_names.py` fails if you do.
+   Add cases to `tests/test_ledger_adapters.py` that read the fixture and
+   assert the arms, families and metrics you know are in it.
 4. **Make it a golden path** (next recipe), so a reader can run it and see
    the arms ranked. `docs/guides/ledger.md` gets a row in the tracker table.
 

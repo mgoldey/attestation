@@ -42,7 +42,7 @@ pipeline. `attestation-schema` depends on **the standard library only**, so a
 producer's dependency on it is free. The direction of dependency is fixed:
 
 ```
-smeltery ──► attestation-schema ◄── attestation (dev group today; see Open decisions)
+smeltery ──► attestation-schema ◄── attestation (runtime dependency since roadmap 11)
 ferric   (depends on nothing here; its identity is recorded BY smeltery)
 ```
 
@@ -121,12 +121,11 @@ refuses to overwrite an existing record unless `overwrite=True` (the ledger's
 new-files-only rule). Nothing reads the clock: timestamps come in on the
 record, so the same record always produces the same bytes.
 
-JCS is **duplicated**, not imported, from `attestation.run_record.canonical`
-into `attestation_schema.canonical` — the schema package may not import
-`attestation`. A parity test runs both over the RFC 8785 vectors and a corpus
-of records and asserts identical bytes, so the copies cannot drift. When
-attestation takes a runtime dependency on the schema package (Open decisions),
-`run_record.canonical` becomes a re-export and the copy disappears.
+JCS lives in `attestation_schema.canonical` — the schema package may not
+import `attestation`. It was first a copy of `attestation.run_record.canonical`;
+since attestation took a runtime dependency on the schema package (roadmap 11),
+`run_record.canonical` is a re-export and the copy is gone (the parity test
+asserts the two names are one function).
 
 ### Reading: loud, never coercing, dispatched on version
 
@@ -668,6 +667,38 @@ writes `history: []`, re-pins).
    logged model gives real versions (open question 2), the exporter lists
    what it can read from it.
 
+### 4. The ledger's importers (roadmap 11, 2026-11-19)
+
+**Producer:** `src/attestation/ledger_adapters/` -- every legacy reader now
+ends in a core record before the ledger sees it, converted in memory and
+validated by `from_dict` (`2026-11-19-ledger-reads-core-records-design.md`).
+No schema change was made. Two findings, both recorded rather than worked
+into the schema:
+
+1. **Terminal status is not observable from most legacy artifacts, and a
+   spec never ran.** A `results/*.json` file, a W&B summary or a DVC metric
+   file says a value exists, not that the run completed; the `generic`
+   reader also records a *spec* (a config with no result). `status` has no
+   value for either, so the importer writes `"complete"` and carries the
+   ledger's own word (`recorded` / `spec`) in `ext.ledger-import.status` --
+   a workaround by this section's rule, made acceptable for now only because
+   these records are never written to disk. **Open for the user** (it touches
+   decision 5): a status meaning "the producer cannot observe the outcome",
+   or keeping specs out of the core record (dropping them from the ledger).
+2. **Reader caveats are carried in `ext`, not a core field.** Each importer
+   states what its format cannot say (final value, not curve) in
+   `ext.ledger-import.caveats`, and per-run problems (a DVC output whose md5
+   no longer matches `dvc.lock`) in `run_caveats`. *Not a core field:* only
+   the importer has needed it, a native producer that knows its own limits
+   can already say so in its own namespace, and the ledger reads the one
+   namespace its importer writes. Revisit if a second producer wants the
+   ledger to surface its caveats.
+
+The MLflow adapter ports the old metric-file reader as-is rather than reusing
+`examples/mlflow-records/export_records.py`: the exporter reads through
+`MlflowClient`, which would make mlflow a runtime dependency of the ledger,
+and adopting its richer mapping (curves, datasets, code) is roadmap 12.
+
 ## Open decisions (for the user)
 
 1. **Freeze criteria.** Proposed: freeze `attestation.run/1` when the three
@@ -676,11 +707,13 @@ writes `history: []`, re-pins).
    (not `1-draft`), on the grounds that a renamed identifier would itself be a
    breaking change at freeze time; the cost is that pre-freeze records may
    become unreadable.
-2. **attestation's runtime dependency on the schema package.** Today
-   `attestation-schema` is a uv workspace member installed in the dev group
-   only, so `attestation`'s wheel and `uvx --from git+...` installs are
-   unchanged. Making it a runtime dependency (so the ledger imports core
-   records) needs it published to an index first.
+2. **Publishing the schema package.** Since roadmap 11 (2026-11-19)
+   `attestation-schema` is a runtime dependency of attestation, resolved from
+   the workspace; attestation's wheel says `Requires-Dist:
+   attestation-schema`, so it installs from an index only once the schema
+   package is published there. Recommended: publish it before the next
+   attestation release (`2026-11-19-ledger-reads-core-records-design.md`,
+   "Dependency").
 3. **Required-and-nullable vs optional keys.** Chosen: every key required.
    It makes hand-written records verbose; it makes absent-vs-null impossible.
 4. **`producer`** was added beyond the roadmap's field list: without it a bad

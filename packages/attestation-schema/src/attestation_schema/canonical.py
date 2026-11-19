@@ -1,9 +1,8 @@
 """RFC 8785 JSON Canonicalization Scheme (JCS), standard library only.
 
-A COPY of `attestation.run_record.canonical`: this package may not import
-`attestation` (tests/test_boundaries.py), so the serializer is duplicated and
-tests/test_attestation_schema.py asserts both copies produce identical bytes.
-Change both or neither.
+The one implementation: `attestation.run_record.canonical` re-exports it
+(attestation depends on this package at runtime), and this package may not
+import `attestation` (tests/test_boundaries.py).
 
 A run record is signed over its exact bytes (DSSE), so verification never
 needs canonical form. Canonical form buys STABILITY: the same record content

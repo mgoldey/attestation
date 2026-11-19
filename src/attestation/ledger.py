@@ -24,6 +24,7 @@ will confidently order an ablation backwards, which is worse than refusing.
 """
 
 import json
+import math
 import os
 import re
 import sqlite3
@@ -31,6 +32,8 @@ import tomllib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+
+from attestation_schema import spell_value
 
 from attestation import paths
 
@@ -214,21 +217,14 @@ def _metric_direction(metric: str, directions: dict[str, str]) -> str | None:
 
 
 @dataclass
-class Metric:
-    """One final value read from a run's artifacts -- not a logged curve;
-    see the module docstring's per-tracker conventions for what "final" means
-    per adapter. `step`/`split` disambiguate a metric a run recorded more
-    than once (a checkpoint, a train vs. eval split)."""
+class Row:
+    """One run as the ledger stores it, derived from a core record.
 
-    metric: str
-    value: float
-    step: int | None = None
-    split: str | None = None
-
-
-@dataclass
-class RunRecord:
-    """One experiment run, as discovered on disk."""
+    The ledger's own shape, not the record's: `name` and `source_path` come
+    from the import (where the run was found), everything else from the
+    record -- its core fields, plus `ext.ledger-import` for what an importer
+    of a legacy artifact knew that the core has no field for. `metrics` are
+    `(metric, value, step, split)` tuples, finite values only."""
 
     project: str
     name: str
@@ -238,17 +234,76 @@ class RunRecord:
     started: str | None = None
     config: dict | None = None
     notes: str | None = None
-    metrics: list[Metric] = field(default_factory=list)
+    metrics: list[tuple] = field(default_factory=list)
     # What the artifact said about the data, if anything. None means "did not
     # say" -- never "no corpus" and never "the default corpus".
     corpus: dict | None = None
     # Resolved at scan time by _link_corpora; NULL until then.
     corpus_id: int | None = None
-    # Which reader produced this record: "generic", "wandb", "mlflow", or a
-    # named adapter. Set by the adapter, never inferred here. NULL/None means
-    # "recorded before anything tracked this", which is not the same as
-    # "generic" -- see ADAPTER_CAVEATS for why the distinction earns a column.
+    # Which adapter produced this run. Set by the adapter, never inferred here.
     adapter: str | None = None
+    # What the reader cannot do (applies to every run it reads) and what is
+    # wrong with this one run -- both data the record carried.
+    caveats: list[str] = field(default_factory=list)
+    run_caveats: list[str] = field(default_factory=list)
+
+
+def _metric_split(m) -> str | None:
+    """A core metric's split with its labels folded in (`test,analogue=a2`).
+
+    `run_metrics` has no labels column and its key would otherwise collide;
+    the split stays first, so `_split_rank`'s prefix match still ranks a
+    `test` value as test."""
+    labels = ",".join(f"{k}={v}" for k, v in sorted(m.labels.items()))
+    if not labels:
+        return m.split
+    return f"{m.split},{labels}" if m.split else labels
+
+
+def row_from_core(project: str, imported) -> Row:
+    """The ledger row for one imported core record -- the ONLY way a run
+    enters the ledger (spec: 2026-11-19-ledger-reads-core-records-design.md).
+
+    A record carrying the importer's extension is read through it (its
+    status word, notes, corpus and caveats); any other record is native, and
+    gets a run caveat when it did not complete or reported a value the
+    ledger cannot rank."""
+    from attestation.ledger_adapters import IMPORT_NAMESPACE
+
+    record = imported.record
+    ext = record.ext.get(IMPORT_NAMESPACE)
+    row = Row(
+        project=project,
+        name=imported.name,
+        source_path=imported.source_path,
+        family=record.family,
+        status=record.status,
+        started=record.started_at,
+        config=record.config or None,
+        adapter=imported.adapter,
+    )
+    for m in record.metrics:
+        if math.isfinite(m.value):
+            row.metrics.append((m.name, float(m.value), m.step, _metric_split(m)))
+        else:
+            row.run_caveats.append(
+                f"{imported.name}: {m.name} is {spell_value(float(m.value))} in its"
+                " record and is not stored -- the ledger ranks finite values only"
+            )
+    if ext is not None:
+        row.status = ext.get("status") or row.status
+        row.notes = ext.get("notes")
+        row.corpus = ext.get("corpus")
+        row.adapter = ext.get("adapter") or row.adapter
+        row.caveats = list(ext.get("caveats") or [])
+        row.run_caveats = list(ext.get("run_caveats") or []) + row.run_caveats
+    elif record.status != "complete":
+        row.run_caveats.insert(
+            0,
+            f"{imported.name} has status {record.status}: its values are from a run"
+            " that did not complete",
+        )
+    return row
 
 
 def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> dict:
@@ -263,7 +318,12 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
     disk are the source of truth, so a run that vanished there vanishes here.
     """
     from attestation import corpus
-    from attestation.ledger_adapters import adapter_for
+    from attestation.ledger_adapters import (
+        ADAPTERS,
+        LEGACY_ADAPTERS,
+        diagnose_empty,
+        import_project,
+    )
 
     root = Path(root).expanduser()
     if not root.is_dir():
@@ -314,18 +374,28 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
             empty.append(project_root.name)
             diagnostics[project_root.name] = "no such directory"
             continue
-        adapter = adapter_for(project_root.name)
-        records = adapter.discover(project_root)
+        # The fallback root exists because the legacy readers look only in
+        # fixed subdirectory names; the core adapter walks, so on the root it
+        # would claim every project's run directories as the root's own.
+        result = import_project(
+            project_root, LEGACY_ADAPTERS if project_root in fallback_roots else ADAPTERS
+        )
+        records = [row_from_core(project_root.name, i) for i in result.imported]
+        if result.refused:
+            # A record the core reader refuses is reported, never coerced.
+            diagnostics[project_root.name] = (
+                f"{len(result.refused)} record(s) refused: " + "; ".join(result.refused)
+            )
         if not records:
             if project_root in fallback_roots:
                 continue  # a fallback that found nothing is not a project
             if project_root.name in consumed:
                 continue
             empty.append(project_root.name)
-            explain = getattr(adapter, "diagnose_empty", None)
-            diagnostics[project_root.name] = (
-                explain(project_root) if explain else "no recognisable runs"
-            )
+            explained = diagnose_empty(project_root)
+            if result.refused:
+                explained = f"{diagnostics[project_root.name]}; {explained}"
+            diagnostics[project_root.name] = explained
             continue
         if project_root in fallback_roots:
             for record in records:
@@ -372,7 +442,7 @@ def _link_corpora(
 
 
 def _replace_project(
-    conn: sqlite3.Connection, project: str, records: list[RunRecord], scanned_at: str
+    conn: sqlite3.Connection, project: str, records: list[Row], scanned_at: str
 ) -> None:
     """Make `project`'s rows in `runs` match `records` exactly.
 
@@ -398,14 +468,14 @@ def _replace_project(
     for r in records:
         cur = conn.execute(
             "INSERT INTO runs(project, name, family, status, started, source_path,"
-            " config_json, notes, corpus_id, adapter, scanned_at) VALUES"
-            " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " config_json, notes, corpus_id, adapter, scanned_at, caveats_json) VALUES"
+            " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(project, name) DO UPDATE SET"
             " family = excluded.family, status = excluded.status,"
             " started = excluded.started, source_path = excluded.source_path,"
             " config_json = excluded.config_json, notes = excluded.notes,"
             " corpus_id = excluded.corpus_id, adapter = excluded.adapter,"
-            " scanned_at = excluded.scanned_at",
+            " scanned_at = excluded.scanned_at, caveats_json = excluded.caveats_json",
             (
                 r.project,
                 r.name,
@@ -418,6 +488,7 @@ def _replace_project(
                 r.corpus_id,
                 r.adapter,
                 scanned_at,
+                _caveats_json(r),
             ),
         )
         # NOT cur.lastrowid: SQLite's last_insert_rowid() is unreliable across
@@ -429,16 +500,31 @@ def _replace_project(
         run_id = existing.get(r.name, cur.lastrowid)
         conn.execute("DELETE FROM run_metrics WHERE run_id = ?", (run_id,))
         seen: set[tuple] = set()
-        for m in r.metrics:
-            key = (m.metric, m.step, m.split)
-            if key in seen:  # last write wins; the PK would reject a duplicate
+        for metric, value, step, split in r.metrics:
+            key = (metric, step, split)
+            if key in seen:  # first write wins; the PK would reject a duplicate
                 continue
             seen.add(key)
             conn.execute(
                 "INSERT INTO run_metrics(run_id, metric, value, step, split)"
                 " VALUES (?, ?, ?, ?, ?)",
-                (run_id, m.metric, m.value, m.step, m.split),
+                (run_id, metric, value, step, split),
             )
+
+
+def _caveats_json(r: Row) -> str | None:
+    """`runs.caveats_json`: the reader's caveats and the run's own, or NULL
+    when there are none."""
+    if not (r.caveats or r.run_caveats):
+        return None
+    return json.dumps({"reader": r.caveats, "run": r.run_caveats})
+
+
+def _stored_caveats(value: str | None) -> dict:
+    """`runs.caveats_json` read back; NULL (none, or scanned before
+    migration 015) reads as no caveats."""
+    stored = json.loads(value) if value else {}
+    return {"reader": stored.get("reader") or [], "run": stored.get("run") or []}
 
 
 def sample_runs(
@@ -529,65 +615,6 @@ def list_runs(
     return [dict(r) for r in conn.execute(sql, params)]
 
 
-# What each reader cannot do, stated where a reader of the run will see it.
-#
-# These are not new facts: both were written down in
-# `ledger_adapters/generic.py` when the readers were built, in source comments
-# no user of the tool ever reads. A wandb-derived run looked identical in
-# `runs.list` and `runs.detail` to a hand-written JSON one, so the reader had
-# no way to know that the number in front of them is the FINAL logged value
-# rather than the best step, or that an offline W&B run carries no metrics at
-# all in files/ until it is synced (see ledger_adapters/generic.py's
-# _wandb_runs docstring).
-#
-# Keyed by adapter name, so a reader with no caveats (the generic one) attaches
-# none. A caveat on every run is boilerplate, and boilerplate is what teaches a
-# reader to skip the caveats that matter.
-ADAPTER_CAVEATS: dict[str, str] = {
-    "wandb": (
-        "read by the wandb adapter: values come from wandb-summary.json, which"
-        " holds each metric's final logged value rather than its curve or its"
-        " best step. Offline W&B does not write that file until a run is"
-        " synced -- see examples/wandb/generate.py for how the committed"
-        " fixture's was materialised without a network call"
-    ),
-    "mlflow": (
-        "read by the mlflow adapter: each metric is the FINAL line of its"
-        " metrics file, not the curve and not the best step"
-    ),
-    "sacred": (
-        "read by the sacred adapter: each metric is the LAST value in"
-        " metrics.json's series, not the curve and not the best step"
-    ),
-    "dvc": (
-        "read by the dvc adapter: each metric file is a snapshot overwritten"
-        " on every `dvc repro`, not a curve -- there is no history of a"
-        " prior run's value once a stage reruns"
-    ),
-    "hydra": (
-        "read by the hydra adapter: metrics come from whatever JSON/CSV file"
-        " an arm's directory holds, read as a final value the same way as"
-        " every other tracker here, not a curve or a best step"
-    ),
-}
-
-
-def adapter_caveats(adapters) -> list[str]:
-    """Caveats for the readers that produced a set of runs, deduplicated.
-
-    Takes adapter names rather than rows so it is callable from anywhere and
-    testable without a database. Unknown and NULL adapters contribute nothing:
-    NULL means "recorded before this was tracked", and inventing a caveat for
-    a reader we cannot name would be worse than saying nothing.
-    """
-    out: list[str] = []
-    for adapter in sorted({a for a in adapters if a}):
-        note = ADAPTER_CAVEATS.get(adapter)
-        if note and note not in out:
-            out.append(note)
-    return out
-
-
 def family_named_in(conn: sqlite3.Connection, text: str) -> str | None:
     """The one recorded family `text` names as a whole word, else None.
 
@@ -660,8 +687,9 @@ def detail(conn: sqlite3.Connection, project: str, name: str) -> dict | None:
         )
     ]
     # Empty for an ordinary run; the caveat is attached only when the reader
-    # that produced this one has a limitation the number does not show.
-    out["caveats"] = adapter_caveats([out.get("adapter")])
+    # that produced this one has a limitation the number does not show. It
+    # is data the run's record carried (ext.ledger-import.caveats).
+    out["caveats"] = _stored_caveats(out.pop("caveats_json", None))["reader"]
     return out
 
 
@@ -751,6 +779,7 @@ def _family_rows(conn: sqlite3.Connection, family: str, project: str | None) -> 
     """The runs of one family, optionally narrowed to a project."""
     sql = (
         "SELECT r.id, r.project, r.name, r.status, r.source_path, r.adapter, r.notes,"
+        " r.caveats_json,"
         # c.source too: upsert records a CONTESTED marker there when one
         # corpus name carries two conflicting declarations, and a comparison
         # must not vouch for a corpus whose own definition is disputed.
@@ -1232,15 +1261,15 @@ def _corpus_agreement(runs: list[dict], metric: str) -> tuple[str | None, list[s
     return (next(iter(known)) if known else None), []
 
 
-def _dvc_hash_caveats(runs: list[dict]) -> list[str]:
-    """One caveat per run whose `notes` names a dvc.lock hash mismatch.
-
-    Only that specific note text is surfaced here -- `notes` also carries a
-    config file's prose header (`test_config_header_is_kept_verbatim`) and
-    other adapter-specific text unrelated to trust, and turning every note
-    into a caveat would print a run's own commentary back as a warning.
-    """
-    return [r["notes"] for r in runs if r.get("notes") and "dvc.lock hash mismatch" in r["notes"]]
+def _record_caveats(runs: list[dict]) -> list[str]:
+    """The caveats the runs' own records carried: each run's own (in run
+    order), then each reader's, ordered by adapter and deduplicated -- one
+    caveat per reader, not one per arm."""
+    stored = [(r.get("adapter") or "", _stored_caveats(r.get("caveats_json"))) for r in runs]
+    out = [c for _, s in stored for c in s["run"]]
+    for _, s in sorted(stored, key=lambda pair: pair[0]):
+        out.extend(c for c in s["reader"] if c not in out)
+    return out
 
 
 def _all_caveats(
@@ -1254,12 +1283,7 @@ def _all_caveats(
     obtained -- context for the whole comparison rather than a reason to
     distrust one arm over another.
     """
-    return (
-        _caveats(scored, metric)
-        + corpus_caveats
-        + _dvc_hash_caveats(runs)
-        + adapter_caveats([r.get("adapter") for r in runs])
-    )
+    return _caveats(scored, metric) + corpus_caveats + _record_caveats(runs)
 
 
 def _judged_splits(scored: list[dict]) -> set[str | None]:

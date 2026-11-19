@@ -175,9 +175,12 @@ def test_writer_validates_before_writing(tmp_path):
 
 
 def test_canonical_copy_matches_attestations_serializer():
-    """The schema package carries a copy of attestation.run_record.canonical;
-    the two must produce identical bytes or records stop comparing."""
+    """attestation.run_record.canonical re-exports this package's serializer
+    (it was a copy until attestation took a runtime dependency on this
+    package); the two must stay one function, or records stop comparing.
+    Skipped where attestation is not installed (the 3.11 schema-only job)."""
     upstream = pytest.importorskip("attestation.run_record.canonical")
+    assert upstream.canonicalize is canonicalize
 
     vectors = [
         _dict(),

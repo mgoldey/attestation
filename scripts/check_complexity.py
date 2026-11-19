@@ -24,7 +24,7 @@ BASELINE = {
     "src/attestation/ledger.py": 27,  # _caveats -- lowered 2026-08-29: the
     # onion-seams split moved compare()'s decision logic into _compare/
     # _pick_metric, so compare itself is no longer the worst function here.
-    "src/attestation/ledger_adapters/generic.py": 29,  # discover
+    "src/attestation/ledger_adapters/generic.py": 29,  # plain_runs (was discover)
     "src/attestation/kg.py": 20,  # communities
     "src/attestation/mcp/feed.py": 10,  # _score_matches: relevance blend --
     # lowered 2026-08-29 after the onion-seams split moved the relevance-floor

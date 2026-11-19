@@ -48,6 +48,13 @@ dependencies = [
     # Signs run records (ed25519). Already installed via mcp[crypto] -> pyjwt[crypto];
     # declared directly because attestation.run_record imports it.
     "cryptography>=44",
+    # The core run record (packages/attestation-schema, a workspace member
+    # resolved through [tool.uv.sources] below). A RUNTIME dependency since the
+    # ledger reads only core records (docs/superpowers/specs/2026-11-19-ledger-
+    # reads-core-records-design.md). Not yet on an index: a bare `pip install`
+    # of this wheel needs the schema wheel beside it, and publishing it is an
+    # open decision for the next release.
+    "attestation-schema>=0.1.0.dev0",
 ]
 
 [project.urls]
@@ -68,11 +75,6 @@ attest-mcp = "attestation.mcp_server:main"
 # hermes.db as a separate process, so a `uvx attestation` install never pays for
 # it and a broken version cannot break the tools.
 dev = [
-    # The core run record's own distribution, a workspace member (see
-    # [tool.uv.workspace] below). Dev-only on purpose: attestation's wheel and
-    # `uvx --from git+...` installs do not depend on it until it is published
-    # to an index (docs/superpowers/specs/2026-11-19-core-run-record-design.md).
-    "attestation-schema",
     "pytest>=8",
     "ruff>=0.6",
     "ty",
