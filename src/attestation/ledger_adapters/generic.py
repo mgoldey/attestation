@@ -27,7 +27,7 @@ import re
 import statistics
 from pathlib import Path
 
-from attestation import corpus
+from attestation import corpus, replicates
 from attestation.ledger import Metric, RunRecord
 
 # Where ML/science projects conventionally put results and configuration.
@@ -388,7 +388,19 @@ def family_of(stem: str) -> str | None:
     A heuristic, and treated as one. It groups names that follow a separator
     convention; anything else gets no family rather than a wrong one, and an
     ungrouped run is still listed, just not auto-compared.
+
+    A seed token never changes a family: `clf_knn_seed3` is grouped exactly as
+    `clf_knn` would be (family `clf`). Stripping it as a variant made every
+    seeded sweep one family PER CONFIGURATION, whose seeds then ranked against
+    each other while the configurations could not be compared at all. See
+    docs/superpowers/specs/2026-11-19-replicate-statistics-design.md.
     """
+    unseeded = replicates.strip_seed(stem)
+    if unseeded and unseeded[0]:
+        rest = unseeded[0]
+        # `run_seed1` leaves only `run`, which alone is no sweep; it was family
+        # `run` before this rule and stays so, so its replicates still group.
+        return family_of(rest) or "-".join(p for p in re.split(r"[-_/]", rest) if p)
     stripped = re.sub(r"[-_]?(?:step|epoch|iter|it|ckpt)[-_]?\d+k?", "", stem, flags=re.I)
     stripped = _SPLIT.sub("", stripped)
     parts = [p for p in re.split(r"[-_]", stripped) if p]

@@ -11,6 +11,16 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **Seed replicates pool into one arm (replicates.py).** `runs.compare` /
+  `attest runs compare` used to rank `<config>_seed<N>` runs against each
+  other as rival arms -- and the seed token split a sweep into one family per
+  configuration -- while printing "each arm is a single run; no seed
+  replication". Now the seeds of one configuration become ONE arm with
+  `n_runs`, `mean`, `sd`, range, a deterministic 95% bootstrap interval
+  (none under 3 runs) and the member `runs`; the result adds `separable` and
+  a Cohen's d for the top two. A config can veto a merge, never start one,
+  and every refused merge is a caveat. Single-run families print exactly what
+  they did. No new tool, no migration.
 - **A first list from the reader's own field (seed.py).** From research
   customer feedback: the first paper was off-topic and nothing said how to
   steer. `feed.ask("I like <DOI | arXiv id | title>")` resolves the paper

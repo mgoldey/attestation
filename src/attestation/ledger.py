@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from attestation import paths
+from attestation import paths, replicates
 
 
 def workspace_root(explicit: str | None = None) -> Path | None:
@@ -751,6 +751,9 @@ def _family_rows(conn: sqlite3.Connection, family: str, project: str | None) -> 
     """The runs of one family, optionally narrowed to a project."""
     sql = (
         "SELECT r.id, r.project, r.name, r.status, r.source_path, r.adapter, r.notes,"
+        # config_json: the replicate grouping vetoes a merge when two seeds'
+        # configs disagree on anything but the seed (replicates.group).
+        " r.config_json,"
         # c.source too: upsert records a CONTESTED marker there when one
         # corpus name carries two conflicting declarations, and a comparison
         # must not vouch for a corpus whose own definition is disputed.
@@ -1023,9 +1026,14 @@ def _compare(
     if direction is None:
         raise ValueError(unknown_direction_message(metric))
 
-    arms = []
+    arms, configs = [], {}
     for r in runs:
-        arms.extend(_arms_for_run(r, values_by_run[r["id"]], n_by_run.get(r["id"]), direction))
+        for arm in _arms_for_run(r, values_by_run[r["id"]], n_by_run.get(r["id"]), direction):
+            arms.append(arm)
+            configs[arm["name"]] = r.get("config_json")
+    # Seed replicates of one configuration pool into ONE arm (mean, interval,
+    # member names) rather than competing as rivals. See replicates.py.
+    arms, replicate_notes = replicates.group(arms, configs)
 
     scored = [a for a in arms if a["value"] is not None]
 
@@ -1043,6 +1051,7 @@ def _compare(
     missing = sorted((a for a in arms if a["value"] is None), key=lambda a: a["name"])
 
     shared, corpus_caveats = _corpus_agreement(runs, metric)
+    found = replicates.summary(scored)
     return {
         "family": family,
         "metric": metric,
@@ -1051,10 +1060,19 @@ def _compare(
         "winner": scored[0]["name"] if scored else None,
         "without_metric": [a["name"] for a in missing],
         "corpus": shared,
+        # `separable` / `effect_size`, present only when some arm pooled
+        # replicates, so a family of single runs keeps the keys it always had.
+        **found,
         # Reader caveats last: they qualify how every number here was
         # obtained, which is context for the ranking rather than a reason to
         # distrust one arm over another.
-        "caveats": _all_caveats(scored, metric, corpus_caveats, runs),
+        "caveats": _all_caveats(
+            scored,
+            metric,
+            corpus_caveats,
+            runs,
+            replicate_notes + replicates.stat_caveats(scored, found),
+        ),
     }
 
 
@@ -1244,10 +1262,15 @@ def _dvc_hash_caveats(runs: list[dict]) -> list[str]:
 
 
 def _all_caveats(
-    scored: list[dict], metric: str, corpus_caveats: list[str], runs: list[dict]
+    scored: list[dict],
+    metric: str,
+    corpus_caveats: list[str],
+    runs: list[dict],
+    replicate_caveats: list[str],
 ) -> list[str]:
     """Every reason to qualify a comparison, in order of how directly it bears
-    on the ranking: the ranking's own caveats, then the corpus ones, then the
+    on the ranking: the ranking's own caveats, then what the seed replicates
+    do and do not support (replicates.py), then the corpus ones, then the
     limitations of the readers that produced the numbers.
 
     Reader caveats come last because they qualify how EVERY number here was
@@ -1256,6 +1279,7 @@ def _all_caveats(
     """
     return (
         _caveats(scored, metric)
+        + replicate_caveats
         + corpus_caveats
         + _dvc_hash_caveats(runs)
         + adapter_caveats([r.get("adapter") for r in runs])
@@ -1339,7 +1363,12 @@ def _caveats(scored: list[dict], metric: str) -> list[str]:
         out.append("some arms report no sample size, so their weight is unknown")
 
     top, second = scored[0], scored[1]
-    if top["value"] is not None and second["value"] is not None:
+    # The 5% rule is a stand-in for a variance this tool usually cannot see.
+    # When both top arms carry replicate intervals it CAN see one, and
+    # `separable` (with its own caveat) answers the question instead -- on a
+    # real 5-seed sweep the rule called 1.4% "too close" beside disjoint
+    # intervals, two caveats contradicting each other.
+    if not replicates.intervals_decide(top, second) and None not in (top["value"], second["value"]):
         spread = abs(second["value"] - top["value"])
         scale = max(abs(top["value"]), 1e-12)
         if spread / scale < 0.05:
@@ -1353,15 +1382,12 @@ def _caveats(scored: list[dict], metric: str) -> list[str]:
             "arms are at different training steps, so this compares checkpoints,"
             " not just configurations"
         )
-    # Each arm here is exactly one run -- the schema records no seed
-    # replication (seed lives in `config`, never as a distinct run of the same
-    # configuration). A ranking over single runs cannot separate the effect of
-    # the configuration from ordinary run-to-run variance, regardless of how
-    # large n_records is for any individual arm.
-    out.append(
-        "each arm is a single run; no seed replication, so this ranking cannot"
-        " separate configuration from run-to-run variance"
-    )
+    # A ranking over single runs cannot separate the effect of the
+    # configuration from ordinary run-to-run variance, regardless of how large
+    # n_records is for any individual arm. This line used to be unconditional
+    # and was false on every sweep that HAD seeds; replicates.group now pools
+    # those, and the line fires only for the arms that really are one run.
+    out.extend(replicates.single_run_caveats(scored))
     return out
 
 
