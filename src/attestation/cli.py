@@ -125,6 +125,7 @@ HELP: dict[str, str] = {
     "runs.compare": "rank the arms of an experiment family",
     "runs.show": "one run in full",
     "runs.record": "write per-arm result/config files the ledger can scan",
+    "runs.lineage": "trace a run back through its datasets to the runs and builds that made them",
     "bootstrap-persona": "write pseudo-clicks for a persona",
     "persona-merge": "fold duplicate personas into one; their names become aliases of it",
     "install": "idempotent setup + --check doctor mode",
@@ -381,6 +382,18 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("project")
     rp.add_argument("name")
     rp.set_defaults(func=cmd_runs_show)
+
+    rp = runs_sub.add_parser("lineage", help=HELP["runs.lineage"])
+    rp.add_argument("run", help="the run directory (or its attestation/run.json)")
+    rp.add_argument(
+        "--search",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="where to find dataset and run records (repeatable; default: the current directory)",
+    )
+    rp.add_argument("--json", action="store_true", help="print the lineage as JSON")
+    rp.set_defaults(func=cmd_runs_lineage)
 
     rp = runs_sub.add_parser("record", help=HELP["runs.record"])
     rp.add_argument("family")
@@ -1463,6 +1476,51 @@ def cmd_runs_show(args: argparse.Namespace) -> int:
             split = f" split={m['split']}" if m["split"] else ""
             print(f"  {m['metric']:24s} {m['value']:>14.6f}{step}{split}")
         return 0
+
+
+def _lineage_records(paths: list[str]) -> tuple[list, list, list[str]]:
+    """(dataset records, run records, unreadable) under `paths`: what
+    `attest runs lineage` resolves against. An unreadable record is listed and
+    skipped -- the conformance suite is where it fails."""
+    from attestation_schema import RecordError, layout, read, read_dataset
+
+    datasets, runs, skipped = [], [], []
+    for root in paths:
+        for d in layout.find_datasets(root):
+            try:
+                datasets.append(read_dataset(d))
+            except (RecordError, OSError) as exc:
+                skipped.append(f"{d}: {exc}")
+        for d in layout.find_runs(root):
+            if (d / layout.RUN_JSON).is_file():
+                try:
+                    runs.append(read(d))
+                except (RecordError, OSError) as exc:
+                    skipped.append(f"{d}: {exc}")
+    return datasets, runs, skipped
+
+
+@_documented("runs.lineage")
+def cmd_runs_lineage(args: argparse.Namespace) -> int:
+    """Reads files only (no ledger database): every dataset and run record
+    under --search, resolved by digest (attestation_schema.resolve_lineage).
+    Exits 1 when a link is broken. Spec: 2026-11-19-dataset-records-design.md."""
+    from attestation_schema import RecordError, read, resolve_lineage
+
+    try:
+        run = read(args.run)
+    except (RecordError, OSError) as exc:
+        print(f"attest runs lineage: cannot read {args.run}: {exc}", file=sys.stderr)
+        return 2
+    datasets, runs, skipped = _lineage_records(args.search or ["."])
+    lineage = resolve_lineage(run, datasets, runs)
+    if args.json:
+        print(json.dumps({**lineage.to_dict(), "skipped": skipped}, indent=2))
+    else:
+        print(lineage.format())
+        for line in skipped:
+            print(f"skipped (unreadable): {line}")
+    return 0 if lineage.ok else 1
 
 
 def _parse_kv_pairs(pairs: list[str], *, label: str) -> dict[str, str]:

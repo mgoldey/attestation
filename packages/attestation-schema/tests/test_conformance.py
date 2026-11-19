@@ -10,6 +10,7 @@ docs/superpowers/specs/2026-11-19-conformance-suite-design.md.
 from __future__ import annotations
 
 import dataclasses
+import json
 import shutil
 from pathlib import Path
 
@@ -17,9 +18,12 @@ import attestation_schema as s
 import pytest
 from attestation_schema import conformance as c
 from attestation_schema import layout
+from attestation_schema.canonical import canonicalize
 from conformance_fixtures import (
     BROKEN_RULES,
     DATA,
+    DATASET_BROKEN_RULES,
+    DATASET_EXPECTED,
     EXPECTED,
     SPEC_CONFLICT,
     build,
@@ -236,3 +240,92 @@ def test_find_targets_reports_a_pattern_matching_nothing(tmp_path):
     assert sorted(d.name for d in dirs) == ["job-complete", "minimal"] and empty == []
     dirs, _ = c.find_targets(["."], DATA / "valid")
     assert len(dirs) == 3
+
+
+# ---- dataset directories (attestation.dataset/1, draft) ---------------------------------
+
+DATASETS = DATA / "datasets"
+
+
+def test_every_dataset_rule_has_a_broken_fixture():
+    assert {p.name for p in (DATASETS / "broken").iterdir()} == set(DATASET_BROKEN_RULES)
+    assert set(DATASET_BROKEN_RULES) <= set(c.RULES)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [DATASETS / "valid" / "minimal", *sorted((DATA / "lineage").iterdir())],
+    ids=lambda p: f"{p.parent.name}/{p.name}",
+)
+def test_valid_dataset_and_lineage_fixtures_conform(path):
+    report = c.check_dir(path)
+    assert report.ok, report.format()
+    assert (report.dataset is not None) == layout.is_dataset_dir(path)
+
+
+@pytest.mark.parametrize("rule", DATASET_BROKEN_RULES)
+def test_each_broken_dataset_fixture_breaks_exactly_its_rule(rule):
+    dd = DATASETS / "broken" / rule
+    report = c.check_dataset_dir(dd)
+    assert [v.rule for v in report.violations] == [rule], report.format()
+    (v,) = report.violations
+    file, json_path, fragment = DATASET_EXPECTED[rule]
+    assert (v.file, v.json_path) == (str(dd / file), json_path)
+    assert fragment in v.message
+    assert c.check_dir(dd).violations == report.violations
+    with pytest.raises(c.ConformanceError):
+        c.assert_conformant(dd)
+
+
+def test_a_dataset_is_not_a_run_and_a_run_is_not_a_dataset(tmp_path):
+    assert c.check_run_dir(DATASETS / "valid" / "minimal").rules == ["read"]
+    assert c.check_dataset_dir(DATA / "valid" / "minimal").rules == ["read"]
+    with pytest.raises(ValueError, match="dataset directory"):
+        c.check_dir(DATASETS / "valid" / "minimal", spec=spec_for())
+
+
+def test_a_directory_holding_both_kinds_is_a_read_violation(tmp_path):
+    dd = tmp_path / "d"
+    shutil.copytree(DATASETS / "valid" / "minimal", dd)
+    shutil.copy(DATA / "valid" / "minimal" / layout.RUN_JSON, dd / layout.RUN_JSON)
+    report = c.check_dir(dd)
+    assert [(v.rule, v.file) for v in report.violations] == [("read", str(dd / layout.RUN_JSON))], (
+        report.format()
+    )
+
+
+def test_a_dataset_needs_its_manifest_and_its_manifest_is_the_content_digest(tmp_path):
+    dd = tmp_path / "d"
+    shutil.copytree(DATASETS / "valid" / "minimal", dd)
+    manifest = dd / layout.DIGESTS_JSON
+    raw = manifest.read_bytes()
+    manifest.unlink()
+    assert [(v.rule, v.json_path) for v in c.check_dir(dd).violations] == [("manifest", "$")]
+    # Another canonical manifest (one more file): bound to nothing, so the
+    # record's content digest disagrees, and the extra entry names no file.
+    obj = json.loads(raw)
+    obj["files"]["ghost.csv"] = "0" * 64
+    manifest.write_bytes(canonicalize(obj))
+    got = [(v.rule, v.json_path) for v in c.check_dir(dd).violations]
+    assert got == [
+        ("manifest", "$.content_sha256"),
+        ("manifest", '$.files["ghost.csv"]'),
+    ], got
+
+
+def test_a_size_that_disagrees_with_files_is_a_manifest_violation(tmp_path):
+    dd = tmp_path / "d"
+    shutil.copytree(DATASETS / "valid" / "minimal", dd)
+    (dd / "data.csv").write_text("a,b\n1,2\n3,4\n")
+    got = [(v.rule, v.json_path) for v in c.check_dir(dd).violations]
+    assert got == [("manifest", '$.files["data.csv"]'), ("manifest", "$.files[0].bytes")], got
+    assert c.check_dir(dd, verify_outputs=False).ok
+
+
+def test_find_targets_finds_both_kinds(tmp_path):
+    dirs, empty = c.find_targets(["lineage"], DATA)
+    assert [d.name for d in dirs] == ["dataset", "smeltery-a", "smeltery-b", "training"]
+    assert not empty
+    dirs, _ = c.find_targets(["**/dataset.json"], DATASETS / "valid")
+    assert [d.name for d in dirs] == ["minimal"]
+    assert c.find_targets(["valid/*"], DATA)[0] == c.find_targets(["valid"], DATA)[0]

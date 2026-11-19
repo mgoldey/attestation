@@ -3,10 +3,35 @@
 Standard library only, and imports nothing from `attestation`: producers
 depend on this package to write records without depending on the observer.
 Curves live in a sidecar (`history.py`), bound to the record by sha256; a
-job's state lives in `state.json` (`state.py`).
-Spec: docs/superpowers/specs/2026-11-19-core-run-record-design.md.
+job's state lives in `state.json` (`state.py`). Datasets have their own record
+kind, `attestation.dataset/1` (DRAFT, `dataset.py`), and `lineage.py` resolves
+run -> dataset -> source run by digest.
+Specs: docs/superpowers/specs/2026-11-19-core-run-record-design.md,
+docs/superpowers/specs/2026-11-19-dataset-records-design.md.
 """
 
+from attestation_schema.dataset import (
+    DATASET_READERS,
+    DATASET_SCHEMA,
+    DATASET_SCHEMA_STATUS,
+    Column,
+    DatasetFile,
+    DatasetManifestError,
+    DatasetRecord,
+    SourceRun,
+    Split,
+    content_digest,
+    dataset_digest,
+    dataset_files,
+    dataset_from_dict,
+    dataset_lineage_entries,
+    dumps_dataset,
+    loads_dataset,
+    read_dataset,
+    suggest_media_type,
+    write_dataset,
+    write_dataset_manifest,
+)
 from attestation_schema.history import (
     HISTORY_SCHEMA,
     HistoryWriter,
@@ -28,6 +53,13 @@ from attestation_schema.jobs import (
     JobState,
     JobStatus,
     can_transition,
+)
+from attestation_schema.lineage import (
+    Lineage,
+    LineageEdge,
+    LineageIssue,
+    LineageNode,
+    resolve_lineage,
 )
 from attestation_schema.record import (
     HISTORY_PATH,
@@ -86,6 +118,31 @@ from attestation_schema.state import (
 )
 
 __all__ = [
+    "DATASET_READERS",
+    "DATASET_SCHEMA",
+    "DATASET_SCHEMA_STATUS",
+    "Column",
+    "DatasetFile",
+    "DatasetManifestError",
+    "DatasetRecord",
+    "Lineage",
+    "LineageEdge",
+    "LineageIssue",
+    "LineageNode",
+    "SourceRun",
+    "Split",
+    "content_digest",
+    "dataset_digest",
+    "dataset_files",
+    "dataset_from_dict",
+    "dataset_lineage_entries",
+    "dumps_dataset",
+    "loads_dataset",
+    "read_dataset",
+    "resolve_lineage",
+    "suggest_media_type",
+    "write_dataset",
+    "write_dataset_manifest",
     "HISTORY_PATH",
     "HISTORY_SCHEMA",
     "NON_FINITE",

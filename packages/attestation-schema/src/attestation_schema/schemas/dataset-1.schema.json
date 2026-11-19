@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mgoldey/attestation/schemas/attestation.dataset/1",
+  "title": "attestation.dataset/1 (DRAFT)",
+  "description": "Dataset record, at <dataset_dir>/attestation/dataset.json beside attestation/digests.json (the frozen attestation.digests/1 manifest of every file outside attestation/). content_sha256 is the sha256 of that manifest's bytes. DRAFT: not frozen until two producers have written it; a draft change may stop older draft records from validating. Necessary, not sufficient: the Python reader in attestation_schema.dataset is the reference and also enforces duplicate-key refusal, content_sha256 = sha256 of the RFC 8785 manifest of files[], files sorted by path (UTF-16 code units) and unique, every split's path one of files[] with the same sha256, unique column/split names and source runs, SPDX license-expression syntax (NOASSERTION/NONE refused), no URL with credentials in any string, integers within +/-2^53, real timestamps, and code's 'verified'/'unknown' rules.",
+  "type": "object",
+  "required": [
+    "schema",
+    "dataset_id",
+    "name",
+    "version",
+    "created_at",
+    "producer",
+    "code",
+    "content_sha256",
+    "files",
+    "rows",
+    "columns",
+    "splits",
+    "source_runs",
+    "license",
+    "ext"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "attestation.dataset/1"
+    },
+    "dataset_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "created_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+    },
+    "producer": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      }
+    },
+    "code": {
+      "type": "object",
+      "required": [
+        "git_sha",
+        "dirty",
+        "repo",
+        "version",
+        "provenance",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "git_sha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+        },
+        "dirty": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "repo": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "provenance": {
+          "enum": [
+            "verified",
+            "inferred",
+            "unknown"
+          ]
+        },
+        "evidence": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      }
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of attestation/digests.json: RFC 8785 {\"schema\":\"attestation.digests/1\",\"files\":{path: sha256}} over files[]."
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "sha256",
+          "bytes",
+          "media_type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!attestation(/|$))(?!(.*/)?\\.{1,2}(/|$))(?!.*//)(?!.*/$)[^\\u0000]+$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "media_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+          }
+        }
+      }
+    },
+    "rows": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "columns": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "type",
+          "unit"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "splits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "sha256",
+          "kind",
+          "seed"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!attestation(/|$))(?!(.*/)?\\.{1,2}(/|$))(?!.*//)(?!.*/$)[^\\u0000]+$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seed": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "integer"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "source_runs": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "family",
+          "record_sha256"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "family": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "record_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "license": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "not": {
+        "enum": [
+          "NOASSERTION",
+          "NONE"
+        ]
+      },
+      "description": "SPDX license expression; null = not stated (never 'no license')."
+    },
+    "ext": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z0-9_-]+)*$",
+        "not": {
+          "pattern": "^attestation(\\.|$)"
+        }
+      },
+      "additionalProperties": {
+        "type": "object"
+      }
+    }
+  }
+}

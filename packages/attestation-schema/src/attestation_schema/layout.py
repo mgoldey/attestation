@@ -8,6 +8,9 @@
     <run_dir>/logs/run.log              whole-run log
     <run_dir>/logs/NN-<name>.log        one per step
 
+    <dataset_dir>/attestation/digests.json  the dataset's content manifest (required)
+    <dataset_dir>/attestation/dataset.json  the dataset record (dataset.py), written last
+
 Only attestation/ is required: steps/ and logs/ are optional, and outputs may
 live anywhere under the run directory (the manifest covers every file).
 Write order is steps, logs and history.jsonl -> digests.json -> run.json, so a
@@ -32,6 +35,9 @@ ATTESTATION_DIR = "attestation"
 RUN_JSON = f"{ATTESTATION_DIR}/run.json"
 STATE_JSON = f"{ATTESTATION_DIR}/state.json"
 DIGESTS_JSON = f"{ATTESTATION_DIR}/digests.json"
+# A dataset directory's record (`attestation.dataset/1`, dataset.py). A
+# directory holds one record kind: a run's or a dataset's, never both.
+DATASET_JSON = f"{ATTESTATION_DIR}/dataset.json"
 HISTORY_JSONL = HISTORY_PATH  # attestation/history.jsonl, owned by history.py
 STEPS_DIR = "steps"
 LOGS_DIR = "logs"
@@ -82,6 +88,29 @@ def find_runs(root: str | os.PathLike[str]) -> list[Path]:
     found: list[Path] = []
     for dirpath, dirnames, _ in os.walk(root):
         if is_run_dir(dirpath):
+            found.append(Path(dirpath))
+            dirnames[:] = []
+            continue
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+    return sorted(found)
+
+
+def is_dataset_dir(path: str | os.PathLike[str]) -> bool:
+    """A dataset directory has `attestation/dataset.json`."""
+    return (Path(path) / DATASET_JSON).is_file()
+
+
+def find_datasets(root: str | os.PathLike[str]) -> list[Path]:
+    """Every dataset directory under `root` (itself included), sorted.
+
+    Datasets do not nest; the walk does descend into run directories (a run
+    may write a dataset among its outputs). `find_runs` never returns a
+    dataset, so the ledger's scan does not see one. Hidden directories are
+    skipped, and symlinked directories are not followed.
+    """
+    found: list[Path] = []
+    for dirpath, dirnames, _ in os.walk(root):
+        if is_dataset_dir(dirpath):
             found.append(Path(dirpath))
             dirnames[:] = []
             continue
