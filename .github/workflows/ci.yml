@@ -134,6 +134,33 @@ jobs:
           print('attestation-schema wheel OK:', s.SCHEMA, s.SCHEMA_STATUS)
           "
 
+  schema-py311:
+    # attestation-schema supports Python >= 3.11 (smeltery, a producer, is
+    # 3.11-only); attestation itself stays >= 3.12, so the workspace venv
+    # cannot run on 3.11. The package's own tests run here against its
+    # installed wheel in a bare 3.11 venv (the JCS parity test skips: it
+    # needs attestation).
+    name: attestation-schema on py3.11
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the attestation-schema wheel
+        run: uv build --package attestation-schema --wheel --out-dir dist-schema
+
+      - name: Package tests on CPython 3.11
+        run: |
+          uv venv --python 3.11 /tmp/schema-311
+          uv pip install --python /tmp/schema-311/bin/python dist-schema/*.whl pytest jsonschema
+          cd packages/attestation-schema
+          /tmp/schema-311/bin/python -c "import sys; assert sys.version_info[:2] == (3, 11), sys.version"
+          /tmp/schema-311/bin/python -m pytest -q -p no:cacheprovider -c /dev/null --rootdir . tests
+
   flows:
     name: example flows (offline)
     runs-on: ubuntu-latest
