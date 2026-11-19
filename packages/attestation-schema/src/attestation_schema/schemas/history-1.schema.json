@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mgoldey/attestation/schemas/attestation.history/1",
-  "title": "attestation.history/1 line (v1-DRAFT, not frozen)",
+  "title": "attestation.history/1 line (frozen 2026-11-19)",
   "description": "ONE LINE of attestation/history.jsonl: JSON Lines, each line RFC 8785 canonical JSON plus a newline (the last line too). Line 1 is the header; then series declarations and points. Necessary, not sufficient: attestation_schema.history.read_history is the reference and also enforces the header on line 1 only, series ids declared 0, 1, 2... each immediately before its first point, every point naming a declared series, one series per (name, split, labels), every series having a point, a final newline, the sha256 the record binds, and the record's series/points counts.",
   "oneOf": [
     {

@@ -277,7 +277,9 @@ def row_from_core(project: str, imported) -> Row:
         name=imported.name,
         source_path=imported.source_path,
         family=record.family,
-        status=record.status,
+        # null: the producer could not observe how the run ended (the
+        # column's own default word for that is "unknown").
+        status=record.status or "unknown",
         started=record.started_at,
         config=record.config or None,
         adapter=imported.adapter,
@@ -297,6 +299,11 @@ def row_from_core(project: str, imported) -> Row:
         row.adapter = ext.get("adapter") or row.adapter
         row.caveats = list(ext.get("caveats") or [])
         row.run_caveats = list(ext.get("run_caveats") or []) + row.run_caveats
+    elif record.status is None:
+        row.run_caveats.insert(
+            0,
+            f"{imported.name} has no status: its record does not say whether the run completed",
+        )
     elif record.status != "complete":
         row.run_caveats.insert(
             0,

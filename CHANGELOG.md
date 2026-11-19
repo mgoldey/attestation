@@ -11,8 +11,23 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **`attestation.run/1` is frozen (attestation-schema 0.1.0).** The last
+  producer findings were decided first: `dependencies[].source` gains
+  `url:<url>` (direct-URL archives; query strings and `url:file:` refused)
+  and `hg+`/`svn+`/`bzr+`; a dependency list is read as observed, not
+  exhaustive; `status` may be `null` when the producer could not observe the
+  outcome, and the ledger's importers write `null` (Sacred, which keeps only
+  completed runs, writes `complete`) instead of a claimed `complete`; a job's
+  record carries its `JobSpec`'s `run_id`, family, arm, config and ext in
+  every terminal state. `attestation_schema.state` takes over `state.json`
+  (`attestation.state/1`, format unchanged from smeltery's), its `flock`,
+  `settle` and the terminal-record builder from smeltery. The JSON Schema
+  files and the writer's bytes are pinned by digest
+  (`packages/attestation-schema/tests/test_frozen.py`); from here any change
+  is a new version. Spec: `2026-11-19-core-run-record-design.md`, "v1
+  freeze".
 - **The core run record, as its own distribution (`attestation-schema`).**
-  `attestation.run/1` (v1-DRAFT, not frozen): one experiment run's family,
+  `attestation.run/1` (then v1-DRAFT): one experiment run's family,
   arm, status, times, producer, code identity, config, data digests,
   metrics with direction, seeds, dependency identities with provenance, and
   `ext.<namespace>` for what the core does not model, carried untouched.

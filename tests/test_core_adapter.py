@@ -234,6 +234,35 @@ def test_every_legacy_reader_emits_a_valid_core_record():
             assert schema.loads(schema.dumps(imp.record)) == imp.record
 
 
+def test_an_importer_claims_completion_only_when_it_observed_it():
+    """Core spec Producer finding 4.1, decided at the v1 freeze: a legacy
+    artifact rarely shows how its run ended, and a spec shows no run at all,
+    so the importer writes status null -- never a claimed `complete` -- and
+    keeps the ledger's own word in ext. Sacred's reader keeps only runs Sacred
+    marked COMPLETED, so it alone says `complete`."""
+    statuses = {}
+    for example in ("wandb", "sacred", "dvc", "hydra", "workspace/speech-distill"):
+        for imp in import_project(ROOT / "examples" / example).imported:
+            statuses.setdefault(imp.adapter, set()).add(imp.record.status)
+    assert statuses.pop("sacred") == {"complete"}
+    assert statuses and all(s == {None} for s in statuses.values()), statuses
+    words = {
+        imp.record.ext[IMPORT_NAMESPACE]["status"]
+        for imp in import_project(ROOT / "examples" / "workspace/speech-distill").imported
+    }
+    assert "spec" in words or "recorded" in words
+
+
+def test_a_native_record_without_a_status_is_unknown_and_caveated(conn, tmp_path):
+    ws = tmp_path / "ws"
+    schema.write(_record("ok"), ws / "p" / "runs" / "ok")
+    schema.write(_record("seen", status=None), ws / "p" / "runs" / "seen")
+    _scan(conn, ws)
+    assert ledger.detail(conn, "p", "seen")["status"] == "unknown"
+    out = ledger.compare(conn, "sweep", metric="wer")
+    assert any("seen has no status" in c for c in out["caveats"]), out["caveats"]
+
+
 def test_tracker_caveats_travel_in_the_record():
     result = import_project(ROOT / "examples" / "wandb")
     ext = result.imported[0].record.ext[IMPORT_NAMESPACE]

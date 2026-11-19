@@ -54,7 +54,7 @@ dependencies = [
     # reads-core-records-design.md). Not yet on an index: a bare `pip install`
     # of this wheel needs the schema wheel beside it, and publishing it is an
     # open decision for the next release.
-    "attestation-schema>=0.1.0.dev0",
+    "attestation-schema>=0.1.0",
 ]
 
 [project.urls]

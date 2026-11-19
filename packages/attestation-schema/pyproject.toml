@@ -1,7 +1,11 @@
 [project]
 name = "attestation-schema"
-version = "0.1.0.dev0"
-description = "The attestation core run record (attestation.run/1, v1-draft): schema, canonical writer, strict reader, run-directory layout and job-backend interface. Standard library only."
+# 0.1.0, not 1.0.0: the record formats are frozen (their identity is the
+# `schema` string, pinned by tests/test_frozen.py, not this number), but the
+# Python state API (`state.py`) has no consumer yet. 1.0.0 once smeltery runs
+# its job backends on it (spec, "v1 freeze": package version).
+version = "0.1.0"
+description = "The attestation core run record (attestation.run/1, frozen): schema, canonical writer, strict reader, run-directory layout, job state file and job-backend interface. Standard library only."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -9,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Matthew Goldey" }]
 keywords = ["reproducibility", "provenance", "run-record", "experiment-tracking"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",

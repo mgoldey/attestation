@@ -135,6 +135,7 @@ def found_to_core(
     caveats: list[str],
     run_caveats: list[str],
     started_is_utc: bool = False,
+    observes_completion: bool = False,
 ) -> schema.RunRecord:
     """The core record for one legacy run, validated by `from_dict` (the
     reader's own rules), so an import is held to everything a written
@@ -148,10 +149,11 @@ def found_to_core(
             "run_id": found.name,
             "family": found.family or None,
             "arm": None,
-            # Terminal status is not observable from most legacy artifacts;
-            # the ledger's own word is in ext (spec: "Status: a schema
-            # finding"; core spec Producer finding 4).
-            "status": "complete",
+            # Terminal status is not observable from most legacy artifacts:
+            # null says so (core spec, Producer finding 4.1, decided at the v1
+            # freeze); a reader that keeps only finished runs says `complete`.
+            # The ledger's own word (recorded/spec) is in ext.
+            "status": "complete" if observes_completion else None,
             "started_at": _started_at(found.started, started_is_utc),
             "finished_at": None,
             "producer": {"name": f"attestation {adapter}-import", "version": _version()},
@@ -191,6 +193,9 @@ class TrackerAdapter:
     caveat: str | None = None
     started_is_utc: bool = False
     notes_are_caveats: bool = False
+    # The reader keeps only runs its tracker marked finished (Sacred's
+    # `COMPLETED`), so it observed completion; every other reader did not.
+    observes_completion: bool = False
 
     def detect(self, path: Path) -> bool:
         """The tracker's marker (its directory or file) is present."""
@@ -209,6 +214,7 @@ class TrackerAdapter:
             caveats=[self.caveat] if self.caveat else [],
             run_caveats=run_caveats,
             started_is_utc=self.started_is_utc,
+            observes_completion=self.observes_completion,
         )
 
 
@@ -222,7 +228,12 @@ WANDB = TrackerAdapter(
 )
 MLFLOW = TrackerAdapter("mlflow", generic._mlflow_runs, _has_dir("mlruns"), MLFLOW_CAVEAT)
 SACRED = TrackerAdapter(
-    "sacred", generic._sacred_runs, _has_dir("sacred_runs"), SACRED_CAVEAT, started_is_utc=True
+    "sacred",
+    generic._sacred_runs,
+    _has_dir("sacred_runs"),
+    SACRED_CAVEAT,
+    started_is_utc=True,
+    observes_completion=True,
 )
 DVC = TrackerAdapter(
     "dvc",

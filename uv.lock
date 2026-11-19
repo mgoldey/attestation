@@ -323,7 +323,7 @@ optimize = [{ name = "dspy", specifier = ">=3.3" }]
 
 [[package]]
 name = "attestation-schema"
-version = "0.1.0.dev0"
+version = "0.1.0"
 source = { editable = "packages/attestation-schema" }
 
 [[package]]

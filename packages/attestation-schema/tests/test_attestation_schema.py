@@ -284,9 +284,23 @@ def test_null_is_not_absent():
     obj["seeds"] = None
     obj["history"] = None
     obj["dependencies"] = None
+    obj["status"] = None
     record = from_dict(obj)
     assert record.family is None and record.code.dirty is None and record.seeds is None
-    assert record.history is None and record.dependencies is None
+    assert record.history is None and record.dependencies is None and record.status is None
+
+
+def test_status_null_means_the_outcome_was_not_observed():
+    """An importer of artifacts someone else wrote often cannot see how the
+    run ended (Producer finding 4.1): null, as everywhere else in the record,
+    not a fourth state word, and never a claimed `complete`."""
+    unobserved = _record(status=None, history=None)
+    assert loads(dumps(unobserved)).status is None
+    assert dumps(unobserved) != dumps(_record(status="complete", history=None))
+    obj = _dict()
+    obj["status"] = "unknown"
+    with pytest.raises(InvalidFieldError, match="status"):
+        from_dict(obj)
 
 
 def test_dependencies_null_is_not_empty():
@@ -376,6 +390,16 @@ INVALID = [
     ("dependencies[0].source", "index:https://user:pw@pypi.example.org/simple"),
     ("dependencies[0].source", "conda:"),
     ("dependencies[0].source", "File"),
+    ("dependencies[0].source", "url:"),
+    ("dependencies[0].source", "url:pkg-1.0-py3-none-any.whl"),
+    ("dependencies[0].source", "url:file:///wheels/pkg-1.0-py3-none-any.whl"),
+    ("dependencies[0].source", "url:git+https://example.org/x.git"),
+    ("dependencies[0].source", "url:https://user:pw@example.org/x.whl"),
+    ("dependencies[0].source", "url:https://token@example.org/x.whl"),
+    ("dependencies[0].source", "url:https://example.org/x.whl?X-Amz-Signature=abc"),
+    ("dependencies[0].source", "hg+https://user:pw@example.org/x"),
+    ("dependencies[0].source", "cvs+https://example.org/x"),
+    ("status", "unknown"),
     ("seeds", {"python": True}),
     ("dependencies[0].provenance", "VERIFIED"),
     ("dependencies[0].build_sha", "xyz"),
@@ -530,6 +554,13 @@ def test_to_dict_is_the_wire_form_and_spell_value_is_public():
         "index:https://pypi.example.org/simple",
         "git+https://example.org/lab/ferric.git@" + FERRIC_SHA,
         "git+ssh://git@example.org/lab/ferric.git",
+        # Producer finding 5.A: pip's other VCS spellings, and a direct-URL
+        # archive (PEP 610 archive_info), its hash fragment kept.
+        "hg+https://example.org/lab/ferric@" + FERRIC_SHA,
+        "svn+https://example.org/lab/ferric/trunk@1234",
+        "bzr+lp:ferric",
+        "url:https://example.org/wheels/ferric-0.1.0-py3-none-any.whl",
+        "url:https://example.org/ferric-0.1.0.tar.gz#sha256=" + "3" * 64,
         "file",
         "conda",
         "conda:conda-forge",
@@ -863,9 +894,9 @@ def test_published_history_line_schema_agrees_with_the_writer(tmp_path):
 # ---- version dispatch -------------------------------------------------------
 
 
-def test_schema_identifier_and_draft_status():
+def test_schema_identifier_and_frozen_status():
     assert SCHEMA == "attestation.run/1"
-    assert SCHEMA_STATUS == "draft"
+    assert SCHEMA_STATUS == "frozen"
     assert set(READERS) == {SCHEMA}
 
 
@@ -935,6 +966,10 @@ def test_published_json_schema_agrees_with_the_reader():
         ("dependencies[0].source", "'git+https://user:pw@example.org/x.git'"),
         ("dependencies[0].source", "'git+https://token@example.org/x.git'"),
         ("dependencies[0].source", "'index:https://user:pw@pypi.example.org/simple'"),
+        ("dependencies[0].source", "'url:https://user:pw@example.org/x.whl'"),
+        ("dependencies[0].source", "'url:https://token@example.org/x.whl'"),
+        ("dependencies[0].source", "'url:https://example.org/x.whl?X-Amz-Signature=abc'"),
+        ("dependencies[0].source", "'hg+https://user:pw@example.org/x'"),
         ("started_at", "'2026-13-19T10:00:00.000000Z'"),  # well-formed, impossible date
         ("metrics[0].step", "1.0"),  # JSON Schema's integer admits 1.0
     }
@@ -1078,6 +1113,7 @@ def test_wheel_builds_and_carries_the_schema_file(tmp_path):
         metadata = next(zf.read(n) for n in names if n.endswith(".dist-info/METADATA"))
     assert "attestation_schema/schemas/run-1.schema.json" in names
     assert "attestation_schema/schemas/history-1.schema.json" in names
+    assert "attestation_schema/schemas/state-1.schema.json" in names
     assert "attestation_schema/py.typed" in names
     assert not any(n.startswith("attestation/") for n in names)
     assert b"Requires-Dist" not in metadata

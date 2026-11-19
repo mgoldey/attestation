@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mgoldey/attestation/schemas/attestation.run/1",
-  "title": "attestation.run/1 (v1-DRAFT, not frozen)",
-  "description": "Core run record. Necessary, not sufficient: the Python reader in attestation_schema.record is the reference and also enforces duplicate-key refusal, one direction and one unit per metric name, unique names/keys (including one metric per (name, step, split, labels)), finished_at >= started_at, integers within +/-2^53, credential-free repo and source URLs and 'verified' needing an identity to verify and 'unknown' claiming no git_sha/build_sha, in code and in each dependency. The history sidecar (attestation/history.jsonl) is described line by line by history-1.schema.json; the record only references it.",
+  "title": "attestation.run/1 (frozen 2026-11-19)",
+  "description": "Core run record. Necessary, not sufficient: the Python reader in attestation_schema.record is the reference and also enforces duplicate-key refusal, one direction and one unit per metric name, unique names/keys (including one metric per (name, step, split, labels)), finished_at >= started_at, integers within +/-2^53, credential-free repo and source URLs (and no query string in a url: source) and 'verified' needing an identity to verify and 'unknown' claiming no git_sha/build_sha, in code and in each dependency. The history sidecar (attestation/history.jsonl) is described line by line by history-1.schema.json; the record only references it. Frozen: this file never changes; a change to the record is attestation.run/2 with its own schema file.",
   "type": "object",
   "required": [
     "schema",
@@ -46,10 +46,12 @@
       "minLength": 1
     },
     "status": {
+      "description": "null = the producer could not observe how the run ended (an importer of someone else's artifacts); a producer that ran the experiment, or a job backend, always says.",
       "enum": [
         "complete",
         "failed",
-        "cancelled"
+        "cancelled",
+        null
       ]
     },
     "started_at": {
@@ -369,8 +371,8 @@
               "null"
             ],
             "minLength": 1,
-            "pattern": "^(index(:.+)?|git\\+.+|file|conda(:.+)?|system)$",
-            "description": "index[:<name or url>] | git+<url> | file | conda[:<channel>] | system; credentials refused (reader only)."
+            "pattern": "^(index(:.+)?|(git|hg|svn|bzr)\\+.+|url:(?!file:)[a-z][a-z0-9.-]*://.+|file|conda(:.+)?|system)$",
+            "description": "index[:<name or url>] | <git|hg|svn|bzr>+<url> | url:<url> (a direct-URL archive) | file | conda[:<channel>] | system; credentials, and a url: query string, refused (reader only)."
           }
         }
       }

@@ -122,7 +122,7 @@ per adapter:
 |---|---|---|
 | `name` | `run_id` | Already unique within the project (`taken`). |
 | `family` | `family` | Verbatim. `arm`: `null` -- no reader knows one (roadmap 12/16). |
-| `status` `recorded`/`spec` | `status: "complete"` + `ext.ledger-import.status` | See "Status" below. |
+| `status` `recorded`/`spec` | `status: null` (Sacred: `"complete"`) + `ext.ledger-import.status` | See "Status" below. |
 | `started` | `started_at` via `format_timestamp` | Only W&B and Sacred have one; both write naive UTC (`startedAt`, `start_time`), which the adapter declares, so the naive value is read as UTC. Unparseable → `null`. |
 | `config` | `config` | Verbatim; `None` ↔ `{}`. A non-finite float (a CSV cell `nan`) becomes its string, the rule `_coerce` already applies to YAML config. |
 | `metrics` | `metrics` | `direction: null` (never inferred), `unit: null`, `labels: {}`. Duplicates on `(name, step, split)` keep the first -- what `_replace_project`'s insert loop always did. |
@@ -155,7 +155,16 @@ reader caveats ordered by adapter name and deduplicated -- the order it
 emitted before. A run scanned before migration 015 has `caveats_json` NULL
 and shows no caveat until it is re-scanned (`runs.scan` replaces every row).
 
-### Status: a schema finding, not a schema change
+### Status: a schema finding, decided at the v1 freeze
+
+**Decided 2026-11-19 (core spec, Producer findings 5.E):** `status` is
+nullable, `null` meaning the producer could not observe how the run ended.
+The importer now writes `null` for every reader except Sacred's (which keeps
+only runs Sacred marked `COMPLETED`, so it observed completion and writes
+`complete`), and for a `spec` too; the ledger's own word stays in
+`ext.ledger-import.status` and its rows are unchanged. A native record with
+`status: null` is stored as `unknown` with a run caveat. The text below is
+the finding as filed.
 
 The core `status` is terminal-only (`complete`/`failed`/`cancelled`, decision
 5 of the core spec). An importer of legacy artifacts mostly cannot observe a
@@ -224,7 +233,7 @@ index. Options:
 
 1. **Publish first, then depend normally** -- recommended. `attestation-schema`
    goes to PyPI (it is stdlib-only, so this is cheap) and attestation declares
-   `attestation-schema>=0.1.0.dev0`. Every install path works, including
+   `attestation-schema>=0.1.0` (`>=0.1.0.dev0` until the v1 freeze). Every install path works, including
    `pip install attestation` from an index.
 2. **Vendor a copy into attestation's wheel** (hatch `force-include`). Rejected:
    two distributions would own the `attestation_schema` import name and

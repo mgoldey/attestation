@@ -1,4 +1,4 @@
-"""The core run record, `attestation.run/1` (v1-DRAFT, not frozen).
+"""The core run record, `attestation.run/1` (frozen 2026-11-19).
 
 `dumps`/`write` are the only sanctioned way to produce a record: they validate
 with the same rules as reading, then serialize as RFC 8785 JCS, so the same
@@ -11,6 +11,10 @@ refused everywhere except inside `config` and `ext.<namespace>`, which are
 carried verbatim. Curves never live here: `history` is a reference to the
 sidecar `attestation/history.jsonl` (format and reader: `history.py`), bound by
 sha256, and reading a record never opens it.
+
+Frozen: any change to what this module accepts or writes for
+`attestation.run/1` is a new version (`attestation.run/2`, a new READERS
+entry), never an edit -- additive optional fields included (spec, "v1 freeze").
 Spec: docs/superpowers/specs/2026-11-19-core-run-record-design.md.
 """
 
@@ -33,10 +37,15 @@ from attestation_schema.canonical import MAX_SAFE_INTEGER, canonicalize
 KIND = "attestation.run"
 VERSION = 1
 SCHEMA = f"{KIND}/{VERSION}"
-# "draft" until the freeze recorded in the spec; then "frozen". A draft
-# record may stop reading if the draft changes.
-SCHEMA_STATUS = "draft"
+# "frozen" since 2026-11-19 (spec, "v1 freeze"): a record this reader accepts
+# today is accepted by every later reader, and nothing about `attestation.run/1`
+# changes without a version bump.
+SCHEMA_STATUS = "frozen"
 
+# A record's `status` is one of these, or null: the producer could not observe
+# how the run ended (an importer of artifacts someone else wrote). A producer
+# that ran the experiment, or a job backend, always knows (spec, Producer
+# findings 4.1 and its decision).
 STATUSES = ("complete", "failed", "cancelled")
 DIRECTIONS = ("min", "max")
 PROVENANCES = ("verified", "inferred", "unknown")
@@ -48,9 +57,17 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 # fraction sorted `:37.5Z` before `:37Z` (spec, Producer findings 2 and 4).
 _TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
 # `dependencies[].source`: where a dependency was installed from, in a closed,
-# prefixed vocabulary so a reader can filter on it (spec, Producer findings 2).
-SOURCE_KINDS = ("index", "git+", "file", "conda", "system")
-_SOURCE = re.compile(r"index(?::.+)?|git\+.+|file|conda(?::.+)?|system", re.DOTALL)
+# prefixed vocabulary so a reader can filter on it (spec, Producer findings 2
+# and 5): a package index, a VCS checkout (pip's own `<vcs>+<url>` spelling),
+# a direct-URL archive, a local path, conda, or the system.
+SOURCE_KINDS = ("index", "git+", "hg+", "svn+", "bzr+", "url", "file", "conda", "system")
+_SOURCE = re.compile(
+    r"index(?::.+)?|(?:git|hg|svn|bzr)\+.+|url:(?!file:)[a-z][a-z0-9.-]*://.+|file"
+    r"|conda(?::.+)?|system",
+    re.DOTALL,
+)
+# The kinds whose detail follows a `:` (the rest of the value, credential-checked).
+_COLON_KINDS = ("index:", "url:", "conda:")
 # Non-finite metric values have no JSON number; these strings spell them.
 NON_FINITE = {"NaN": math.nan, "Infinity": math.inf, "-Infinity": -math.inf}
 _NAMESPACE = re.compile(r"[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*")
@@ -186,7 +203,7 @@ class RunRecord:
     run_id: str
     family: str | None
     arm: str | None
-    status: str
+    status: str | None
     started_at: str | None
     finished_at: str | None
     producer: Producer
@@ -392,19 +409,25 @@ def _repo(value: Any, path: str) -> str | None:
 
 
 def _source(value: Any, path: str) -> str | None:
-    """`index[:<name or url>]`, `git+<url>`, `file`, `conda[:<channel>]` or
-    `system`; any URL in it free of credentials."""
+    """`index[:<name or url>]`, `<vcs>+<url>` (git, hg, svn, bzr), `url:<url>`
+    (a direct-URL archive; not `file:`, which is `file`), `file`,
+    `conda[:<channel>]` or `system`; any URL in it free of credentials, and a
+    `url:` free of a query string (a signed URL's query IS a credential)."""
     source = _opt_string(value, path)
     if source is None:
         return None
     if not _SOURCE.fullmatch(source):
         raise InvalidFieldError(
             path,
-            f"{source!r} is not index[:<name>], git+<url>, file, conda[:<channel>] or system",
+            f"{source!r} is not index[:<name>], <git|hg|svn|bzr>+<url>, url:<url>, file,"
+            " conda[:<channel>] or system",
         )
-    _no_credentials(
-        source.partition(":")[2] if source[:6] in ("index:", "conda:") else source, path
-    )
+    location = source.partition(":")[2] if source.startswith(_COLON_KINDS) else source
+    _no_credentials(location, path)
+    if source.startswith("url:") and urlsplit(location).query:
+        raise InvalidFieldError(
+            path, "a url: source carries a query string (a signed URL's credential); strip it"
+        )
     return source
 
 
@@ -603,7 +626,7 @@ def _read_v1(obj: dict[str, Any]) -> RunRecord:
         run_id=_string(d["run_id"], "run_id"),
         family=_opt_string(d["family"], "family"),
         arm=_opt_string(d["arm"], "arm"),
-        status=_choice(d["status"], "status", STATUSES),
+        status=_choice(d["status"], "status", STATUSES, nullable=True),
         started_at=_timestamp(d["started_at"], "started_at"),
         finished_at=_timestamp(d["finished_at"], "finished_at"),
         producer=_producer(d["producer"], "producer"),
@@ -680,15 +703,18 @@ def _strict_int(text: str) -> int:
     return value
 
 
-def loads(data: bytes | str) -> RunRecord:
-    """Parse and validate a record. Raises `RecordError` on anything non-conforming."""
+def parse_strict(data: bytes | str) -> Any:
+    """JSON, strictly: a duplicated key, `NaN`/`Infinity`, an integer past
+    +/-2^53 or invalid UTF-8 is an `InvalidFieldError` (the standard library
+    keeps the last duplicate and accepts `NaN`). Shared by every schema-owned
+    file this package reads (the record, `state.json`)."""
     if isinstance(data, bytes):
         try:
             data = data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise InvalidFieldError("", f"not UTF-8: {exc}") from exc
     try:
-        obj = json.loads(
+        return json.loads(
             data,
             object_pairs_hook=_duplicate_free,
             parse_constant=_no_constant,
@@ -697,7 +723,11 @@ def loads(data: bytes | str) -> RunRecord:
         )
     except json.JSONDecodeError as exc:
         raise InvalidFieldError("", f"not JSON: {exc}") from exc
-    return from_dict(obj)
+
+
+def loads(data: bytes | str) -> RunRecord:
+    """Parse and validate a record. Raises `RecordError` on anything non-conforming."""
+    return from_dict(parse_strict(data))
 
 
 def dumps(record: RunRecord) -> bytes:

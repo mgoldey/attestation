@@ -1,8 +1,9 @@
-"""attestation-schema: the core run record (`attestation.run/1`, v1-DRAFT).
+"""attestation-schema: the core run record (`attestation.run/1`, frozen 2026-11-19).
 
 Standard library only, and imports nothing from `attestation`: producers
 depend on this package to write records without depending on the observer.
-Curves live in a sidecar (`history.py`), bound to the record by sha256.
+Curves live in a sidecar (`history.py`), bound to the record by sha256; a
+job's state lives in `state.json` (`state.py`).
 Spec: docs/superpowers/specs/2026-11-19-core-run-record-design.md.
 """
 
@@ -55,11 +56,33 @@ from attestation_schema.record import (
     format_timestamp,
     from_dict,
     loads,
+    parse_strict,
     read,
     record_digest,
     record_path,
     spell_value,
     write,
+)
+from attestation_schema.state import (
+    STATE_SCHEMA,
+    UNKNOWN_CODE,
+    IllegalTransitionError,
+    StateFile,
+    StateFormatError,
+    StateLockUnavailableError,
+    Transition,
+    dumps_state,
+    handle_in,
+    init_state,
+    loads_state,
+    read_state,
+    settle,
+    spec_conflicts,
+    state_from_dict,
+    state_lock,
+    state_path,
+    terminal_record,
+    transition,
 )
 
 __all__ = [
@@ -97,6 +120,26 @@ __all__ = [
     "RecordError",
     "RunRecord",
     "SOURCE_KINDS",
+    "STATE_SCHEMA",
+    "UNKNOWN_CODE",
+    "IllegalTransitionError",
+    "StateFile",
+    "StateFormatError",
+    "StateLockUnavailableError",
+    "Transition",
+    "dumps_state",
+    "handle_in",
+    "init_state",
+    "loads_state",
+    "parse_strict",
+    "read_state",
+    "settle",
+    "spec_conflicts",
+    "state_from_dict",
+    "state_lock",
+    "state_path",
+    "terminal_record",
+    "transition",
     "Series",
     "UnknownFieldError",
     "UnsupportedSchemaError",

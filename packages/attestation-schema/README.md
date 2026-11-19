@@ -2,7 +2,9 @@
 
 The core run record that experiment producers write and
 [attestation](https://github.com/mgoldey/attestation) reads:
-`attestation.run/1`, **v1-DRAFT (not frozen)**. Standard library only.
+`attestation.run/1`, **frozen 2026-11-19**: a record valid today stays valid,
+and any change -- an additive optional field included -- is a new version
+(`attestation.run/2`) that readers dispatch on. Standard library only.
 
 ```python
 from attestation_schema import (
@@ -51,10 +53,20 @@ curves = read_history(run_dir)          # verifies the sha256, then parses
 - `attestation_schema.layout` fixes the run directory (`attestation/run.json`,
   `attestation/state.json`, `attestation/digests.json`,
   `attestation/history.jsonl`, `steps/NN-<name>/`, `logs/`);
-  `attestation_schema.jobs` is the job-backend `Protocol`.
-- `attestation_schema/schemas/run-1.schema.json` (the record) and
-  `history-1.schema.json` (one sidecar line) are JSON Schemas for other
-  languages: necessary, not sufficient — the Python reader is the reference.
+  `attestation_schema.jobs` is the job-backend `Protocol`, and
+  `attestation_schema.state` is what every backend shares: `state.json`
+  (`attestation.state/1`: `read_state`, `init_state`, `transition`), its
+  cross-process lock (`state_lock`, POSIX `flock`; refused on Windows), and
+  `settle` -- end a job exactly once, an existing record deciding, writing
+  `terminal_record` for a job that died without one. A job's record carries
+  its `JobSpec`'s `run_id`, `family`, `arm`, `config` and `ext` verbatim.
+- `attestation_schema/schemas/run-1.schema.json` (the record),
+  `history-1.schema.json` (one sidecar line) and `state-1.schema.json`
+  (`state.json`) are JSON Schemas for other languages: necessary, not
+  sufficient — the Python reader is the reference. They are frozen and
+  pinned by digest.
+- Package version 0.1.0: the formats are frozen; the Python API may still
+  change in a 0.x minor release until the job-state API has a consumer.
 
 Design: `docs/superpowers/specs/2026-11-19-core-run-record-design.md` in the
 attestation repository.

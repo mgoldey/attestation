@@ -1,13 +1,16 @@
 # The core run record, the run directory, and the job-backend interface
 
 **Date:** 2026-11-19
-**Status:** v1-DRAFT, not frozen (roadmap items 1, 2 and 43).
-**Draft means:** records written under `attestation.run/1` before the freeze
-may stop reading if the draft changes, and nothing outside the three
-cooperating repos (attestation, smeltery, ferric) should write one until the
-Status line says "frozen". The freeze is a deliberate edit to this spec and to
-`SCHEMA_STATUS` in `attestation_schema.record`, made once the three producers
-in "Fit check" below exist and have written real records.
+**Status:** v1 FROZEN 2026-11-19 (roadmap items 1, 2, 6 and 43).
+**Frozen means:** `attestation.run/1`, `attestation.history/1`,
+`attestation.state/1` and `attestation.digests/1` never change again. A record
+the reader accepts today is accepted by every later reader, and anything that
+would change what a v1 reader accepts or what the writer emits -- an additive
+optional field included -- is a new version (see "v1 freeze" below for the
+compatibility policy and what each producer changed before it).
+`SCHEMA_STATUS` in `attestation_schema.record` is `"frozen"` and
+`packages/attestation-schema/tests/test_frozen.py` pins the JSON Schema files
+and the writer's bytes by digest.
 **Ships as:** a second distribution, `attestation-schema` (import name
 `attestation_schema`), built from this repository at
 `packages/attestation-schema/`.
@@ -78,7 +81,7 @@ knowledge is. Unknown keys are refused everywhere except inside `config` and
 | `run_id` | non-empty string | The producer's name for the run. **Not required unique**: an MLflow run id names one execution, smeltery's `<digest12>` names an input set, so re-executions share it. Two records with the same `(family, run_id)` are both valid and distinct (told apart by `record_digest`); a reader keeps both, treats them as re-executions of one run, and never silently picks one. |
 | `family` | string, nullable | The comparison group (an MLflow experiment, a smeltery campaign). `null` = the run belongs to no comparison. |
 | `arm` | string, nullable | The variant within the family. |
-| `status` | `"complete"` \| `"failed"` \| `"cancelled"` | Terminal states only: a record is written once, when the run ends. In-flight state lives in `state.json` (below). |
+| `status` | `"complete"` \| `"failed"` \| `"cancelled"`, nullable | Terminal states only: a record is written once, when the run ends. In-flight state lives in `state.json` (below). `null` = the producer could not observe how the run ended -- an importer of artifacts someone else wrote (a results file says a value exists, not that its run finished). A producer that ran the experiment, and a job backend, always know and never write `null` (Producer findings 5.E). |
 | `started_at`, `finished_at` | RFC 3339 UTC `YYYY-MM-DDTHH:MM:SS.ffffffZ`, nullable | `Z` only, no offsets, and **always exactly six fraction digits** (`:37.500000Z`, `:37.000000Z`), so one instant has one spelling *and* timestamps sort as text in time order (smeltery finding 10). `format_timestamp(datetime)` produces it. The same spelling is used for history points' `at`. `finished_at >= started_at` when both are known. |
 | `producer` | `{name, version}` | What wrote this file (`smeltery 0.4.0`, `attestation mlflow-import 0.6.0`). `version` nullable. Not the code that ran — that is `code`. |
 | `code` | `{git_sha, dirty, repo, version, provenance, evidence}` | The experiment code's identity, on the same ladder as a dependency. `git_sha` 40 or 64 lowercase hex, nullable; `dirty` bool, nullable (unknown ≠ clean); `repo` nullable string, refused if it carries `user:password@` credentials; `version` the code's own version, nullable (a non-editable install may have only this; `producer.version` is not it when converting old runs); `provenance` `"verified"` \| `"inferred"` \| `"unknown"`, `verified` requiring `git_sha` or `version`, `unknown` requiring `git_sha: null` (a sha held but not vouched for is `inferred`); `evidence` nullable free text. **Mixed code** (results from more than one commit): `provenance: "unknown"`, `git_sha: null`, `dirty: null`, `version` only if every commit shares it, `evidence` naming each commit and how many result rows it produced (`mixed: <sha> (412 rows), <sha> (88 rows)`) — the dependency rule, applied to the code (smeltery finding 9). |
@@ -87,7 +90,7 @@ knowledge is. Unknown keys are refused everywhere except inside `config` and
 | `metrics` | list of `{name, value, direction, step, split, unit, labels}` | Final values, not curves (curves are in the `history` sidecar). `value` a finite JSON number, or one of the strings `"NaN"`, `"Infinity"`, `"-Infinity"` (read as the Python float; a JSON `true` or any other string is refused); `direction` `"min"` \| `"max"` \| `null` (null = the producer did not say; **never inferred**); `step` int ≥ 0, nullable; `split` string, nullable; `unit` nullable free string (UCUM suggested, e.g. `kcal/mol`); `labels` an object `{string: string}`, `{}` for none — what the value is *about* (an analogue, a model), so a reader groups without parsing names. `(name, step, split, labels)` unique; one `direction` and one `unit` per `name`. **Absence**: a metric that is not in the list was not reported; `"NaN"` means computed and undefined (the SEM of one sample). There is no null value and no boolean value (a flag is not a metric: it belongs in `ext`). |
 | `history` | `{path, sha256, series, points}`, nullable | A **reference** to the logged curves, never the curves: `path` is always `"attestation/history.jsonl"` (the sidecar, below), `sha256` 64 lowercase hex of its bytes, `series` int ≥ 1 and `points` int ≥ `series` its counts, so a reader can size it without opening it. `null` = no curve was recorded. Each series is `(name, split, labels)` with points `{step, value, at}` in logging order (steps may repeat and need not increase — it is a log, not a map; `value` as in `metrics`; `at` nullable). A series need not have a `metrics` entry or vice versa; direction and unit are properties of the metric name, so both live on `metrics` only. Producer findings 3. |
 | `seeds` | object `{name: int \| [int, ...]}`, nullable | Named RNG seeds (`{"python": 0, "numpy": 0}`); a non-empty list is one stage run once per seed, in order (`{"docking": [7]}`). `null` = unknown; `{}` = the producer states no seed was set. |
-| `dependencies` | list of `{name, version, build_sha, dirty, provenance, evidence, source}`, nullable | Identity of what the code ran on. `null` = the producer could not observe the environment; `[]` = it did, and there is nothing to name (the `seeds` convention; Producer findings 3). `provenance` is `"verified"` \| `"inferred"` \| `"unknown"`; `verified` requires `version` or `build_sha`. `evidence` nullable free text naming how the identity was established (`ferric.__build__`, `direct_url.json`). `source` nullable: where it was installed from, in a closed, prefixed vocabulary — `index` or `index:<name or url>` (`index:pypi`), `git+<url>`, `file` (a local path or wheel; the path is machine-specific, so not recorded), `conda` or `conda:<channel>` (`conda:conda-forge`), `system` (the OS or interpreter provided it); any URL in it credential-free, as for `code.repo` (`git+https://token@...` included). `null` = not known (smeltery finding 12). Names unique: one identity per dependency; a run that mixed builds of one dependency records it `unknown` with `build_sha: null` (enforced: `unknown` claims no sha), its `evidence` naming each build (deferred until a reader needs per-scope identities). |
+| `dependencies` | list of `{name, version, build_sha, dirty, provenance, evidence, source}`, nullable | Identity of what the code ran on. **A list is observed, not exhaustive** (Producer findings 5.B): every entry is something the run did run on, and a name's absence says nothing -- never "the run did not use it". `null` = the producer made no observation of the environment; `[]` = it observed and has nothing to name (the `seeds` convention; Producer findings 3). A dependency the producer knows the run used but cannot identify is listed `unknown`. `provenance` is `"verified"` \| `"inferred"` \| `"unknown"`; `verified` requires `version` or `build_sha`. `evidence` nullable free text naming how the identity was established (`ferric.__build__`, `direct_url.json`). `source` nullable: where it was installed from, in a closed, prefixed vocabulary — `index` or `index:<name or url>` (`index:pypi`), `<vcs>+<url>` for `git`, `hg`, `svn`, `bzr` (pip's own spelling), `url:<url>` (a direct-URL archive, PEP 610 `archive_info`: `pip install https://…/x.whl`; never `url:file:`, and no query string), `file` (a local path or wheel; the path is machine-specific, so not recorded), `conda` or `conda:<channel>` (`conda:conda-forge`), `system` (the OS or interpreter provided it); any URL in it credential-free, as for `code.repo` (`git+https://token@...` included). `null` = not known (smeltery finding 12, Producer findings 5.A). Names unique: one identity per dependency; a run that mixed builds of one dependency records it `unknown` with `build_sha: null` (enforced: `unknown` claims no sha), its `evidence` naming each build (deferred until a reader needs per-scope identities). |
 | `ext` | object `{namespace: object}` | Producer extensions. Namespace `^[a-z][a-z0-9_-]*(\.[a-z0-9_-]+)*$`; `attestation` and `attestation.*` reserved for this schema. |
 
 Lists keep the producer's order (the writer never sorts them: order can mean
@@ -265,17 +268,28 @@ digest is compared.
   point) for other languages; ordering, ids, the final newline and the digest
   are the Python reader's.
 
-**`state.json`** (`"schema": "attestation.state/1"`, backend-owned):
+**`state.json`** (`"schema": "attestation.state/1"`, backend-owned; owned
+by `attestation_schema.state`, JSON Schema `schemas/state-1.schema.json`):
 `{"schema", "run_id", "backend", "job_id", "state", "updated_at", "message",
-"history": [{"state", "at"}]}`. `state` is a `JobState`; `history` is
-append-only and every adjacent pair is an allowed transition. `state.json` is
-kept after the run ends — the history is the only record of queueing time.
+"history": [{"state", "at"}]}`, exactly these keys, JCS with no trailing
+newline, replaced atomically (temporary file, fsync, `os.replace`). `state` is
+a `JobState`; `message` a string or `null` (why the job ended as it did);
+`history` starts at `submitted`, is append-only, every adjacent pair is an
+allowed transition, its times never go backwards (a lagging clock is clamped
+to the last entry) and its last entry is `state` at `updated_at`. `read_state`
+refuses a file that breaks any of this (`StateFormatError`) rather than
+guess. `state.json` is kept after the run ends — the history is the only
+record of queueing time. The format is the one smeltery's backends wrote
+before it moved here; two files smeltery wrote are the package's fixtures and
+re-serialize byte for byte (Producer findings 5.D).
 
-## The job backend: interface only
+## The job backend: the interface, and what every backend shares
 
 `attestation_schema.jobs` defines the contract a runner (local process,
-Slurm, a cloud batch queue) implements; this spec ships **no**
-implementation.
+Slurm, a cloud batch queue) implements; this spec ships **no** backend. What
+every backend needs identically -- `state.json`, its lock, `settle` and the
+minimal terminal record -- is `attestation_schema.state` (Producer findings
+5.D), so the rules below are code, not prose each backend re-implements.
 
 ```
             ┌──────────► cancelled ◄──────────┐
@@ -301,23 +315,51 @@ class JobBackend(Protocol):
 ```
 
 - `JobSpec(run_id, family, arm, config, run_dir, ext)` — what to run and
-  where; `config` and `ext` mean what they mean in the record. How a backend
-  turns a spec into work is its own business (a smeltery backend reads
-  `config`); the interface does not model commands.
+  where. How a backend turns a spec into work is its own business (a
+  smeltery backend reads `config`); the interface does not model commands.
+- **The spec reaches the record verbatim** (Producer findings 5.C). The
+  submitter owns `run_id`: the handle, `state.json` and the job's `run.json`
+  all carry `JobSpec.run_id`, whoever writes the record. The record carries
+  the spec's `family`, `arm` and `config` as those fields **in every terminal
+  state** (what the run was given -- the one configuration that exists
+  whether or not it finished; what a producer derives from it goes in
+  `ext.<producer>`), and every namespace of the spec's `ext` unchanged. A
+  backend that cannot hand these to its producer refuses the spec at
+  `submit`. `state.spec_conflicts(spec, record)` checks all of it.
 - `submit` writes `state.json` (`submitted`) before returning and raises
   `JobExistsError` if `run_dir` already holds a `state.json` or `run.json` —
-  resubmission is a new `run_id`, never an overwrite.
+  resubmission is a new run directory, never an overwrite. It may reuse a
+  `run_id` (re-executions share one; see the `run_id` row).
 - `status` returns `JobStatus(state, updated_at, message)` from the backend's
   view, which `state.json` mirrors.
 - `cancel` is idempotent: on a terminal job it returns the unchanged status
   rather than raising, because a cancel that races completion is normal.
 - `result` returns the core record for a terminal job and raises
   `JobNotTerminalError` otherwise. **Every terminal job has a record**: a
-  backend whose job died without writing one writes a `failed` record itself
-  (it knows `run_id`, `family`, `arm`, `config` and the times), so the scanner
-  never has to infer failure from absence.
+  backend whose job died without writing one writes a `failed` (or
+  `cancelled`) record itself (it knows `run_id`, `family`, `arm`, `config`
+  and the times), so the scanner never has to infer failure from absence.
+- **Settling** is `attestation_schema.state.settle`, under `state_lock`: end
+  exactly once (a terminal job is returned unchanged); a record already in
+  the run directory decides the terminal state (a cancel that races
+  completion ends `complete`); a record that is not the job's, or cannot be
+  read, or has `status: null`, ends the job `failed` with `message` saying
+  why; no record: `complete` becomes `failed` and the backend writes
+  `state.terminal_record` (no metrics; `history`, `seeds`, `dependencies`
+  null; the backend's `producer`, `code` -- `state.UNKNOWN_CODE` by default --
+  and `ext` namespaces), the record before the state.
+- **`state.json` may lag; `run.json` is authoritative.** A backend that
+  learns of the end only when it looks (a Temporal workflow writes no
+  `state.json`) settles then: `status`, `cancel` and `result` settle a job
+  found to have ended before returning. When the backend knows the real end
+  time it passes `ended_at` (and `started_at`); otherwise the terminal entry's
+  `at` and the record's `finished_at` are the time of the look.
+- **The lock is POSIX `flock`** on `attestation/`. On Windows there is no
+  `flock`; `state_lock` raises `StateLockUnavailableError` and no state is
+  written (reading needs no lock). A Windows backend is out of scope for v1;
+  adding one is a new lock implementation, not a format change.
 
-## Fit check (walked through, not built — producers are roadmap 3-5)
+## Fit check (walked through before the producers were built; superseded by "Producer findings")
 
 **An MLflow sweep** — **built** (roadmap 3, 2026-11-19); "Producer
 findings" below supersedes the walk-through that stood here. The real sweep
@@ -356,10 +398,11 @@ identity field `null`.
 
 Each finding is what a real producer needed, what changed in the schema
 (`record.py`, `run-1.schema.json`, this spec and the package tests change
-together), and why. The rule while the draft is open: **a field a producer can
-only fill with a workaround is a schema bug**, fixed before the producer moves
-on. Changes here break draft records written earlier; that is what draft
-means.
+together), and why. The rule while the draft was open: **a field a producer
+can only fill with a workaround is a schema bug**, fixed before the producer
+moves on. Changes here broke draft records written earlier; that is what draft
+meant. Since the v1 freeze the same rule holds, but the fix is a new version
+(see "v1 freeze").
 
 ### 1. MLflow (roadmap 3, 2026-11-19)
 
@@ -682,9 +725,8 @@ into the schema:
    value for either, so the importer writes `"complete"` and carries the
    ledger's own word (`recorded` / `spec`) in `ext.ledger-import.status` --
    a workaround by this section's rule, made acceptable for now only because
-   these records are never written to disk. **Open for the user** (it touches
-   decision 5): a status meaning "the producer cannot observe the outcome",
-   or keeping specs out of the core record (dropping them from the ledger).
+   these records are never written to disk. **Decided at the freeze**
+   (5.E below): `status` is nullable, and the importer writes `null`.
 2. **Reader caveats are carried in `ext`, not a core field.** Each importer
    states what its format cannot say (final value, not curve) in
    `ext.ledger-import.caveats`, and per-run problems (a DVC output whose md5
@@ -699,26 +741,221 @@ The MLflow adapter ports the old metric-file reader as-is rather than reusing
 `MlflowClient`, which would make mlflow a runtime dependency of the ledger,
 and adopting its richer mapping (curves, datasets, code) is roadmap 12.
 
+### 5. The last findings, decided at the freeze (roadmap 6, 2026-11-19)
+
+Open against `f809522` (smeltery's `docs/core-record.md`, "Open findings"
+and "Job-backend schema findings") and from the ledger (4.1 above). Each was
+decided before the freeze, because after it every answer costs a version.
+
+**A. `dependencies[].source` for a direct-URL archive or a non-git VCS --
+schema change.** `pip install https://host/x-1.0-py3-none-any.whl` leaves a
+PEP 610 `direct_url.json` with `archive_info`: not an index (`index:<url>`
+would claim one), not `file` (a local path), not `git+`. smeltery wrote
+`null`, and the URL was then recorded nowhere. Two additions to the closed
+vocabulary, not one:
+- `url:<url>`, as proposed, for a direct-URL archive. Credentials refused as
+  for `index:`; also refused: `url:file:` (a local file is `file`, whose path
+  names a machine) and **any query string**, because a signed archive URL
+  (S3, GCS, a CI artifact link) carries its credential in the query, which
+  the userinfo check cannot see. A `#sha256=` fragment is kept: it is pip's
+  own hash of the archive.
+- `hg+<url>`, `svn+<url>`, `bzr+<url>` beside `git+<url>`, rather than
+  `url:hg+https://...` as the proposal suggested: PEP 610's `vcs_info.vcs` is
+  exactly `git|hg|svn|bzr`, `<vcs>+<url>` is pip's own requirement spelling,
+  and a reader filtering on "installed from version control" filters on the
+  part before `+` -- folding VCS into `url:` would make a VCS install
+  indistinguishable from an archive. smeltery's `record.package_identity`
+  labels every VCS install git today; it now has a kind for each.
+`SOURCE_KINDS` and the JSON Schema pattern change together. No record written
+before is refused (the vocabulary only widens).
+
+**B. A `dependencies` list cannot say it is partial -- spec text, no
+field.** Chosen: a list is *observed, not exhaustive* -- every entry is a
+dependency the run did run on, and a name's absence says nothing. Rejected:
+`dependencies_complete: bool`. Completeness is unattainable for any real run
+(transitive packages, native libraries under numpy, the interpreter's own
+modules), so `true` would be false whenever written, unverifiable by a
+reader, and `false` would be the constant every honest producer writes -- a
+field whose only honest value carries no information. The question a reader
+actually asks is "do I know which X this run used?", which a lower bound
+answers for every listed X and correctly leaves unanswered for the rest. And
+a required key would have broken every record at the freeze. What this
+changes: `null` vs `[]` keeps its meaning (no observation vs observed and
+nothing to name), and the MLflow argument for `null` still holds without
+exhaustiveness -- the exporter observed nothing, so it has no entry to make
+(an entry is an observation, which `[mlflow (unknown)]` was not). smeltery's
+converted records (ferric, Python, tier-recorded versions; core imports it
+knows of as `unknown`; optional imports left out) are correct as written.
+
+**C. Job backend vs record -- interface text and `state.spec_conflicts`.**
+1. *Who owns `run_id`.* The submitter: `JobSpec.run_id` names the run in the
+   handle, `state.json` and `run.json`, whoever writes the record; `settle`
+   fails a job whose record names another. Rejected: letting the producer's
+   own id win (smeltery's input digest) -- a run directory would then carry
+   two names, and a failed attempt (backend-written, the job's id) could not
+   be grouped with its successful re-execution (producer-written, the
+   digest). A producer that wants its own identity as the run_id makes it
+   the default at submit (smeltery can build the plan at submit and default
+   `run_id` to `input_digest[:12]`, which keeps re-executions sharing a
+   run_id); otherwise it goes in `ext.<producer>`. Rejected too: carrying
+   both ids as core fields -- the job's id is already in `state.json`, which
+   is kept.
+2. *What `config` means for a run that never finished.* The same as for one
+   that did: `JobSpec.config`, what the run was given, in every terminal
+   state. It is the only configuration that exists in every outcome, so a
+   reader comparing `config` across a family compares like with like.
+   smeltery's `inputs` (derived from the config once the plan is built) go in
+   `ext.smeltery`; `input_digest` already does. Outside jobs the general rule
+   is unchanged (`config` = the run's configuration, verbatim); a producer
+   should use the same form with and without a job.
+3. *`JobSpec.ext` into a producer-written record.* The contract carries it:
+   every spec `ext` namespace appears unchanged in the job's record, and a
+   backend that cannot hand it (and `family`/`arm`) to its producer refuses
+   the spec at `submit` -- which smeltery's `check_spec` already does.
+   `JobSpec.ext` stays: dropping it is a breaking API change, and a backend
+   wrapping a producer it controls can honour it. How a backend hands the
+   spec over is its own business (argv, environment, its job store); no file
+   is added to `attestation/`.
+4. *(smeltery's fourth: Temporal does not push settle.)* Interface text:
+   `state.json` may lag, `run.json` is authoritative, every `status`/
+   `cancel`/`result` settles a job found to have ended, and `settle` takes
+   the scheduler's `started_at`/`ended_at` when it has them.
+
+**D. `state.json`, its lock, `settle` and `terminal_record` move into
+`attestation_schema.state`** (stdlib only, Python 3.11), with
+`schemas/state-1.schema.json` and `tests/test_state.py`. Ported from
+`smeltery.jobs` at smeltery `2e21918`; the format is unchanged, evidenced by
+two `state.json` files written by smeltery's own code (`tests/data/
+smeltery-*.state.json`) that read and re-serialize byte for byte. The lock is
+the same `flock` on the `attestation/` directory, so a backend on smeltery's
+copy and one on this package exclude each other during a migration (the test
+holds the lock in one process and checks a second `flock` is refused).
+Differences from smeltery's copy, each deliberate:
+- `read_state` returns a frozen `StateFile` (with `.status`, `.started_at`,
+  `.handle()`), not a dict, as `read` returns a `RunRecord`; it also checks
+  what smeltery's writer guaranteed but its reader did not (times never go
+  backwards, the last entry is `state` at `updated_at`) and parses strictly
+  (duplicate keys refused) -- no file smeltery's code writes is refused.
+- `transition` refuses a terminal state: ending a job is `settle`'s, which
+  also guarantees the record.
+- `settle` takes `producer`, `code` (default `UNKNOWN_CODE`) and `ext` for the
+  terminal record instead of smeltery's `observer` flag (the schema cannot
+  know a producer's code); `started` is `started_at`, and `ended_at` is new
+  (C.4); the terminal entry and the record's `finished_at` share one instant.
+  It also checks the record against the spec (C) and fails a record with
+  `status: null`. A manifest refused for a symlink costs the manifest (`data:
+  []`), and the reason is in `message` -- smeltery wrote it to
+  `ext.smeltery.job.manifest_refused`, which the schema cannot own.
+- The job's message stays in `state.json`, not in a schema-owned `ext`
+  namespace: `ext.attestation.*` is refused by every v1 reader, and the kept
+  `state.json` already holds it.
+- **Windows:** no `flock`, so `state_lock` raises `StateLockUnavailableError`
+  and nothing is written. Rejected: an `msvcrt.locking` lock file -- it would
+  add a file to `attestation/`, and nothing here can run it on Windows; a
+  lock nobody has run is worse than a refusal. Adding one later changes no
+  format.
+
+**E. Status for artifacts that cannot show how their run ended -- schema
+change: `status` is nullable.** Rejected: an `unknown` string. Every other
+"the producer could not say" in this record is `null` (`dirty`,
+`direction`, `seeds`, `dependencies`, a data `sha256`), and `unknown` already
+means something else here (a provenance rung: "identity not established").
+Rejected: keeping such artifacts out of the core record -- that would drop
+every W&B, DVC, Hydra, MLflow-file and results-file run from the ledger,
+which reads only core records. **The ledger's `spec`** (a config with no
+results) maps to `null` too, not to its own exclusion: "it never ran" is an
+inference from the absence of results, which is the inference this schema
+refuses everywhere; what the importer observed is a configured run whose
+outcome it cannot see and which reported no values (`metrics: []`). Decision
+5 still holds for producers: a record is written once, at the end, and a
+producer that ran the experiment or a job backend always knows the outcome
+and never writes `null` (`settle` fails a job whose record does). The ledger
+importer writes `null` for every reader except Sacred's, which keeps only
+runs Sacred marked `COMPLETED` and therefore writes `complete`; the ledger's
+word (`recorded`/`spec`) stays in `ext.ledger-import.status` and its rows are
+unchanged. A native record with `status: null` is stored as `unknown` with a
+run caveat. The widening refuses no record written before.
+
+## v1 freeze (roadmap 6, 2026-11-19)
+
+The criteria (Open decision 1) were met: MLflow (`examples/mlflow-records`),
+smeltery (golden record `tests/data/core_record/benzoic-rhf.run.json`, pinned
+at `f809522`, plus its two job backends) and the ferric build identity (a
+`verified` dependency in that record, from `ferric.__build__`) have each
+written real records the reader accepts, and the ledger imports them
+(`tests/test_core_adapter.py`). The last open findings were decided (Producer
+findings 5) and `SCHEMA_STATUS` became `"frozen"`.
+
+### What each producer changed, and when
+
+All on 2026-11-19; the commit is the one that carried the change.
+
+| Producer | Commit | What it changed in the schema |
+|---|---|---|
+| (initial draft) | `d11b928` | The record, writer, reader, layout, job interface. |
+| MLflow (roadmap 3) | `040c451` | `history` (curves; later a sidecar); non-finite metric values spelled `"NaN"`/`"Infinity"`/`"-Infinity"`; `data[].sha256` nullable; one spelling per timestamp. Also needed `code.provenance` (with smeltery 1). |
+| smeltery round 1 (roadmap 4) | `040c451`, `314e4ff` | `code.provenance`/`evidence`/`version`; `metrics[].unit` and `labels` (and history labels); seed lists; `dependencies[].source`; `run_id` not unique (text); `steps/`/`logs/` optional (text); JCS number note (text); Python floor 3.11 (`314e4ff`). Rejected `config_digest`; deferred per-scope dependency identities. |
+| smeltery round 2 | `f809522` | Mixed code is `unknown` with no `git_sha`, and `unknown` with any sha is refused; timestamps always six fraction digits; `to_dict` is the wire form and `spell_value` public; `source` a closed vocabulary. (Same commit, user-directed: `history` became a digest-bound sidecar reference; `dependencies` nullable.) |
+| ledger (roadmap 11) | `5325344` | No schema change; filed finding 4.1 (status not observable) and 4.2 (caveats in `ext`, kept). |
+| smeltery job backends + freeze (roadmap 6) | this commit | `source` gains `url:<url>` and `hg+`/`svn+`/`bzr+` (5.A); a dependency list is a lower bound (5.B, text); the job/record contract (5.C); `attestation.state/1` reader, writer, lock, `settle` and `terminal_record` in `attestation_schema.state` with `state-1.schema.json` (5.D); `status` nullable, the ledger importer writes `null` (5.E). |
+
+### Compatibility policy (from now on)
+
+- **Readers dispatch on `schema`.** `from_dict` splits `<kind>/<version>`
+  and calls `READERS[schema]`; an unknown version is an
+  `UnsupportedSchemaError` naming the versions the reader knows. The same
+  holds for `attestation.history/N`, `attestation.state/N` and
+  `attestation.digests/N`.
+- **Nothing about a frozen version changes.** Not the fields, not what the
+  reader accepts or refuses, not the bytes `dumps` writes for a given record
+  (a record's digest is its identity). The JSON Schema files are pinned by
+  sha256 and so is the writer's output for a reference record and state
+  (`tests/test_frozen.py`, whose failure message states this policy). A
+  digest there is never updated to make the test pass.
+- **Additive optional fields still need a version bump.** A v1 reader refuses
+  unknown keys (that is how absent-vs-null stays impossible), so a record
+  carrying a new key -- however optional -- is unreadable by every deployed
+  v1 reader. "Additive" is not "compatible" here. Relaxing a rule is also a
+  change (a v2 record a v1 writer could not have written must say v2).
+  `ext.<namespace>` is the only place new data goes without a version.
+- **A v2 reader still reads v1.** `READERS` keeps `_read_v1`, which gains an
+  upgrade step returning the v2 model with v1 meaning preserved: a field v2
+  adds is `null` ("a v1 producer could not say"), never a guessed default.
+  The record's `schema` stays the version it was written in. Every frozen
+  version stays readable for as long as the package exists; dropping one is
+  itself a breaking package release.
+- **Writers write only the newest version**, so a package release that
+  writes v2 is a breaking release for producers (major version bump of the
+  package once it is past 0.x).
+- **The package version is not the format version.** `attestation-schema`
+  goes to **0.1.0** now, not 1.0.0: the formats are frozen and that promise
+  is carried by the `schema` strings and the digest pins, but the Python API
+  added here (`attestation_schema.state`) has no consumer yet, and a 1.0
+  promise about an API nobody has called would be a claim measured on a
+  fixture. 1.0.0 follows when smeltery runs its job backends on it. Until
+  then a 0.x minor release may change Python API (never a frozen format).
+
 ## Open decisions (for the user)
 
-1. **Freeze criteria.** Proposed: freeze `attestation.run/1` when the three
-   producers above have each written real records that the reader accepts and
-   the ledger has imported. Until then the identifier stays `attestation.run/1`
-   (not `1-draft`), on the grounds that a renamed identifier would itself be a
-   breaking change at freeze time; the cost is that pre-freeze records may
-   become unreadable.
-2. **Publishing the schema package.** Since roadmap 11 (2026-11-19)
-   `attestation-schema` is a runtime dependency of attestation, resolved from
-   the workspace; attestation's wheel says `Requires-Dist:
-   attestation-schema`, so it installs from an index only once the schema
-   package is published there. Recommended: publish it before the next
-   attestation release (`2026-11-19-ledger-reads-core-records-design.md`,
-   "Dependency").
+1. **Freeze criteria.** Met and applied 2026-11-19 ("v1 freeze"). The
+   identifier stayed `attestation.run/1` throughout, so drafts written before
+   a draft change could stop reading; every committed record was regenerated
+   at each change, and smeltery re-pins to the frozen commit.
+2. **Publishing the schema package -- still open.** Since roadmap 11
+   (2026-11-19) `attestation-schema` is a runtime dependency of attestation,
+   resolved from the workspace; attestation's wheel says `Requires-Dist:
+   attestation-schema>=0.1.0`, so it installs from an index only once the
+   schema package is published there. Recommended: publish it before the
+   next attestation release (`2026-11-19-ledger-reads-core-records-design.md`,
+   "Dependency"). Nothing has been published.
 3. **Required-and-nullable vs optional keys.** Chosen: every key required.
    It makes hand-written records verbose; it makes absent-vs-null impossible.
 4. **`producer`** was added beyond the roadmap's field list: without it a bad
    record cannot be traced to the code that wrote it.
 5. **Terminal-only `status`.** A record is never written for a run in flight.
+   Amended at the freeze (5.E): `status` may be `null` when the producer
+   could not observe the outcome (importers); never in flight, and never from
+   a producer that ran the experiment or a job backend.
 
 ## Testing
 
@@ -743,7 +980,19 @@ refused with the known list, a registered reader is used); writer determinism
 (same record twice, key order of the input irrelevant, JCS parity with
 `attestation.run_record.canonical`); the JSON Schema file agrees with the
 reader on every valid and invalid case; layout and manifest; job state
-machine. The wheel builds with `uv build --package attestation-schema` in CI's
+machine; `null` status; the `url:` and VCS `source` kinds and their refusals.
+`tests/test_state.py`: `attestation.state/1` -- two `state.json` files written
+by smeltery's own code read and re-serialize byte for byte; every malformed
+case refused with its path, and the JSON Schema file agrees where it can
+express the rule; illegal transitions write nothing; clock clamping; `settle`
+exactly once, an existing record deciding, a record that is not the job's
+(run_id, family, config, ext, null status) or unreadable ending the job
+failed, the terminal record's contents, a symlink costing only the manifest;
+the lock is `flock` on `attestation/` (a second process's `flock` is refused
+while it is held); eight processes settling at once leave one terminal entry
+and a record that agrees; no `flock` (Windows) refuses writes, reads work.
+`tests/test_frozen.py`: the frozen JSON Schema files and the writer's bytes
+for a reference record and state, pinned by sha256. The wheel builds with `uv build --package attestation-schema` in CI's
 wheel smoke job, which installs it into a clean venv and reads a record.
 `tests/test_boundaries.py`: the import rules, with detector self-tests.
 `tests/test_mlflow_records.py`: the MLflow producer (Producer findings, 1) —

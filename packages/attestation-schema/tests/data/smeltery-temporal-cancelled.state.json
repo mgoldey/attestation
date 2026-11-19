@@ -1,0 +1,1 @@
+{"backend":"temporal","history":[{"at":"2026-11-19T16:15:49.855629Z","state":"submitted"},{"at":"2026-11-19T16:15:49.873935Z","state":"cancelled"}],"job_id":"wf-1","message":"the workflow was terminated","run_id":"aa","schema":"attestation.state/1","state":"cancelled","updated_at":"2026-11-19T16:15:49.873935Z"}
