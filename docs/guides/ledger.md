@@ -153,6 +153,53 @@ sample size, when the top two are within 5%, or when arms sit at different
 training steps. A healthy comparison emits no caveats — a tool that always warns
 trains you to ignore it.
 
+## Preregistering a hypothesis
+
+The one thing a reviewer cannot reconstruct afterwards is what you predicted
+before the runs existed. `attest prereg add` writes the prediction down and
+signs it with the same key as a run record:
+
+```bash
+attest prereg add kdsweep --metric wer --expect "kdsweep_t4 < kdsweep_baseline" \
+  --by 0.005 --note "distillation at T=4 beats the baseline"
+attest prereg check            # exit 1 on refuted, or on altered text
+attest prereg list             # the registrations, no database needed
+```
+
+`--expect` orders arms by the metric's raw values (`a < b`: a's value is
+lower), chains allowed (`a < b < c`); `--by` is the minimum gap per pair, in
+the metric's units. The metric needs a declared direction or `add` refuses
+with the sentence `runs compare` prints. Files go to `--root`, else
+`RESEARCH_ROOT`, else the current directory: `hypotheses.toml` (the index you
+commit and diff) and `prereg/` (the canonical text, whose sha256 is the id,
+and its signed record — `attest record verify prereg/<id>.json` checks it).
+An edit is a new registration: `--supersedes <id>` keeps the old one and
+flags it `superseded`.
+
+`check` re-runs `runs compare` on each hypothesis's own metric and reports
+`confirmed`, `refuted`, `inconclusive` or `untested`. With replicated arms
+(`ci_low`/`ci_high` present) it compares intervals; with single runs, point
+values decide only if you registered with `--allow-single-run`. An arm that
+is missing is `untested`, never `refuted`, and naming one seed of a replicated
+arm is `inconclusive`. Flags sit beside the verdict: `post_hoc` (registered
+after a named arm's artifact was last written), `altered` (anything no longer
+matches what was signed — the verdict is computed from the signed text).
+
+What it proves, and what it cannot, is printed with every result:
+
+- **proved** — this key signed exactly this text, and it has not changed;
+- **evidence only** — `registered_at` is this machine's clock and `post_hoc`
+  compares it with this disk's mtimes; `post_hoc` unset proves nothing;
+- **cannot check** — that the prediction came before anyone saw the data, that
+  no registration was deleted along with its record, or who holds the key
+  unless you pin it. Commit `prereg/` somewhere you do not control to make
+  deletion and backdating visible.
+
+`runs.compare` carries the same verdicts as a `hypotheses` block (with
+`prereg_limits`) when the family has registrations under `RESEARCH_ROOT`;
+registering stays a CLI act. Design:
+`docs/superpowers/specs/2026-11-19-preregistration-design.md`.
+
 ## Browsing the ledger
 
 ```bash

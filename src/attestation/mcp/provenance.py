@@ -14,7 +14,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from attestation import ledger, record
+from attestation import ledger, prereg, record
 from attestation.mcp._shared import MAX_LIST_LIMIT, Limit, Verdict
 from attestation.mcp._tool import ToolError, open_db, tool
 
@@ -171,6 +171,9 @@ def register(mcp) -> None:
         A family name is unique per project, not globally. If the same name exists
         in two projects this refuses and names them: arms from different projects
         are not comparable, and picking one silently would be a guess.
+
+        When the family has hypotheses preregistered with `attest prereg add`, a
+        `hypotheses` list gives each verdict and flags, and `prereg_limits` says what that proves.
 
         """
         return _compare(family, metric, project)
@@ -597,7 +600,9 @@ def _compare(conn, family: str, metric: str | None = None, project: str | None =
         raise ToolError(result.get("message") or f"no runs in family {family!r}")
     arms = result["arms"]
     total_arms = len(arms)
-    result = {**result, "arms": arms[:MAX_ARMS_SHOWN], "n_arms": total_arms}
+    # Judged on every arm, before the cap; {} when the family has no registrations.
+    hypotheses = prereg.attach(result, ledger.workspace_root())
+    result = {**result, "arms": arms[:MAX_ARMS_SHOWN], "n_arms": total_arms, **hypotheses}
     message = f"{total_arms} arm(s)"
     if total_arms > MAX_ARMS_SHOWN:
         message += f"; showing the {MAX_ARMS_SHOWN} best"

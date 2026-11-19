@@ -154,6 +154,10 @@ HELP: dict[str, str] = {
     "desk.build": "render the page for a persona to a file (imports pending verdicts first)",
     "desk.import": "record the page's pending verdicts as clicks",
     "desk.refresh": "import, build and publish as configured in .env; no-op when unconfigured",
+    "prereg": "preregister a prediction about a family's arms; judge it once the runs exist",
+    "prereg.add": "sign a hypothesis (family, metric, predicted ordering, margin) before the runs",
+    "prereg.check": "judge registered hypotheses against the ledger; exit 1 on refuted/altered",
+    "prereg.list": "registered hypotheses and anything changed since they were signed",
     "record": "signed run records: what a run read, checked and concluded",
     "record.create": "sign a run record from a JSON spec (for tools outside attest)",
     "record.verify": "check a run record's signature and the files it names",
@@ -489,6 +493,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_persona_merge)
 
     _add_record_parser(sub)
+
+    from attestation import cli_prereg  # lazy, like cli_bib
+
+    cli_prereg.register(sub, add_db)
 
     sp = sub.add_parser("install", help=HELP["install"])
     sp.add_argument("--check", action="store_true", help="detect only, change nothing")
