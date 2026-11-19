@@ -319,6 +319,13 @@ def _by_base(
     return loose, buckets
 
 
+def _clash(base: str, members: list[dict], taken: set[str]) -> str | None:
+    """`base` when a run OTHER than these members already holds that name. A
+    member may itself be named like its arm (a native record whose run_id is
+    the arm), which is no clash."""
+    return base if base in taken - {m["name"] for m in members} else None
+
+
 def group(
     arms: list[dict],
     configs: dict[str, object],
@@ -349,10 +356,7 @@ def group(
             # no new keys, exactly what it was before this module.
             out.extend(members)
             continue
-        # A member may itself be named like its arm (a native record whose
-        # run_id is the arm): only ANOTHER run holding the name clashes.
-        clash = base if base in taken - {m["name"] for m in members} else None
-        reason = _veto(members, [seed for _, seed in pairs], decoded, clash)
+        reason = _veto(members, [seed for _, seed in pairs], decoded, _clash(base, members, taken))
         if reason is None:
             out.append(_merge(base, members))
         else:
