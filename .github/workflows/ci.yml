@@ -239,3 +239,45 @@ jobs:
         with:
           name: docs-site
           path: site/
+
+  schema-integrations:
+    # The training-loop callbacks (attestation_schema.integrations) on real,
+    # tiny CPU training runs, against the installed wheel with its [hf] and
+    # [lightning] extras, on the package's 3.11 floor. A job of its own, not
+    # part of the bare 3.11 job, whose evidence is that the package works with
+    # NOTHING installed (the framework tests skip there, which is itself the check
+    # that the core never imports a framework). Not in gates either: torch
+    # from PyPI pulls ~2.5 GB of CUDA wheels into each of four matrix cells.
+    # Spec: docs/superpowers/specs/2026-11-19-training-callbacks-design.md.
+    name: attestation-schema training callbacks (py3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the attestation-schema wheel
+        run: uv build --package attestation-schema --wheel --out-dir dist-schema
+
+      - name: Install the wheel with its extras (CPU torch)
+        run: |
+          uv venv --python 3.11 /tmp/schema-int
+          # torch first, from PyTorch's CPU index (no CUDA wheels); the
+          # extras then find it satisfied.
+          uv pip install --python /tmp/schema-int/bin/python torch \
+            --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --python /tmp/schema-int/bin/python \
+            "$(ls dist-schema/*.whl)[hf,lightning,conformance]"
+
+      - name: Callback tests on real training runs (a skip is a failure here)
+        env:
+          ATTESTATION_REQUIRE_INTEGRATIONS: "1"
+        run: |
+          cd packages/attestation-schema
+          /tmp/schema-int/bin/python -c "import sys; assert sys.version_info[:2] == (3, 11), sys.version"
+          /tmp/schema-int/bin/python -m pytest -q -rs -p no:cacheprovider -c /dev/null --rootdir . \
+            tests/test_integrations_core.py tests/test_integrations_hf.py \
+            tests/test_integrations_lightning.py

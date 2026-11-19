@@ -34,8 +34,16 @@ dependencies = []
 # plugin is opt-in (`-p attestation_schema.pytest_plugin`), so a suite that
 # merely has this package installed is unchanged. See
 # docs/superpowers/specs/2026-11-19-conformance-suite-design.md.
+#
+# The training-loop callbacks (`attestation_schema.integrations`) follow the
+# same rule: each framework is an extra, imported only by its own module
+# (`integrations/huggingface.py`, `integrations/lightning.py`), never by
+# `import attestation_schema`. See
+# docs/superpowers/specs/2026-11-19-training-callbacks-design.md.
 [project.optional-dependencies]
 conformance = ["pytest>=7.2"]
+hf = ["transformers>=4.41", "torch>=2.1", "accelerate>=0.26"]
+lightning = ["lightning>=2.1"]
 
 [project.urls]
 Repository = "https://github.com/mgoldey/attestation"

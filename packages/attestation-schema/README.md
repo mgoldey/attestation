@@ -172,6 +172,64 @@ directories wherever they accept run directories (`check_dir`,
 `check_dataset_dir`). `attest runs lineage RUN --search DIR` prints the
 chain. Design: `docs/superpowers/specs/2026-11-19-dataset-records-design.md`.
 
+## Training callbacks (Hugging Face Trainer, PyTorch Lightning)
+
+Optional, behind extras; `import attestation_schema` imports no framework.
+
+```
+pip install "attestation-schema[hf]"          # transformers, torch, accelerate
+pip install "attestation-schema[lightning]"   # lightning
+```
+
+```python
+from attestation_schema.integrations.huggingface import AttestationCallback
+
+# `with`: HF calls no hook when train() raises, so the context manager is
+# what writes a `failed` (Ctrl-C: `cancelled`) record on the way out.
+with AttestationCallback(datasets=[("datasets/toy/1", "scaffold")], family="lr-sweep") as cb:
+    Trainer(model, args, train_dataset=train, callbacks=[cb]).train()
+print(cb.record_path)   # <output_dir>/attestation/run-<run_id>/attestation/run.json
+```
+
+```python
+from attestation_schema.integrations.lightning import AttestationCallback
+
+L.seed_everything(7)
+cb = AttestationCallback(datasets=["datasets/toy/1"])
+L.Trainer(callbacks=[cb]).fit(model, datamodule=dm)   # on_exception writes `failed`
+```
+
+At the end of training, on global rank 0 only, each writes a conforming
+`attestation.run/1` record (curves -> `digests.json` -> `run.json`):
+
+- **seeds** -- `TrainingArguments.seed` (applied by `Trainer.__init__`) and
+  `data_seed`; Lightning's `seed_everything` seed, or `null` when it never ran
+  (never `{}`: the script may have seeded torch itself);
+- **data** -- each dataset you pass (a dataset directory, its `dataset.json`
+  or a `DatasetRecord`, optionally `(dataset, split)`) by content and split
+  digest, so `resolve_lineage` links the run to it. Nothing is auto-detected:
+  with no `datasets=`, `data[]` names `train` (and `eval`) with `sha256: null`;
+- **checkpoints** -- every file of every checkpoint this run saved, by
+  sha256, role `output` (`trainer.save_model()` after `train()` runs after the
+  record and is not bound: save checkpoints to bind the weights);
+- **metrics** -- final values in `metrics`, every logged value in the history
+  sidecar; a direction only where you declared one (`metric_for_best_model`,
+  `ModelCheckpoint`/`EarlyStopping` `mode`, or `directions=`);
+- **config** -- `TrainingArguments.to_dict()`, or the module's and
+  datamodule's `hparams` plus the trainer's loop settings; anything the
+  conformance credential rule would flag is replaced by `<redacted>`;
+- **code** -- the training script's git HEAD and dirtiness (`inferred`), or
+  `unknown`; **dependencies** -- python, torch, transformers/accelerate or
+  lightning: the imported `__version__`, `source` from PEP 610
+  `direct_url.json` (`index`, `git+<url>`, `url:<url>`, `file`, `conda`), and
+  `verified` only when the module and the installed metadata agree;
+- **ext** -- world size, global step, removed checkpoints, the error.
+
+`run_dir=` overrides the default `<output_dir>/attestation/run-<run_id>/`
+(Lightning: `trainer.log_dir`); a directory that already holds a record is
+refused before training starts. Design:
+`docs/superpowers/specs/2026-11-19-training-callbacks-design.md`.
+
 ## Releasing
 
 Tag `schema-v<version>` (the version in this package's `pyproject.toml`, which

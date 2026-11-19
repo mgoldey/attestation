@@ -1117,8 +1117,17 @@ def test_wheel_builds_and_carries_the_schema_file(tmp_path):
     assert "attestation_schema/py.typed" in names
     assert not any(n.startswith("attestation/") for n in names)
     # No unconditional requirement: pytest is the `[conformance]` extra's
-    # (the plugin), never the core's (conformance spec, Decision 1).
+    # (the plugin), never the core's (conformance spec, Decision 1); the
+    # frameworks are the training callbacks' `[hf]`/`[lightning]` extras'
+    # (training-callbacks spec, "Where the callbacks live").
     requires = [ln for ln in metadata.decode().splitlines() if ln.startswith("Requires-Dist:")]
-    assert requires == ["Requires-Dist: pytest>=7.2; extra == 'conformance'"], requires
+    assert sorted(requires) == [
+        "Requires-Dist: accelerate>=0.26; extra == 'hf'",
+        "Requires-Dist: lightning>=2.1; extra == 'lightning'",
+        "Requires-Dist: pytest>=7.2; extra == 'conformance'",
+        "Requires-Dist: torch>=2.1; extra == 'hf'",
+        "Requires-Dist: transformers>=4.41; extra == 'hf'",
+    ], requires
+    assert "attestation_schema/integrations/_core.py" in names
     assert not any(n.endswith("entry_points.txt") for n in names), "the plugin is opt-in (-p)"
     assert "attestation_schema/pytest_plugin.py" in names
