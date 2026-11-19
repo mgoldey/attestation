@@ -9,6 +9,8 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-19
+
 ### Added
 
 - **A conformance suite for core run records (attestation-schema
