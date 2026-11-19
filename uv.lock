@@ -6,6 +6,12 @@ resolution-markers = [
     "python_full_version < '3.14'",
 ]
 
+[manifest]
+members = [
+    "attestation",
+    "attestation-schema",
+]
+
 [[package]]
 name = "aiofiles"
 version = "25.1.0"
@@ -213,6 +219,7 @@ name = "attestation"
 version = "0.5.0"
 source = { editable = "." }
 dependencies = [
+    { name = "attestation-schema" },
     { name = "bibtexparser" },
     { name = "citeproc-py" },
     { name = "cryptography" },
@@ -267,6 +274,7 @@ optimize = [
 
 [package.metadata]
 requires-dist = [
+    { name = "attestation-schema", editable = "packages/attestation-schema" },
     { name = "bibtexparser", specifier = ">=2.0.1" },
     { name = "citeproc-py", specifier = ">=0.11.1" },
     { name = "cryptography", specifier = ">=44" },
@@ -312,6 +320,11 @@ docs = [
 ]
 examples = [{ name = "mlflow-skinny", specifier = ">=2.20" }]
 optimize = [{ name = "dspy", specifier = ">=3.3" }]
+
+[[package]]
+name = "attestation-schema"
+version = "0.1.0"
+source = { editable = "packages/attestation-schema" }
 
 [[package]]
 name = "attrs"

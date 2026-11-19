@@ -48,6 +48,13 @@ dependencies = [
     # Signs run records (ed25519). Already installed via mcp[crypto] -> pyjwt[crypto];
     # declared directly because attestation.run_record imports it.
     "cryptography>=44",
+    # The core run record (packages/attestation-schema, a workspace member
+    # resolved through [tool.uv.sources] below). A RUNTIME dependency since the
+    # ledger reads only core records (docs/superpowers/specs/2026-11-19-ledger-
+    # reads-core-records-design.md). Not yet on an index: a bare `pip install`
+    # of this wheel needs the schema wheel beside it, and publishing it is an
+    # open decision for the next release.
+    "attestation-schema>=0.1.0",
 ]
 
 [project.urls]
@@ -112,8 +119,18 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/attestation"]
 
+# packages/attestation-schema is a second distribution built from this repo:
+# the core run record, stdlib only, which producers (smeltery, a training
+# script) install without installing attestation. `uv build --package
+# attestation-schema` builds it.
+[tool.uv.workspace]
+members = ["packages/attestation-schema"]
+
+[tool.uv.sources]
+attestation-schema = { workspace = true }
+
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "packages/attestation-schema/tests"]
 markers = [
     "live_model: needs a running Ollama; excluded from the default run and CI",
 ]

@@ -1,0 +1,393 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mgoldey/attestation/schemas/attestation.run/1",
+  "title": "attestation.run/1 (frozen 2026-11-19)",
+  "description": "Core run record. Necessary, not sufficient: the Python reader in attestation_schema.record is the reference and also enforces duplicate-key refusal, one direction and one unit per metric name, unique names/keys (including one metric per (name, step, split, labels)), finished_at >= started_at, integers within +/-2^53, credential-free repo and source URLs (and no query string in a url: source) and 'verified' needing an identity to verify and 'unknown' claiming no git_sha/build_sha, in code and in each dependency. The history sidecar (attestation/history.jsonl) is described line by line by history-1.schema.json; the record only references it. Frozen: this file never changes; a change to the record is attestation.run/2 with its own schema file.",
+  "type": "object",
+  "required": [
+    "schema",
+    "run_id",
+    "family",
+    "arm",
+    "status",
+    "started_at",
+    "finished_at",
+    "producer",
+    "code",
+    "config",
+    "data",
+    "metrics",
+    "history",
+    "seeds",
+    "dependencies",
+    "ext"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "attestation.run/1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "family": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "arm": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "status": {
+      "description": "null = the producer could not observe how the run ended (an importer of someone else's artifacts); a producer that ran the experiment, or a job backend, always says.",
+      "enum": [
+        "complete",
+        "failed",
+        "cancelled",
+        null
+      ]
+    },
+    "started_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+    },
+    "finished_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+    },
+    "producer": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      }
+    },
+    "code": {
+      "type": "object",
+      "required": [
+        "git_sha",
+        "dirty",
+        "repo",
+        "version",
+        "provenance",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "git_sha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+        },
+        "dirty": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "repo": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "provenance": {
+          "enum": [
+            "verified",
+            "inferred",
+            "unknown"
+          ]
+        },
+        "evidence": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      }
+    },
+    "config": {
+      "type": "object"
+    },
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "sha256",
+          "role"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "value",
+          "direction",
+          "step",
+          "split",
+          "unit",
+          "labels"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "enum": [
+                  "NaN",
+                  "Infinity",
+                  "-Infinity"
+                ]
+              }
+            ]
+          },
+          "direction": {
+            "enum": [
+              "min",
+              "max",
+              null
+            ]
+          },
+          "step": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "split": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "labels": {
+            "type": "object",
+            "propertyNames": {
+              "minLength": 1
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "history": {
+      "description": "null = no curve was recorded; otherwise a reference to the sidecar, bound by sha256. The record never embeds points.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "path",
+            "sha256",
+            "series",
+            "points"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "const": "attestation/history.jsonl"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "series": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "points": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      ]
+    },
+    "seeds": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer"
+            }
+          }
+        ]
+      },
+      "propertyNames": {
+        "minLength": 1
+      }
+    },
+    "dependencies": {
+      "description": "null = the producer could not observe the environment; [] = observed, and none.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "version",
+          "build_sha",
+          "dirty",
+          "provenance",
+          "evidence",
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "build_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+          },
+          "dirty": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "provenance": {
+            "enum": [
+              "verified",
+              "inferred",
+              "unknown"
+            ]
+          },
+          "evidence": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "pattern": "^(index(:.+)?|(git|hg|svn|bzr)\\+.+|url:(?!file:)[a-z][a-z0-9.-]*://.+|file|conda(:.+)?|system)$",
+            "description": "index[:<name or url>] | <git|hg|svn|bzr>+<url> | url:<url> (a direct-URL archive) | file | conda[:<channel>] | system; credentials, and a url: query string, refused (reader only)."
+          }
+        }
+      }
+    },
+    "ext": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z0-9_-]+)*$",
+        "not": {
+          "pattern": "^attestation(\\.|$)"
+        }
+      },
+      "additionalProperties": {
+        "type": "object"
+      }
+    }
+  }
+}

@@ -376,7 +376,9 @@ def test_write_record_refuses_to_overwrite(run, signer, tmp_path):
 
 def test_verifier_imports_nothing_heavy():
     """verify.py and canonical.py must run from a bare install: stdlib,
-    cryptography, and each other -- no sqlite3, no attestation.db, no model."""
+    cryptography, and each other -- no sqlite3, no attestation.db, no model.
+    canonical.py re-exports `attestation_schema.canonical` (stdlib only,
+    tests/test_boundaries.py) since attestation depends on that package."""
     pkg = Path(verify.__file__).parent
     for name in ("verify.py", "canonical.py"):
         tree = ast.parse((pkg / name).read_text())
@@ -387,7 +389,10 @@ def test_verifier_imports_nothing_heavy():
             for a in n.names
         }
         attest = {m for m in imported if m.startswith("attestation")}
-        assert attest <= {"attestation.run_record.canonical"}, (name, attest)
+        assert attest <= {
+            "attestation.run_record.canonical",
+            "attestation_schema.canonical",
+        }, (name, attest)
         assert "sqlite3" not in imported
 
 

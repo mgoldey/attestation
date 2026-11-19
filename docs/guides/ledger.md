@@ -64,6 +64,15 @@ because a ledger that compares finished arms has no use for the whole series:
 | DVC | `dvc.yaml`'s declared `metrics:` files + `params.yaml` | each metric file is a snapshot overwritten on every `dvc repro` |
 | Hydra | `--multirun` sweep dirs | needs `hydra.job.chdir=true` or all arms overwrite one `metrics.json` |
 
+A directory that already holds a **core run record** (`attestation/run.json`,
+written by smeltery or by `examples/mlflow-records/export_records.py`) is
+read as-is, with no conversion: its own family, status, start time, config and
+final metrics. Every importer above ends in the same core record before it
+reaches the ledger, and the caveats in this table travel inside each record
+(`ext.ledger-import`), so `runs.detail` and `runs.compare` show them without
+the ledger knowing any tracker's name (see
+`docs/superpowers/specs/2026-11-19-ledger-reads-core-records-design.md`).
+
 Every one of these was verified against a real directory produced by the real
 tool (see `docs/superpowers/specs/2026-08-22-tracker-adapters-design.md` for
 the per-tracker findings) — earlier drafts of this ledger read only the

@@ -592,7 +592,11 @@ def test_a_version_13_database_gains_the_citation_manager_schema(tmp_path):
     assert {"reference_aliases", "reference_notes", "reference_edits", "reference_formatted"} <= (
         tables
     )
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 14
+    # The ladder runs to the newest version, not to 014 (migration 015 adds
+    # runs.caveats_json).
+    from attestation.db import SCHEMA_VERSION
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION >= 14
 
 
 # --------------------------------------------------------------------------- CLI
