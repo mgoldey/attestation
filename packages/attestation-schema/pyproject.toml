@@ -27,6 +27,16 @@ classifiers = [
 # docs/superpowers/specs/2026-11-19-core-run-record-design.md.
 dependencies = []
 
+# The conformance suite's pytest plugin (`attestation_schema.pytest_plugin`)
+# is the ONLY module that needs anything outside the standard library, so
+# pytest is an extra, never a dependency: `pip install
+# "attestation-schema[conformance]"`. No `pytest11` entry point either -- the
+# plugin is opt-in (`-p attestation_schema.pytest_plugin`), so a suite that
+# merely has this package installed is unchanged. See
+# docs/superpowers/specs/2026-11-19-conformance-suite-design.md.
+[project.optional-dependencies]
+conformance = ["pytest>=7.2"]
+
 [project.urls]
 Repository = "https://github.com/mgoldey/attestation"
 

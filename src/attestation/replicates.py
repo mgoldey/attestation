@@ -368,6 +368,17 @@ def group(
     return out, notes + _lookalikes(out, decoded)
 
 
+# Pooled-arm keys that are uncapped lists: `source_paths` (prereg's post_hoc
+# check) and `members` (compute's wall-time sum, prereg's replicate check).
+UNCAPPED = ("source_paths", "members")
+
+
+def for_model(arms: list[dict]) -> list[dict]:
+    """`arms` without the UNCAPPED lists, for a payload a model reads every
+    turn: it gets the capped `runs` instead (runs.compare's MCP envelope)."""
+    return [{k: v for k, v in arm.items() if k not in UNCAPPED} for arm in arms]
+
+
 def intervals_decide(top: dict, second: dict) -> bool:
     """True when both arms carry a bootstrap interval, so `separable` -- not
     a relative-size rule of thumb -- says whether they are too close."""

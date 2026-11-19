@@ -14,7 +14,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from attestation import ledger, prereg, record
+from attestation import ledger, prereg, record, replicates
 from attestation.mcp._shared import MAX_LIST_LIMIT, Limit, Verdict
 from attestation.mcp._tool import ToolError, open_db, tool
 
@@ -275,7 +275,11 @@ def _nothing_listed(conn, project: str | None, family: str | None) -> str:
     )
 
 
-@tool(empty={"scanned": {}, "empty": [], "diagnostics": {}}, needs_db=False, label="runs_scan")
+@tool(
+    empty={"scanned": {}, "empty": [], "diagnostics": {}, "quarantined": [], "lossy": {}},
+    needs_db=False,
+    label="runs_scan",
+)
 def _scan(root: str | None = None, project: str | None = None, confirm: bool = False) -> dict:
     if not confirm:
         raise ToolError(
@@ -298,13 +302,25 @@ def _scan(root: str | None = None, project: str | None = None, confirm: bool = F
             f"{out['message']} -- set RESEARCH_ROOT or pass root= to a directory that exists"
         )
     total = sum(out["scanned"].values())
+    quarantined = out.get("quarantined", [])
+    message = f"{total} run(s) across {len(out['scanned'])} project(s)"
+    if quarantined:
+        # Leads the message: a model summarising this envelope reads the
+        # message first, and a refusal buried in a list is the silence the
+        # conformance spec (Decision 3) removed.
+        message = (
+            f"QUARANTINED {len(quarantined)} record(s) that failed conformance (not imported;"
+            f" see quarantined). {message}"
+        )
     return {
-        "message": f"{total} run(s) across {len(out['scanned'])} project(s)",
+        "message": message,
         "scanned": out["scanned"],
         "empty": out.get("empty", []),
         # why each empty project was empty: the caller is a model, and a bare
         # "0 run(s)" gives it nothing to tell the user or act on
         "diagnostics": out.get("diagnostics", {}),
+        "quarantined": quarantined,
+        "lossy": out.get("lossy", {}),
     }
 
 
@@ -614,11 +630,7 @@ def _compare(conn, family: str, metric: str | None = None, project: str | None =
     total_arms = len(arms)
     # Judged on every arm, before the cap; {} when the family has no registrations.
     hypotheses = prereg.attach(result, ledger.workspace_root())
-    # `source_paths` (every replicate's file) and `members` (every replicate's
-    # name) serve prereg and compute above; uncapped, they are not for a model
-    # to read every turn -- `runs` is the capped list it gets.
-    uncapped = ("source_paths", "members")
-    shown = [{k: v for k, v in arm.items() if k not in uncapped} for arm in arms[:MAX_ARMS_SHOWN]]
+    shown = replicates.for_model(arms[:MAX_ARMS_SHOWN])
     result = {**result, "arms": shown, "n_arms": total_arms, **hypotheses}
     message = f"{total_arms} arm(s)"
     if total_arms > MAX_ARMS_SHOWN:

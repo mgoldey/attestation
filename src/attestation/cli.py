@@ -356,6 +356,13 @@ def build_parser() -> argparse.ArgumentParser:
     rp = runs_sub.add_parser("scan", help=HELP["runs.scan"])
     rp.add_argument("--root", help="workspace dir (default: $RESEARCH_ROOT)")
     rp.add_argument("--project", help="scan only this project")
+    rp.add_argument(
+        "--strict",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="exit 1 when any record is QUARANTINED (fails conformance); --no-strict"
+        " still lists them and exits 0 (default: strict)",
+    )
     rp.set_defaults(func=cmd_runs_scan)
 
     rp = runs_sub.add_parser("list", help=HELP["runs.list"])
@@ -408,6 +415,13 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--force", action="store_true", help="overwrite existing files/entries")
     rp.add_argument(
         "--scan", action="store_true", help="also run `runs scan` and print `runs compare`"
+    )
+    rp.add_argument(
+        "--strict",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="with --scan, exit 1 when any record is QUARANTINED (fails conformance); --no-strict"
+        " still lists them and exits 0 (default: strict)",
     )
     rp.set_defaults(func=cmd_runs_record)
 
@@ -1287,7 +1301,35 @@ def cmd_runs_scan(args: argparse.Namespace) -> int:
             print()
             for name in out["empty"]:
                 print(f"  no runs in {name}: {out['diagnostics'].get(name, 'unrecognised layout')}")
+        return _scan_verdict(out, strict=args.strict)
+
+
+def _scan_verdict(out: dict, *, strict: bool) -> int:
+    """Print what a scan refused or lost, prominently; the exit code.
+
+    A record that fails conformance is QUARANTINED: never imported, listed
+    with its path and every reason, and (strict, the default) the command
+    exits 1 -- a scan that exits 0 while refusing records was the silence
+    this replaced (docs/superpowers/specs/2026-11-19-conformance-suite-
+    design.md, Decision 3). LOSSY lists values the readers skipped."""
+    for project, notes in sorted((out.get("lossy") or {}).items()):
+        print()
+        print(f"LOSSY ({project}):")
+        for note in notes:
+            print(f"  {note}")
+    quarantined = out.get("quarantined") or []
+    if not quarantined:
         return 0
+    print()
+    print(f"QUARANTINED ({len(quarantined)} record(s) -- failed conformance, not imported):")
+    for q in quarantined:
+        print(f"  {q['path']}  [{', '.join(q['rules'])}]")
+        for reason in q["reasons"]:
+            print(f"      {reason}")
+    if strict:
+        print("exit 1: records were quarantined (pass --no-strict to exit 0 anyway)")
+        return 1
+    return 0
 
 
 @_documented("runs.list")
@@ -1597,6 +1639,8 @@ def _run_record_scan(args: argparse.Namespace, root: Path) -> int:
             return 1
         for name, count in sorted(scan_out["scanned"].items()):
             print(f"  {name:28s} {count} run(s)")
+        if _scan_verdict(scan_out, strict=args.strict):
+            return 1
         try:
             result = ledger.compare(conn, args.family)
         except ValueError as exc:

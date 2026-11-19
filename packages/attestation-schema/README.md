@@ -68,6 +68,61 @@ curves = read_history(run_dir)          # verifies the sha256, then parses
 - Package version 0.1.0: the formats are frozen; the Python API may still
   change in a 0.x minor release until the job-state API has a consumer.
  
+## Conformance
+
+The reader stops at the first problem in `run.json`; a run directory has more
+rules than that. The conformance suite checks all of them and reports every
+violation with the file and the JSON path it is in: the record reads under
+the frozen reader; its bytes are the canonical ones (`write` round-trips them
+byte for byte); `digests.json` matches the files and is bound by the record;
+the history sidecar matches its digest and format; `state.json` is
+well-formed with legal transitions and agrees with the record; a terminal
+state has its record; the record matches its `JobSpec` (when you pass one);
+every `dependencies[].source` is in the vocabulary; no credentials anywhere
+in the schema-owned files; every `ext` key is a valid namespace.
+
+Run it in your CI -- three lines:
+
+```
+pip install "attestation-schema[conformance]"
+pytest -p attestation_schema.pytest_plugin --attestation-runs 'runs/*'
+```
+
+One test per run directory (marker `attestation_conformance`). A pattern
+that matches no run directory **fails**: a typo never turns the suite into a
+green no-op. Or configure it once:
+
+```toml
+[tool.pytest.ini_options]
+addopts = "-p attestation_schema.pytest_plugin"
+attestation_runs = ["runs"]          # used when pytest runs without explicit paths
+```
+
+A failure names the record and the path inside it:
+
+```
+runs/r1/attestation/run.json at $.config.tracking_uri: [credentials] a URL with credentials (user:password@); strip them
+```
+
+To check a record your test just produced (and, for a job, the spec it ran
+with), use the fixture:
+
+```python
+def test_my_producer_writes_a_conforming_record(tmp_path, attestation_conformance):
+    run_my_pipeline(out=tmp_path)
+    attestation_conformance(tmp_path, spec)        # spec: the JobSpec, or omit it
+```
+
+Without pytest: `attestation_schema.conformance.check_run_dir(run_dir)`
+returns a `Report` (`.ok`, `.violations`, `.format()`), and
+`assert_conformant(run_dir)` raises `ConformanceError`. The plugin is
+**opt-in** (`-p`, no `pytest11` entry point), so a suite that merely has this
+package installed is unchanged, and pytest is only the `[conformance]`
+extra's: the package itself still depends on nothing. attestation's ledger
+runs the same checks on every scan and quarantines any record that fails.
+Golden fixtures (a conforming record for each shape, and one record broken
+per rule) are in `tests/data/conformance/`.
+
 ## Releasing
 
 Tag `schema-v<version>` (the version in this package's `pyproject.toml`, which

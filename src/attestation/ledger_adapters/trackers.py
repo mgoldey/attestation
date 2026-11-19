@@ -91,29 +91,58 @@ def _started_at(text: str | None, assume_utc: bool) -> str | None:
     return schema.format_timestamp(when)
 
 
-def _json_safe(value: Any) -> Any:
+def _json_safe(value: Any, path: str = "", lossy: list[str] | None = None) -> Any:
     """`value` as JSON the record accepts: a non-finite float becomes its
     string (the rule `generic._coerce` already applies to YAML config -- a
-    CSV cell `nan` is otherwise the one way a NaN reaches a config)."""
+    CSV cell `nan` is otherwise the one way a NaN reaches a config). Each
+    such path is appended to `lossy`, so the change is a caveat, not silent."""
     if isinstance(value, float) and not math.isfinite(value):
+        if lossy is not None:
+            lossy.append(path or "(value)")
         return str(value)
     if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
+        return {
+            str(k): _json_safe(v, f"{path}.{k}" if path else str(k), lossy)
+            for k, v in value.items()
+        }
     if isinstance(value, (list, tuple)):
-        return [_json_safe(v) for v in value]
+        return [_json_safe(v, f"{path}[{i}]", lossy) for i, v in enumerate(value)]
     return value
 
 
-def _metrics(found: Found) -> list[dict]:
+def _lossy_caveats(
+    found: Found, lossy: list[str], dropped: list[str], started: str | None
+) -> list[str]:
+    """What the conversion changed or dropped, said where a reader of the run
+    will see it (conformance spec, Decision 4: nothing coerces silently)."""
+    out = []
+    if lossy:
+        out.append(
+            f"{found.name}: non-finite value(s) stored as strings, not numbers: {', '.join(lossy)}"
+        )
+    if dropped:
+        out.append(
+            f"{found.name}: duplicate metric value(s) dropped, the first of each kept: "
+            + ", ".join(dropped)
+        )
+    if found.started and started is None:
+        out.append(f"{found.name}: start time {found.started!r} not recorded (no UTC instant)")
+    return out
+
+
+def _metrics(found: Found, dropped: list[str] | None = None) -> list[dict]:
     """The core metric list. Duplicates on (name, step, split) keep the first,
-    which is what the ledger's insert loop always did; direction is never
-    inferred, a legacy reader knows no label, and a unit only where the
-    reader set one (wall time, `timing.add_wall`)."""
+    which is what the ledger's insert loop always did (each dropped one is
+    appended to `dropped`); direction is never inferred, a legacy reader knows
+    no label, and a unit only where the reader set one (wall time,
+    `timing.add_wall`)."""
     out: list[dict] = []
     seen: set[tuple] = set()
     for m in found.metrics:
         key = (m.metric, m.step, m.split or None)
         if key in seen:
+            if dropped is not None:
+                dropped.append(f"{m.metric}={m.value!r}")
             continue
         seen.add(key)
         out.append(
@@ -172,12 +201,20 @@ def found_to_core(
     record is. Raises `attestation_schema.RecordError` for a run the core
     cannot express. What the core has no field for -- the ledger's own
     status word, notes, the corpus an artifact named, the caveats -- goes in
-    `ext.ledger-import`.
+    `ext.ledger-import`. A lossy step (a duplicate dropped, a NaN config value
+    stringified, a start time dropped) becomes a run caveat.
 
     `arm` and `seeds` are set only for a run named as a seed replicate
     (`replicate_of`): `arm` the configuration's name, `seeds` `{"seed": N}`.
     Every other legacy run keeps both null -- "did not say"."""
     replicate = replicate_of(found.name, run_id_suffix=run_id_suffix)
+    lossy: list[str] = []
+    dropped: list[str] = []
+    started = _started_at(found.started, started_is_utc)
+    config = _json_safe(found.config or {}, "config", lossy)
+    corpus = _json_safe(found.corpus, "corpus", lossy)
+    metrics = _metrics(found, dropped)
+    run_caveats = [*run_caveats, *_lossy_caveats(found, lossy, dropped, started)]
     return schema.from_dict(
         {
             "schema": schema.SCHEMA,
@@ -189,13 +226,13 @@ def found_to_core(
             # freeze); a reader that keeps only finished runs says `complete`.
             # The ledger's own word (recorded/spec) is in ext.
             "status": "complete" if observes_completion else None,
-            "started_at": _started_at(found.started, started_is_utc),
+            "started_at": started,
             "finished_at": None,
             "producer": {"name": f"attestation {adapter}-import", "version": _version()},
             "code": dict(_UNKNOWN_CODE),
-            "config": _json_safe(found.config or {}),
+            "config": config,
             "data": [],
-            "metrics": _metrics(found),
+            "metrics": metrics,
             "history": None,
             "seeds": {"seed": replicate[1]} if replicate else None,
             "dependencies": None,
@@ -204,7 +241,7 @@ def found_to_core(
                     "adapter": found.adapter or adapter,
                     "status": found.status,
                     "notes": found.notes,
-                    "corpus": _json_safe(found.corpus),
+                    "corpus": corpus,
                     "caveats": caveats,
                     "run_caveats": run_caveats,
                 }

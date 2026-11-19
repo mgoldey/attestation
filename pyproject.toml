@@ -1,6 +1,6 @@
 [project]
 name = "attestation"
-version = "0.5.0"
+version = "0.5.1"
 description = "Auditable research provenance: experiment runs, verifiable claims, a reading graph, and symbolic derivations — fully local"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -139,7 +139,16 @@ markers = [
 # expansion, unrelated domains staying apart -- which a hash-based fake cannot
 # check. Excluded by default because CI has no model and the pre-commit hook
 # should stay a fixed cost.
-addopts = "-m 'not live_model'"
+#
+# `-p attestation_schema.pytest_plugin` loads the core-record conformance suite
+# (opt-in by design, no pytest11 entry point), and `attestation_runs` gives it
+# the committed MLflow exporter records: one generated test per record, run
+# whenever pytest is invoked without explicit paths (the pre-commit hook and
+# CI's gates job). tests/test_mlflow_records.py guards both lines, since
+# deleting one would stop the suite with nothing going red. Spec:
+# docs/superpowers/specs/2026-11-19-conformance-suite-design.md.
+addopts = "-m 'not live_model' -p attestation_schema.pytest_plugin"
+attestation_runs = ["examples/mlflow-records/records"]
 
 
 [tool.ruff]

@@ -2,11 +2,16 @@
 
 smeltery writes `<run_dir>/attestation/run.json` itself, and the MLflow
 exporter writes one per run; those are read with `attestation_schema.read`,
-no conversion. A record the reader refuses is reported by the pipeline,
-never coerced; a directory with only `state.json` is a run in flight and is
-skipped (the ledger records runs that ended).
+no conversion. Every run directory holding a record is first checked against
+the whole conformance suite (`attestation_schema.conformance`: the reader,
+canonical bytes, the manifest's binding, the history sidecar, `state.json`,
+credentials, ext namespaces) and ANY violation quarantines it: it is never
+imported and the pipeline reports it loudly, never coerced. A directory with
+only `state.json` is a run in flight and is skipped (the ledger records runs
+that ended).
 
-Spec: docs/superpowers/specs/2026-11-19-ledger-reads-core-records-design.md.
+Specs: docs/superpowers/specs/2026-11-19-ledger-reads-core-records-design.md,
+docs/superpowers/specs/2026-11-19-conformance-suite-design.md (Decision 3).
 """
 
 import os
@@ -15,13 +20,32 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import attestation_schema as schema
-from attestation_schema import layout
+from attestation_schema import conformance, layout
 
 # How far below a project directory a run directory is looked for. The
 # known producers put runs one or two levels down (`records/run-<id>/`,
 # `runs/<campaign>/run-<id>/`); an unbounded walk would visit every file of
 # every dataset in the workspace on every scan, to find nothing.
 MAX_DEPTH = 4
+
+
+class NonConformingRecord(schema.RecordError):
+    """A run directory that broke at least one conformance rule. `report`
+    holds every violation; the message lists them relative to the run."""
+
+    def __init__(self, report: conformance.Report):
+        self.report = report
+        self.rules = report.rules
+        self.reasons = [_relative(report.run_dir, v) for v in report.violations]
+        super().__init__("", "; ".join(self.reasons))
+
+
+def _relative(run_dir: Path, v: conformance.Violation) -> str:
+    try:
+        file = Path(v.file).relative_to(run_dir).as_posix()
+    except ValueError:
+        file = v.file
+    return f"{file} at {v.json_path}: [{v.rule}] {v.message}"
 
 
 @dataclass(frozen=True)
@@ -55,10 +79,16 @@ def run_dirs(root: Path) -> list[Path]:
 
 
 def _read(run_dir: Path) -> tuple[schema.RunRecord | None, schema.RecordError | None]:
-    try:
-        return schema.read(run_dir), None
-    except schema.RecordError as exc:
-        return None, exc
+    """The record if the run directory conforms, else why it is quarantined.
+
+    `verify_outputs=False`: re-hashing every output of every run on every
+    scan costs time proportional to the outputs, which the ledger does not
+    store; the manifest's own format and its binding to the record are still
+    checked. Re-hashing is the producer's CI's job (the pytest plugin)."""
+    report = conformance.check_run_dir(run_dir, verify_outputs=False)
+    if not report.ok or report.record is None:
+        return None, NonConformingRecord(report)
+    return report.record, None
 
 
 def _names(records: list[schema.RunRecord | None], taken: set[str]) -> list[str]:
