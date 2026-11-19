@@ -1,0 +1,1 @@
+{"backend":"local","history":[{"at":"2026-11-19T16:15:49.832025Z","state":"submitted"},{"at":"2026-11-19T16:15:49.833657Z","state":"running"},{"at":"2026-11-19T16:15:49.854752Z","state":"failed"}],"job_id":"817549d48ac9","message":"smeltery run exited 1: boom","run_id":"07693d07e8b9","schema":"attestation.state/1","state":"failed","updated_at":"2026-11-19T16:15:49.854752Z"}

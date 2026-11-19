@@ -11,6 +11,38 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **`attestation.run/1` is frozen (attestation-schema 0.1.0).** The last
+  producer findings were decided first: `dependencies[].source` gains
+  `url:<url>` (direct-URL archives; query strings and `url:file:` refused)
+  and `hg+`/`svn+`/`bzr+`; a dependency list is read as observed, not
+  exhaustive; `status` may be `null` when the producer could not observe the
+  outcome, and the ledger's importers write `null` (Sacred, which keeps only
+  completed runs, writes `complete`) instead of a claimed `complete`; a job's
+  record carries its `JobSpec`'s `run_id`, family, arm, config and ext in
+  every terminal state. `attestation_schema.state` takes over `state.json`
+  (`attestation.state/1`, format unchanged from smeltery's), its `flock`,
+  `settle` and the terminal-record builder from smeltery. The JSON Schema
+  files and the writer's bytes are pinned by digest
+  (`packages/attestation-schema/tests/test_frozen.py`); from here any change
+  is a new version. Spec: `2026-11-19-core-run-record-design.md`, "v1
+  freeze".
+- **The core run record, as its own distribution (`attestation-schema`).**
+  `attestation.run/1` (then v1-DRAFT): one experiment run's family,
+  arm, status, times, producer, code identity, config, data digests,
+  metrics with direction, seeds, dependency identities with provenance, and
+  `ext.<namespace>` for what the core does not model, carried untouched.
+  Stdlib only and importing nothing from attestation, so producers write
+  records without installing the observer; a uv workspace member at
+  `packages/attestation-schema/`, built with `uv build --package
+  attestation-schema`. `dumps`/`write` are the only writers (validated, JCS
+  canonical, deterministic); `loads`/`read` refuse non-conforming input with
+  an error naming the path and dispatch on `schema`. Also fixes the run
+  directory attestation will scan (`attestation/run.json`, `state.json`,
+  `digests.json`, `steps/NN-<name>/`, `logs/`) and the job-backend interface
+  (submit/status/cancel/result, a five-state machine), interface only.
+  `tests/test_boundaries.py` asserts nothing here imports smeltery or ferric
+  and the schema package imports nothing from attestation, each detector
+  proven to fire. Spec: `2026-11-19-core-run-record-design.md`.
 - **Write-side skills teach the new checks.** `attestation-record` now
   teaches `<arm>_seed<N>` naming (so seeds pool) and registering a
   prediction with `attest prereg add` before the runs, then relaying
@@ -21,7 +53,7 @@ commit that carries the reasoning rather than repeating it; `git log
   must judge `fresh`, the prereg line must parse, the seed names must pool).
   The live write-side evals (`evals/run_record_eval.py`,
   `evals/run_annotate_eval.py`) were not re-run.
-- **Compute tracking (compute.py).** `runs.compare` arms gain `wall_time_s` (summed over every pooled run) when the tracker recorded a duration -- sacred start/stop, MLflow start/end, W&B `_runtime`, or an explicit `wall_time_s` key -- and a caveat when the top two arms differ 2x or more per run: wall time is not compute, so it prompts a check and ranks nothing. Nothing is inferred and untimed families print exactly what they did. Run records gain `predicate.environment` (Python, argv, uv.lock hash, GPU names). No new tool, no migration.
+- **Compute tracking (compute.py).** `runs.compare` arms gain `wall_time_s` (summed over every pooled run) when the tracker recorded a duration -- sacred start/stop, MLflow start/end, W&B `_runtime`, read by each adapter and carried in the core record as the metric `wall_time_s` (unit `s`, no direction), or an explicit `wall_time_s` key -- and a caveat when the top two arms differ 2x or more per run: wall time is not compute, so it prompts a check and ranks nothing. Nothing is inferred and untimed families print exactly what they did. Run records gain `predicate.environment` (Python, argv, uv.lock hash, GPU names). No new tool, no migration.
 - **Seed replicates pool into one arm (replicates.py).** `runs.compare` /
   `attest runs compare` used to rank `<config>_seed<N>` runs against each
   other as rival arms -- and the seed token split a sweep into one family per
@@ -31,7 +63,11 @@ commit that carries the reasoning rather than repeating it; `git log
   (none under 3 runs) and the member `runs`; the result adds `separable` and
   a Cohen's d for the top two. A config can veto a merge, never start one,
   and every refused merge is a caveat. Single-run families print exactly what
-  they did. No new tool, no migration.
+  they did. Pooling is schema-driven: runs whose core records share an `arm`
+  and carry distinct `seeds` pool (a native record needs no naming
+  convention); a legacy artifact's `<config>_seed<N>` name is read once, at
+  import, into those two fields. Migration 016 stores them as `runs.arm` and
+  `runs.seeds_json` (re-scan to pool runs scanned earlier). No new tool.
 - **Figure provenance (figures.py).** A claim ties a number to a run; a
   figure had no such tie. `<!-- figure: figs/loss.png from=results/a.json
   sha256=<hex> -->` (`% figure:` in a .tex) beside an included figure links it

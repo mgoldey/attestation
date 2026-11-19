@@ -161,19 +161,28 @@ CREATE TABLE IF NOT EXISTS runs(
   -- default corpus". Most artifacts record nothing about data, so unknown is
   -- the common case, and treating it as agreement is the bug this guards.
   corpus_id INTEGER REFERENCES corpora(id) ON DELETE SET NULL,
-  -- Which reader produced this run: 'generic', 'wandb', 'mlflow', or a named
-  -- adapter. NULL means "recorded before this column existed" -- never
-  -- "generic", which is a guess the reader would have no way to challenge.
-  -- The point is not bookkeeping: the tracker readers carry caveats the
-  -- generic one does not (never run against a real directory; final metric
-  -- values, not curves), and without this a wandb-derived run is
-  -- indistinguishable in `runs.list` from a hand-written JSON one.
+  -- Which adapter produced this run (`ledger_adapters.ADAPTERS`: 'core' for
+  -- a native record, 'generic', or one adapter per tracker layout). NULL
+  -- means "recorded before this column existed" -- never 'generic', which is
+  -- a guess the reader would have no way to challenge. The point is not
+  -- bookkeeping: a run read from a tracker's layout looked identical in
+  -- `runs.list` to a hand-written JSON one, though its reader has limits.
   adapter TEXT,
   -- When the ledger last read this run's artifact, ISO-8601 UTC. NULL means
   -- "recorded before this column existed" -- never "just scanned". The
   -- artifact's own `started` time is a different fact: a stale artifact
   -- re-scanned today has an old `started` and a fresh `scanned_at`.
   scanned_at TEXT,
+  -- The caveats the run's core record carried: a JSON object holding a
+  -- "reader" list (what its reader cannot do) and a "run" list (what is
+  -- wrong with this run). NULL = none, or scanned before migration 015.
+  caveats_json TEXT,
+  -- The core record's `arm` (the configuration within the family) and
+  -- `seeds` (JSON), which together are how seed replicates of one
+  -- configuration pool into one arm (replicates.group). NULL = the record
+  -- did not say, or scanned before migration 016.
+  arm TEXT,
+  seeds_json TEXT,
   UNIQUE (project, name)
 );
 -- long format, not wide: projects report entirely different metrics, and a
@@ -678,6 +687,30 @@ def _migration_014_add_citation_manager(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _migration_015_add_runs_caveats(conn: sqlite3.Connection) -> None:
+    """Add runs.caveats_json: caveats now travel inside each core record
+    (docs/superpowers/specs/2026-11-19-ledger-reads-core-records-design.md)
+    instead of a table keyed by reader name in ledger.py. Existing runs get
+    NULL and show no caveat until re-scanned; nothing is backfilled, because
+    the text belongs to the adapters, not to the database."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
+    if "caveats_json" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN caveats_json TEXT")
+
+
+def _migration_016_add_runs_arm_seeds(conn: sqlite3.Connection) -> None:
+    """Add runs.arm and runs.seeds_json: the core record's own `arm` and
+    `seeds`, which seed-replicate pooling reads instead of parsing run names
+    (docs/superpowers/specs/2026-11-19-replicate-statistics-design.md).
+    Existing runs get NULL and pool nothing until re-scanned, the same rule
+    migration 015 follows: the values come from the records, not the DB."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
+    if "arm" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN arm TEXT")
+    if "seeds_json" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN seeds_json TEXT")
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -700,6 +733,8 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (12, _migration_012_add_feedback_since),
     (13, _migration_013_add_bibliography),
     (14, _migration_014_add_citation_manager),
+    (15, _migration_015_add_runs_caveats),
+    (16, _migration_016_add_runs_arm_seeds),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]

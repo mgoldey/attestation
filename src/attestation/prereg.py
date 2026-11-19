@@ -255,15 +255,10 @@ def _find_arm(name: str, arms: list[dict]) -> tuple[dict | None, str | None]:
             if arm.get("value") is None:
                 return None, f"{name} has no value for this metric"
             return arm, None
-    # By the seed rule itself, not membership in `runs`: that list is capped at
-    # replicates.MAX_RUN_NAMES, so a sixth seed used to read "no arm named".
-    from attestation import replicates
-
-    parsed = replicates.seed_of(name)
+    # By the pooled arm's uncapped `members`, not `runs`: that list is capped
+    # at replicates.MAX_RUN_NAMES, so a sixth seed used to read "no arm named".
     for arm in arms:
-        if name in (arm.get("runs") or []) or (
-            arm.get("n_runs") and parsed is not None and parsed[0] == arm.get("name")
-        ):
+        if name in (arm.get("members") or arm.get("runs") or []):
             return None, f"{name} is one replicate of arm {arm['name']}; name the arm, not a seed"
     return None, f"no arm named {name} in this comparison"
 

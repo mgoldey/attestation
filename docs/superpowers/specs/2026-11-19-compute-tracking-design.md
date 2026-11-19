@@ -141,3 +141,28 @@ lines.
   `nvidia-smi` both still build the record;
 - mutations (measurement-lessons section 4): delete the ratio call, flip `>=` to `>`, sum only
   the named runs, and make the "not recorded" caveat unconditional; each must fail a test.
+
+## After the ledger began reading only core records (2026-11-19 merge)
+
+Roadmap 11 landed first and moved every tracker reader behind the core run
+record, with `tests/test_tracker_names.py` forbidding a tracker name in
+shipped code outside `src/attestation/ledger_adapters/`. The table above is
+unchanged in behaviour; only where it lives moved:
+
+- The per-tracker duration parsers (`iso_duration`, `epoch_ms_duration`) and
+  `add_wall` live in `ledger_adapters/timing.py`; `compute.py` keeps the
+  tracker-agnostic half (`seconds`, `run_wall`, `attach`, the caveats).
+- **The wall time travels as a core metric**: `wall_time_s`, `unit: "s"`,
+  `direction: null`. Chosen over an `ext.ledger-import` field because the
+  core metric already has exactly this shape (a named value with a unit),
+  because a native producer that times its own runs then writes the same
+  thing and gets the same treatment, and because it reaches `run_metrics`
+  through `row_from_core` like every other value -- no second path. A null
+  direction keeps it out of every ranking, as before. It is still a
+  `run_metrics` row; this feature adds no column (migration 016 belongs to
+  the replicate spec).
+- A pooled arm's runs are found through its uncapped `members` list rather
+  than by re-parsing seed tokens.
+
+The 2x caveat, its floor, the `compute not recorded` rule and every number
+pinned above are unchanged.

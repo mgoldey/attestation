@@ -654,19 +654,20 @@ def test_annotate_figure_examples_parse_and_judge_fresh(tmp_path):
 
 
 def test_record_skill_teaches_seeds_that_pool_and_a_prereg_command_that_parses():
-    """The seed spelling the skill teaches must be one replicates.seed_of pools,
+    """The seed spelling the skill teaches must be one the import reads as one arm
+    (trackers.replicate_of: the core record's `arm` + `seeds`, which pool),
     and the full `attest prereg add` line must parse with its flags -- the
     generic command test only checks `attest prereg --help`."""
     import shlex
 
-    from attestation import replicates
     from attestation.cli import build_parser
+    from attestation.ledger_adapters import trackers
 
     text = _skill_md("attestation-record")
     seeds = text[text.index("## Seeds") : text.index("\n## ", text.index("## Seeds") + 1)]
     arms = re.findall(r"--arm (\w+)", seeds) + re.findall(r"`(\w+)\.json`", seeds)
     assert len(arms) >= 2, "expected --arm and file examples in the Seeds section"
-    assert {(replicates.seed_of(a) or ("unpooled",))[0].removeprefix("asr_") for a in arms} == {
+    assert {(trackers.replicate_of(a) or ("unpooled",))[0].removeprefix("asr_") for a in arms} == {
         "biglm"
     }, arms
 

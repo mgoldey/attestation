@@ -9,13 +9,12 @@ a prompt to check, never a measure, and never an adjustment to a ranking.
 
 Pure and stdlib-only except `walls_by_run`, the one read of the ledger (it takes
 an open connection and imports nothing for it). `ledger._compare` calls
-`attach` and `caveats`; the tracker readers call the duration parsers. See
+`attach` and `caveats`. Names no tracker: each adapter reads its tracker's own
+timestamps (`ledger_adapters/timing.py`) and emits the duration in the core
+record as the metric `wall_time_s`, unit `s`, no direction -- which is all
+this module reads, whichever adapter (or native producer) wrote it. See
 docs/superpowers/specs/2026-11-19-compute-tracking-design.md.
 """
-
-from datetime import datetime
-
-from attestation import replicates
 
 # A duration is stored as an ordinary run_metrics row under this name -- the
 # name an explicit key in a JSON/CSV result already gets -- so there is no
@@ -49,27 +48,6 @@ def seconds(value) -> float | None:
     except (TypeError, ValueError):
         return None
     return out if 0.0 <= out < float("inf") else None
-
-
-def iso_duration(start, stop) -> float | None:
-    """Seconds from one ISO-8601 timestamp to another (sacred's `start_time` and
-    `stop_time`), or None when either is absent, unparseable or the stop is
-    before the start. Mixing a naive and an aware timestamp is None, not a guess."""
-    try:
-        a, b = datetime.fromisoformat(str(start)), datetime.fromisoformat(str(stop))
-        return seconds((b - a).total_seconds())
-    except (TypeError, ValueError):
-        return None
-
-
-def epoch_ms_duration(start, end) -> float | None:
-    """Seconds between two millisecond epoch timestamps (MLflow's `start_time`
-    and `end_time`), or None when either is missing, zero or the end precedes the
-    start. MLflow writes `end_time: 0` or omits it for a run still going."""
-    a, b = seconds(start), seconds(end)
-    if not a or not b:
-        return None
-    return seconds((b - a) / 1000.0)
 
 
 def run_wall(rows: list[dict]) -> float | None:
@@ -114,14 +92,10 @@ def run_walls(runs: list[dict], walls: dict[int, float] | None) -> dict[str, flo
 
 
 def _members(arm: dict, raw_arms: list[dict]) -> list[dict]:
-    """The pre-pooling arms a replicate arm was built from: the valued arms
-    whose name is `arm`'s base once the seed token is removed."""
-    out = []
-    for raw in raw_arms:
-        parsed = replicates.seed_of(raw["name"]) if raw.get("value") is not None else None
-        if parsed is not None and parsed[0] == arm["name"]:
-            out.append(raw)
-    return out
+    """The pre-pooling arms a replicate arm was built from: its uncapped
+    `members` list (replicates._merge), looked up among the valued arms."""
+    names = set(arm.get("members") or [])
+    return [raw for raw in raw_arms if raw.get("value") is not None and raw["name"] in names]
 
 
 def attach(arms: list[dict], raw_arms: list[dict], walls: dict[str, float]) -> None:

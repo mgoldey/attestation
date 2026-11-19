@@ -18,7 +18,7 @@ import pytest
 
 from attestation import compute, ledger
 from attestation.db import get_db
-from attestation.ledger_adapters import generic
+from attestation.ledger_adapters import generic, timing, trackers
 from attestation.run_record import build, keys, verify
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -63,19 +63,19 @@ def scan_dir(tmp_path, files: dict[str, dict]):
 
 def test_iso_duration_is_stop_minus_start():
     a, b = "2026-08-28T10:00:00.000000", "2026-08-28T10:00:10.500000"
-    assert compute.iso_duration(a, b) == 10.5
-    assert compute.iso_duration(b, a) is None, "a stop before the start is not a duration"
-    assert compute.iso_duration(a, None) is None
-    assert compute.iso_duration("yesterday", b) is None
-    assert compute.iso_duration(a, "2026-08-28T10:00:10+00:00") is None, "naive vs aware"
+    assert timing.iso_duration(a, b) == 10.5
+    assert timing.iso_duration(b, a) is None, "a stop before the start is not a duration"
+    assert timing.iso_duration(a, None) is None
+    assert timing.iso_duration("yesterday", b) is None
+    assert timing.iso_duration(a, "2026-08-28T10:00:10+00:00") is None, "naive vs aware"
 
 
 def test_epoch_ms_duration_refuses_a_run_that_has_not_ended():
-    assert compute.epoch_ms_duration(1000, 61000) == 60.0
-    assert compute.epoch_ms_duration("1000", "3500") == 2.5, "YAML scalars arrive as strings"
-    assert compute.epoch_ms_duration(1000, 0) is None
-    assert compute.epoch_ms_duration(1000, None) is None
-    assert compute.epoch_ms_duration(5000, 1000) is None
+    assert timing.epoch_ms_duration(1000, 61000) == 60.0
+    assert timing.epoch_ms_duration("1000", "3500") == 2.5, "YAML scalars arrive as strings"
+    assert timing.epoch_ms_duration(1000, 0) is None
+    assert timing.epoch_ms_duration(1000, None) is None
+    assert timing.epoch_ms_duration(5000, 1000) is None
 
 
 def test_seconds_rejects_what_is_not_a_duration():
@@ -173,6 +173,19 @@ def test_wandb_runtime_is_read_before_the_underscore_filter(tmp_path):
     (run,) = generic.discover(proj)
     assert _wall_of(run) == [42.5]
     assert {m.metric for m in run.metrics} == {"loss", compute.WALL_METRIC}
+
+
+def test_wall_time_reaches_the_core_record_as_seconds_with_no_direction(tmp_path):
+    """The adapters, not compute.py, know each tracker's timestamps; what they
+    hand the ledger is an ordinary core metric -- unit "s", direction null, so
+    nothing ranks by it -- and compute reads that name tracker-agnostically."""
+    proj = tmp_path / "p"
+    _sacred(proj, 1, "2026-08-28T10:00:00.000000", "2026-08-28T10:02:30.250000")
+    (run,) = generic.discover(proj)
+    record = trackers.SACRED.to_core_record(run)
+    (wall,) = [m for m in record.metrics if m.name == compute.WALL_METRIC]
+    assert (wall.value, wall.unit, wall.direction) == (150.25, "s", None)
+    assert all(m.unit is None for m in record.metrics if m.name != compute.WALL_METRIC)
 
 
 def test_hydra_and_dvc_record_no_wall_time():
@@ -336,7 +349,7 @@ def test_the_committed_sacred_fixture_reports_its_real_durations():
     assert len(runs) == 4 and all(len(_wall_of(r)) == 1 for r in runs)
     for r in runs:
         run_json = json.loads((Path(r.source_path) / "run.json").read_text())
-        want = compute.iso_duration(run_json["start_time"], run_json["stop_time"])
+        want = timing.iso_duration(run_json["start_time"], run_json["stop_time"])
         assert _wall_of(r) == [want]
 
 

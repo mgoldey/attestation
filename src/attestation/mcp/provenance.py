@@ -614,9 +614,11 @@ def _compare(conn, family: str, metric: str | None = None, project: str | None =
     total_arms = len(arms)
     # Judged on every arm, before the cap; {} when the family has no registrations.
     hypotheses = prereg.attach(result, ledger.workspace_root())
-    # `source_paths` (every replicate's file) serves prereg's post_hoc check
-    # above; uncapped, it is not for a model to read every turn.
-    shown = [{k: v for k, v in arm.items() if k != "source_paths"} for arm in arms[:MAX_ARMS_SHOWN]]
+    # `source_paths` (every replicate's file) and `members` (every replicate's
+    # name) serve prereg and compute above; uncapped, they are not for a model
+    # to read every turn -- `runs` is the capped list it gets.
+    uncapped = ("source_paths", "members")
+    shown = [{k: v for k, v in arm.items() if k not in uncapped} for arm in arms[:MAX_ARMS_SHOWN]]
     result = {**result, "arms": shown, "n_arms": total_arms, **hypotheses}
     message = f"{total_arms} arm(s)"
     if total_arms > MAX_ARMS_SHOWN:

@@ -64,6 +64,15 @@ because a ledger that compares finished arms has no use for the whole series:
 | DVC | `dvc.yaml`'s declared `metrics:` files + `params.yaml` | each metric file is a snapshot overwritten on every `dvc repro` |
 | Hydra | `--multirun` sweep dirs | needs `hydra.job.chdir=true` or all arms overwrite one `metrics.json` |
 
+A directory that already holds a **core run record** (`attestation/run.json`,
+written by smeltery or by `examples/mlflow-records/export_records.py`) is
+read as-is, with no conversion: its own family, status, start time, config and
+final metrics. Every importer above ends in the same core record before it
+reaches the ledger, and the caveats in this table travel inside each record
+(`ext.ledger-import`), so `runs.detail` and `runs.compare` show them without
+the ledger knowing any tracker's name (see
+`docs/superpowers/specs/2026-11-19-ledger-reads-core-records-design.md`).
+
 Every one of these was verified against a real directory produced by the real
 tool (see `docs/superpowers/specs/2026-08-22-tracker-adapters-design.md` for
 the per-tracker findings) — earlier drafts of this ledger read only the
@@ -186,6 +195,14 @@ splits stay separate arms, with a caveat naming the reason. Tracker runs that
 carry no seed token in their name (`train/0`, `train/1`) are never pooled;
 when their configs differ only in seed, a caveat says so. A family of single
 runs prints exactly what it always did, ending with the single-run caveat.
+
+What pools is the core run record's own `arm` and `seeds`: runs of one family
+whose records share an `arm` and carry distinct seeds. A producer that writes
+core records (`attestation/run.json`) fills those fields and needs no naming
+convention; a record with `seeds: null` never pools. For artifacts with no such
+fields, the seed name above is read once, at import, into the record's `arm`
+and `seeds` (`{"seed": N}`). Runs scanned before migration 016 pool after the
+next `runs scan`.
 Design record: `docs/superpowers/specs/2026-11-19-replicate-statistics-design.md`.
 ## Preregistering a hypothesis
 
@@ -246,7 +263,10 @@ When a tracker recorded a duration (Sacred `start_time`/`stop_time`, MLflow
 `runs.compare` arms carry `wall_time_s`. A pooled replicate arm sums every run it
 pooled and also reports `wall_time_mean_s`; if any of its runs has no duration it
 reports none rather than a partial sum. Nothing is inferred: Hydra and DVC record
-no duration, so those runs have none.
+no duration, so those runs have none. Each tracker's adapter reads its
+timestamps and hands the ledger the duration as an ordinary metric in the core
+run record (`wall_time_s`, unit `s`, no direction), so a producer writing core
+records gets the same column by reporting that metric.
 
 ```
   caveat: the top two arms did not take the same wall time per run: m_big 32s vs m_small 12s (2.7x); ...

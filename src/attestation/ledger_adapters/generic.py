@@ -27,8 +27,11 @@ import re
 import statistics
 from pathlib import Path
 
-from attestation import compute, corpus, replicates
-from attestation.ledger import Metric, RunRecord
+from attestation_schema import layout
+
+from attestation import corpus, replicates
+from attestation.ledger_adapters import timing
+from attestation.ledger_adapters.found import Found, FoundMetric
 
 # Where ML/science projects conventionally put results and configuration.
 RESULT_DIRS = ("results", "logs", "outputs", "metrics", "eval", "evals", "benchmarks", "reports")
@@ -151,11 +154,11 @@ def _numeric_items(obj: dict) -> list[tuple[str, float]]:
 MAX_DEPTH = 4
 
 
-def _descend(node: dict, step: int | None, prefix: str, depth: int = 0) -> list[Metric]:
+def _descend(node: dict, step: int | None, prefix: str, depth: int = 0) -> list[FoundMetric]:
     """Numeric leaves of a nested mapping, with their path kept as `split`."""
     if depth > MAX_DEPTH:
         return []
-    out: list[Metric] = []
+    out: list[FoundMetric] = []
     for key, value in node.items():
         path = f"{prefix}.{key}" if prefix else str(key)
         if isinstance(value, dict):
@@ -163,7 +166,9 @@ def _descend(node: dict, step: int | None, prefix: str, depth: int = 0) -> list[
                 continue  # a lookup table, not results
             out.extend(_descend(value, step, path, depth + 1))
     if depth > 0:  # top-level scalars are handled by the caller
-        out.extend(Metric(k, v, step=step, split=prefix or None) for k, v in _numeric_items(node))
+        out.extend(
+            FoundMetric(k, v, step=step, split=prefix or None) for k, v in _numeric_items(node)
+        )
     return out
 
 
@@ -193,13 +198,13 @@ def _row_step(row: dict) -> int | None:
     return None
 
 
-def metrics_from_payload(payload, step: int | None, split: str | None) -> list[Metric]:
+def metrics_from_payload(payload, step: int | None, split: str | None) -> list[FoundMetric]:
     """Extract metrics from the three JSON shapes that actually recur.
 
     Shapes not covered here yield nothing, which is the correct outcome: an
     unrecognised layout should produce no run rather than a wrong one.
     """
-    out: list[Metric] = []
+    out: list[FoundMetric] = []
 
     if isinstance(payload, dict):
         if _is_lookup_table(payload):
@@ -207,11 +212,11 @@ def metrics_from_payload(payload, step: int | None, split: str | None) -> list[M
         flat = _numeric_items(payload)
         if flat:
             # {"wer": 0.31, "loss": 1.2} -- a metrics record
-            out.extend(Metric(k, v, step=step, split=split) for k, v in flat)
+            out.extend(FoundMetric(k, v, step=step, split=split) for k, v in flat)
             if payload.get("step") is not None and step is None:
                 try:
                     fixed = int(payload["step"])
-                    out = [Metric(m.metric, m.value, step=fixed, split=m.split) for m in out]
+                    out = [FoundMetric(m.metric, m.value, step=fixed, split=m.split) for m in out]
                 except (TypeError, ValueError):
                     pass
         # Results nest. A real file puts its headline number at
@@ -236,7 +241,9 @@ def metrics_from_payload(payload, step: int | None, split: str | None) -> list[M
             and all(s is not None for s in steps)
         ):
             for row, row_step in zip(rows, steps, strict=True):
-                out.extend(Metric(k, v, step=row_step, split=split) for k, v in _numeric_items(row))
+                out.extend(
+                    FoundMetric(k, v, step=row_step, split=split) for k, v in _numeric_items(row)
+                )
             return out
         if rows:
             # a per-item eval dump: aggregate to the mean of each numeric field
@@ -245,14 +252,16 @@ def metrics_from_payload(payload, step: int | None, split: str | None) -> list[M
                 for k, v in _numeric_items(row):
                     fields.setdefault(k, []).append(v)
             for k, vs in sorted(fields.items()):
-                out.append(Metric(k, float(statistics.fmean(vs)), step=step, split=split))
+                out.append(FoundMetric(k, float(statistics.fmean(vs)), step=step, split=split))
                 # pstdev of a single value is 0.0 (stdlib-guaranteed), not an
                 # error -- a bimodal [0.01, 0.01, 0.99] and a tight
                 # [0.34, 0.34, 0.33] both mean ~0.337; without this the spread
                 # that distinguishes them is unrecoverable once aggregated.
-                out.append(Metric(f"{k}_std", float(statistics.pstdev(vs)), step=step, split=split))
+                out.append(
+                    FoundMetric(f"{k}_std", float(statistics.pstdev(vs)), step=step, split=split)
+                )
             if fields:
-                out.append(Metric("n_records", float(len(rows)), step=step, split=split))
+                out.append(FoundMetric("n_records", float(len(rows)), step=step, split=split))
 
     return out
 
@@ -519,7 +528,7 @@ def diagnose_empty(root: Path) -> str:
 # metrics.json instead of four -- see examples/hydra/train.py's docstring.
 TRACKER_DIRS = ("wandb", "mlruns", "sacred_runs", "multirun")
 
-# Recorded on every RunRecord this module's convention-based reader produces,
+# Recorded on every Found this module's convention-based reader produces,
 # so `runs.detail` can tell a hand-written results/ tree apart from a tracker
 # directory. The tracker readers below label themselves "wandb" and "mlflow"
 # instead, which is what lets ledger.ADAPTER_CAVEATS attach their limitations
@@ -687,15 +696,7 @@ def _coerce(text: str):
     return value if math.isfinite(value) else text
 
 
-def _add_wall(metrics: list[Metric], wall: float | None) -> None:
-    """Append the run's wall time as `wall_time_s` when the tracker recorded one
-    -- and only then: nothing is inferred, and a metric the tracker itself named
-    `wall_time_s` is never shadowed. See compute.py: wall time is not compute."""
-    if wall is not None and all(m.metric != compute.WALL_METRIC for m in metrics):
-        metrics.append(Metric(compute.WALL_METRIC, wall))
-
-
-def _wandb_runs(root: Path, seen: set[str]) -> list[RunRecord]:
+def _wandb_runs(root: Path, seen: set[str]) -> list[Found]:
     """Runs under `wandb/<any-dir>/files/`.
 
     Verified 2026-08-28 against a real offline directory (wandb 0.17.6,
@@ -729,7 +730,7 @@ def _wandb_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     base = root / "wandb"
     if not base.is_dir():
         return []
-    records: list[RunRecord] = []
+    records: list[Found] = []
     for run_dir in sorted(base.iterdir()):
         files = run_dir / "files"
         summary = files / "wandb-summary.json"
@@ -750,7 +751,7 @@ def _wandb_runs(root: Path, seen: set[str]) -> list[RunRecord]:
         metrics = metrics_from_payload(payload, None, None)
         if not metrics:
             continue
-        _add_wall(metrics, compute.seconds(runtime))
+        timing.add_wall(metrics, timing.seconds(runtime))
 
         meta_path = files / "wandb-metadata.json"
         meta = _load(meta_path) if meta_path.is_file() else None
@@ -769,7 +770,7 @@ def _wandb_runs(root: Path, seen: set[str]) -> list[RunRecord]:
 
         config_path = files / "config.yaml"
         records.append(
-            RunRecord(
+            Found(
                 project=root.name,
                 name=name,
                 source_path=str(run_dir),
@@ -807,7 +808,7 @@ def _mlflow_metric(path: Path) -> tuple[float, int | None] | None:
         # A diverged run's last logged loss is `nan` or `inf`, and float()
         # accepts both. `_numeric_items` filters these on the JSON path and its
         # docstring calls itself "the one place every numeric metric passes
-        # through" -- this reader made that untrue by building Metric directly.
+        # through" -- this reader made that untrue by building FoundMetric directly.
         # A NaN compares false to everything, so it loses every ranking it
         # appears in and is reported as a legitimate last place.
         #
@@ -827,7 +828,7 @@ def _mlflow_metric(path: Path) -> tuple[float, int | None] | None:
     return None
 
 
-def _mlflow_runs(root: Path, seen: set[str]) -> list[RunRecord]:
+def _mlflow_runs(root: Path, seen: set[str]) -> list[Found]:
     """Runs under `mlruns/<experiment_id>/<run_id>/`.
 
     The metric-per-file layout is genuinely unlike anything else this adapter
@@ -837,7 +838,7 @@ def _mlflow_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     base = root / "mlruns"
     if not base.is_dir():
         return []
-    records: list[RunRecord] = []
+    records: list[Found] = []
     for exp_dir in sorted(p for p in base.iterdir() if p.is_dir()):
         for run_dir in sorted(p for p in exp_dir.iterdir() if p.is_dir()):
             meta_path = run_dir / "meta.yaml"
@@ -856,11 +857,11 @@ def _mlflow_runs(root: Path, seen: set[str]) -> list[RunRecord]:
                     continue
                 final = _mlflow_metric(metric_file)
                 if final is not None:
-                    metrics.append(Metric(metric_file.name, final[0], step=final[1]))
+                    metrics.append(FoundMetric(metric_file.name, final[0], step=final[1]))
             if not metrics:
                 continue
-            _add_wall(
-                metrics, compute.epoch_ms_duration(meta.get("start_time"), meta.get("end_time"))
+            timing.add_wall(
+                metrics, timing.epoch_ms_duration(meta.get("start_time"), meta.get("end_time"))
             )
 
             label = meta.get("run_name") or run_dir.name
@@ -875,7 +876,7 @@ def _mlflow_runs(root: Path, seen: set[str]) -> list[RunRecord]:
                     config[param_file.name] = param_file.read_text(errors="replace").strip()
 
             records.append(
-                RunRecord(
+                Found(
                     project=root.name,
                     name=name,
                     source_path=str(run_dir),
@@ -889,19 +890,19 @@ def _mlflow_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     return records
 
 
-def _sacred_metrics(metrics_path: Path) -> list[Metric]:
+def _sacred_metrics(metrics_path: Path) -> list[FoundMetric]:
     """`metrics.json`'s `{name: {"steps": [...], "values": [...]}}` shape.
 
     Same decision as MLflow's metric-per-file log: the final value and the
     step it was logged at, not the curve -- a ten-point train_loss series
-    becomes one Metric, not ten `run_metrics` rows. `values`/`steps` are
+    becomes one FoundMetric, not ten `run_metrics` rows. `values`/`steps` are
     parallel arrays kept in logged order, so the last element of each is the
     final one; a `timestamps` array is also present and unused here.
     """
     payload = _load(metrics_path)
     if not isinstance(payload, dict):
         return []
-    out: list[Metric] = []
+    out: list[FoundMetric] = []
     for name, series in payload.items():
         if not isinstance(series, dict):
             continue
@@ -919,11 +920,11 @@ def _sacred_metrics(metrics_path: Path) -> list[Metric]:
         step = (
             steps[-1] if isinstance(steps, list) and steps and isinstance(steps[-1], int) else None
         )
-        out.append(Metric(name, float(value), step=step))
+        out.append(FoundMetric(name, float(value), step=step))
     return out
 
 
-def _sacred_result_metric(run_json: dict) -> Metric | None:
+def _sacred_result_metric(run_json: dict) -> FoundMetric | None:
     """`run.json`'s own `result` -- the value `@ex.main` returned.
 
     Sacred lets a main function return anything JSON-serialisable: a dict, a
@@ -938,10 +939,10 @@ def _sacred_result_metric(run_json: dict) -> Metric | None:
         or not math.isfinite(result)
     ):
         return None
-    return Metric("result", float(result))
+    return FoundMetric("result", float(result))
 
 
-def _sacred_runs(root: Path, seen: set[str]) -> list[RunRecord]:
+def _sacred_runs(root: Path, seen: set[str]) -> list[Found]:
     """Runs under `sacred_runs/<n>/`, one numbered directory per run.
 
     Verified 2026-08-28 against a real directory (sacred 0.8.7,
@@ -957,7 +958,7 @@ def _sacred_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     base = root / "sacred_runs"
     if not base.is_dir():
         return []
-    records: list[RunRecord] = []
+    records: list[Found] = []
     for run_dir in sorted((p for p in base.iterdir() if p.is_dir()), key=lambda p: p.name):
         run_json = _load(run_dir / "run.json")
         if not isinstance(run_json, dict):
@@ -979,8 +980,8 @@ def _sacred_runs(root: Path, seen: set[str]) -> list[RunRecord]:
             metrics.append(result_metric)
         if not metrics:
             continue  # a spec with no measurement attached -- same as MLflow
-        _add_wall(
-            metrics, compute.iso_duration(run_json.get("start_time"), run_json.get("stop_time"))
+        timing.add_wall(
+            metrics, timing.iso_duration(run_json.get("start_time"), run_json.get("stop_time"))
         )
 
         name = f"{family}/{run_dir.name}"
@@ -993,7 +994,7 @@ def _sacred_runs(root: Path, seen: set[str]) -> list[RunRecord]:
         config = config if isinstance(config, dict) else None
 
         records.append(
-            RunRecord(
+            Found(
                 project=root.name,
                 name=name,
                 source_path=str(run_dir),
@@ -1287,7 +1288,7 @@ def _dvc_flow_list_from_params(root: Path, param: str) -> list[str]:
     return value if isinstance(value, list) else [value]
 
 
-def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
+def _dvc_runs(root: Path, seen: set[str]) -> list[Found]:
     """Runs declared by `dvc.yaml`'s stages, one per `foreach` item or one
     for a plain stage -- read without ever invoking `dvc` itself.
 
@@ -1320,7 +1321,7 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     blindly, since the ledger reads content mtime never touches. A file that
     no longer hashes to what `dvc.lock` recorded (hand-edited after `dvc
     repro`, or a stale checkout) gets its value read exactly as before, but
-    `RunRecord.notes` names the mismatch so `compare()` can surface it as a
+    `Found.notes` names the mismatch so `compare()` can surface it as a
     caveat instead of presenting a silently-diverged number as trustworthy.
     """
     dvc_yaml = root / "dvc.yaml"
@@ -1335,7 +1336,7 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     lock_params = _dvc_lock_params(dvc_lock) if dvc_lock.is_file() else {}
     lock_outs = _dvc_lock_outs(dvc_lock) if dvc_lock.is_file() else {}
 
-    records: list[RunRecord] = []
+    records: list[Found] = []
     for stage_name, stage in sorted(stages.items()):
         foreach_param = stage["foreach"]
         items = top_params.get(foreach_param, []) if foreach_param else [None]
@@ -1343,7 +1344,7 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
             items = [items]
         for item in items:
             instance = f"{stage_name}@{item}" if item is not None else stage_name
-            metrics: list[Metric] = []
+            metrics: list[FoundMetric] = []
             mismatches: list[str] = []
             for metric_rel in stage["metrics"]:
                 rel = metric_rel.replace("${item}", item) if item is not None else metric_rel
@@ -1386,7 +1387,7 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[RunRecord]:
             )
 
             records.append(
-                RunRecord(
+                Found(
                     project=root.name,
                     name=instance,
                     source_path=str(root / stage["metrics"][0].replace("${item}", item or "")),
@@ -1424,7 +1425,7 @@ def _hydra_config(config_yaml: Path) -> dict | None:
     return {k: _coerce(v) for k, v in scalars.items()} or None
 
 
-def _hydra_arm_metrics(arm_dir: Path) -> list[Metric]:
+def _hydra_arm_metrics(arm_dir: Path) -> list[FoundMetric]:
     """Metrics from any JSON/JSONL/CSV file directly in an arm's directory.
 
     `.hydra/` is excluded -- it holds config and Hydra's own bookkeeping,
@@ -1434,7 +1435,7 @@ def _hydra_arm_metrics(arm_dir: Path) -> list[Metric]:
     `examples/hydra/train.py` writes) or a metrics CSV are both already
     handled shapes.
     """
-    metrics: list[Metric] = []
+    metrics: list[FoundMetric] = []
     for path in sorted(arm_dir.glob("*")):
         if not path.is_file() or path.parent.name == ".hydra":
             continue
@@ -1449,7 +1450,7 @@ def _hydra_arm_metrics(arm_dir: Path) -> list[Metric]:
     return metrics
 
 
-def _hydra_runs(root: Path, seen: set[str]) -> list[RunRecord]:
+def _hydra_runs(root: Path, seen: set[str]) -> list[Found]:
     """Runs under `multirun/<date>/<time>/<n>/`, one numbered directory per
     arm of a sweep -- Hydra's own `--multirun` layout.
 
@@ -1481,7 +1482,7 @@ def _hydra_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     fewer metrics rather than raising on a shape it does not recognise.
     """
     sweeps = sorted(p for p in root.glob("multirun/*/*") if p.is_dir())
-    records: list[RunRecord] = []
+    records: list[Found] = []
     for sweep_dir in sweeps:
         arm_dirs = sorted(
             (
@@ -1513,7 +1514,7 @@ def _hydra_runs(root: Path, seen: set[str]) -> list[RunRecord]:
             seen.add(name)
 
             records.append(
-                RunRecord(
+                Found(
                     project=root.name,
                     name=name,
                     source_path=str(arm_dir),
@@ -1541,14 +1542,51 @@ def _result_name(stem: str, result: Path, base: Path, dirname: str, seen: set[st
     return f"{dirname}/{stem}" if stem in seen else stem
 
 
-def discover(root: Path) -> list[RunRecord]:
-    """Every run this adapter recognises under one project directory,
-    trying every tracker convention this module knows (wandb, mlflow,
-    sacred, dvc, hydra, plain results/configs) and deduplicating by name via
-    `seen` -- see the comment below for why results are read before configs."""
-    project = root.name
-    records: list[RunRecord] = []
+def discover(root: Path) -> list[Found]:
+    """Every legacy run under one project directory, as `Found`s: the plain
+    results/configs conventions, then each tracker's, sharing one `seen` set.
+
+    The order is the adapter registry's (`ledger_adapters.LEGACY_ADAPTERS`),
+    so this and `ledger_adapters.import_project` cannot drift. Kept for the
+    callers that inspect what a reader found before it is a core record."""
+    from attestation.ledger_adapters import LEGACY_ADAPTERS
+
     seen: set[str] = set()
+    records: list[Found] = []
+    for adapter in LEGACY_ADAPTERS:
+        if adapter.detect(root):
+            records.extend(adapter.scan(root, seen))
+    return records
+
+
+def has_plain_layout(root: Path) -> bool:
+    """True when `root` has any results or config directory to read."""
+    return any((root / d).is_dir() for d in (*RESULT_DIRS, *CONFIG_DIRS))
+
+
+def _in_run_dir(path: Path, root: Path) -> bool:
+    """True when `path` sits inside a core-record run directory under `root`.
+
+    Those are read whole by the `core` adapter; reading their loose outputs
+    here too would record one run twice."""
+    for parent in path.parents:
+        if layout.is_run_dir(parent):
+            return True
+        if parent == root:
+            return False
+    return False
+
+
+def _outside_runs(paths, root: Path) -> list[Path]:
+    """`paths`, sorted, without those inside a core-record run directory."""
+    return [p for p in sorted(paths) if not _in_run_dir(p, root)]
+
+
+def plain_runs(root: Path, seen: set[str]) -> list[Found]:
+    """Runs from the plain `results/`-and-`configs/` conventions -- see the
+    comment below for why results are read before configs."""
+    project = root.name
+    records: list[Found] = []
     # dvc.yaml stages routinely write into metrics/, one of RESULT_DIRS --
     # unlike wandb/mlruns/sacred_runs, whose directory names never collide
     # with a plain-results convention. Without this a project with a DVC
@@ -1567,7 +1605,8 @@ def discover(root: Path) -> list[RunRecord]:
         base = root / dirname
         if not base.is_dir():
             continue
-        for table in sorted(list(base.glob("*.csv")) + list(base.glob("*/*.csv"))):
+        tables = list(base.glob("*.csv")) + list(base.glob("*/*.csv"))
+        for table in _outside_runs(tables, root):
             rows = _csv_rows(table)
             labelled = [(r, _label_of(r)) for r in rows]
             if not any(label for _, label in labelled):
@@ -1581,11 +1620,11 @@ def discover(root: Path) -> list[RunRecord]:
                 if name in seen:
                     continue
                 seen.add(name)
-                metrics = [Metric(k, v) for k, v in _numeric_items(row)]
+                metrics = [FoundMetric(k, v) for k, v in _numeric_items(row)]
                 if not metrics:
                     continue
                 records.append(
-                    RunRecord(
+                    Found(
                         project=project,
                         name=name,
                         source_path=str(table),
@@ -1600,7 +1639,7 @@ def discover(root: Path) -> list[RunRecord]:
         candidates = (
             list(base.glob("*.json")) + list(base.glob("*/*.json")) + list(base.glob("*.jsonl"))
         )
-        for result in sorted(candidates):
+        for result in _outside_runs(candidates, root):
             if result.resolve() in dvc_metric_paths:
                 continue  # DVC's own output -- _dvc_runs below reads it
             payload = _load(result)
@@ -1615,7 +1654,7 @@ def discover(root: Path) -> list[RunRecord]:
                 continue
             seen.add(name)
             records.append(
-                RunRecord(
+                Found(
                     project=project,
                     name=name,
                     source_path=str(result),
@@ -1630,10 +1669,11 @@ def discover(root: Path) -> list[RunRecord]:
                 )
             )
 
-    # Tracker directories last, sharing `seen`: a project may have both a
-    # results/ tree and a wandb/ one, and the same run must not appear twice.
+    # Tracker directories come after this reader (their own adapters), sharing
+    # `seen`: a project may have both a results/ tree and a wandb/ one, and
+    # the same run must not appear twice.
     for dirname in CONFIG_DIRS:
-        for cfg in sorted((root / dirname).glob("*")):
+        for cfg in _outside_runs((root / dirname).glob("*"), root):
             if cfg.suffix.lower() not in CONFIG_SUFFIXES or not cfg.is_file():
                 continue
             if cfg.suffix == ".json" and _load(cfg) is not None:
@@ -1643,7 +1683,7 @@ def discover(root: Path) -> list[RunRecord]:
                 continue
             seen.add(name)
             records.append(
-                RunRecord(
+                Found(
                     project=project,
                     name=name,
                     source_path=str(cfg),
@@ -1655,9 +1695,4 @@ def discover(root: Path) -> list[RunRecord]:
                 )
             )
 
-    records.extend(_wandb_runs(root, seen))
-    records.extend(_mlflow_runs(root, seen))
-    records.extend(_sacred_runs(root, seen))
-    records.extend(_dvc_runs(root, seen))
-    records.extend(_hydra_runs(root, seen))
     return records

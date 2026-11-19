@@ -17,6 +17,11 @@ third convention, Sacred, was added 2026-08-28 as part of the golden-paths
 work (`2026-08-28-golden-paths-design.md`) -- see the "Sacred" subsection
 below. A fourth, DVC, followed the same day -- see the "DVC" subsection. A
 fifth, Hydra, followed the same day -- see the "Hydra" subsection.
+**Superseded in structure 2026-11-19** by `2026-11-19-ledger-reads-core-records-design.md`:
+the readers are unchanged, but each is now an adapter behind one protocol
+that ends in a core run record, and `ledger.ADAPTER_CAVEATS` moved into the
+adapters (the caveats travel in each record). "No named adapters" below
+still holds for projects; trackers are adapters of their own.
 **Roadmap:** spec 3 of `2026-08-21-architecture-roadmap.md`
 **Depends on:** nothing. The adapter seam already exists.
 

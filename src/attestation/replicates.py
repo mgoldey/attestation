@@ -8,13 +8,17 @@ deterministic bootstrap interval and a range, and the caveats describe what
 was actually found.
 
 Pure and stdlib-only: no database, no ledger import (`ledger` imports this,
-and so does the generic adapter, for the one definition of a seed token).
+and so do the adapters, for the one definition of a seed token).
 See docs/superpowers/specs/2026-11-19-replicate-statistics-design.md.
 
-The rule that matters most is asymmetric: a NAME proposes a merge (the same
-name once its seed token is removed) and a CONFIG can only veto one. A wrong
-merge silently averages two configurations, which is worse than leaving
-replicates apart with a caveat.
+Pooling is SCHEMA-DRIVEN: two runs are replicates of one configuration when
+their core records share an `arm` and differ in `seeds` -- the record's own
+fields, stored by the ledger as `runs.arm`/`runs.seeds_json`. A name is read
+only once, by the adapter importing a legacy artifact that has no such
+fields (`ledger_adapters.trackers.replicate_of`: `<arm>_seed<N>`), never
+here. The rule that matters most is asymmetric: the record PROPOSES a merge
+and a CONFIG can only veto one. A wrong merge silently averages two
+configurations, which is worse than leaving replicates apart with a caveat.
 """
 
 import json
@@ -27,12 +31,6 @@ import re
 # separator (or `/`, for a directory-qualified name) is part of the match so
 # removing it leaves a clean base name.
 SEED_TOKEN = re.compile(r"(?:^|[-_/])seed[-_=]?(\d+)(?=$|[-_./\[])", re.I)
-# The run id a tracker adapter appends to a run's own name: mlflow names an
-# arm `<run_name>/<first 8 hex of the run id>`, wandb `<program>/<short id>`.
-# Unique per run, so it must not take part in pooling -- left in, every seed
-# of `clf_seed<N>/<id>` became its own base and nothing ever pooled.
-TRACKER_ID = re.compile(r"^[0-9a-z]{8}$")
-
 # The bootstrap is FIXED: the same values give the same interval in every
 # process and on every supported Python. A comparison that printed a
 # different interval on each call would be unauditable.
@@ -69,24 +67,26 @@ def strip_seed(text: str) -> tuple[str, int] | None:
     return rest, int(m.group(1))
 
 
-def seed_of(name: str) -> tuple[str, int] | None:
-    """`(base name, seed)` for an arm name that can pool with siblings.
-
-    A nested arm keeps its bracket suffix in the base (`run_seed1[arms.A]`
-    -> `run[arms.A]`), so arm A of one seed pools only with arm A of another.
-    None when the name has no single seed token or nothing is left once it
-    is removed: a bare `seed1` names no configuration to pool under.
-    """
-    head, bracket, tail = name.partition("[")
-    label, slash, run_id = head.rpartition("/")
-    if slash and TRACKER_ID.match(run_id) and strip_seed(label) is not None:
-        # a tracker run `<label>/<id>`: the seed lives in the label, and the
-        # id is per-run noise (mlflow, wandb)
-        head = label
-    parsed = strip_seed(head)
-    if parsed is None or not parsed[0]:
+def identity(arm: str | None, seeds_json) -> tuple[str, dict] | None:
+    """`(arm, seeds)` for a run that can pool with siblings: its record named
+    an arm AND at least one seed. A run with no arm is its own configuration;
+    one with no seeds (`null`, "did not say", or `{}`, "set none") cannot be
+    told apart from a re-execution, so neither pools."""
+    if not arm or not seeds_json:
         return None
-    return parsed[0] + bracket + tail, parsed[1]
+    try:
+        seeds = json.loads(seeds_json) if isinstance(seeds_json, str) else seeds_json
+    except ValueError:
+        return None
+    return (arm, seeds) if isinstance(seeds, dict) and seeds else None
+
+
+def _seed_label(seeds: dict) -> str:
+    """One run's seeds as one comparable value: `3` for the common single
+    `{"seed": 3}`, canonical JSON otherwise."""
+    if len(seeds) == 1:
+        return json.dumps(next(iter(seeds.values())))
+    return json.dumps(seeds, sort_keys=True)
 
 
 def mean(values: list[float]) -> float:
@@ -177,23 +177,30 @@ def _common(values: list):
     return values[0] if len(set(values)) == 1 else None
 
 
-def _config_conflict(members: list[dict], configs: dict[str, dict | None]) -> list[str]:
-    """Config keys, other than `seed`, on which the members that HAVE a
-    config disagree. A missing config is not disagreement."""
+def _config_conflict(
+    members: list[dict], configs: dict[str, dict | None], seed_keys: set[str]
+) -> list[str]:
+    """Config keys, other than `seed` and the keys the records name as seeds,
+    on which the members that HAVE a config disagree. A missing config is not
+    disagreement."""
     present = [c for c in (configs.get(m["name"]) for m in members) if c is not None]
-    rests = [_canonical_without_seed(c) for c in present]
+    rests = [_canonical_without_seed(c, seed_keys) for c in present]
     keys: set[str] = set().union(*rests)
     return sorted(k for k in keys if len({r.get(k) for r in rests}) > 1)
 
 
-def _canonical_without_seed(config: dict) -> dict[str, str]:
+def _canonical_without_seed(config: dict, seed_keys: set[str]) -> dict[str, str]:
     """A config's non-seed values as canonical JSON (nested keys sorted), so
     values compare by their serialized form rather than by identity."""
-    return {k: json.dumps(v, sort_keys=True) for k, v in config.items() if k != "seed"}
+    skip = {"seed"} | seed_keys
+    return {k: json.dumps(v, sort_keys=True) for k, v in config.items() if k not in skip}
 
 
 def _veto(
-    members: list[dict], seeds: list[int], configs: dict[str, dict | None], taken: str | None
+    members: list[dict],
+    seeds: list[dict],
+    configs: dict[str, dict | None],
+    taken: str | None,
 ) -> str | None:
     """Why these name-matched arms must NOT pool, or None if they may.
     `taken` is their base name when another arm already holds it."""
@@ -201,11 +208,12 @@ def _veto(
         # Pooling under a name another arm already holds would print two
         # rows called `base`, one of which may itself be a replicate.
         return f"a run named {taken} with no seed token also exists"
-    if len(set(seeds)) != len(seeds):
+    labels = [_seed_label(s) for s in seeds]
+    if len(set(labels)) != len(labels):
         return "two of them claim the same seed"
     if len({_unseeded_split(m.get("split")) for m in members}) > 1:
         return "they report different splits"
-    differing = _config_conflict(members, configs)
+    differing = _config_conflict(members, configs, {k for s in seeds for k in s})
     if differing:
         return f"their configs differ in {', '.join(differing)}"
     return None
@@ -236,6 +244,10 @@ def _merge(base: str, members: list[dict]) -> dict:
         # needs the earliest of them. Not capped like `runs`; the MCP layer
         # drops it from what a model reads.
         "source_paths": [m.get("source_path") for m in members if m.get("source_path")],
+        # EVERY member's name, likewise uncapped (dropped from the MCP
+        # payload): wall time sums over all of them (compute.attach), and a
+        # hypothesis naming a sixth seed is told it is a replicate (prereg).
+        "members": [m["name"] for m in members],
         "n": _smallest_n(members),
         "n_runs": len(values),
         "mean": mu,
@@ -268,7 +280,7 @@ def _lookalikes(arms: list[dict], configs: dict[str, dict | None]) -> list[str]:
     """Caveats for single-run arms whose configs say they are replicates.
 
     Tracker runs (`train/0`, `train/1`) carry no seed token in their names, so
-    the name rule cannot pool them. Configs alone never merge -- a plain JSON
+    their records have no arm and cannot pool. Configs alone never merge -- a plain JSON
     result's config is `{"seed": ...}` only, so "equal apart from seed" would
     be vacuously true across a whole sweep -- but when a config carries real
     keys and two runs differ ONLY in seed, the reader is told.
@@ -285,19 +297,21 @@ def _lookalikes(arms: list[dict], configs: dict[str, dict | None]) -> list[str]:
             out.append(
                 f"{_listed(sorted(n for n, _ in members))} have identical configs apart"
                 " from seed but are listed as separate arms; if they are replicates,"
-                " name them (or their tracker run names) <config>_seed<N> so they"
-                " pool into one"
+                " name them (or their tracker run names) <config>_seed<N>, or give"
+                " their run records one arm and distinct seeds, so they pool into one"
             )
     return out
 
 
-def _by_base(arms: list[dict]) -> tuple[list[dict], dict[str, list[tuple[dict, int]]]]:
-    """`(arms that cannot pool, {base name: [(arm, seed), ...]})`. An arm
-    without a value never pools: it stays listed in `without_metric`."""
+def _by_base(
+    arms: list[dict], identities: dict[str, tuple[str, dict]]
+) -> tuple[list[dict], dict[str, list[tuple[dict, dict]]]]:
+    """`(arms that cannot pool, {pooled arm name: [(arm, seeds), ...]})`. An
+    arm without a value never pools: it stays listed in `without_metric`."""
     loose: list[dict] = []
-    buckets: dict[str, list[tuple[dict, int]]] = {}
+    buckets: dict[str, list[tuple[dict, dict]]] = {}
     for arm in arms:
-        parsed = seed_of(arm["name"]) if arm.get("value") is not None else None
+        parsed = identities.get(arm["name"]) if arm.get("value") is not None else None
         if parsed is None:
             loose.append(arm)
         else:
@@ -305,11 +319,17 @@ def _by_base(arms: list[dict]) -> tuple[list[dict], dict[str, list[tuple[dict, i
     return loose, buckets
 
 
-def group(arms: list[dict], configs: dict[str, object]) -> tuple[list[dict], list[str]]:
+def group(
+    arms: list[dict],
+    configs: dict[str, object],
+    identities: dict[str, tuple[str, dict]],
+) -> tuple[list[dict], list[str]]:
     """Pool seed replicates of one configuration into one arm.
 
     `arms` are the per-run arm dicts `ledger._compare` builds; `configs` maps
-    an arm name to its run's `config_json` (a JSON string, a dict or None).
+    an arm name to its run's `config_json` (a JSON string, a dict or None);
+    `identities` maps an arm name to `(pooled arm name, seeds)` from its run's
+    core record (`identity`), and an arm absent from it never pools.
     Returns `(arms, caveats)`: arms with each pooled group replaced by one
     replicate arm, and a caveat for every merge refused and every config-only
     lookalike. Arms without a value never pool -- they stay listed by name in
@@ -320,7 +340,7 @@ def group(arms: list[dict], configs: dict[str, object]) -> tuple[list[dict], lis
     """
     decoded = {name: _config(raw) for name, raw in configs.items()}
     taken = {arm["name"] for arm in arms}
-    out, buckets = _by_base(arms)
+    out, buckets = _by_base(arms, identities)
     notes: list[str] = []
     for base, pairs in sorted(buckets.items()):
         members = [arm for arm, _ in pairs]
@@ -329,15 +349,17 @@ def group(arms: list[dict], configs: dict[str, object]) -> tuple[list[dict], lis
             # no new keys, exactly what it was before this module.
             out.extend(members)
             continue
-        clash = base if base in taken else None
+        # A member may itself be named like its arm (a native record whose
+        # run_id is the arm): only ANOTHER run holding the name clashes.
+        clash = base if base in taken - {m["name"] for m in members} else None
         reason = _veto(members, [seed for _, seed in pairs], decoded, clash)
         if reason is None:
             out.append(_merge(base, members))
         else:
             out.extend(members)
             notes.append(
-                f"{_listed(sorted(m['name'] for m in members))} differ only by seed in"
-                f" their names, but {reason}; kept as separate arms"
+                f"{_listed(sorted(m['name'] for m in members))} differ only by seed"
+                f" (one arm, distinct seeds), but {reason}; kept as separate arms"
             )
     return out, notes + _lookalikes(out, decoded)
 

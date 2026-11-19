@@ -640,11 +640,20 @@ def test_compare_block_is_absent_without_registrations(root):
 
 
 def test_a_seed_beyond_the_listed_runs_is_still_inconclusive():
-    """`runs` is capped at five names; a sixth seed used to read 'no arm named'."""
+    """`runs` is capped at five names; a sixth seed used to read 'no arm named'.
+    The pooled arm's uncapped `members` (as ledger.compare returns it) names it."""
     h = hyp(expect="kdsweep_t4_seed7 < kdsweep_base", allow_single_run=True)
-    listed = [f"kdsweep_t4_seed{i}" for i in range(1, 6)]
+    members = [f"kdsweep_t4_seed{i}" for i in range(1, 11)]
     arms = [
-        arm("kdsweep_t4", 0.05, ci_low=0.04, ci_high=0.06, n_runs=10, runs=listed),
+        arm(
+            "kdsweep_t4",
+            0.05,
+            ci_low=0.04,
+            ci_high=0.06,
+            n_runs=10,
+            runs=members[:5],
+            members=members,
+        ),
         arm("kdsweep_base", 0.09),
     ]
     out = prereg.evaluate(h, result(*arms))

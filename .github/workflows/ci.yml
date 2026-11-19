@@ -40,7 +40,7 @@ jobs:
         run: uv run ruff check .
 
       - name: ty check
-        run: uv run ty check src/
+        run: uv run ty check src/ packages/attestation-schema/src/
 
       - name: uv.lock is in sync with pyproject.toml
         run: uv lock --check
@@ -69,12 +69,28 @@ jobs:
           python-version: "3.12"
 
       - name: Build wheel
-        run: uv build
+        run: uv build --out-dir dist
+
+      - name: Build the attestation-schema wheel
+        # The second distribution built from this repo (packages/attestation-
+        # schema). attestation depends on it at runtime (the ledger reads core
+        # records) and it is not on an index yet, so the attestation wheel
+        # installs with it beside it -- see docs/superpowers/specs/
+        # 2026-11-19-ledger-reads-core-records-design.md, "Dependency".
+        run: uv build --package attestation-schema --out-dir dist-schema
 
       - name: Install wheel into a clean venv
         run: |
           python3 -m venv /tmp/wheel-venv
-          /tmp/wheel-venv/bin/pip install --quiet dist/*.whl
+          /tmp/wheel-venv/bin/pip install --quiet dist-schema/*.whl dist/*.whl
+
+      - name: the ledger imports a core record from the installed wheels
+        run: |
+          /tmp/wheel-venv/bin/python -c "
+          import attestation.ledger, attestation.ledger_adapters as a
+          assert [x.name for x in a.ADAPTERS][0] == 'core'
+          print('ledger adapters:', [x.name for x in a.ADAPTERS])
+          "
 
       - name: attest --help exits 0
         run: /tmp/wheel-venv/bin/attest --help
@@ -106,6 +122,58 @@ jobs:
           assert p.is_file(), 'attestation/py.typed missing from installed wheel'
           print('py.typed present in wheel:', p)
           "
+
+      - name: attestation-schema installs alone and round-trips a record
+        run: |
+          python3 -m venv /tmp/schema-venv
+          /tmp/schema-venv/bin/pip install --quiet --no-deps dist-schema/*.whl
+          /tmp/schema-venv/bin/python -c "
+          import dataclasses, importlib.metadata as m, importlib.resources as r, json, tempfile
+          import attestation_schema as s
+          assert m.requires('attestation-schema') is None, 'attestation-schema must declare no dependencies'
+          assert r.files('attestation_schema').joinpath('py.typed').is_file()
+          schema = json.loads(r.files('attestation_schema').joinpath('schemas/run-1.schema.json').read_text())
+          assert schema['properties']['schema']['const'] == s.SCHEMA
+          rec = s.RunRecord(run_id='smoke', family=None, arm=None, status='complete',
+              started_at=None, finished_at=None, producer=s.Producer('ci', None),
+              code=s.CodeIdentity(None, None, None, None, 'unknown', None), config={}, data=[], metrics=[], history=None,
+              seeds=None, dependencies=None, ext={'x': {'y': 1}})
+          d = tempfile.mkdtemp()
+          curve = [s.Series('loss', None, {}, [s.Point(0, float('nan'), None), s.Point(1, 0.5, None)])]
+          rec = dataclasses.replace(rec, history=s.write_history(d, curve))
+          s.write(rec, d)
+          assert s.read(d) == rec
+          assert s.read_history(d)[0].points[1] == s.Point(1, 0.5, None)
+          assert r.files('attestation_schema').joinpath('schemas/history-1.schema.json').is_file()
+          print('attestation-schema wheel OK:', s.SCHEMA, s.SCHEMA_STATUS)
+          "
+
+  schema-py311:
+    # attestation-schema supports Python >= 3.11 (smeltery, a producer, is
+    # 3.11-only); attestation itself stays >= 3.12, so the workspace venv
+    # cannot run on 3.11. The package's own tests run here against its
+    # installed wheel in a bare 3.11 venv (the JCS parity test skips: it
+    # needs attestation).
+    name: attestation-schema on py3.11
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the attestation-schema wheel
+        run: uv build --package attestation-schema --wheel --out-dir dist-schema
+
+      - name: Package tests on CPython 3.11
+        run: |
+          uv venv --python 3.11 /tmp/schema-311
+          uv pip install --python /tmp/schema-311/bin/python dist-schema/*.whl pytest jsonschema
+          cd packages/attestation-schema
+          /tmp/schema-311/bin/python -c "import sys; assert sys.version_info[:2] == (3, 11), sys.version"
+          /tmp/schema-311/bin/python -m pytest -q -p no:cacheprovider -c /dev/null --rootdir . tests
 
   flows:
     name: example flows (offline)

@@ -1,7 +1,7 @@
 # Replicate-aware comparison
 
 **Date:** 2026-11-19
-**Status:** implemented in `replicates.py`, called from `ledger._compare`; no new tool, no migration.
+**Status:** implemented in `replicates.py`, called from `ledger._compare`; no new tool. Re-based on the core run record when merged with roadmap 11 (below): pooling reads the record's `arm` and `seeds`, stored by migration 016.
 **Depends on:** the run ledger (`2026-08-12-run-ledger-design.md`), the corpus ledger
 (`2026-08-20-corpus-ledger-design.md`).
 
@@ -218,3 +218,48 @@ Downgrading claims on n=1 or overlapping intervals (needs a comparative-claim
 grammar), `attest runs record --seed`, any migration, per-sample statistics,
 p-values or multiple-comparison correction, regrouping subdirectory layouts,
 a new golden-path example, SKILL.md text.
+
+## After the ledger began reading only core records (2026-11-19 merge)
+
+Written when this branch was merged with roadmap 11 (`2026-11-19-ledger-
+reads-core-records-design.md`), which landed first. That change made the
+core run record the only way a run enters the ledger, and the record already
+has the two fields this feature had been inferring from names: `arm` (the
+variant within a family) and `seeds`. So the rule above is restated against
+the record, which is also roadmap 17 ("seed/variance checks as a
+schema-driven rule"):
+
+- **Propose = same `arm`, distinct non-empty `seeds`.** Runs of one family
+  whose records share a non-null `arm` and each carry non-empty `seeds` pool
+  into one arm named by that `arm`. `seeds: null` ("did not say") or `{}`
+  ("set none") never pools: such runs cannot be told from re-executions. A
+  nested arm `<run>[<key>]` pools under `<arm>[<key>]`, as before.
+- **The name is read once, at import.** Legacy artifacts carry neither field,
+  so `ledger_adapters.trackers.replicate_of` reads `<config>_seed<N>` from the
+  run name when the importer builds the record and writes `arm = <config>`,
+  `seeds = {"seed": N}`. The run id a tracker's reader appends
+  (`<run_name>/<id>`) is dropped only for the readers that declare it
+  (`TrackerAdapter.run_id_suffix`), instead of guessing from an 8-character
+  regex -- which also moves that tracker knowledge out of `replicates.py`.
+  The ledger never parses a name for pooling; `replicates.py` keeps
+  `strip_seed` only as the one definition of the token, used by the importer,
+  by `generic.family_of` (the seed token still never changes a family) and
+  by the split veto's `_unseeded_split`.
+- **Veto** is unchanged except that config keys the records name as seeds
+  (`{"np": 3}` -> `np`) are ignored beside `seed`, so a native producer's
+  seed parameter does not veto its own replicates.
+- **Storage: migration 016** adds `runs.arm` and `runs.seeds_json`; the
+  "no migration" above is superseded. The ledger's tables had no place for
+  either field (the roadmap-11 spec lists `seeds` among what it did not
+  store), and pooling must read them at compare time. Columns only: the 24
+  application tables and 35 `sqlite_master` objects are unchanged. A run
+  scanned before 016 pools nothing until re-scanned (`runs.scan` replaces
+  every row), the rule migration 015 set for `caveats_json`.
+- **Members.** A pooled arm also carries the uncapped `members` list beside
+  `source_paths`; `compute.attach` sums wall time over it and `prereg`
+  recognises a sixth seed by it, where both used to re-parse names.
+  `runs.compare` drops it from the MCP payload like `source_paths`.
+
+Every output this spec pins (kdsweep byte-identical, the CLI rendering, the
+statistics and caveat texts) is unchanged; the lookalike caveat now also
+suggests giving the records one arm and distinct seeds.
