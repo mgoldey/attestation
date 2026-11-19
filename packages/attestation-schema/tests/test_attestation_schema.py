@@ -24,13 +24,16 @@ from attestation_schema import (
     JobState,
     Metric,
     MissingFieldError,
+    Point,
     Producer,
     RecordError,
     RunRecord,
+    Series,
     UnknownFieldError,
     UnsupportedSchemaError,
     can_transition,
     dumps,
+    format_timestamp,
     from_dict,
     layout,
     loads,
@@ -58,17 +61,38 @@ def _record(**changes) -> RunRecord:
         arm="baseline",
         status="complete",
         started_at="2026-11-19T10:00:00Z",
-        finished_at="2026-11-19T10:42:13.250000Z",
+        finished_at="2026-11-19T10:42:13.25Z",
         producer=Producer(name="example-producer", version="0.1.0"),
-        code=CodeIdentity(git_sha="0" * 40, dirty=False, repo="https://example.org/lab/code.git"),
+        code=CodeIdentity(
+            git_sha="0" * 40,
+            dirty=False,
+            repo="https://example.org/lab/code.git",
+            version="0.4.0",
+            provenance="inferred",
+            evidence="editable install: the checkout's HEAD",
+        ),
         config={"lr": 0.001, "layers": [64, 64], "note": "π"},
         data=[DataDigest(name="inputs/library.sdf", sha256="1" * 64, role="input")],
         metrics=[
-            Metric(name="loss", value=0.25, direction="min", step=1000, split="eval"),
-            Metric(name="loss", value=0.31, direction="min", step=1000, split="train"),
-            Metric(name="tier.dock.survivors", value=412, direction=None, step=None, split=None),
+            Metric("loss", 0.25, "min", 1000, "eval", None, {}),
+            Metric("loss", 0.31, "min", 1000, "train", None, {}),
+            Metric("tier.dock.survivors", 412, None, None, None, None, {}),
+            Metric("paired_ddE.mean", -1.2, "min", None, None, "kcal/mol", {"analogue": "4-F"}),
+            Metric("paired_ddE.mean", -0.4, "min", None, None, "kcal/mol", {"analogue": "4-Cl"}),
         ],
-        seeds={"python": 0, "numpy": 7},
+        history=[
+            Series(
+                name="loss",
+                split="train",
+                labels={},
+                points=[
+                    Point(step=0, value=0.9, at="2026-11-19T10:00:01.5Z"),
+                    Point(step=0, value=0.8, at="2026-11-19T10:00:02Z"),
+                    Point(step=1000, value=0.31, at=None),
+                ],
+            )
+        ],
+        seeds={"python": 0, "numpy": 7, "docking": [7, 8]},
         dependencies=[
             Dependency(
                 name="ferric",
@@ -77,6 +101,7 @@ def _record(**changes) -> RunRecord:
                 dirty=False,
                 provenance="verified",
                 evidence="ferric.__build__",
+                source="git+https://example.org/lab/ferric.git",
             )
         ],
         ext={"smeltery": {"tiers": [{"name": "dock", "n_in": 5000, "n_out": 412}]}},
@@ -200,7 +225,8 @@ def _paths(value, prefix=""):
         for key, item in value.items():
             path = f"{prefix}.{key}" if prefix else key
             yield path, (prefix, key)
-            if key not in ("config", "ext", "seeds") or prefix:
+            opaque = (key in ("config", "ext", "seeds") and not prefix) or key == "labels"
+            if not opaque:
                 yield from _paths(item, path)
     elif isinstance(value, list) and value:
         yield from _paths(value[0], f"{prefix}[0]")
@@ -222,7 +248,10 @@ def test_the_required_field_inventory_is_complete():
     for nested in ("producer.version", "code.dirty", "data[0].role", "metrics[0].direction"):
         assert nested in ALL_PATHS
     assert "dependencies[0].evidence" in ALL_PATHS and "seeds" in ALL_PATHS
-    assert len(ALL_PATHS) == 15 + 2 + 3 + 3 + 5 + 6
+    assert "history[0].points[0].at" in ALL_PATHS and "history[0].split" in ALL_PATHS
+    assert "code.provenance" in ALL_PATHS and "metrics[0].labels" in ALL_PATHS
+    assert "dependencies[0].source" in ALL_PATHS and "history[0].labels" in ALL_PATHS
+    assert len(ALL_PATHS) == 16 + 2 + 6 + 3 + 7 + 4 + 3 + 7
 
 
 @pytest.mark.parametrize("path", ALL_PATHS)
@@ -253,6 +282,8 @@ def test_null_is_not_absent():
         lambda d: d["code"],
         lambda d: d["data"][0],
         lambda d: d["metrics"][0],
+        lambda d: d["history"][0],
+        lambda d: d["history"][0]["points"][0],
         lambda d: d["dependencies"][0],
     ],
 )
@@ -272,6 +303,9 @@ INVALID = [
     ("status", "COMPLETE"),
     ("started_at", "2026-11-19T10:00:00+00:00"),
     ("started_at", "2026-13-19T10:00:00Z"),
+    ("started_at", "2026-11-19T10:00:00.500Z"),
+    ("started_at", "2026-11-19T10:00:00.000Z"),
+    ("started_at", "2026-11-19T10:00:00.Z"),
     ("finished_at", "2026-11-19T09:00:00Z"),
     ("code.git_sha", "ABC"),
     ("code.git_sha", "A" * 40),
@@ -283,11 +317,33 @@ INVALID = [
     ("data[0].sha256", "1" * 63),
     ("metrics[0].value", True),
     ("metrics[0].value", "0.25"),
+    ("metrics[0].value", "nan"),
+    ("metrics[0].value", "Inf"),
     ("metrics[0].direction", "maximize"),
     ("metrics[0].step", -1),
     ("metrics[0].step", 1.0),
     ("metrics[0].split", ""),
+    ("history", {}),
+    ("history[0].name", ""),
+    ("history[0].split", ""),
+    ("history[0].points", []),
+    ("history[0].points[0].step", None),
+    ("history[0].points[0].step", -1),
+    ("history[0].points[0].value", True),
+    ("history[0].points[0].value", "NAN"),
+    ("history[0].points[0].at", "2026-11-19T10:00:00.100Z"),
     ("seeds", [1]),
+    ("seeds", {"docking": []}),
+    ("seeds", {"docking": [7, "8"]}),
+    ("code.provenance", "VERIFIED"),
+    ("code.version", ""),
+    ("metrics[0].unit", ""),
+    ("metrics[0].labels", []),
+    ("metrics[0].labels", {"analogue": 4}),
+    ("metrics[0].labels", {"analogue": ""}),
+    ("history[0].labels", None),
+    ("dependencies[0].source", ""),
+    ("dependencies[0].source", "https://user:pw@example.org/x.git"),
     ("seeds", {"python": True}),
     ("dependencies[0].provenance", "VERIFIED"),
     ("dependencies[0].build_sha", "xyz"),
@@ -317,20 +373,118 @@ def test_cross_field_rules():
         dumps(
             _record(
                 metrics=[
-                    Metric("loss", 1, "min", 0, "eval"),
-                    Metric("loss", 1, "max", 0, "train"),
+                    Metric("loss", 1, "min", 0, "eval", None, {}),
+                    Metric("loss", 1, "max", 0, "train", None, {}),
                 ]
             )
         )
     with pytest.raises(InvalidFieldError, match="duplicate metric"):
-        dumps(_record(metrics=[Metric("loss", 1, None, 0, None), Metric("loss", 2, None, 0, None)]))
+        dumps(
+            _record(
+                metrics=[
+                    Metric("loss", 1, None, 0, None, None, {}),
+                    Metric("loss", 2, None, 0, None, None, {}),
+                ]
+            )
+        )
+    with pytest.raises(InvalidFieldError, match="one unit per name"):
+        dumps(
+            _record(
+                metrics=[
+                    Metric("dE", 1, None, None, None, "kcal/mol", {"a": "x"}),
+                    Metric("dE", 2, None, None, None, "kJ/mol", {"a": "y"}),
+                ]
+            )
+        )
+    with pytest.raises(InvalidFieldError, match="duplicate metric"):
+        dumps(
+            _record(
+                metrics=[
+                    Metric("dE", 1, None, None, None, None, {"a": "x", "b": "y"}),
+                    Metric("dE", 2, None, None, None, None, {"b": "y", "a": "x"}),
+                ]
+            )
+        )
+    with pytest.raises(InvalidFieldError, match="verified"):
+        dumps(_record(code=CodeIdentity(None, None, None, None, "verified", "a guess")))
+    dumps(_record(code=CodeIdentity(None, None, None, "0.0.2", "verified", "index release")))
+    dumps(_record(code=CodeIdentity(None, None, None, None, "unknown", None)))
     with pytest.raises(InvalidFieldError, match="duplicate data name"):
         dumps(_record(data=[DataDigest("a", "1" * 64, "input"), DataDigest("a", "2" * 64, "eval")]))
     with pytest.raises(InvalidFieldError, match="verified"):
-        dumps(_record(dependencies=[Dependency("x", None, None, None, "verified", None)]))
+        dumps(_record(dependencies=[Dependency("x", None, None, None, "verified", None, None)]))
     # A dirty build can still be verified -- verified that it was dirty.
-    dumps(_record(dependencies=[Dependency("ferric", None, FERRIC_SHA, True, "verified", None)]))
-    dumps(_record(dependencies=[Dependency("ferric", None, None, None, "unknown", None)]))
+    dumps(
+        _record(dependencies=[Dependency("ferric", None, FERRIC_SHA, True, "verified", None, None)])
+    )
+    dumps(_record(dependencies=[Dependency("ferric", None, None, None, "unknown", None, None)]))
+
+
+def test_history_keeps_every_logged_point_in_order():
+    """A curve is a log: MLflow really does log two values at one step, and
+    both are kept, in logging order (spec, Producer findings)."""
+    record = loads(dumps(_record()))
+    (series,) = record.history
+    assert [(p.step, p.value) for p in series.points] == [(0, 0.9), (0, 0.8), (1000, 0.31)]
+    with pytest.raises(InvalidFieldError, match="duplicate series"):
+        dumps(_record(history=[series, series]))
+    other_split = Series(name="loss", split="eval", labels={}, points=series.points)
+    labelled = Series(name="loss", split="train", labels={"seed": "1"}, points=series.points)
+    assert len(loads(dumps(_record(history=[series, labelled]))).history) == 2
+    assert len(loads(dumps(_record(history=[series, other_split]))).history) == 2
+    assert loads(dumps(_record(history=[]))).history == []
+
+
+def test_non_finite_metric_values_are_spelled_not_dropped():
+    """A diverged loss is a result. In Python it is a float; on the wire it
+    is a string, because JSON has no NaN and JCS refuses one."""
+    import math
+
+    record = _record(
+        metrics=[
+            Metric("loss", math.nan, "min", 3, None, None, {}),
+            Metric("grad", math.inf, None, 3, None, None, {}),
+            Metric("score", -math.inf, None, 3, None, None, {}),
+        ],
+        history=[Series("loss", None, {}, [Point(0, 1.5, None), Point(3, math.nan, None)])],
+    )
+    b = dumps(record)
+    wire = json.loads(b)
+    assert [m["value"] for m in wire["metrics"]] == ["NaN", "Infinity", "-Infinity"]
+    assert wire["history"][0]["points"][1]["value"] == "NaN"
+    back = loads(b)
+    assert math.isnan(back.metrics[0].value) and back.metrics[1].value == math.inf
+    assert back.metrics[2].value == -math.inf and math.isnan(back.history[0].points[1].value)
+    assert dumps(back) == b
+    # The JSON form is the string: a raw float NaN handed to from_dict is refused,
+    # and non-finite numbers stay refused outside metric values.
+    obj = _dict()
+    obj["metrics"][0]["value"] = math.nan
+    with pytest.raises(InvalidFieldError, match="finite"):
+        from_dict(obj)
+    with pytest.raises(InvalidFieldError, match="finite"):
+        dumps(_record(config={"lr": math.nan}))
+
+
+def test_data_may_be_named_without_a_digest():
+    """MLflow logs datasets the producer cannot hash (an HTTP source, an
+    in-memory frame). The core still says the run read them; null says how
+    much is known (spec, Producer findings)."""
+    entry = DataDigest(name="datasets/toy@ed51c932", sha256=None, role="training")
+    assert loads(dumps(_record(data=[entry]))).data == [entry]
+
+
+def test_format_timestamp_gives_the_one_accepted_spelling():
+    from datetime import UTC, datetime, timedelta, timezone
+
+    assert format_timestamp(datetime(2026, 11, 19, 10, 0, tzinfo=UTC)) == "2026-11-19T10:00:00Z"
+    when = datetime(2026, 11, 19, 10, 0, 0, 250000, tzinfo=timezone(timedelta(hours=-5)))
+    assert format_timestamp(when) == "2026-11-19T15:00:00.25Z"
+    assert format_timestamp(datetime(2026, 1, 1, 0, 0, 0, 1, tzinfo=UTC)).endswith(".000001Z")
+    with pytest.raises(ValueError, match="aware"):
+        format_timestamp(datetime(2026, 1, 1))
+    # Whatever it produces, the reader accepts.
+    dumps(_record(started_at=format_timestamp(when), finished_at=format_timestamp(when)))
 
 
 @pytest.mark.parametrize(
@@ -424,6 +578,7 @@ def test_published_json_schema_agrees_with_the_reader():
         ("finished_at", "'2026-11-19T09:00:00Z'"),  # finished_at >= started_at
         ("code.repo", "'https://user:token@example.org/x.git'"),  # credentials
         ("code.repo", "'https://token@example.org/x.git'"),
+        ("dependencies[0].source", "'https://user:pw@example.org/x.git'"),
         ("started_at", "'2026-13-19T10:00:00Z'"),  # well-formed, impossible date
         ("metrics[0].step", "1.0"),  # JSON Schema's integer admits 1.0
     }

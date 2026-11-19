@@ -20,6 +20,7 @@ from attestation_schema.jobs import (
     can_transition,
 )
 from attestation_schema.record import (
+    NON_FINITE,
     READERS,
     SCHEMA,
     SCHEMA_STATUS,
@@ -29,12 +30,15 @@ from attestation_schema.record import (
     InvalidFieldError,
     Metric,
     MissingFieldError,
+    Point,
     Producer,
     RecordError,
     RunRecord,
+    Series,
     UnknownFieldError,
     UnsupportedSchemaError,
     dumps,
+    format_timestamp,
     from_dict,
     loads,
     read,
@@ -44,6 +48,7 @@ from attestation_schema.record import (
 )
 
 __all__ = [
+    "NON_FINITE",
     "READERS",
     "SCHEMA",
     "SCHEMA_STATUS",
@@ -64,13 +69,16 @@ __all__ = [
     "JobStatus",
     "Metric",
     "MissingFieldError",
+    "Point",
     "Producer",
     "RecordError",
     "RunRecord",
+    "Series",
     "UnknownFieldError",
     "UnsupportedSchemaError",
     "can_transition",
     "dumps",
+    "format_timestamp",
     "from_dict",
     "loads",
     "read",

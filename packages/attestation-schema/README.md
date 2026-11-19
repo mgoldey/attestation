@@ -11,9 +11,12 @@ record = RunRecord(
     run_id="run-3f2a9c01b7de", family="lr-sweep", arm="lr=1e-3", status="complete",
     started_at="2026-11-19T10:00:00Z", finished_at="2026-11-19T10:42:13Z",
     producer=Producer(name="train.py", version=None),
-    code=CodeIdentity(git_sha=None, dirty=None, repo=None),
+    code=CodeIdentity(git_sha=None, dirty=None, repo=None, version=None,
+                      provenance="unknown", evidence=None),
     config={"lr": 0.001}, data=[],
-    metrics=[Metric(name="loss", value=0.25, direction="min", step=1000, split="eval")],
+    metrics=[Metric(name="loss", value=0.25, direction="min", step=1000, split="eval",
+                    unit=None, labels={})],
+    history=[],  # curves: Series(name, split, labels, points=[Point(step, value, at)])
     seeds={"python": 0}, dependencies=[], ext={},
 )
 write(record, "runs/run-3f2a9c01b7de")   # -> runs/run-3f2a9c01b7de/attestation/run.json

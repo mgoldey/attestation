@@ -20,7 +20,7 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -40,7 +40,12 @@ PROVENANCES = ("verified", "inferred", "unknown")
 
 _SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
-_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z")
+# One instant, one spelling: UTC `Z`, and a fraction (if any) of at most six
+# digits with no trailing zero -- `.5`, never `.500` or `.000`. MLflow's
+# millisecond clocks made the second rule necessary (spec, Producer findings).
+_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{0,5}[1-9])?Z")
+# Non-finite metric values have no JSON number; these strings spell them.
+NON_FINITE = {"NaN": math.nan, "Infinity": math.inf, "-Infinity": -math.inf}
 _NAMESPACE = re.compile(r"[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*")
 _SCHEMA_ID = re.compile(r"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*)/([1-9][0-9]*)")
 _RESERVED_NAMESPACE = "attestation"
@@ -80,31 +85,62 @@ class Producer:
 
 @dataclass(frozen=True)
 class CodeIdentity:
-    """The experiment code. `dirty=None` is unknown, never clean."""
+    """The experiment code, and how sure that identity is -- the same ladder as
+    a `Dependency`. `dirty=None` is unknown, never clean; `version` is the
+    code's own version (a non-editable install may have nothing else)."""
 
     git_sha: str | None
     dirty: bool | None
     repo: str | None
+    version: str | None
+    provenance: str
+    evidence: str | None
 
 
 @dataclass(frozen=True)
 class DataDigest:
-    """A file the run read or produced, by sha256."""
+    """Data the run read or produced. `sha256=None`: named, but its bytes
+    were not digested (the producer knows the run read it, not what it held)."""
 
     name: str
-    sha256: str
+    sha256: str | None
     role: str
 
 
 @dataclass(frozen=True)
 class Metric:
-    """A final value. `direction=None` means the producer did not say."""
+    """A final value. `direction=None` means the producer did not say.
+
+    `value` may be NaN or +/-infinity (a diverged loss is a result, not a
+    gap); on the wire those are the strings in `NON_FINITE`."""
 
     name: str
     value: int | float
     direction: str | None
     step: int | None
     split: str | None
+    unit: str | None
+    labels: dict[str, str]
+
+
+@dataclass(frozen=True)
+class Point:
+    """One logged value of a series, in the order the producer logged it."""
+
+    step: int
+    value: int | float
+    at: str | None
+
+
+@dataclass(frozen=True)
+class Series:
+    """A metric's logged history (a curve). Steps may repeat and need not
+    increase: it is a log, not a map. Final values live in `metrics`."""
+
+    name: str
+    split: str | None
+    labels: dict[str, str]
+    points: list[Point]
 
 
 @dataclass(frozen=True)
@@ -117,6 +153,7 @@ class Dependency:
     dirty: bool | None
     provenance: str
     evidence: str | None
+    source: str | None
 
 
 @dataclass(frozen=True)
@@ -134,7 +171,8 @@ class RunRecord:
     config: dict[str, Any]
     data: list[DataDigest]
     metrics: list[Metric]
-    seeds: dict[str, int] | None
+    history: list[Series]
+    seeds: dict[str, int | list[int]] | None
     dependencies: list[Dependency]
     ext: dict[str, dict[str, Any]]
     schema: str = SCHEMA
@@ -211,6 +249,17 @@ def _integer(value: Any, path: str, *, nullable: bool = False, minimum: int | No
     return value
 
 
+def _metric_value(value: Any, path: str) -> int | float:
+    """A metric value: a finite JSON number, or a `NON_FINITE` spelling."""
+    if isinstance(value, str):
+        if value not in NON_FINITE:
+            raise InvalidFieldError(
+                path, f"expected a number or one of {list(NON_FINITE)}, got {value!r}"
+            )
+        return NON_FINITE[value]
+    return _number(value, path)
+
+
 def _number(value: Any, path: str) -> int | float:
     if isinstance(value, float):
         if not math.isfinite(value):
@@ -285,6 +334,7 @@ _TOP_V1 = (
     "config",
     "data",
     "metrics",
+    "history",
     "seeds",
     "dependencies",
     "ext",
@@ -300,21 +350,34 @@ def _producer(value: Any, path: str) -> Producer:
 
 
 def _repo(value: Any, path: str) -> str | None:
+    """A nullable location string (a repo URL, a package source) with no
+    `user:password@` in it."""
     repo = _opt_string(value, path)
     if repo is not None:
         parts = urlsplit(repo)
         if parts.password is not None or (parts.scheme in ("http", "https") and parts.username):
-            raise InvalidFieldError(path, "repository URL carries credentials; strip them")
+            raise InvalidFieldError(path, "URL carries credentials; strip them")
     return repo
 
 
+def _verified_needs(identity: str | None, provenance: str, path: str, what: str) -> None:
+    if provenance == "verified" and identity is None:
+        raise InvalidFieldError(_at(path, "provenance"), f"'verified' needs {what} to verify")
+
+
 def _code(value: Any, path: str) -> CodeIdentity:
-    d = _object(value, path, ("git_sha", "dirty", "repo"))
-    return CodeIdentity(
+    keys = ("git_sha", "dirty", "repo", "version", "provenance", "evidence")
+    d = _object(value, path, keys)
+    code = CodeIdentity(
         git_sha=_opt_string(d["git_sha"], _at(path, "git_sha"), pattern=_SHA),
         dirty=_bool(d["dirty"], _at(path, "dirty")),
         repo=_repo(d["repo"], _at(path, "repo")),
+        version=_opt_string(d["version"], _at(path, "version")),
+        provenance=_choice(d["provenance"], _at(path, "provenance"), PROVENANCES),
+        evidence=_opt_string(d["evidence"], _at(path, "evidence")),
     )
+    _verified_needs(code.git_sha or code.version, code.provenance, path, "a git_sha or a version")
+    return code
 
 
 def _data(value: Any, path: str) -> list[DataDigest]:
@@ -325,7 +388,7 @@ def _data(value: Any, path: str) -> list[DataDigest]:
         out.append(
             DataDigest(
                 name=_string(d["name"], _at(p, "name")),
-                sha256=_string(d["sha256"], _at(p, "sha256"), pattern=_SHA256),
+                sha256=_opt_string(d["sha256"], _at(p, "sha256"), pattern=_SHA256),
                 role=_string(d["role"], _at(p, "role")),
             )
         )
@@ -333,43 +396,112 @@ def _data(value: Any, path: str) -> list[DataDigest]:
     return out
 
 
+def _labels(value: Any, path: str) -> dict[str, str]:
+    """`{key: value}`, both non-empty strings: what a value is ABOUT (an
+    analogue, a model), so a reader groups without parsing metric names."""
+    if not isinstance(value, dict):
+        raise InvalidFieldError(path, f"expected an object, got {_tname(value)}")
+    for key, label in value.items():
+        _string(key, path)
+        _string(label, _at(path, key))
+    return value
+
+
+def _label_key(labels: dict[str, str]) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted(labels.items()))
+
+
 def _metric(value: Any, path: str) -> Metric:
-    d = _object(value, path, ("name", "value", "direction", "step", "split"))
+    keys = ("name", "value", "direction", "step", "split", "unit", "labels")
+    d = _object(value, path, keys)
     return Metric(
         name=_string(d["name"], _at(path, "name")),
-        value=_number(d["value"], _at(path, "value")),
+        value=_metric_value(d["value"], _at(path, "value")),
         direction=_choice(d["direction"], _at(path, "direction"), DIRECTIONS, nullable=True),
         step=_integer(d["step"], _at(path, "step"), nullable=True, minimum=0),
         split=_opt_string(d["split"], _at(path, "split")),
+        unit=_opt_string(d["unit"], _at(path, "unit")),
+        labels=_labels(d["labels"], _at(path, "labels")),
     )
+
+
+def _one_per_name(out: list[Metric], path: str, field: str) -> None:
+    seen: dict[str, Any] = {}
+    for i, m in enumerate(out):
+        mine = getattr(m, field)
+        if seen.setdefault(m.name, mine) != mine:
+            raise InvalidFieldError(
+                _at(_at(path, i), field),
+                f"metric {m.name!r} is {seen[m.name]!r} elsewhere; one {field} per name",
+            )
 
 
 def _metrics(value: Any, path: str) -> list[Metric]:
     out = [_metric(item, _at(path, i)) for i, item in enumerate(_list(value, path))]
-    _unique([(m.name, m.step, m.split) for m in out], path, "metric (name, step, split)")
-    direction: dict[str, str | None] = {}
-    for i, m in enumerate(out):
-        if direction.setdefault(m.name, m.direction) != m.direction:
-            raise InvalidFieldError(
-                _at(_at(path, i), "direction"),
-                f"metric {m.name!r} is {direction[m.name]!r} elsewhere; one direction per name",
-            )
+    _unique(
+        [(m.name, m.step, m.split, _label_key(m.labels)) for m in out],
+        path,
+        "metric (name, step, split, labels)",
+    )
+    _one_per_name(out, path, "direction")
+    _one_per_name(out, path, "unit")
     return out
 
 
-def _seeds(value: Any, path: str) -> dict[str, int] | None:
+def _point(value: Any, path: str) -> Point:
+    d = _object(value, path, ("step", "value", "at"))
+    return Point(
+        step=_integer(d["step"], _at(path, "step"), minimum=0),
+        value=_metric_value(d["value"], _at(path, "value")),
+        at=_timestamp(d["at"], _at(path, "at")),
+    )
+
+
+def _history(value: Any, path: str) -> list[Series]:
+    out = []
+    for i, item in enumerate(_list(value, path)):
+        p = _at(path, i)
+        d = _object(item, p, ("name", "split", "labels", "points"))
+        points = _list(d["points"], _at(p, "points"))
+        if not points:
+            raise InvalidFieldError(_at(p, "points"), "a series has at least one point")
+        out.append(
+            Series(
+                name=_string(d["name"], _at(p, "name")),
+                split=_opt_string(d["split"], _at(p, "split")),
+                labels=_labels(d["labels"], _at(p, "labels")),
+                points=[_point(pt, _at(_at(p, "points"), j)) for j, pt in enumerate(points)],
+            )
+        )
+    _unique(
+        [(s.name, s.split, _label_key(s.labels)) for s in out],
+        path,
+        "series (name, split, labels)",
+    )
+    return out
+
+
+def _seeds(value: Any, path: str) -> dict[str, int | list[int]] | None:
+    """`{name: int | [int, ...]}`: a list is one stage run once per seed
+    (docking's `seeds: [7]`), in the producer's order; never empty."""
     if value is None:
         return None
     if not isinstance(value, dict):
         raise InvalidFieldError(path, f"expected an object or null, got {_tname(value)}")
     for name, seed in value.items():
         _string(name, _at(path, str(name)))
-        _integer(seed, _at(path, name))
+        if isinstance(seed, list):
+            if not seed:
+                raise InvalidFieldError(_at(path, name), "a seed list has at least one seed")
+            for i, one in enumerate(seed):
+                _integer(one, _at(_at(path, name), i))
+        else:
+            _integer(seed, _at(path, name))
     return value
 
 
 def _dependency(value: Any, path: str) -> Dependency:
-    keys = ("name", "version", "build_sha", "dirty", "provenance", "evidence")
+    keys = ("name", "version", "build_sha", "dirty", "provenance", "evidence", "source")
     d = _object(value, path, keys)
     dep = Dependency(
         name=_string(d["name"], _at(path, "name")),
@@ -378,11 +510,9 @@ def _dependency(value: Any, path: str) -> Dependency:
         dirty=_bool(d["dirty"], _at(path, "dirty")),
         provenance=_choice(d["provenance"], _at(path, "provenance"), PROVENANCES),
         evidence=_opt_string(d["evidence"], _at(path, "evidence")),
+        source=_repo(d["source"], _at(path, "source")),
     )
-    if dep.provenance == "verified" and dep.version is None and dep.build_sha is None:
-        raise InvalidFieldError(
-            _at(path, "provenance"), "'verified' needs a version or a build_sha to verify"
-        )
+    _verified_needs(dep.version or dep.build_sha, dep.provenance, path, "a version or a build_sha")
     return dep
 
 
@@ -431,6 +561,7 @@ def _read_v1(obj: dict[str, Any]) -> RunRecord:
         config=_config(d["config"], "config"),
         data=_data(d["data"], "data"),
         metrics=_metrics(d["metrics"], "metrics"),
+        history=_history(d["history"], "history"),
         seeds=_seeds(d["seeds"], "seeds"),
         dependencies=_dependencies(d["dependencies"], "dependencies"),
         ext=_ext(d["ext"], "ext"),
@@ -524,8 +655,44 @@ def dumps(record: RunRecord) -> bytes:
     if not isinstance(record, RunRecord):
         raise TypeError(f"dumps() takes a RunRecord, got {type(record).__name__}")
     obj = record.to_dict()
+    _spell_values(obj)
     from_dict(obj)  # the reader's rules: a record that would not read cannot be written
     return canonicalize(obj)
+
+
+def _spell_values(obj: dict[str, Any]) -> None:
+    """Rewrite non-finite metric and history values as their wire strings,
+    wherever the shape is the expected one (anything else the reader refuses)."""
+    holders: list[Any] = list(obj["metrics"]) if isinstance(obj["metrics"], list) else []
+    for series in obj["history"] if isinstance(obj["history"], list) else []:
+        if isinstance(series, dict) and isinstance(series.get("points"), list):
+            holders += series["points"]
+    for holder in holders:
+        if isinstance(holder, dict) and "value" in holder:
+            holder["value"] = _spell(holder["value"])
+
+
+def _spell(value: Any) -> Any:
+    """A non-finite float as its `NON_FINITE` string; anything else unchanged
+    (the reader then judges it)."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return "NaN" if math.isnan(value) else ("Infinity" if value > 0 else "-Infinity")
+    return value
+
+
+def format_timestamp(when: datetime) -> str:
+    """The one spelling of an instant the record accepts: UTC, `Z`, and a
+    fraction only as long as it needs to be (`.25`, never `.250000`).
+
+    A naive datetime is refused rather than assumed UTC.
+    """
+    if when.tzinfo is None:
+        raise ValueError("format_timestamp needs an aware datetime; a naive one has no instant")
+    utc = when.astimezone(UTC)
+    text = utc.strftime("%Y-%m-%dT%H:%M:%S")
+    if utc.microsecond:
+        text += f".{utc.microsecond:06d}".rstrip("0")
+    return text + "Z"
 
 
 def record_digest(record: RunRecord) -> str:

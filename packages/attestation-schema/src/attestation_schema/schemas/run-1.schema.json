@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mgoldey/attestation/schemas/attestation.run/1",
   "title": "attestation.run/1 (v1-DRAFT, not frozen)",
-  "description": "Core run record. Necessary, not sufficient: the Python reader in attestation_schema.record is the reference and also enforces duplicate-key refusal, one direction per metric name, unique names/keys, finished_at >= started_at, integers within +/-2^53, credential-free repo URLs and 'verified' needing a version or build_sha.",
+  "description": "Core run record. Necessary, not sufficient: the Python reader in attestation_schema.record is the reference and also enforces duplicate-key refusal, one direction and one unit per metric name, unique names/keys (including one series per (name, split, labels) in history and one metric per (name, step, split, labels)), finished_at >= started_at, integers within +/-2^53, credential-free repo and source URLs and 'verified' needing an identity to verify, in code and in each dependency.",
   "type": "object",
   "required": [
     "schema",
@@ -17,6 +17,7 @@
     "config",
     "data",
     "metrics",
+    "history",
     "seeds",
     "dependencies",
     "ext"
@@ -56,14 +57,14 @@
         "string",
         "null"
       ],
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$"
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{0,5}[1-9])?Z$"
     },
     "finished_at": {
       "type": [
         "string",
         "null"
       ],
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$"
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{0,5}[1-9])?Z$"
     },
     "producer": {
       "type": "object",
@@ -91,7 +92,10 @@
       "required": [
         "git_sha",
         "dirty",
-        "repo"
+        "repo",
+        "version",
+        "provenance",
+        "evidence"
       ],
       "additionalProperties": false,
       "properties": {
@@ -109,6 +113,27 @@
           ]
         },
         "repo": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "provenance": {
+          "enum": [
+            "verified",
+            "inferred",
+            "unknown"
+          ]
+        },
+        "evidence": {
           "type": [
             "string",
             "null"
@@ -136,7 +161,10 @@
             "minLength": 1
           },
           "sha256": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "pattern": "^[0-9a-f]{64}$"
           },
           "role": {
@@ -155,7 +183,9 @@
           "value",
           "direction",
           "step",
-          "split"
+          "split",
+          "unit",
+          "labels"
         ],
         "additionalProperties": false,
         "properties": {
@@ -164,7 +194,18 @@
             "minLength": 1
           },
           "value": {
-            "type": "number"
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "enum": [
+                  "NaN",
+                  "Infinity",
+                  "-Infinity"
+                ]
+              }
+            ]
           },
           "direction": {
             "enum": [
@@ -186,6 +227,99 @@
               "null"
             ],
             "minLength": 1
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "labels": {
+            "type": "object",
+            "propertyNames": {
+              "minLength": 1
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "split",
+          "labels",
+          "points"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "split": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "labels": {
+            "type": "object",
+            "propertyNames": {
+              "minLength": 1
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "points": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "step",
+                "value",
+                "at"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "step": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "value": {
+                  "oneOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "NaN",
+                        "Infinity",
+                        "-Infinity"
+                      ]
+                    }
+                  ]
+                },
+                "at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{0,5}[1-9])?Z$"
+                }
+              }
+            }
           }
         }
       }
@@ -196,7 +330,18 @@
         "null"
       ],
       "additionalProperties": {
-        "type": "integer"
+        "oneOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer"
+            }
+          }
+        ]
       },
       "propertyNames": {
         "minLength": 1
@@ -212,7 +357,8 @@
           "build_sha",
           "dirty",
           "provenance",
-          "evidence"
+          "evidence",
+          "source"
         ],
         "additionalProperties": false,
         "properties": {
@@ -248,6 +394,13 @@
             ]
           },
           "evidence": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "source": {
             "type": [
               "string",
               "null"

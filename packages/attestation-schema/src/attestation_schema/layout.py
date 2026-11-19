@@ -7,6 +7,8 @@
     <run_dir>/logs/run.log              whole-run log
     <run_dir>/logs/NN-<name>.log        one per step
 
+Only attestation/ is required: steps/ and logs/ are optional, and outputs may
+live anywhere under the run directory (the manifest covers every file).
 Write order is steps and logs -> digests.json -> run.json, so a directory with
 run.json is complete and one with only state.json is in flight. Spec:
 docs/superpowers/specs/2026-11-19-core-run-record-design.md.
