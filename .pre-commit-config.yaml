@@ -35,10 +35,11 @@ repos:
 
       - id: ty
         name: ty (type check)
-        entry: uv run --frozen ty check src/
+        entry: uv run --frozen ty check src/ packages/attestation-schema/src/
         language: system
         types_or: [python, pyi]
-        # src/ only, and always the whole tree: ty resolves imports across
+        # Source trees only (attestation and the attestation-schema workspace
+        # member), and always the whole tree: ty resolves imports across
         # modules, so checking just the staged files reports errors that a
         # full run does not, and misses ones it would catch.
         pass_filenames: false

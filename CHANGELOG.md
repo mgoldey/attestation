@@ -11,6 +11,23 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **The core run record, as its own distribution (`attestation-schema`).**
+  `attestation.run/1` (v1-DRAFT, not frozen): one experiment run's family,
+  arm, status, times, producer, code identity, config, data digests,
+  metrics with direction, seeds, dependency identities with provenance, and
+  `ext.<namespace>` for what the core does not model, carried untouched.
+  Stdlib only and importing nothing from attestation, so producers write
+  records without installing the observer; a uv workspace member at
+  `packages/attestation-schema/`, built with `uv build --package
+  attestation-schema`. `dumps`/`write` are the only writers (validated, JCS
+  canonical, deterministic); `loads`/`read` refuse non-conforming input with
+  an error naming the path and dispatch on `schema`. Also fixes the run
+  directory attestation will scan (`attestation/run.json`, `state.json`,
+  `digests.json`, `steps/NN-<name>/`, `logs/`) and the job-backend interface
+  (submit/status/cancel/result, a five-state machine), interface only.
+  `tests/test_boundaries.py` asserts nothing here imports smeltery or ferric
+  and the schema package imports nothing from attestation, each detector
+  proven to fire. Spec: `2026-11-19-core-run-record-design.md`.
 - **A first list from the reader's own field (seed.py).** From research
   customer feedback: the first paper was off-topic and nothing said how to
   steer. `feed.ask("I like <DOI | arXiv id | title>")` resolves the paper

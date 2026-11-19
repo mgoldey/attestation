@@ -40,7 +40,7 @@ jobs:
         run: uv run ruff check .
 
       - name: ty check
-        run: uv run ty check src/
+        run: uv run ty check src/ packages/attestation-schema/src/
 
       - name: uv.lock is in sync with pyproject.toml
         run: uv lock --check
@@ -69,7 +69,7 @@ jobs:
           python-version: "3.12"
 
       - name: Build wheel
-        run: uv build
+        run: uv build --out-dir dist
 
       - name: Install wheel into a clean venv
         run: |
@@ -105,6 +105,33 @@ jobs:
           p = r.files('attestation').joinpath('py.typed')
           assert p.is_file(), 'attestation/py.typed missing from installed wheel'
           print('py.typed present in wheel:', p)
+          "
+
+      - name: Build the attestation-schema wheel
+        # The second distribution built from this repo (packages/attestation-
+        # schema): stdlib only, so it installs into a clean venv with no
+        # dependencies and must write and read a record there.
+        run: uv build --package attestation-schema --out-dir dist-schema
+
+      - name: attestation-schema installs alone and round-trips a record
+        run: |
+          python3 -m venv /tmp/schema-venv
+          /tmp/schema-venv/bin/pip install --quiet --no-deps dist-schema/*.whl
+          /tmp/schema-venv/bin/python -c "
+          import importlib.metadata as m, importlib.resources as r, json, tempfile
+          import attestation_schema as s
+          assert m.requires('attestation-schema') is None, 'attestation-schema must declare no dependencies'
+          assert r.files('attestation_schema').joinpath('py.typed').is_file()
+          schema = json.loads(r.files('attestation_schema').joinpath('schemas/run-1.schema.json').read_text())
+          assert schema['properties']['schema']['const'] == s.SCHEMA
+          rec = s.RunRecord(run_id='smoke', family=None, arm=None, status='complete',
+              started_at=None, finished_at=None, producer=s.Producer('ci', None),
+              code=s.CodeIdentity(None, None, None), config={}, data=[], metrics=[],
+              seeds=None, dependencies=[], ext={'x': {'y': 1}})
+          d = tempfile.mkdtemp()
+          s.write(rec, d)
+          assert s.read(d) == rec
+          print('attestation-schema wheel OK:', s.SCHEMA, s.SCHEMA_STATUS)
           "
 
   flows:

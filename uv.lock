@@ -6,6 +6,12 @@ resolution-markers = [
     "python_full_version < '3.14'",
 ]
 
+[manifest]
+members = [
+    "attestation",
+    "attestation-schema",
+]
+
 [[package]]
 name = "aiofiles"
 version = "25.1.0"
@@ -241,6 +247,7 @@ demos = [
     { name = "playwright" },
 ]
 dev = [
+    { name = "attestation-schema" },
     { name = "bandit" },
     { name = "datasette" },
     { name = "datasette-vega" },
@@ -293,6 +300,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 demos = [{ name = "playwright", specifier = ">=1.47" }]
 dev = [
+    { name = "attestation-schema", editable = "packages/attestation-schema" },
     { name = "bandit", specifier = ">=1.7" },
     { name = "datasette", specifier = ">=0.64" },
     { name = "datasette-vega", specifier = ">=0.6" },
@@ -312,6 +320,11 @@ docs = [
 ]
 examples = [{ name = "mlflow-skinny", specifier = ">=2.20" }]
 optimize = [{ name = "dspy", specifier = ">=3.3" }]
+
+[[package]]
+name = "attestation-schema"
+version = "0.1.0.dev0"
+source = { editable = "packages/attestation-schema" }
 
 [[package]]
 name = "attrs"

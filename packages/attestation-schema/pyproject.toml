@@ -1,0 +1,33 @@
+[project]
+name = "attestation-schema"
+version = "0.1.0.dev0"
+description = "The attestation core run record (attestation.run/1, v1-draft): schema, canonical writer, strict reader, run-directory layout and job-backend interface. Standard library only."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Matthew Goldey" }]
+keywords = ["reproducibility", "provenance", "run-record", "experiment-tracking"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+# Deliberately empty: a producer (smeltery, a training script) depends on this
+# package to WRITE a record, and a dependency it must install for that is a
+# dependency that gets skipped. See
+# docs/superpowers/specs/2026-11-19-core-run-record-design.md.
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/mgoldey/attestation"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/attestation_schema"]
