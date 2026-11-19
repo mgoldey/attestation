@@ -389,12 +389,24 @@ def _units(root: Path) -> list[tuple[Path, list[Path]]]:
     return units
 
 
+# When sightings of one file disagree, the most severe wins: a stale or
+# missing annotation in one document must not be hidden by a fresh one in
+# another (it was, and `attest claims --figures` exited 0). An annotated
+# sighting still beats an orphan.
+_MERGE_RANK = {
+    FigureVerdict.ORPHAN: 0,
+    FigureVerdict.FRESH: 1,
+    FigureVerdict.STALE: 2,
+    FigureVerdict.MISSING: 3,
+}
+
+
 def _merge(found: list[Figure]) -> list[Figure]:
-    """One finding per distinct figure file; an annotated sighting beats an orphan."""
+    """One finding per distinct figure file: the most severe sighting of it."""
     best: dict[str, Figure] = {}
     for fig in found:
         seen = best.get(fig.resolved)
-        if seen is None or (seen.verdict == FigureVerdict.ORPHAN and fig.verdict != seen.verdict):
+        if seen is None or _MERGE_RANK[fig.verdict] > _MERGE_RANK[seen.verdict]:
             best[fig.resolved] = fig
     return list(best.values())
 

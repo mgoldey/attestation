@@ -101,8 +101,21 @@ def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
     summary = ", ".join(f"{n} {k}" for k, n in sorted(out["counts"].items()))
     # Figures are judged beside the claims: a number can be right while the
     # plot beside it was drawn from results that have since moved.
-    found = figures.check(target)
     message = f"{out['claims']} claim(s): {summary}" if out["claims"] else "no claims found"
+    try:
+        found = figures.check(target)
+    except OSError as exc:
+        # An unreadable figure or included file must not cost the caller the
+        # claim verdicts this tool exists for (the same rule as the resolver).
+        figure_block = figures.empty_block() | {"note": f"figures not checked: {exc}"}
+        return {
+            "message": message + "; figures not checked",
+            "claims": rows,
+            "counts": out["counts"],
+            "malformed": out["malformed"],
+            "checked": checked,
+            "figures": figure_block,
+        }
     return {
         "message": message + figures.message_suffix(found),
         "claims": rows,

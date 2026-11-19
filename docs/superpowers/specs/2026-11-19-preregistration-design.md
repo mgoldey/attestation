@@ -43,7 +43,13 @@ text, so an edited copy cannot change the verdict it is reported beside.
 
 **Evidence only** (reported, never treated as proof): `registered_at` is this
 machine's clock at signing. `post_hoc` compares it with the modification time of
-each named arm's artifact (`source_path` from the ledger) on this disk. Both
+each named arm's artifacts on this disk -- for a pooled arm the EARLIEST of
+every replicate's file (`source_paths`), so re-running one seed cannot hide
+that the others predate the registration. `registered_at` is stored to the
+second, so mtimes are truncated to the second and an artifact from the
+registration's own second counts as predating it (`post_hoc` errs toward
+flagging). A seed named instead of its arm is matched by the seed rule, not
+by the capped `runs` list, so a sixth seed is inconclusive too. Both
 clocks belong to whoever controls the machine; an mtime is the *last* write, so
 an artifact rewritten after registration hides that it existed before (a
 missed `post_hoc`), and a backdated clock hides a late registration. The

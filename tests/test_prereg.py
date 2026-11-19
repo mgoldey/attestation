@@ -634,3 +634,70 @@ def test_compare_block_is_capped_and_small(root, signer):
 def test_compare_block_is_absent_without_registrations(root):
     assert prereg.attach(result(arm("kdsweep_t4", 0.05)), root) == {}
     assert prereg.attach(result(arm("kdsweep_t4", 0.05)), None) == {}
+
+
+# --- code review fixes (2026-11-19) ---------------------------------------------
+
+
+def test_a_seed_beyond_the_listed_runs_is_still_inconclusive():
+    """`runs` is capped at five names; a sixth seed used to read 'no arm named'."""
+    h = hyp(expect="kdsweep_t4_seed7 < kdsweep_base", allow_single_run=True)
+    listed = [f"kdsweep_t4_seed{i}" for i in range(1, 6)]
+    arms = [
+        arm("kdsweep_t4", 0.05, ci_low=0.04, ci_high=0.06, n_runs=10, runs=listed),
+        arm("kdsweep_base", 0.09),
+    ]
+    out = prereg.evaluate(h, result(*arms))
+    assert out.verdict == VerdictKind.INCONCLUSIVE
+    assert "one replicate of arm kdsweep_t4" in out.reasons[0]
+
+
+def test_post_hoc_sees_every_replicate_not_only_the_first(tmp_path):
+    """Re-running seed1 after registering must not hide that seeds 2-3 predate it."""
+    old, new = tmp_path / "kd_seed2.json", tmp_path / "kd_seed1.json"
+    for p in (old, new, tmp_path / "kd_seed3.json"):
+        p.write_text("{}")
+    t0 = datetime(2026, 11, 19, 12, tzinfo=UTC).timestamp()
+    os.utime(old, (t0 - 3600, t0 - 3600))
+    os.utime(tmp_path / "kd_seed3.json", (t0 - 3600, t0 - 3600))
+    os.utime(new, (t0 + 3600, t0 + 3600))
+    pooled = arm(
+        "kd",
+        0.05,
+        n_runs=3,
+        source_path=str(new),
+        source_paths=[str(new), str(old), str(tmp_path / "kd_seed3.json")],
+    )
+    times = prereg.evidence_times(result(pooled), ["kd"])
+    assert times["kd"] == datetime.fromtimestamp(t0 - 3600, UTC)
+
+
+def test_an_artifact_from_the_registrations_own_second_predates_it():
+    """registered_at is stored to the second; an artifact written 0.4s into that
+    second, before a registration at 0.9s, must still set post_hoc."""
+    h = hyp(allow_single_run=True)
+    written = datetime(2026, 11, 19, 12, 0, 0, 400000, tzinfo=UTC)
+    out = prereg.evaluate(
+        h,
+        result(arm("kdsweep_t4", 0.05), arm("kdsweep_base", 0.07)),
+        {"kdsweep_base": written},
+        registered_at="2026-11-19T12:00:00Z",
+    )
+    assert out.post_hoc is True
+
+
+def test_a_failed_signature_leaves_nothing_behind_and_a_retry_works(root, signer, monkeypatch):
+    """A half-written registration refused every retry as 'already registered'
+    while list and check showed nothing."""
+    from attestation.run_record import build
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(build, "write_record", boom)
+    with pytest.raises(OSError, match="disk full"):
+        prereg.register(hyp(), root, signer)
+    assert not list((root / "prereg").glob("*"))
+    assert not (root / "hypotheses.toml").exists()
+    monkeypatch.undo()
+    prereg.register(hyp(), root, signer)

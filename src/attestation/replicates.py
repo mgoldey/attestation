@@ -27,6 +27,11 @@ import re
 # separator (or `/`, for a directory-qualified name) is part of the match so
 # removing it leaves a clean base name.
 SEED_TOKEN = re.compile(r"(?:^|[-_/])seed[-_=]?(\d+)(?=$|[-_./\[])", re.I)
+# The run id a tracker adapter appends to a run's own name: mlflow names an
+# arm `<run_name>/<first 8 hex of the run id>`, wandb `<program>/<short id>`.
+# Unique per run, so it must not take part in pooling -- left in, every seed
+# of `clf_seed<N>/<id>` became its own base and nothing ever pooled.
+TRACKER_ID = re.compile(r"^[0-9a-z]{8}$")
 
 # The bootstrap is FIXED: the same values give the same interval in every
 # process and on every supported Python. A comparison that printed a
@@ -73,6 +78,11 @@ def seed_of(name: str) -> tuple[str, int] | None:
     is removed: a bare `seed1` names no configuration to pool under.
     """
     head, bracket, tail = name.partition("[")
+    label, slash, run_id = head.rpartition("/")
+    if slash and TRACKER_ID.match(run_id) and strip_seed(label) is not None:
+        # a tracker run `<label>/<id>`: the seed lives in the label, and the
+        # id is per-run noise (mlflow, wandb)
+        head = label
     parsed = strip_seed(head)
     if parsed is None or not parsed[0]:
         return None
@@ -222,6 +232,10 @@ def _merge(base: str, members: list[dict]) -> dict:
         "step": _common([m.get("step") for m in members]),
         "split": _unseeded_split(members[0].get("split")),
         "source_path": members[0].get("source_path"),
+        # EVERY member's artifact, not only the first: prereg's post_hoc check
+        # needs the earliest of them. Not capped like `runs`; the MCP layer
+        # drops it from what a model reads.
+        "source_paths": [m.get("source_path") for m in members if m.get("source_path")],
         "n": _smallest_n(members),
         "n_runs": len(values),
         "mean": mu,
@@ -271,7 +285,8 @@ def _lookalikes(arms: list[dict], configs: dict[str, dict | None]) -> list[str]:
             out.append(
                 f"{_listed(sorted(n for n, _ in members))} have identical configs apart"
                 " from seed but are listed as separate arms; if they are replicates,"
-                " name them <config>_seed<N> so they pool into one"
+                " name them (or their tracker run names) <config>_seed<N> so they"
+                " pool into one"
             )
     return out
 

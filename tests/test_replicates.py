@@ -397,3 +397,56 @@ def test_cli_renders_replicates_and_leaves_single_runs_alone(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "replicates:" not in out and "separable" not in out
     conn.close()
+
+
+# --- tracker run ids (code review, 2026-11-19) --------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("clf_seed1/abc12345", ("clf", 1)),  # mlflow: <run_name>/<run id[:8]>
+        ("clf_seed2/ffe12345", ("clf", 2)),
+        ("train_seed3/a1b2c3d4", ("train", 3)),  # wandb: <program>/<short id>
+    ],
+)
+def test_a_tracker_run_id_does_not_take_part_in_pooling(name, expected):
+    """mlflow and wandb append a per-run id to the arm name; left in, every
+    seed of `clf_seed<N>/<id>` was its own base and nothing pooled."""
+    assert replicates.seed_of(name) == expected
+
+
+def test_a_short_last_segment_is_not_mistaken_for_a_tracker_id():
+    assert replicates.seed_of("kd_seed1/eval") == ("kd/eval", 1)
+
+
+def test_tracker_runs_named_by_seed_pool_into_one_arm():
+    arms = [arm(f"clf_seed{i}/{i:08x}", 0.9 + i / 100) for i in range(1, 6)]
+    out, notes = replicates.group(arms, {})
+    assert [a["name"] for a in out] == ["clf"]
+    assert out[0]["n_runs"] == 5
+    assert not notes
+
+
+def test_a_pooled_arm_keeps_every_members_source_path():
+    """prereg's post_hoc check needs every replicate's file, not the first."""
+    arms = [arm(f"kd_seed{i}", 0.5) for i in range(1, 8)]
+    out, _ = replicates.group(arms, {})
+    assert len(out[0]["runs"]) == replicates.MAX_RUN_NAMES
+    assert sorted(out[0]["source_paths"]) == sorted(f"/r/kd_seed{i}.json" for i in range(1, 8))
+
+
+def test_the_mcp_payload_drops_the_uncapped_source_paths(tmp_path, monkeypatch):
+    """`source_paths` serves prereg; a model reading runs.compare every turn
+    gets the capped `runs` list instead."""
+    from attestation.mcp import provenance as pv
+
+    seeded_sweep(tmp_path, {"fam_a": [0.90, 0.91, 0.92], "fam_b": [0.80, 0.81, 0.82]})
+    monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
+    conn = get_db(tmp_path / "t.db")
+    ledger.scan(conn, tmp_path)
+    assert "source_paths" in ledger.compare(conn, "fam", metric="accuracy")["arms"][0]
+    conn.close()
+    out = pv._compare(family="fam", metric="accuracy")
+    assert out["ok"] is True
+    assert all("source_paths" not in a for a in out["arms"])

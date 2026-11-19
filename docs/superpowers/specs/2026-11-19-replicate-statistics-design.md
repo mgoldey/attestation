@@ -94,6 +94,14 @@ refuse. A wrong merge silently averages two configurations -- the
 family-pooling bug `compare()`'s docstring describes, one level down -- so the
 asymmetric rule is deliberate: a config can stop a merge, never start one.
 
+**A tracker's run id never takes part in pooling.** mlflow names an arm
+`<run_name>/<run id[:8]>` and wandb `<program>/<short id>`; when the label
+before the last `/` carries the seed token and the last segment is an
+8-character id, the id is dropped before the seed is, so `clf_seed1/abc12345`
+and `clf_seed2/ffe12345` pool as `clf`. Code review (2026-11-19) found the
+first version left the id in, so no mlflow or wandb seed ever pooled while the
+lookalike caveat advised a rename the runs already had.
+
 **Config-only replicates are reported, not merged.** Tracker adapters
 (hydra multirun `train/0`, `train/1`; wandb run ids) name runs without a seed
 token. When two unmerged arms have configs with at least one non-seed key,
@@ -116,7 +124,9 @@ A merged arm keeps every key a single-run arm has, plus:
 | `ci_low`, `ci_high` | 95% percentile bootstrap interval of the mean; `None` when `n_runs < 3` |
 | `runs` | member names, sorted, at most `MAX_RUN_NAMES` (5); `n_runs` is the true count |
 
-`name` becomes the base name; `source_path` is the first member's; `step`
+`name` becomes the base name; `source_path` is the first member's and
+`source_paths` lists every member's (uncapped, for prereg's `post_hoc` check;
+the MCP layer drops it from `runs.compare`'s payload); `step`
 and `split` are the members' common value or `None`; `n` (samples per
 evaluation) is the members' common value, else the smallest, else `None`.
 **A single-run arm gains no key.** Absent keys mean a single run; a consumer

@@ -84,7 +84,13 @@ point, not a date the author typed.
   `scheme:`, `//host`) and paths built from macros (`\figdir/x`, `#1`), which
   cannot be resolved without running TeX. Nothing here touches the network.
 - One finding per distinct figure file: the same file included twice, or
-  reached by two routes, is reported once at its first location.
+  reached by two routes, is reported once -- at its MOST SEVERE sighting
+  (missing > stale > fresh > orphan). Code review (2026-11-19) found the first
+  version kept the first annotated sighting, so a stale annotation in one
+  document was hidden by a fresh one in another and the gate exited 0.
+- An unreadable figure or included file (`OSError`) never costs
+  `runs.claims_check` its claim verdicts: the figures block comes back empty
+  with a note saying the figures were not checked.
 
 For a folder target, each `.tex` paper root (a `\documentclass` file) is a
 unit with its whole `\input` tree, so a chapter file is resolved from the

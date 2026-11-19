@@ -410,3 +410,31 @@ def test_the_workspace_example_still_reports_its_pinned_line(tmp_path, monkeypat
     out = _check()
     assert out["message"] == "7 claim(s): 1 contradicted, 5 supported, 1 unsupported"
     assert out["figures"] == figures.empty_block()
+
+
+def test_a_stale_sighting_is_not_hidden_by_a_fresh_one_elsewhere(tmp_path):
+    """Two documents annotate one figure; the one whose pin no longer matches
+    must win, or `attest claims --figures` exits 0 on a stale figure."""
+    touch(tmp_path / "f.png", "v1")
+    good = hashlib.sha256(b"v1").hexdigest()
+    touch(tmp_path / "a.md", f"![f](f.png)\n<!-- figure: f.png sha256={good} -->\n")
+    touch(tmp_path / "b.md", f"![f](f.png)\n<!-- figure: f.png sha256={'0' * 64} -->\n")
+    report = figures.check(tmp_path)
+    assert [f.verdict for f in report["figures"]] == [V.STALE]
+    assert figures.failing(report) == 1
+
+
+def test_an_unreadable_figure_does_not_cost_the_claim_verdicts(mcp_env, monkeypatch):
+    from attestation.mcp.claims_tools import _check
+
+    draft = _markdown_draft(mcp_env / "w")
+
+    def unreadable(_root):
+        raise PermissionError("figs/a.png")
+
+    monkeypatch.setattr(figures, "check", unreadable)
+    out = _check(path=str(draft))
+    assert out["ok"] is True
+    assert set(out["figures"]) == set(figures.empty_block())
+    assert "figures not checked" in out["figures"]["note"]
+    assert out["message"].endswith("; figures not checked")

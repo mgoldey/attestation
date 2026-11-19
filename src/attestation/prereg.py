@@ -255,8 +255,15 @@ def _find_arm(name: str, arms: list[dict]) -> tuple[dict | None, str | None]:
             if arm.get("value") is None:
                 return None, f"{name} has no value for this metric"
             return arm, None
+    # By the seed rule itself, not membership in `runs`: that list is capped at
+    # replicates.MAX_RUN_NAMES, so a sixth seed used to read "no arm named".
+    from attestation import replicates
+
+    parsed = replicates.seed_of(name)
     for arm in arms:
-        if name in (arm.get("runs") or []):
+        if name in (arm.get("runs") or []) or (
+            arm.get("n_runs") and parsed is not None and parsed[0] == arm.get("name")
+        ):
             return None, f"{name} is one replicate of arm {arm['name']}; name the arm, not a seed"
     return None, f"no arm named {name} in this comparison"
 
@@ -301,10 +308,13 @@ def _predates(hyp: Hypothesis, evidence_times: dict, registered_at: str | None) 
     when = parse_time(registered_at)
     if when is None:
         return {}
+    # registered_at is stored to the second, mtimes are finer: compare both at
+    # whole seconds, and an artifact from the registration's own second counts
+    # as predating it -- post_hoc errs toward flagging, never toward clearing.
     return {
         arm: iso(evidence_times[arm])
         for arm in hyp.arms
-        if arm in evidence_times and evidence_times[arm] < when
+        if arm in evidence_times and evidence_times[arm].replace(microsecond=0) <= when
     }
 
 
@@ -343,18 +353,27 @@ def evaluate(
 
 
 def evidence_times(compare_result: dict, names: list[str]) -> dict[str, datetime]:
-    """When each named arm's artifact was last written, by this disk's clock.
-    Evidence, not proof: an mtime is the LAST write, so a rewritten artifact
-    hides that it existed earlier."""
+    """When each named arm's earliest artifact was last written, by this disk's
+    clock. A pooled arm is judged by EVERY replicate's file (`source_paths`),
+    not only the first: re-running one seed must not hide that the others
+    predate the registration. Evidence, not proof: an mtime is the LAST write,
+    so a rewritten artifact hides that it existed earlier."""
     out: dict[str, datetime] = {}
     for arm in compare_result.get("arms") or []:
-        path = arm.get("source_path")
-        if arm.get("name") in names and path:
-            try:
-                out[arm["name"]] = datetime.fromtimestamp(Path(path).stat().st_mtime, UTC)
-            except OSError:
-                continue
+        if arm.get("name") not in names:
+            continue
+        times = [_mtime(p) for p in arm.get("source_paths") or [arm.get("source_path")] if p]
+        known = [t for t in times if t is not None]
+        if known:
+            out[arm["name"]] = min(known)
     return out
+
+
+def _mtime(path: str) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(Path(path).stat().st_mtime, UTC)
+    except OSError:
+        return None
 
 
 # --- the index file ----------------------------------------------------------
@@ -483,7 +502,7 @@ def register(hyp: Hypothesis, root: Path, signer, *, registered_at: str | None =
     New files only: the same content registered twice is refused, since its
     id -- and so its files -- would be the same. The signer is passed in
     already resolved so a key problem refuses before anything is written."""
-    from attestation.run_record.build import CheckResult, Finding, RunRecorder, now, write_record
+    from attestation.run_record.build import now
 
     root = Path(root).expanduser().resolve()
     index = root / INDEX_NAME
@@ -495,6 +514,24 @@ def register(hyp: Hypothesis, root: Path, signer, *, registered_at: str | None =
     canonical_path.parent.mkdir(parents=True, exist_ok=True)
     with canonical_path.open("xb") as fh:
         fh.write(hyp.canonical())
+    try:
+        _sign_and_write(hyp, root, signer, stamp, canonical_path, record_path)
+    except BaseException:
+        # A half-written registration (canonical file, no record) would refuse
+        # every retry as "already registered" while list/check show nothing.
+        record_path.unlink(missing_ok=True)
+        canonical_path.unlink(missing_ok=True)
+        raise
+    prefix = "\n" if index.is_file() and index.read_text(encoding="utf-8").strip() else ""
+    with index.open("a", encoding="utf-8") as fh:
+        fh.write(prefix + index_block(hyp, stamp))
+    return Registered(hyp.id, stamp, signer.keyid, record_path, canonical_path, index)
+
+
+def _sign_and_write(hyp, root: Path, signer, stamp: str, canonical_path: Path, record_path: Path):
+    """The signed run record whose subject is the canonical file."""
+    from attestation.run_record.build import CheckResult, Finding, RunRecorder, write_record
+
     rec = RunRecorder(TOOL_NAME, root=root, started_at=stamp)
     rec.finished_at = stamp
     rec.add_subject(canonical_path)
@@ -505,10 +542,6 @@ def register(hyp: Hypothesis, root: Path, signer, *, registered_at: str | None =
     }
     rec.add_check(CheckResult(CHECK_NAME, [Finding(hyp.id, "registered", hyp.describe(), data)]))
     write_record(rec.sign(signer), record_path)
-    prefix = "\n" if index.is_file() and index.read_text(encoding="utf-8").strip() else ""
-    with index.open("a", encoding="utf-8") as fh:
-        fh.write(prefix + index_block(hyp, stamp))
-    return Registered(hyp.id, stamp, signer.keyid, record_path, canonical_path, index)
 
 
 # --- reading registrations back ---------------------------------------------
