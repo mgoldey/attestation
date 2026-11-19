@@ -1,0 +1,54 @@
+{
+ "algorithm_version": 1,
+ "format": "smeltery.split",
+ "kind": "scaffold",
+ "parameters": {
+  "fractions": {
+   "test": 0.25,
+   "train": 0.75
+  },
+  "generic": false
+ },
+ "partitions": {
+  "test": [
+   [
+    "9c1e44a0b2d7",
+    "3-Cl",
+    "receptor.pdb",
+    "xtb"
+   ]
+  ],
+  "train": [
+   [
+    "07693d07e8b9",
+    "4-F",
+    "receptor.pdb",
+    "xtb"
+   ],
+   [
+    "07693d07e8b9",
+    "parent",
+    "receptor.pdb",
+    "xtb"
+   ],
+   [
+    "9c1e44a0b2d7",
+    "parent",
+    "receptor.pdb",
+    "xtb"
+   ]
+  ]
+ },
+ "schema_version": 1,
+ "seed": 0,
+ "table": {
+  "identity_columns": [
+   "run_id",
+   "ligand",
+   "target",
+   "tier"
+  ],
+  "rows": 4,
+  "sha256": "abe73bf0d9fb59fd446f97f0e1c72f9d9337027962aedb36a9a7ce577793ecbf"
+ }
+}

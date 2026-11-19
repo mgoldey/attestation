@@ -162,6 +162,22 @@ sample size, when the top two are within 5%, or when arms sit at different
 training steps. A healthy comparison emits no caveats — a tool that always warns
 trains you to ignore it.
 
+### Tracing a run to the data it trained on
+
+`attest runs lineage RUN --search DIR` follows a run's `data[]` digests to
+the dataset records (`attestation.dataset/1`, draft) under `DIR`, each
+dataset's `source_runs` to the run records that produced it, and prints the
+builds those runs record (a `verified` ferric `build_sha`, for instance):
+
+```bash
+attest runs lineage runs/train-1 --search datasets --search runs
+```
+
+Links are made by digest only; a name match only diagnoses (`BROKEN
+[dataset-digest-mismatch]`: the run trained on a version that is not here).
+It reads files, not the ledger database, and exits 1 on a broken link.
+Design: `docs/superpowers/specs/2026-11-19-dataset-records-design.md`.
+
 ## Browsing the ledger
 
 ```bash

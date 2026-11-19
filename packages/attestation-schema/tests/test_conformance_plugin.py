@@ -10,7 +10,13 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from conformance_fixtures import BROKEN_RULES, DATA, EXPECTED
+from conformance_fixtures import (
+    BROKEN_RULES,
+    DATA,
+    DATASET_BROKEN_RULES,
+    DATASET_EXPECTED,
+    EXPECTED,
+)
 
 pytest_plugins = ["pytester"]
 
@@ -115,3 +121,48 @@ def test_no_pytest11_entry_point_and_pytest_only_as_an_extra():
         ep for ep in metadata.entry_points(group="pytest11") if "attestation_schema" in ep.value
     ]
     assert installed == []
+
+
+def test_dataset_and_lineage_directories_are_items_too(pytester):
+    result = _run(
+        pytester,
+        "--attestation-runs",
+        str(DATA / "lineage"),
+        "--attestation-runs",
+        str(DATA / "datasets" / "valid" / "minimal" / "attestation" / "dataset.json"),
+        "-v",
+    )
+    result.assert_outcomes(passed=5)
+    result.stdout.fnmatch_lines(["*attestation-conformance::*lineage/dataset PASSED*"])
+
+
+@pytest.mark.parametrize("rule", DATASET_BROKEN_RULES)
+def test_each_broken_dataset_fails_naming_rule_file_and_json_path(pytester, rule):
+    dd = DATA / "datasets" / "broken" / rule
+    result = _run(pytester, "--attestation-runs", str(dd))
+    result.assert_outcomes(failed=1)
+    file, json_path, fragment = DATASET_EXPECTED[rule]
+    out = result.stdout.str()
+    assert f"{dd / file} at {json_path}: [{rule}]" in out, out
+    assert fragment in out
+
+
+def test_fixture_checks_a_dataset_made_in_the_test(pytester):
+    pytester.makepyfile(
+        test_producer=f"""
+import shutil
+import sys
+sys.path.insert(0, {str(Path(__file__).parent)!r})
+from conformance_fixtures import DATA
+
+def test_fresh_dataset_conforms(tmp_path, attestation_conformance):
+    shutil.copytree(DATA / "datasets" / "valid" / "minimal", tmp_path / "d")
+    assert attestation_conformance(tmp_path / "d").dataset.dataset_id == "toy"
+
+def test_broken_dataset_fails(attestation_conformance):
+    attestation_conformance(DATA / "datasets" / "broken" / "manifest")
+"""
+    )
+    result = _run(pytester)
+    result.assert_outcomes(passed=1, failed=1)
+    assert "[manifest] sha256 is" in result.stdout.str()
