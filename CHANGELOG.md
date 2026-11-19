@@ -9,6 +9,28 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Added
+
+- **Training callbacks that write core records (attestation-schema
+  `attestation_schema.integrations`, roadmap 34).** A Hugging Face `Trainer`
+  callback (`[hf]` extra) and a PyTorch Lightning callback (`[lightning]`
+  extra) write a conforming `attestation.run/1` record at the end of
+  training, on global rank 0 only: seeds (`TrainingArguments.seed`/
+  `data_seed`, `seed_everything`), the datasets passed by content and split
+  digest so `resolve_lineage` links the run (nothing auto-detected: `train`/
+  `eval` named with a null digest otherwise), every checkpoint file this run
+  saved by sha256 (role `output`), final metrics plus curves through
+  `HistoryWriter`, `TrainingArguments`/`hparams` as config (credentials
+  redacted), the script's git identity, and python/torch/transformers/
+  lightning with PEP 610 provenance and source. A run that raises writes
+  `failed` (`cancelled` for Ctrl-C): Lightning's `on_exception`, HF's `with`
+  form. Default run directory `<output_dir>/attestation/run-<run_id>/`.
+  `import attestation_schema` stays stdlib-only and 3.11-compatible; CI's new
+  `schema-integrations` job runs tiny real CPU training runs on 3.11 where a
+  skip is a failure. The lock gains the extras' resolution and bumps
+  `huggingface-hub` 1.28.0 -> 1.31.0 (transformers' floor). No format changed
+  (`2026-11-19-training-callbacks-design.md`).
+
 ## [0.5.1] - 2026-11-19
 
 ### Added

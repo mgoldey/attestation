@@ -102,21 +102,42 @@ def test_schema_package_imports_nothing_from_attestation():
 # else -- the checker it wraps included -- stays stdlib, so a producer that
 # writes records installs nothing.
 PYTEST_PLUGIN = SCHEMA_SRC / "pytest_plugin.py"
+# The training-loop callbacks, each behind its own extra and imported only by
+# whoever uses it (docs/superpowers/specs/2026-11-19-training-callbacks-design.md):
+# each may import its framework and nothing else outside the stdlib. Their
+# shared core (`integrations/_core.py`) stays stdlib.
+FRAMEWORK_MODULES = {
+    SCHEMA_SRC / "integrations" / "huggingface.py": ("transformers",),
+    SCHEMA_SRC / "integrations" / "lightning.py": ("lightning",),
+}
+EXTRAS = {
+    "conformance": ["pytest>=7.2"],
+    "hf": ["transformers>=4.41", "torch>=2.1", "accelerate>=0.26"],
+    "lightning": ["lightning>=2.1"],
+}
 
 
 def test_schema_package_is_standard_library_only():
-    stdlib_only = [p for p in _modules(SCHEMA_SRC) if p != PYTEST_PLUGIN]
+    optional = {PYTEST_PLUGIN, *FRAMEWORK_MODULES}
+    stdlib_only = [p for p in _modules(SCHEMA_SRC) if p not in optional]
     assert SCHEMA_SRC / "conformance.py" in stdlib_only
+    assert SCHEMA_SRC / "integrations" / "_core.py" in stdlib_only
     offenders = _offenders(stdlib_only, lambda s: non_stdlib_imports(s, ("attestation_schema",)))
     assert not offenders, "attestation_schema is stdlib-only:\n  " + "\n  ".join(offenders)
     plugin = _offenders(
         [PYTEST_PLUGIN], lambda s: non_stdlib_imports(s, ("attestation_schema", "pytest"))
     )
     assert not plugin, "the plugin may import pytest and nothing else:\n  " + "\n  ".join(plugin)
+    for module, framework in FRAMEWORK_MODULES.items():
+        assert module.is_file(), module
+        extra = _offenders(
+            [module], lambda s, f=framework: non_stdlib_imports(s, ("attestation_schema", *f))
+        )
+        assert not extra, f"{module.name} may import {framework} only:\n  " + "\n  ".join(extra)
     project = tomllib.loads((SCHEMA_PKG / "pyproject.toml").read_text())["project"]
     assert project["dependencies"] == [], "attestation-schema declares no dependencies"
-    assert project.get("optional-dependencies") == {"conformance": ["pytest>=7.2"]}, (
-        "the only extra is the conformance plugin's pytest"
+    assert project.get("optional-dependencies") == EXTRAS, (
+        "the extras are the conformance plugin's pytest and the callbacks' frameworks"
     )
 
 
