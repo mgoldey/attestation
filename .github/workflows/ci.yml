@@ -130,7 +130,8 @@ jobs:
           /tmp/schema-venv/bin/python -c "
           import dataclasses, importlib.metadata as m, importlib.resources as r, json, tempfile
           import attestation_schema as s
-          assert m.requires('attestation-schema') is None, 'attestation-schema must declare no dependencies'
+          reqs = m.requires('attestation-schema') or []
+          assert all('extra ==' in r for r in reqs), f'attestation-schema must declare no unconditional dependency: {reqs}'
           assert r.files('attestation_schema').joinpath('py.typed').is_file()
           schema = json.loads(r.files('attestation_schema').joinpath('schemas/run-1.schema.json').read_text())
           assert schema['properties']['schema']['const'] == s.SCHEMA
@@ -170,10 +171,22 @@ jobs:
       - name: Package tests on CPython 3.11
         run: |
           uv venv --python 3.11 /tmp/schema-311
-          uv pip install --python /tmp/schema-311/bin/python dist-schema/*.whl pytest jsonschema
+          # With the [conformance] extra: the package tests include the
+          # pytest plugin's pytester tests, and pytest comes from the extra.
+          uv pip install --python /tmp/schema-311/bin/python "$(ls dist-schema/*.whl)[conformance]" jsonschema
           cd packages/attestation-schema
           /tmp/schema-311/bin/python -c "import sys; assert sys.version_info[:2] == (3, 11), sys.version"
           /tmp/schema-311/bin/python -m pytest -q -p no:cacheprovider -c /dev/null --rootdir . tests
+
+      - name: Conformance suite on the committed MLflow records (installed wheel, 3.11)
+        # Exactly what a producer runs in its own CI (README "Conformance"):
+        # the opt-in plugin from the installed wheel, one test per record. A
+        # glob matching nothing fails rather than passing vacuously. Spec:
+        # docs/superpowers/specs/2026-11-19-conformance-suite-design.md.
+        run: |
+          /tmp/schema-311/bin/python -m pytest -q -p no:cacheprovider -c /dev/null --rootdir . \
+            -p attestation_schema.pytest_plugin \
+            --attestation-runs 'examples/mlflow-records/records/*' examples/mlflow-records/records
 
   flows:
     name: example flows (offline)

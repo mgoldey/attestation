@@ -37,6 +37,7 @@ __all__ = [
     "Adapter",
     "ImportResult",
     "Imported",
+    "Quarantined",
     "diagnose_empty",
     "import_project",
 ]
@@ -87,27 +88,61 @@ class Imported:
     adapter: str
 
 
+@dataclass(frozen=True)
+class Quarantined:
+    """A record that failed conformance: never imported, always reported.
+    `rules` are the conformance rules it broke (`read` for a legacy run the
+    core record cannot express); `reasons` say where and why."""
+
+    path: str
+    adapter: str
+    rules: list[str]
+    reasons: list[str]
+
+
 @dataclass
 class ImportResult:
-    """A project's imports, and the items refused as `<path>: <error>`."""
+    """A project's imports; the records quarantined (also as `refused`,
+    `<path>: <error>`, the older shape); and what the readers skipped."""
 
     imported: list[Imported] = field(default_factory=list)
     refused: list[str] = field(default_factory=list)
+    quarantined: list[Quarantined] = field(default_factory=list)
+    lossy: list[str] = field(default_factory=list)
+
+
+def _quarantine(found: Any, adapter: str, exc: schema.RecordError) -> Quarantined:
+    rules = getattr(exc, "rules", None) or ["read"]
+    reasons = getattr(exc, "reasons", None) or [str(exc)]
+    return Quarantined(str(found.source_path), adapter, list(rules), list(reasons))
 
 
 def import_project(root: Path, adapters: Iterable[Adapter] = ADAPTERS) -> ImportResult:
-    """Every run under one project directory, as validated core records."""
+    """Every run under one project directory, as validated core records.
+
+    A record that fails conformance is quarantined -- listed with its path and
+    reasons, never imported, never coerced (conformance spec, Decision 3)."""
     root = Path(root)
     out = ImportResult()
     taken: set[str] = set()
     for adapter in adapters:
         if not adapter.detect(root):
             continue
-        for found in adapter.scan(root, taken):
+        with generic.skipped_non_finite() as skipped:
+            found_items = list(adapter.scan(root, taken))
+        if skipped:
+            names = sorted(set(skipped))
+            shown = ", ".join(names[:8]) + (", ..." if len(names) > 8 else "")
+            out.lossy.append(
+                f"the {adapter.name} reader skipped {len(skipped)} non-finite value(s)"
+                f" (NaN/inf: not measured, not stored): {shown}"
+            )
+        for found in found_items:
             try:
                 record = adapter.to_core_record(found)
             except schema.RecordError as exc:
                 out.refused.append(f"{found.source_path}: {exc}")
+                out.quarantined.append(_quarantine(found, adapter.name, exc))
                 continue
             out.imported.append(Imported(record, found.name, found.source_path, adapter.name))
     return out

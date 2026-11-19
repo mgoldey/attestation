@@ -304,7 +304,10 @@ def row_from_core(project: str, imported) -> Row:
             0,
             f"{imported.name} has no status: its record does not say whether the run completed",
         )
-    elif record.status != "complete":
+    if record.status in ("failed", "cancelled"):
+        # Whatever ext.ledger-import says: its status word replaces the
+        # column's, and it once silenced this caveat too (conformance spec,
+        # Decision 4). No legacy importer writes failed/cancelled.
         row.run_caveats.insert(
             0,
             f"{imported.name} has status {record.status}: its values are from a run"
@@ -338,6 +341,8 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
             "scanned": {},
             "empty": [],
             "diagnostics": {},
+            "quarantined": [],
+            "lossy": {},
             "message": f"no such directory: {root}",
         }
 
@@ -375,6 +380,10 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
     # one of these as an empty project too would tell the reader to go fix a
     # layout that just worked.
     consumed: set[str] = set()
+    # Records that failed conformance: never imported, always returned, so the
+    # CLI can print them and fail (conformance spec, Decision 3).
+    quarantined: list[dict] = []
+    lossy: dict[str, list[str]] = {}
     # Fallback first, so `consumed` is known before the per-project pass.
     for project_root in [*fallback_roots, *candidates]:
         if not project_root.is_dir():
@@ -388,6 +397,7 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
             project_root, LEGACY_ADAPTERS if project_root in fallback_roots else ADAPTERS
         )
         records = [row_from_core(project_root.name, i) for i in result.imported]
+        _note_quarantine(project_root.name, result, quarantined, lossy)
         if result.refused:
             # A record the core reader refuses is reported, never coerced.
             diagnostics[project_root.name] = (
@@ -421,7 +431,34 @@ def scan(conn: sqlite3.Connection, root: Path, project: str | None = None) -> di
         scanned[project_root.name] = len(records)
 
     conn.commit()
-    return {"scanned": scanned, "empty": empty, "diagnostics": diagnostics}
+    return {
+        "scanned": scanned,
+        "empty": empty,
+        "diagnostics": diagnostics,
+        "quarantined": quarantined,
+        "lossy": lossy,
+    }
+
+
+def _note_quarantine(project: str, result, quarantined: list[dict], lossy: dict) -> None:
+    """Add a project's quarantined records (deduplicated by path) and the
+    readers' skipped values to the scan's report."""
+    seen = {q["path"] for q in quarantined}
+    for q in result.quarantined:
+        if q.path in seen:
+            continue
+        seen.add(q.path)
+        quarantined.append(
+            {
+                "project": project,
+                "path": q.path,
+                "adapter": q.adapter,
+                "rules": q.rules,
+                "reasons": q.reasons,
+            }
+        )
+    if result.lossy:
+        lossy.setdefault(project, []).extend(result.lossy)
 
 
 def _link_corpora(

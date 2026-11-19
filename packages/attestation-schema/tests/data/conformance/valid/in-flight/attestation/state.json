@@ -1,0 +1,1 @@
+{"backend":"local","history":[{"at":"2026-11-19T10:00:00.000000Z","state":"submitted"},{"at":"2026-11-19T10:00:05.000000Z","state":"running"}],"job_id":"j-2","message":null,"run_id":"in-flight","schema":"attestation.state/1","state":"running","updated_at":"2026-11-19T10:00:05.000000Z"}

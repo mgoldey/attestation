@@ -1116,4 +1116,9 @@ def test_wheel_builds_and_carries_the_schema_file(tmp_path):
     assert "attestation_schema/schemas/state-1.schema.json" in names
     assert "attestation_schema/py.typed" in names
     assert not any(n.startswith("attestation/") for n in names)
-    assert b"Requires-Dist" not in metadata
+    # No unconditional requirement: pytest is the `[conformance]` extra's
+    # (the plugin), never the core's (conformance spec, Decision 1).
+    requires = [ln for ln in metadata.decode().splitlines() if ln.startswith("Requires-Dist:")]
+    assert requires == ["Requires-Dist: pytest>=7.2; extra == 'conformance'"], requires
+    assert not any(n.endswith("entry_points.txt") for n in names), "the plugin is opt-in (-p)"
+    assert "attestation_schema/pytest_plugin.py" in names
