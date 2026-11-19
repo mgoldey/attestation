@@ -155,6 +155,10 @@ HELP: dict[str, str] = {
     "desk.build": "render the page for a persona to a file (imports pending verdicts first)",
     "desk.import": "record the page's pending verdicts as clicks",
     "desk.refresh": "import, build and publish as configured in .env; no-op when unconfigured",
+    "prereg": "preregister a prediction about a family's arms; judge it once the runs exist",
+    "prereg.add": "sign a hypothesis (family, metric, predicted ordering, margin) before the runs",
+    "prereg.check": "judge registered hypotheses against the ledger; exit 1 on refuted/altered",
+    "prereg.list": "registered hypotheses and anything changed since they were signed",
     "record": "signed run records: what a run read, checked and concluded",
     "record.create": "sign a run record from a JSON spec (for tools outside attest)",
     "record.verify": "check a run record's signature and the files it names",
@@ -297,6 +301,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--citations",
         action="store_true",
         help="instead: list citation keys (cite= and LaTeX \\cite) the bibliography lacks",
+    )
+    sp.add_argument(
+        "--figures",
+        action="store_true",
+        help="instead: check each included figure against the files it was drawn from",
     )
     sp.set_defaults(func=cmd_claims)
 
@@ -516,6 +525,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_persona_merge)
 
     _add_record_parser(sub)
+
+    from attestation import cli_prereg  # lazy, like cli_bib
+
+    cli_prereg.register(sub, add_db)
 
     sp = sub.add_parser("install", help=HELP["install"])
     sp.add_argument("--check", action="store_true", help="detect only, change nothing")
@@ -971,6 +984,42 @@ def _print_coverage(target: Path) -> int:
     return 0
 
 
+def _print_figures(target: Path, verdict: str | None) -> int:
+    """`attest claims --figures`: exit 1 on a stale or missing figure or a malformed note."""
+    from attestation import figures
+
+    report = figures.check(target)
+    for problem in report["malformed"]:
+        print(f"  malformed  {problem}")
+    for fig in report["figures"]:
+        if verdict and fig.verdict != verdict:
+            continue
+        where = f"{Path(fig.file).name}:{fig.line}"
+        print(f"  {fig.verdict:8s} {where:24s} {fig.path}  {fig.message}")
+    if not report["total"]:
+        print(f"no figures found under {target}")
+        return 1 if report["malformed"] else 0
+    summary = ", ".join(f"{n} {k}" for k, n in sorted(report["counts"].items()))
+    skipped = f" ({report['skipped']} remote or macro path(s) skipped)" if report["skipped"] else ""
+    print(f"\n{report['total']} figure(s): {summary}{skipped}")
+    print(f"note: {figures.NOTE}")
+    if report["counts"].get("orphan"):
+        print("annotate one beside the figure it describes:")
+        print("  <!-- figure: figs/loss.png from=results/a.json -->    (% figure: in .tex)")
+    return 1 if figures.failing(report) else 0
+
+
+def _claims_instead(args: argparse.Namespace, target: Path) -> int | None:
+    """The `--coverage`/`--citations`/`--figures` modes, which replace the check."""
+    if args.coverage:
+        return _print_coverage(target)
+    if args.citations:
+        return _print_citations(target, args.db)
+    if args.figures:
+        return _print_figures(target, args.verdict)
+    return None
+
+
 def _print_citations(target: Path, db: str | None) -> int:
     """`cite.check` from the shell: exit 1 when any key resolves to nothing."""
     from attestation import citations, latex
@@ -1014,10 +1063,9 @@ def cmd_claims(args: argparse.Namespace) -> int:
     if not target.exists():
         return fail(f"no such path: {target}")
 
-    if args.coverage:
-        return _print_coverage(target)
-    if args.citations:
-        return _print_citations(target, args.db)
+    instead = _claims_instead(args, target)
+    if instead is not None:
+        return instead
 
     started = _record_clock()
     with open_db(args.db) as conn:
@@ -1325,19 +1373,29 @@ def _print_compare(result: dict) -> None:
     if result.get("corpus"):
         header += f", all arms on {result['corpus']}"
     print(header + "\n")
-    print(f"  {'arm':44s} {result['metric']:>10s} {'n':>6s}  {'step':>8s}  source")
-    print(f"  {'-' * 44} {'-' * 10} {'-' * 6}  {'-' * 8}  {'-' * 6}")
+    # A wall-time column appears only when some arm has one, so a family with
+    # no recorded durations prints exactly what it always has.
+    timed = any(a.get("wall_time_s") is not None for a in result["arms"])
+    wall_h, wall_r = (f"{'wall_s':>8s}  ", f"{'-' * 8}  ") if timed else ("", "")
+    print(f"  {'arm':44s} {result['metric']:>10s} {'n':>6s}  {'step':>8s}  {wall_h}source")
+    print(f"  {'-' * 44} {'-' * 10} {'-' * 6}  {'-' * 8}  {wall_r}{'-' * 6}")
     for arm in result["arms"]:
         # every row carries where the number came from: an auditor's
         # first question is "from which file?"
         src = arm.get("source_path") or ""
         if arm["value"] is None:
-            print(f"  {arm['name']:44s} {'(none)':>10s} {'':>6s}  {'':>8s}  {src}")
+            wall = _wall_cell(arm, timed)
+            print(f"  {arm['name']:44s} {'(none)':>10s} {'':>6s}  {'':>8s}  {wall}{src}")
             continue
         n = str(arm["n"]) if arm.get("n") is not None else "?"
         step = str(arm["step"]) if arm["step"] is not None else ""
-        print(f"  {arm['name']:44s} {arm['value']:>10.4f} {n:>6s}  {step:>8s}  {src}")
+        if arm.get("n_runs"):
+            # a pooled arm's value is a mean; say over how many runs
+            src = f"mean of {arm['n_runs']} runs, first {src}"
+        wall = _wall_cell(arm, timed)
+        print(f"  {arm['name']:44s} {arm['value']:>10.4f} {n:>6s}  {step:>8s}  {wall}{src}")
 
+    _print_replicates(result)
     print(f"\nwinner: {result['winner']}")
     for caveat in result.get("caveats", []):
         print(f"  caveat: {caveat}")
@@ -1346,6 +1404,41 @@ def _print_compare(result: dict) -> None:
             f"  {len(result['without_metric'])} arm(s) have no {result['metric']}:"
             f" {', '.join(result['without_metric'])}"
         )
+
+
+def _wall_cell(arm: dict, timed: bool) -> str:
+    """The wall-time cell of one compare row: total seconds over the arm's runs,
+    or blank when it has none; empty text when no arm in the table is timed."""
+    if not timed:
+        return ""
+    wall = arm.get("wall_time_s")
+    return f"{(f'{wall:.4g}' if wall is not None else ''):>8s}  "
+
+
+def _print_replicates(result: dict) -> None:
+    """One line per pooled seed-replicate arm (mean, spread, interval, the
+    runs it pooled), then whether the top two separate. Prints nothing for a
+    family of single runs, whose output must stay exactly what it was --
+    golden paths pin it."""
+    pooled = [a for a in result["arms"] if a.get("n_runs")]
+    if not pooled:
+        return
+    print("\n  replicates:")
+    for arm in pooled:
+        if arm.get("ci_low") is not None:
+            spread = f"95% CI [{arm['ci_low']:.4f}, {arm['ci_high']:.4f}]"
+        else:
+            spread = f"range [{arm['min']:.4f}, {arm['max']:.4f}], no interval"
+        more = arm["n_runs"] - len(arm["runs"])
+        runs = ", ".join(arm["runs"]) + (f" (+{more} more)" if more > 0 else "")
+        print(
+            f"  {arm['name']}: mean {arm['mean']:.4f} sd {arm['sd']:.4f}"
+            f" over {arm['n_runs']} runs, {spread} -- {runs}"
+        )
+    verdict = {True: "yes", False: "no", None: "cannot tell"}[result.get("separable")]
+    effect = result.get("effect_size")
+    d = f", Cohen's d {effect['cohen_d']}" if effect else ""
+    print(f"  top two separable: {verdict}{d}")
 
 
 @_documented("runs.compare")

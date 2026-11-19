@@ -177,6 +177,12 @@ CREATE TABLE IF NOT EXISTS runs(
   -- "reader" list (what its reader cannot do) and a "run" list (what is
   -- wrong with this run). NULL = none, or scanned before migration 015.
   caveats_json TEXT,
+  -- The core record's `arm` (the configuration within the family) and
+  -- `seeds` (JSON), which together are how seed replicates of one
+  -- configuration pool into one arm (replicates.group). NULL = the record
+  -- did not say, or scanned before migration 016.
+  arm TEXT,
+  seeds_json TEXT,
   UNIQUE (project, name)
 );
 -- long format, not wide: projects report entirely different metrics, and a
@@ -692,6 +698,19 @@ def _migration_015_add_runs_caveats(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE runs ADD COLUMN caveats_json TEXT")
 
 
+def _migration_016_add_runs_arm_seeds(conn: sqlite3.Connection) -> None:
+    """Add runs.arm and runs.seeds_json: the core record's own `arm` and
+    `seeds`, which seed-replicate pooling reads instead of parsing run names
+    (docs/superpowers/specs/2026-11-19-replicate-statistics-design.md).
+    Existing runs get NULL and pool nothing until re-scanned, the same rule
+    migration 015 follows: the values come from the records, not the DB."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
+    if "arm" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN arm TEXT")
+    if "seeds_json" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN seeds_json TEXT")
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -715,6 +734,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (13, _migration_013_add_bibliography),
     (14, _migration_014_add_citation_manager),
     (15, _migration_015_add_runs_caveats),
+    (16, _migration_016_add_runs_arm_seeds),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]

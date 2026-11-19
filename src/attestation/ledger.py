@@ -35,7 +35,7 @@ from pathlib import Path
 
 from attestation_schema import spell_value
 
-from attestation import paths
+from attestation import compute, paths, replicates
 
 
 def workspace_root(explicit: str | None = None) -> Path | None:
@@ -246,6 +246,10 @@ class Row:
     # wrong with this one run -- both data the record carried.
     caveats: list[str] = field(default_factory=list)
     run_caveats: list[str] = field(default_factory=list)
+    # The record's `arm` and `seeds`: what pools seed replicates of one
+    # configuration into one arm (replicates.group). None = did not say.
+    arm: str | None = None
+    seeds: dict | None = None
 
 
 def _metric_split(m) -> str | None:
@@ -283,6 +287,8 @@ def row_from_core(project: str, imported) -> Row:
         started=record.started_at,
         config=record.config or None,
         adapter=imported.adapter,
+        arm=record.arm,
+        seeds=record.seeds,
     )
     for m in record.metrics:
         if math.isfinite(m.value):
@@ -512,14 +518,15 @@ def _replace_project(
     for r in records:
         cur = conn.execute(
             "INSERT INTO runs(project, name, family, status, started, source_path,"
-            " config_json, notes, corpus_id, adapter, scanned_at, caveats_json) VALUES"
-            " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " config_json, notes, corpus_id, adapter, scanned_at, caveats_json, arm,"
+            " seeds_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(project, name) DO UPDATE SET"
             " family = excluded.family, status = excluded.status,"
             " started = excluded.started, source_path = excluded.source_path,"
             " config_json = excluded.config_json, notes = excluded.notes,"
             " corpus_id = excluded.corpus_id, adapter = excluded.adapter,"
-            " scanned_at = excluded.scanned_at, caveats_json = excluded.caveats_json",
+            " scanned_at = excluded.scanned_at, caveats_json = excluded.caveats_json,"
+            " arm = excluded.arm, seeds_json = excluded.seeds_json",
             (
                 r.project,
                 r.name,
@@ -533,6 +540,8 @@ def _replace_project(
                 r.adapter,
                 scanned_at,
                 _caveats_json(r),
+                r.arm,
+                json.dumps(r.seeds, sort_keys=True) if r.seeds is not None else None,
             ),
         )
         # NOT cur.lastrowid: SQLite's last_insert_rowid() is unreliable across
@@ -824,6 +833,10 @@ def _family_rows(conn: sqlite3.Connection, family: str, project: str | None) -> 
     sql = (
         "SELECT r.id, r.project, r.name, r.status, r.source_path, r.adapter, r.notes,"
         " r.caveats_json,"
+        # config_json: the replicate grouping vetoes a merge when two seeds'
+        # configs disagree on anything but the seed (replicates.group); arm
+        # and seeds_json are the core record's own, which PROPOSE the merge.
+        " r.config_json, r.arm, r.seeds_json,"
         # c.source too: upsert records a CONTESTED marker there when one
         # corpus name carries two conflicting declarations, and a comparison
         # must not vouch for a corpus whose own definition is disputed.
@@ -1087,6 +1100,8 @@ def _compare(
     metric: str,
     directions: dict[str, str],
     family: str,
+    *,
+    walls: dict[int, float] | None = None,
 ) -> dict:
     """Rank every arm of an ablation family by `metric` -- the pure decision
     half of `compare()`. Takes rows and already-fetched values so it can be
@@ -1096,9 +1111,23 @@ def _compare(
     if direction is None:
         raise ValueError(unknown_direction_message(metric))
 
-    arms = []
+    arms, configs, identities = [], {}, {}
     for r in runs:
-        arms.extend(_arms_for_run(r, values_by_run[r["id"]], n_by_run.get(r["id"]), direction))
+        identity = replicates.identity(r.get("arm"), r.get("seeds_json"))
+        for arm in _arms_for_run(r, values_by_run[r["id"]], n_by_run.get(r["id"]), direction):
+            arms.append(arm)
+            configs[arm["name"]] = r.get("config_json")
+            if identity is not None:
+                # A nested arm `<run>[<key>]` pools under `<arm>[<key>]`, so arm
+                # A of one seed pools only with arm A of another.
+                identities[arm["name"]] = (identity[0] + arm["name"][len(r["name"]) :], identity[1])
+    # Seed replicates of one configuration -- runs whose core records share an
+    # `arm` and differ in `seeds` -- pool into ONE arm (mean, interval, member
+    # names) rather than competing as rivals. See replicates.py.
+    raw_arms = arms
+    arms, replicate_notes = replicates.group(arms, configs, identities)
+    # Wall time per arm (compute.py), summed over every pooled run.
+    compute.attach(arms, raw_arms, compute.run_walls(runs, walls))
 
     scored = [a for a in arms if a["value"] is not None]
 
@@ -1116,6 +1145,7 @@ def _compare(
     missing = sorted((a for a in arms if a["value"] is None), key=lambda a: a["name"])
 
     shared, corpus_caveats = _corpus_agreement(runs, metric)
+    found = replicates.summary(scored)
     return {
         "family": family,
         "metric": metric,
@@ -1124,10 +1154,19 @@ def _compare(
         "winner": scored[0]["name"] if scored else None,
         "without_metric": [a["name"] for a in missing],
         "corpus": shared,
+        # `separable` / `effect_size`, present only when some arm pooled
+        # replicates, so a family of single runs keeps the keys it always had.
+        **found,
         # Reader caveats last: they qualify how every number here was
         # obtained, which is context for the ranking rather than a reason to
         # distrust one arm over another.
-        "caveats": _all_caveats(scored, metric, corpus_caveats, runs),
+        "caveats": _all_caveats(
+            scored,
+            metric,
+            corpus_caveats,
+            runs,
+            replicate_notes + replicates.stat_caveats(scored, found),
+        ),
     }
 
 
@@ -1229,7 +1268,8 @@ def compare(
     metric = metric or _pick_metric(counts, directions, family)
     run_ids_all = [r["id"] for r in runs]
     values_by_run, n_by_run = _compare_values(conn, run_ids_all, metric)
-    return _compare(runs, values_by_run, n_by_run, metric, directions, family)
+    walls = compute.walls_by_run(conn, run_ids_all)
+    return _compare(runs, values_by_run, n_by_run, metric, directions, family, walls=walls)
 
 
 # Below this many samples, a difference between arms is not worth reading as a
@@ -1317,17 +1357,29 @@ def _record_caveats(runs: list[dict]) -> list[str]:
 
 
 def _all_caveats(
-    scored: list[dict], metric: str, corpus_caveats: list[str], runs: list[dict]
+    scored: list[dict],
+    metric: str,
+    corpus_caveats: list[str],
+    runs: list[dict],
+    replicate_caveats: list[str],
 ) -> list[str]:
     """Every reason to qualify a comparison, in order of how directly it bears
-    on the ranking: the ranking's own caveats, then the corpus ones, then the
+    on the ranking: the ranking's own caveats, then what the seed replicates
+    do and do not support (replicates.py), then whether the arms had similar
+    wall time (compute.py), then the corpus ones, then the
     limitations of the readers that produced the numbers.
 
     Reader caveats come last because they qualify how EVERY number here was
     obtained -- context for the whole comparison rather than a reason to
     distrust one arm over another.
     """
-    return _caveats(scored, metric) + corpus_caveats + _record_caveats(runs)
+    return (
+        _caveats(scored, metric)
+        + replicate_caveats
+        + compute.caveats(scored)
+        + corpus_caveats
+        + _record_caveats(runs)
+    )
 
 
 def _judged_splits(scored: list[dict]) -> set[str | None]:
@@ -1407,7 +1459,12 @@ def _caveats(scored: list[dict], metric: str) -> list[str]:
         out.append("some arms report no sample size, so their weight is unknown")
 
     top, second = scored[0], scored[1]
-    if top["value"] is not None and second["value"] is not None:
+    # The 5% rule is a stand-in for a variance this tool usually cannot see.
+    # When both top arms carry replicate intervals it CAN see one, and
+    # `separable` (with its own caveat) answers the question instead -- on a
+    # real 5-seed sweep the rule called 1.4% "too close" beside disjoint
+    # intervals, two caveats contradicting each other.
+    if not replicates.intervals_decide(top, second) and None not in (top["value"], second["value"]):
         spread = abs(second["value"] - top["value"])
         scale = max(abs(top["value"]), 1e-12)
         if spread / scale < 0.05:
@@ -1421,15 +1478,12 @@ def _caveats(scored: list[dict], metric: str) -> list[str]:
             "arms are at different training steps, so this compares checkpoints,"
             " not just configurations"
         )
-    # Each arm here is exactly one run -- the schema records no seed
-    # replication (seed lives in `config`, never as a distinct run of the same
-    # configuration). A ranking over single runs cannot separate the effect of
-    # the configuration from ordinary run-to-run variance, regardless of how
-    # large n_records is for any individual arm.
-    out.append(
-        "each arm is a single run; no seed replication, so this ranking cannot"
-        " separate configuration from run-to-run variance"
-    )
+    # A ranking over single runs cannot separate the effect of the
+    # configuration from ordinary run-to-run variance, regardless of how large
+    # n_records is for any individual arm. This line used to be unconditional
+    # and was false on every sweep that HAD seeds; replicates.group now pools
+    # those, and the line fires only for the arms that really are one run.
+    out.extend(replicates.single_run_caveats(scored))
     return out
 
 

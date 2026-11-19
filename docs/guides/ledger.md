@@ -178,6 +178,124 @@ Links are made by digest only; a name match only diagnoses (`BROKEN
 It reads files, not the ledger database, and exits 1 on a broken link.
 Design: `docs/superpowers/specs/2026-11-19-dataset-records-design.md`.
 
+## Seed replicates
+
+Name each seeded run `<config>_seed<N>` (`seed_N`, `seed-N` and `seed=N` work
+too) and `compare` pools the seeds of one configuration into ONE arm instead
+of ranking them against each other. A seed token never changes the family:
+`clf_knn_seed3` groups exactly as `clf_knn` would, so `knn` and `logreg`
+compare as arms of `clf`. A real five-seed sweep (sklearn digits):
+
+```
+  clf_knn                                          0.9829    540            mean of 5 runs, first .../clf_knn_seed0.json
+  clf_logreg                                       0.9696    540            mean of 5 runs, first .../clf_logreg_seed0.json
+  clf_sgd                                          0.9452    540            mean of 5 runs, first .../clf_sgd_seed0.json
+
+  replicates:
+  clf_knn: mean 0.9829 sd 0.0033 over 5 runs, 95% CI [0.9803, 0.9855] -- clf_knn_seed0, ...
+  ...
+  top two separable: yes, Cohen's d 3.225
+```
+
+A pooled arm reports `n_runs`, `mean` (also its `value`), `sd`, `min`/`max`,
+`ci_low`/`ci_high` and up to five member names in `runs`. The interval is a
+95% percentile bootstrap of the mean with a fixed seed, so the same runs
+always print the same interval; under three runs there is no interval, only
+the range. `separable` says whether the top two arms' intervals are disjoint
+(`None` when either has none). None of this is a significance test, and the
+caveats say so: with fewer than ten runs a bootstrap interval is too narrow.
+
+A config can stop a merge but never start one. Seeds whose configs differ in
+anything but `seed`, that claim the same seed, or that report different
+splits stay separate arms, with a caveat naming the reason. Tracker runs that
+carry no seed token in their name (`train/0`, `train/1`) are never pooled;
+when their configs differ only in seed, a caveat says so. A family of single
+runs prints exactly what it always did, ending with the single-run caveat.
+
+What pools is the core run record's own `arm` and `seeds`: runs of one family
+whose records share an `arm` and carry distinct seeds. A producer that writes
+core records (`attestation/run.json`) fills those fields and needs no naming
+convention; a record with `seeds: null` never pools. For artifacts with no such
+fields, the seed name above is read once, at import, into the record's `arm`
+and `seeds` (`{"seed": N}`). Runs scanned before migration 016 pool after the
+next `runs scan`.
+Design record: `docs/superpowers/specs/2026-11-19-replicate-statistics-design.md`.
+## Preregistering a hypothesis
+
+The one thing a reviewer cannot reconstruct afterwards is what you predicted
+before the runs existed. `attest prereg add` writes the prediction down and
+signs it with the same key as a run record:
+
+```bash
+attest prereg add kdsweep --metric wer --expect "kdsweep_t4 < kdsweep_baseline" \
+  --by 0.005 --note "distillation at T=4 beats the baseline"
+attest prereg check            # exit 1 on refuted, or on altered text
+attest prereg list             # the registrations, no database needed
+
+`--expect` orders arms by the metric's raw values (`a < b`: a's value is
+lower), chains allowed (`a < b < c`); `--by` is the minimum gap per pair, in
+the metric's units. The metric needs a declared direction or `add` refuses
+with the sentence `runs compare` prints. Files go to `--root`, else
+`RESEARCH_ROOT`, else the current directory: `hypotheses.toml` (the index you
+commit and diff) and `prereg/` (the canonical text, whose sha256 is the id,
+and its signed record — `attest record verify prereg/<id>.json` checks it).
+An edit is a new registration: `--supersedes <id>` keeps the old one and
+flags it `superseded`.
+
+`check` re-runs `runs compare` on each hypothesis's own metric and reports
+`confirmed`, `refuted`, `inconclusive` or `untested`. With replicated arms
+(`ci_low`/`ci_high` present) it compares intervals; with single runs, point
+values decide only if you registered with `--allow-single-run`. An arm that
+is missing is `untested`, never `refuted`, and naming one seed of a replicated
+arm is `inconclusive`. Flags sit beside the verdict: `post_hoc` (registered
+after a named arm's artifact was last written), `altered` (anything no longer
+matches what was signed — the verdict is computed from the signed text).
+
+What it proves, and what it cannot, is printed with every result:
+
+- **proved** — this key signed exactly this text, and it has not changed;
+- **evidence only** — `registered_at` is this machine's clock and `post_hoc`
+  compares it with this disk's mtimes; `post_hoc` unset proves nothing;
+- **cannot check** — that the prediction came before anyone saw the data, that
+  no registration was deleted along with its record, or who holds the key
+  unless you pin it. Commit `prereg/` somewhere you do not control to make
+  deletion and backdating visible.
+
+`runs.compare` carries the same verdicts as a `hypotheses` block (with
+`prereg_limits`) when the family has registrations under `RESEARCH_ROOT`;
+registering stays a CLI act. Design:
+`docs/superpowers/specs/2026-11-19-preregistration-design.md`.
+
+## Wall time per arm
+
+**Wall time is not compute.** It is the seconds between a run's own start and
+stop on whatever machine ran it: it includes queueing and data loading, differs
+between a laptop and a GPU node, and says nothing about FLOPs, energy or cost.
+Read it only as "these arms may not have had the same budget".
+
+When a tracker recorded a duration (Sacred `start_time`/`stop_time`, MLflow
+`start_time`/`end_time`, W&B `_runtime`) or a result file carries an explicit
+`wall_time_s` / `runtime_s` key, `runs compare` shows a `wall_s` column and
+`runs.compare` arms carry `wall_time_s`. A pooled replicate arm sums every run it
+pooled and also reports `wall_time_mean_s`; if any of its runs has no duration it
+reports none rather than a partial sum. Nothing is inferred: Hydra and DVC record
+no duration, so those runs have none. Each tracker's adapter reads its
+timestamps and hands the ledger the duration as an ordinary metric in the core
+run record (`wall_time_s`, unit `s`, no direction), so a producer writing core
+records gets the same column by reporting that metric.
+
+```
+  caveat: the top two arms did not take the same wall time per run: m_big 32s vs m_small 12s (2.7x); ...
+  caveat: compute not recorded for m_tiny while other arms have a wall time, ...
+```
+
+The first caveat fires when the top two arms differ 2x or more per run and the
+longer took at least a second; the second only when some arm is timed and another
+is not. A family with no durations prints exactly what it always did. Run records
+(`attest record`, `attest claims --record`) also carry `predicate.environment`:
+Python version, command line, the `uv.lock` hash and any GPU names. Design record:
+`docs/superpowers/specs/2026-11-19-compute-tracking-design.md`.
+
 ## Browsing the ledger
 
 ```bash

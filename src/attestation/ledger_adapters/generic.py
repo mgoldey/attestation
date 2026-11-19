@@ -32,7 +32,8 @@ from pathlib import Path
 
 from attestation_schema import layout
 
-from attestation import corpus
+from attestation import corpus, replicates
+from attestation.ledger_adapters import timing
 from attestation.ledger_adapters.found import Found, FoundMetric
 
 # Where ML/science projects conventionally put results and configuration.
@@ -428,7 +429,19 @@ def family_of(stem: str) -> str | None:
     A heuristic, and treated as one. It groups names that follow a separator
     convention; anything else gets no family rather than a wrong one, and an
     ungrouped run is still listed, just not auto-compared.
+
+    A seed token never changes a family: `clf_knn_seed3` is grouped exactly as
+    `clf_knn` would be (family `clf`). Stripping it as a variant made every
+    seeded sweep one family PER CONFIGURATION, whose seeds then ranked against
+    each other while the configurations could not be compared at all. See
+    docs/superpowers/specs/2026-11-19-replicate-statistics-design.md.
     """
+    unseeded = replicates.strip_seed(stem)
+    if unseeded and unseeded[0]:
+        rest = unseeded[0]
+        # `run_seed1` leaves only `run`, which alone is no sweep; it was family
+        # `run` before this rule and stays so, so its replicates still group.
+        return family_of(rest) or "-".join(p for p in re.split(r"[-_/]", rest) if p)
     stripped = re.sub(r"[-_]?(?:step|epoch|iter|it|ckpt)[-_]?\d+k?", "", stem, flags=re.I)
     stripped = _SPLIT.sub("", stripped)
     parts = [p for p in re.split(r"[-_]", stripped) if p]
@@ -765,10 +778,12 @@ def _wandb_runs(root: Path, seen: set[str]) -> list[Found]:
         # noise rather than a wrong verdict -- but a ledger listing
         # `_timestamp: 170000001.0` beside a real metric invites the misreading
         # the direction rule exists to prevent.
+        runtime = payload.get("_runtime")
         payload = {k: v for k, v in payload.items() if not k.startswith("_")}
         metrics = metrics_from_payload(payload, None, None)
         if not metrics:
             continue
+        timing.add_wall(metrics, timing.seconds(runtime))
 
         meta_path = files / "wandb-metadata.json"
         meta = _load(meta_path) if meta_path.is_file() else None
@@ -878,6 +893,9 @@ def _mlflow_runs(root: Path, seen: set[str]) -> list[Found]:
                     metrics.append(FoundMetric(metric_file.name, final[0], step=final[1]))
             if not metrics:
                 continue
+            timing.add_wall(
+                metrics, timing.epoch_ms_duration(meta.get("start_time"), meta.get("end_time"))
+            )
 
             label = meta.get("run_name") or run_dir.name
             name = f"{label}/{run_dir.name[:8]}" if meta.get("run_name") else run_dir.name
@@ -993,6 +1011,9 @@ def _sacred_runs(root: Path, seen: set[str]) -> list[Found]:
             metrics.append(result_metric)
         if not metrics:
             continue  # a spec with no measurement attached -- same as MLflow
+        timing.add_wall(
+            metrics, timing.iso_duration(run_json.get("start_time"), run_json.get("stop_time"))
+        )
 
         name = f"{family}/{run_dir.name}"
         if name in seen:

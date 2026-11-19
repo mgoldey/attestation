@@ -20,6 +20,9 @@ class FoundMetric:
     value: float
     step: int | None = None
     split: str | None = None
+    # The core metric's `unit`. Only the readers that emit wall time set one
+    # (`timing.add_wall`: "s"); every other value's unit is not on disk.
+    unit: str | None = None
 
 
 @dataclass

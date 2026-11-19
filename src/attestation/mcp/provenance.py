@@ -14,7 +14,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from attestation import ledger, record
+from attestation import ledger, prereg, record, replicates
 from attestation.mcp._shared import MAX_LIST_LIMIT, Limit, Verdict
 from attestation.mcp._tool import ToolError, open_db, tool
 
@@ -168,9 +168,19 @@ def register(mcp) -> None:
         winner. Arms with no value for the metric are listed in `without_metric`
         rather than dropped: an arm that was never evaluated is a finding.
 
+        Seed replicates (`<config>_seed<N>`) pool into one arm with `n_runs`, `mean`,
+        `ci_low`/`ci_high` (a bootstrap interval, none under 3 runs) and `runs`; the
+        result then adds `separable` for the top two. Not a significance test.
+
+        An arm whose runs recorded a duration carries `wall_time_s` (summed over its runs);
+        the top two taking 2x or more time per run adds a caveat. Wall time is not compute.
+
         A family name is unique per project, not globally. If the same name exists
         in two projects this refuses and names them: arms from different projects
         are not comparable, and picking one silently would be a guess.
+
+        When the family has hypotheses preregistered with `attest prereg add`, a
+        `hypotheses` list gives each verdict and flags, and `prereg_limits` says what that proves.
 
         """
         return _compare(family, metric, project)
@@ -237,6 +247,11 @@ def register(mcp) -> None:
 
         Filter with `verdict` to answer "what in my documentation is unsupported".
         Read-only: it reports, it never edits a document.
+
+        The `figures` block judges each included figure: `<!-- figure: figs/a.png
+        from=results/a.json sha256=<hex> -->` (`% figure:` in .tex) links it to its
+        sources. `stale`: a source is newer or the bytes changed. `missing`: a file is
+        absent. `orphan`: no annotation. `fresh` never proves the figure was drawn from them.
 
         """
         return _check(path, verdict)
@@ -613,7 +628,10 @@ def _compare(conn, family: str, metric: str | None = None, project: str | None =
         raise ToolError(result.get("message") or f"no runs in family {family!r}")
     arms = result["arms"]
     total_arms = len(arms)
-    result = {**result, "arms": arms[:MAX_ARMS_SHOWN], "n_arms": total_arms}
+    # Judged on every arm, before the cap; {} when the family has no registrations.
+    hypotheses = prereg.attach(result, ledger.workspace_root())
+    shown = replicates.for_model(arms[:MAX_ARMS_SHOWN])
+    result = {**result, "arms": shown, "n_arms": total_arms, **hypotheses}
     message = f"{total_arms} arm(s)"
     if total_arms > MAX_ARMS_SHOWN:
         message += f"; showing the {MAX_ARMS_SHOWN} best"

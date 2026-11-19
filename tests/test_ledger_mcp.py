@@ -93,6 +93,49 @@ def test_compare_ranks_and_names_a_winner(workspace):
     assert out["winner"] == "eval_step_200"  # 0.2 beats 0.4, lower is better
 
 
+COMPARE_KEYS_BEFORE_PREREG = {
+    "ok",
+    "message",
+    "family",
+    "metric",
+    "direction",
+    "arms",
+    "winner",
+    "without_metric",
+    "corpus",
+    "caveats",
+    "n_arms",
+}
+
+
+def test_compare_without_preregistrations_keeps_its_envelope(workspace, monkeypatch, tmp_path):
+    """A family with no hypotheses must return exactly the keys it always did
+    (response-size and golden-path pins depend on it), whether or not the
+    workspace holds registrations for some OTHER family."""
+    from attestation import prereg
+    from attestation.run_record import keys
+
+    mcp_server._runs_scan_impl(confirm=True)
+    plain = mcp_server._runs_compare_impl("eval", metric="wer")
+    # keys a parallel change to ledger.compare adds are not this test's business
+    assert COMPARE_KEYS_BEFORE_PREREG <= set(plain)
+    assert not {k for k in plain if k.startswith(("hypothes", "prereg"))}
+
+    monkeypatch.setenv(keys.ENV_KEY, str(tmp_path / "k.pem"))
+    keys.LocalKeySource(tmp_path / "k.pem").signer()
+    other = prereg.Hypothesis(family="energy", metric="wer", expect="a < b", by=0.0)
+    prereg.register(other, workspace, keys.resolve_key_source().signer())
+    assert set(mcp_server._runs_compare_impl("eval", metric="wer")) == set(plain)
+
+    mine = prereg.Hypothesis(
+        family="eval", metric="wer", expect="eval_step_200 < eval_step_100", by=0.1
+    )
+    prereg.register(mine, workspace, keys.resolve_key_source().signer())
+    out = mcp_server._runs_compare_impl("eval", metric="wer")
+    assert set(out) - set(plain) == {"hypotheses", "n_hypotheses", "prereg_limits"}
+    assert out["hypotheses"][0]["verdict"] == "inconclusive"  # single runs, no allow_single_run
+
+
 def test_compare_surfaces_an_undeclared_direction_not_internal_error(workspace):
     """A caller-fixable problem must say what to fix. Flattening it to
     "internal error" would hide the one thing that resolves it."""

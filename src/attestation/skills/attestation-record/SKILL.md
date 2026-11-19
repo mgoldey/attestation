@@ -130,6 +130,29 @@ config = "clean"
 kdsweep = "speech-clean-16k"
 ```
 
+## Seeds: name them `<arm>_seed<N>`
+
+`--arm biglm_seed1 ... --arm biglm_seed3` (or `asr_biglm_seed1.json`...) pools
+into ONE arm `asr_biglm` with a mean and, from 3 seeds, an interval. Any
+other seed spelling ranks your seeds against each other as rival arms.
+
+## Register the prediction BEFORE you run
+
+If you expect one arm to win, sign that expectation first (no MCP tool;
+this is deliberate):
+
+```bash
+attest prereg add asr --metric wer --expect "asr_biglm < asr_baseline" --by 0.01 --note "why"
+```
+
+Name arms as `runs.compare` names them (the pooled `asr_biglm`, never a
+seed). After the runs are recorded, `attest prereg check asr` prints
+confirmed / refuted / inconclusive / untested and exits 1 on refuted or
+altered; `runs.compare` carries the same as `hypotheses`. Relay the verdict
+and its limits verbatim. Never edit `hypotheses.toml` (that reads
+`altered`); register a new one with `--supersedes ID`. Registering after
+the results exist is flagged `post_hoc` -- say so, don't hide it.
+
 ## Hydra sweeps need one override
 
 Hydra 1.2+ does **not** chdir per job by default. A `--multirun` sweep
