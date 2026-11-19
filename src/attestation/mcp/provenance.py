@@ -168,6 +168,10 @@ def register(mcp) -> None:
         winner. Arms with no value for the metric are listed in `without_metric`
         rather than dropped: an arm that was never evaluated is a finding.
 
+        Seed replicates (`<config>_seed<N>`) pool into one arm with `n_runs`, `mean`,
+        `ci_low`/`ci_high` (a bootstrap interval, none under 3 runs) and `runs`; the
+        result then adds `separable` for the top two. Not a significance test.
+
         A family name is unique per project, not globally. If the same name exists
         in two projects this refuses and names them: arms from different projects
         are not comparable, and picking one silently would be a guess.

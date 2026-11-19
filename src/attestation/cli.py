@@ -1281,8 +1281,12 @@ def _print_compare(result: dict) -> None:
             continue
         n = str(arm["n"]) if arm.get("n") is not None else "?"
         step = str(arm["step"]) if arm["step"] is not None else ""
+        if arm.get("n_runs"):
+            # a pooled arm's value is a mean; say over how many runs
+            src = f"mean of {arm['n_runs']} runs, first {src}"
         print(f"  {arm['name']:44s} {arm['value']:>10.4f} {n:>6s}  {step:>8s}  {src}")
 
+    _print_replicates(result)
     print(f"\nwinner: {result['winner']}")
     for caveat in result.get("caveats", []):
         print(f"  caveat: {caveat}")
@@ -1291,6 +1295,32 @@ def _print_compare(result: dict) -> None:
             f"  {len(result['without_metric'])} arm(s) have no {result['metric']}:"
             f" {', '.join(result['without_metric'])}"
         )
+
+
+def _print_replicates(result: dict) -> None:
+    """One line per pooled seed-replicate arm (mean, spread, interval, the
+    runs it pooled), then whether the top two separate. Prints nothing for a
+    family of single runs, whose output must stay exactly what it was --
+    golden paths pin it."""
+    pooled = [a for a in result["arms"] if a.get("n_runs")]
+    if not pooled:
+        return
+    print("\n  replicates:")
+    for arm in pooled:
+        if arm.get("ci_low") is not None:
+            spread = f"95% CI [{arm['ci_low']:.4f}, {arm['ci_high']:.4f}]"
+        else:
+            spread = f"range [{arm['min']:.4f}, {arm['max']:.4f}], no interval"
+        more = arm["n_runs"] - len(arm["runs"])
+        runs = ", ".join(arm["runs"]) + (f" (+{more} more)" if more > 0 else "")
+        print(
+            f"  {arm['name']}: mean {arm['mean']:.4f} sd {arm['sd']:.4f}"
+            f" over {arm['n_runs']} runs, {spread} -- {runs}"
+        )
+    verdict = {True: "yes", False: "no", None: "cannot tell"}[result.get("separable")]
+    effect = result.get("effect_size")
+    d = f", Cohen's d {effect['cohen_d']}" if effect else ""
+    print(f"  top two separable: {verdict}{d}")
 
 
 @_documented("runs.compare")

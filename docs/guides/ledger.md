@@ -153,6 +153,41 @@ sample size, when the top two are within 5%, or when arms sit at different
 training steps. A healthy comparison emits no caveats — a tool that always warns
 trains you to ignore it.
 
+## Seed replicates
+
+Name each seeded run `<config>_seed<N>` (`seed_N`, `seed-N` and `seed=N` work
+too) and `compare` pools the seeds of one configuration into ONE arm instead
+of ranking them against each other. A seed token never changes the family:
+`clf_knn_seed3` groups exactly as `clf_knn` would, so `knn` and `logreg`
+compare as arms of `clf`. A real five-seed sweep (sklearn digits):
+
+```
+  clf_knn                                          0.9829    540            mean of 5 runs, first .../clf_knn_seed0.json
+  clf_logreg                                       0.9696    540            mean of 5 runs, first .../clf_logreg_seed0.json
+  clf_sgd                                          0.9452    540            mean of 5 runs, first .../clf_sgd_seed0.json
+
+  replicates:
+  clf_knn: mean 0.9829 sd 0.0033 over 5 runs, 95% CI [0.9803, 0.9855] -- clf_knn_seed0, ...
+  ...
+  top two separable: yes, Cohen's d 3.225
+```
+
+A pooled arm reports `n_runs`, `mean` (also its `value`), `sd`, `min`/`max`,
+`ci_low`/`ci_high` and up to five member names in `runs`. The interval is a
+95% percentile bootstrap of the mean with a fixed seed, so the same runs
+always print the same interval; under three runs there is no interval, only
+the range. `separable` says whether the top two arms' intervals are disjoint
+(`None` when either has none). None of this is a significance test, and the
+caveats say so: with fewer than ten runs a bootstrap interval is too narrow.
+
+A config can stop a merge but never start one. Seeds whose configs differ in
+anything but `seed`, that claim the same seed, or that report different
+splits stay separate arms, with a caveat naming the reason. Tracker runs that
+carry no seed token in their name (`train/0`, `train/1`) are never pooled;
+when their configs differ only in seed, a caveat says so. A family of single
+runs prints exactly what it always did, ending with the single-run caveat.
+Design record: `docs/superpowers/specs/2026-11-19-replicate-statistics-design.md`.
+
 ## Browsing the ledger
 
 ```bash
