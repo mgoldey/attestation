@@ -30,7 +30,17 @@ commit that carries the reasoning rather than repeating it; `git log
   capped `figures` block; a draft with no figures is unchanged. mtime and a
   hash are evidence the figure is out of date, never that it is right.
   Spec: `docs/superpowers/specs/2026-11-19-figure-provenance-design.md`.
-
+- **Hypothesis preregistration (prereg.py, `attest prereg add|check|list`).**
+  A prediction -- family, metric, an ordering of arms (`a < b`) and a minimum
+  margin -- is signed with the run-record key before the runs exist and
+  stored as files in the workspace (`hypotheses.toml` + `prereg/`). `check`
+  judges it against `runs compare` (confirmed / refuted / inconclusive /
+  untested; intervals when arms are replicated, point values only with
+  `--allow-single-run`) and flags `post_hoc` and `altered`; `runs.compare`
+  carries the verdicts as a `hypotheses` block when a family has any. Every
+  surface states what this proves (the signed text is unchanged) and what it
+  cannot (when it was written: the timestamps are this machine's clock). No
+  new tool, no migration. Spec: `2026-11-19-preregistration-design.md`.
 - **A first list from the reader's own field (seed.py).** From research
   customer feedback: the first paper was off-topic and nothing said how to
   steer. `feed.ask("I like <DOI | arXiv id | title>")` resolves the paper
