@@ -46,12 +46,12 @@ Abridged -- the full run also prints the scan summary, the four runs from
 ```
 lr_sweep — ranked by auc (higher_is_better)
 
-  arm                                                 auc      n      step  source
-  -------------------------------------------- ---------- ------  --------  ------
-  lr_sweep/2                                       0.9970      ?         0  sacred_runs/2
-  lr_sweep/3                                       0.9960      ?         0  sacred_runs/3
-  lr_sweep/4                                       0.9957      ?         0  sacred_runs/4
-  lr_sweep/1                                       0.9937      ?         0  sacred_runs/1
+  arm                                                 auc      n      step    wall_s  source
+  -------------------------------------------- ---------- ------  --------  --------  ------
+  lr_sweep/2                                       0.9970      ?         0    0.0593  sacred_runs/2
+  lr_sweep/3                                       0.9960      ?         0   0.02391  sacred_runs/3
+  lr_sweep/4                                       0.9957      ?         0   0.04385  sacred_runs/4
+  lr_sweep/1                                       0.9937      ?         0    0.1384  sacred_runs/1
 
 winner: lr_sweep/2
   caveat: some arms report no sample size, so their weight is unknown

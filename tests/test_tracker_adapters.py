@@ -362,7 +362,8 @@ def test_mlflow_reads_the_final_value_of_each_metric(tmp_path):
     )
 
     (run,) = generic.discover(proj)
-    (metric,) = run.metrics
+    # the run's own duration rides along as `wall_time_s` (compute.py)
+    (metric,) = [m for m in run.metrics if m.metric == "wer"]
     assert metric.value == 0.29
     assert metric.step == 2, "the step of the value actually recorded"
 
@@ -1353,7 +1354,10 @@ def test_wandb_bookkeeping_keys_are_not_metrics(tmp_path):
     )
 
     (run,) = generic.discover(proj)
-    assert [m.metric for m in run.metrics] == ["accuracy"], [m.metric for m in run.metrics]
+    # `_runtime` is the one bookkeeping key read, and under its own name:
+    # `wall_time_s` (compute.py), never as `_runtime` and never `_timestamp`.
+    assert [m.metric for m in run.metrics] == ["accuracy", "wall_time_s"]
+    assert [m.value for m in run.metrics if m.metric == "wall_time_s"] == [451.2]
 
 
 def test_a_config_does_not_shadow_a_result_of_the_same_name(tmp_path):

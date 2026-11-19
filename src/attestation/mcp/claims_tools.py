@@ -12,7 +12,7 @@ exist. This is a source split, not a namespace change.
 
 from pathlib import Path
 
-from attestation import claims, ledger
+from attestation import claims, figures, ledger
 from attestation.mcp._tool import ToolError, tool
 from attestation.mcp.provenance import NO_ROOT
 
@@ -55,7 +55,16 @@ def _citation_resolver(target: Path):
         return None
 
 
-@tool(empty={"claims": [], "counts": {}, "malformed": [], "checked": []}, label="claims_check")
+@tool(
+    empty={
+        "claims": [],
+        "counts": {},
+        "malformed": [],
+        "checked": [],
+        "figures": figures.empty_block(),
+    },
+    label="claims_check",
+)
 def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
     target = _target(path)
     # The citation lint runs alongside the numeric check: a claim whose number
@@ -90,12 +99,30 @@ def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
         if verdict is None or v.verdict == verdict
     ]
     summary = ", ".join(f"{n} {k}" for k, n in sorted(out["counts"].items()))
+    # Figures are judged beside the claims: a number can be right while the
+    # plot beside it was drawn from results that have since moved.
+    message = f"{out['claims']} claim(s): {summary}" if out["claims"] else "no claims found"
+    try:
+        found = figures.check(target)
+    except OSError as exc:
+        # An unreadable figure or included file must not cost the caller the
+        # claim verdicts this tool exists for (the same rule as the resolver).
+        figure_block = figures.empty_block() | {"note": f"figures not checked: {exc}"}
+        return {
+            "message": message + "; figures not checked",
+            "claims": rows,
+            "counts": out["counts"],
+            "malformed": out["malformed"],
+            "checked": checked,
+            "figures": figure_block,
+        }
     return {
-        "message": f"{out['claims']} claim(s): {summary}" if out["claims"] else "no claims found",
+        "message": message + figures.message_suffix(found),
         "claims": rows,
         "counts": out["counts"],
         "malformed": out["malformed"],
         "checked": checked,
+        "figures": figures.block(found),
     }
 
 

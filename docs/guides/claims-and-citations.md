@@ -108,6 +108,42 @@ the usual cause is saving or editing a paper from an uploaded `.bib`, which
 puts the same key in the generated owner `.bib`. These rules match AgentMarkit's `latex-paper`
 skill. `tests/fixtures/latex/` is a three-file paper exercising all of it.
 
+## Figures
+
+A figure is the most-read part of a draft and, until it is annotated, the
+least checked. Put a comment beside it that names the figure and the files it
+was drawn from (results, or the plotting script), and optionally pins its
+bytes:
+
+```markdown
+![training loss](figs/loss.png)
+<!-- figure: figs/loss.png from=results/a.json,results/b.json sha256=<64 hex> -->
+```
+
+```latex
+\includegraphics[width=\linewidth]{figs/loss}
+% figure: figs/loss.png from=results/a.json,results/b.json
+```
+
+```bash
+uv run attest claims paper/main.tex --figures   # exit 1 on stale or missing
+```
+
+`fresh`: every source exists and none is newer than the figure. `stale`: a
+source is newer, or `sha256=` no longer matches. `missing`: the figure or a
+source is gone. `orphan`: included with no annotation (reported, exit 0, like
+`--coverage`). A malformed annotation is reported and fails the run. Markdown
+`![]()`, `<img>` and LaTeX `\includegraphics` are found (an extensionless
+LaTeX name tries `.pdf .png .jpg .jpeg .eps`; `\graphicspath` and `\input`
+are followed); URLs and macro-built paths are skipped, never fetched, and a
+commented-out or code-fenced figure counts as nothing. `runs.claims_check`
+returns the same findings as a capped `figures` block.
+
+`fresh` is not proof: it means no declared source is newer. The tool never
+opens an image, and a `git clone` resets mtimes, so use `sha256=` for a figure
+that must survive a copy. Tables are not covered here; `--coverage` already
+reads table cells.
+
 ## The library
 
 One deduplicated store of references, filled by `attest library sync` (or the

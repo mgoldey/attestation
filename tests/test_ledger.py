@@ -255,8 +255,8 @@ def test_compare_warns_when_the_top_two_are_nearly_tied(conn, tmp_path):
 def test_a_healthy_comparison_still_flags_no_seed_replication(conn, tmp_path):
     """The warnings must be earned, not boilerplate -- a tool that always warns
     trains the reader to ignore it. But arm_a/arm_b here really are one run
-    each: the schema records no seed replication (seed lives in `config`, not
-    as a second run of the same configuration), so even a well-powered,
+    each (no `<config>_seed<N>` siblings for replicates.group to pool), so
+    even a well-powered,
     clearly-separated comparison cannot rule out run-to-run variance and must
     say so -- that is the one caveat that is earned here, not boilerplate."""
     project = tmp_path / "p"

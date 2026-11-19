@@ -111,6 +111,51 @@ commit that carries the reasoning rather than repeating it; `git log
   `tests/test_boundaries.py` asserts nothing here imports smeltery or ferric
   and the schema package imports nothing from attestation, each detector
   proven to fire. Spec: `2026-11-19-core-run-record-design.md`.
+- **Write-side skills teach the new checks.** `attestation-record` now
+  teaches `<arm>_seed<N>` naming (so seeds pool) and registering a
+  prediction with `attest prereg add` before the runs, then relaying
+  `prereg check`'s verdict and limits; `attestation-annotate` teaches the
+  `<!-- figure: ... -->` / `% figure:` annotation, a `sha256=` computed
+  rather than typed, and what each figure verdict asks of the writer. Every
+  example is executed by `tests/test_skill_files.py` (the figure examples
+  must judge `fresh`, the prereg line must parse, the seed names must pool).
+  The live write-side evals (`evals/run_record_eval.py`,
+  `evals/run_annotate_eval.py`) were not re-run.
+- **Compute tracking (compute.py).** `runs.compare` arms gain `wall_time_s` (summed over every pooled run) when the tracker recorded a duration -- sacred start/stop, MLflow start/end, W&B `_runtime`, read by each adapter and carried in the core record as the metric `wall_time_s` (unit `s`, no direction), or an explicit `wall_time_s` key -- and a caveat when the top two arms differ 2x or more per run: wall time is not compute, so it prompts a check and ranks nothing. Nothing is inferred and untimed families print exactly what they did. Run records gain `predicate.environment` (Python, argv, uv.lock hash, GPU names). No new tool, no migration.
+- **Seed replicates pool into one arm (replicates.py).** `runs.compare` /
+  `attest runs compare` used to rank `<config>_seed<N>` runs against each
+  other as rival arms -- and the seed token split a sweep into one family per
+  configuration -- while printing "each arm is a single run; no seed
+  replication". Now the seeds of one configuration become ONE arm with
+  `n_runs`, `mean`, `sd`, range, a deterministic 95% bootstrap interval
+  (none under 3 runs) and the member `runs`; the result adds `separable` and
+  a Cohen's d for the top two. A config can veto a merge, never start one,
+  and every refused merge is a caveat. Single-run families print exactly what
+  they did. Pooling is schema-driven: runs whose core records share an `arm`
+  and carry distinct `seeds` pool (a native record needs no naming
+  convention); a legacy artifact's `<config>_seed<N>` name is read once, at
+  import, into those two fields. Migration 016 stores them as `runs.arm` and
+  `runs.seeds_json` (re-scan to pool runs scanned earlier). No new tool.
+- **Figure provenance (figures.py).** A claim ties a number to a run; a
+  figure had no such tie. `<!-- figure: figs/loss.png from=results/a.json
+  sha256=<hex> -->` (`% figure:` in a .tex) beside an included figure links it
+  to the files that drew it, and `attest claims --figures` reports each
+  figure `fresh`, `stale` (a source is newer, or the bytes changed),
+  `missing` or `orphan` (not annotated; exit 0). `runs.claims_check` gains a
+  capped `figures` block; a draft with no figures is unchanged. mtime and a
+  hash are evidence the figure is out of date, never that it is right.
+  Spec: `docs/superpowers/specs/2026-11-19-figure-provenance-design.md`.
+- **Hypothesis preregistration (prereg.py, `attest prereg add|check|list`).**
+  A prediction -- family, metric, an ordering of arms (`a < b`) and a minimum
+  margin -- is signed with the run-record key before the runs exist and
+  stored as files in the workspace (`hypotheses.toml` + `prereg/`). `check`
+  judges it against `runs compare` (confirmed / refuted / inconclusive /
+  untested; intervals when arms are replicated, point values only with
+  `--allow-single-run`) and flags `post_hoc` and `altered`; `runs.compare`
+  carries the verdicts as a `hypotheses` block when a family has any. Every
+  surface states what this proves (the signed text is unchanged) and what it
+  cannot (when it was written: the timestamps are this machine's clock). No
+  new tool, no migration. Spec: `2026-11-19-preregistration-design.md`.
 - **A first list from the reader's own field (seed.py).** From research
   customer feedback: the first paper was off-topic and nothing said how to
   steer. `feed.ask("I like <DOI | arXiv id | title>")` resolves the paper

@@ -298,7 +298,10 @@ def test_mcp_domain_modules_stay_small():
         # <paper>" rule from _first_rules (+4: the lazy import and the hook);
         # the rule itself lives in routing_seed.py, split out for this cap.
         "routing.py": 485,
-        "provenance.py": 415,
+        # Raised 2026-11-19 (+3): runs.compare judges preregistered hypotheses
+        # (prereg.attach) and strips the pooled arms' uncapped lists
+        # (replicates.for_model) before the cap; both bodies live outside mcp/.
+        "provenance.py": 418,
         # Raised 2026-09-10 for Task 8 (BibTeX from a library row): `_lookup`
         # gained a `bibtex` field on both return branches and its `empty`,
         # plus the `cite.lookup` docstring sentence naming it. The rendering

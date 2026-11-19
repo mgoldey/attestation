@@ -181,6 +181,7 @@ options:
 ```
 usage: attest claims [-h] [--db DB] [--verdict VERDICT] [--coverage]
                      [--record OUT.json] [--force-record] [--citations]
+                     [--figures]
                      [path]
 
 positional arguments:
@@ -198,6 +199,8 @@ options:
   --force-record     replace an existing record
   --citations        instead: list citation keys (cite= and LaTeX \cite) the
                      bibliography lacks
+  --figures          instead: check each included figure against the files it
+                     was drawn from
 ```
 
 ## attest browse
@@ -684,6 +687,63 @@ usage: attest record key [-h] [--export PUB.pem]
 options:
   -h, --help        show this help message and exit
   --export PUB.pem  also write the public key here
+```
+
+## attest prereg add
+
+```
+usage: attest prereg add [-h] --metric METRIC --expect EXPECT --by BY
+                         [--note NOTE] [--allow-single-run] [--supersedes ID]
+                         [--root ROOT]
+                         family
+
+positional arguments:
+  family              the experiment family, as `attest runs list` names it
+
+options:
+  -h, --help          show this help message and exit
+  --metric METRIC     a metric with a declared direction
+  --expect EXPECT     arms joined by < or > on the metric's raw values, e.g.
+                      'kd_t4 < baseline'
+  --by BY             minimum margin per pair, in the metric's units
+  --note NOTE         why you expect it (signed with the rest)
+  --allow-single-run  let point values (arms without an interval) confirm or
+                      refute
+  --supersedes ID     the registration this one replaces
+  --root ROOT         where hypotheses.toml and prereg/ live (default:
+                      $RESEARCH_ROOT, else cwd)
+```
+
+## attest prereg check
+
+```
+usage: attest prereg check [-h] [--db DB] [--root ROOT] [--json] [family]
+
+positional arguments:
+  family       only this family's hypotheses
+
+options:
+  -h, --help   show this help message and exit
+  --db DB      DB path. Resolution order if omitted: ATTEST_DB (or RSS_DB) env
+               var > ~/.hermes/skills/science-recommendations/data/hermes.db
+               (if it exists) > ./hermes.db
+  --root ROOT  where hypotheses.toml and prereg/ live (default:
+               $RESEARCH_ROOT, else cwd)
+  --json       print the verdicts as JSON
+```
+
+## attest prereg list
+
+```
+usage: attest prereg list [-h] [--root ROOT] [family]
+
+positional arguments:
+  family       only this family's hypotheses
+
+options:
+  -h, --help   show this help message and exit
+  --root ROOT  where hypotheses.toml and prereg/ live (default:
+               $RESEARCH_ROOT, else cwd)
 ```
 
 ## attest install

@@ -613,3 +613,66 @@ def test_a_surface_skill_names_no_tool_its_deployed_session_hides():
             f"(baseline {HIDDEN_TOOL_BASELINE[surface]}): {sorted(hidden)}"
         )
     assert counts["feed"] == 0, "the feed skill must name only feed.ask and feed.tools"
+
+
+def test_annotate_figure_examples_parse_and_judge_fresh(tmp_path):
+    """attestation-annotate teaches the figure grammar by example (Markdown and
+    LaTeX); like the claim examples, each must parse with no malformed
+    complaint and, with its files present, come back `fresh` -- or the skill
+    teaches an annotation `runs.claims_check` would reject."""
+    import os
+
+    from attestation import figures
+
+    text = _skill_md("attestation-annotate")
+    md_notes = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("<!-- figure:")]
+    tex_notes = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("% figure:")]
+    assert md_notes and tex_notes, "expected a Markdown and a LaTeX figure example"
+
+    for i, (note, include) in enumerate(
+        [(n, "![f]({p})") for n in md_notes] + [(n, "\\includegraphics{{{p}}}") for n in tex_notes]
+    ):
+        ws = tmp_path / str(i)
+        tokens = note.replace("<!--", "").replace("-->", "").split()
+        fig = tokens[tokens.index("figure:") + 1]
+        sources = next(t for t in tokens if t.startswith("from=")).removeprefix("from=").split(",")
+        for src in sources:
+            (ws / src).parent.mkdir(parents=True, exist_ok=True)
+            (ws / src).write_text("x")
+            os.utime(ws / src, (1_000_000_000, 1_000_000_000))
+        (ws / fig).parent.mkdir(parents=True, exist_ok=True)
+        (ws / fig).write_text("png")
+        tex = note.startswith("%")
+        body = "\\documentclass{article}\n" if tex else ""
+        doc = ws / ("main.tex" if tex else "draft.md")
+        ref = fig.removesuffix(".png") if tex else fig  # LaTeX resolves extensionless
+        doc.write_text(body + include.format(p=ref) + "\n" + note + "\n")
+
+        report = figures.check(doc)
+        assert not report["malformed"], f"figure example does not parse: {report['malformed']}"
+        assert [f.verdict for f in report["figures"]] == [figures.FigureVerdict.FRESH], note
+
+
+def test_record_skill_teaches_seeds_that_pool_and_a_prereg_command_that_parses():
+    """The seed spelling the skill teaches must be one the import reads as one arm
+    (trackers.replicate_of: the core record's `arm` + `seeds`, which pool),
+    and the full `attest prereg add` line must parse with its flags -- the
+    generic command test only checks `attest prereg --help`."""
+    import shlex
+
+    from attestation.cli import build_parser
+    from attestation.ledger_adapters import trackers
+
+    text = _skill_md("attestation-record")
+    seeds = text[text.index("## Seeds") : text.index("\n## ", text.index("## Seeds") + 1)]
+    arms = re.findall(r"--arm (\w+)", seeds) + re.findall(r"`(\w+)\.json`", seeds)
+    assert len(arms) >= 2, "expected --arm and file examples in the Seeds section"
+    assert {(trackers.replicate_of(a) or ("unpooled",))[0].removeprefix("asr_") for a in arms} == {
+        "biglm"
+    }, arms
+
+    line = next(ln for ln in text.splitlines() if ln.startswith("attest prereg add "))
+    args = build_parser().parse_args(shlex.split(line)[1:])
+    assert args.family == "asr" and args.metric == "wer" and args.by == 0.01
+    assert args.expect == "asr_biglm < asr_baseline"
+    assert "--supersedes" in text and "post_hoc" in text and "altered" in text

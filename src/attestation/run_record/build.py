@@ -17,7 +17,9 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shutil
 import subprocess
+import sys
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -114,6 +116,44 @@ def _git_state() -> tuple[str | None, bool | None]:
     return head or None, bool(status.strip())
 
 
+MAX_ARGV = 20
+MAX_ARG_CHARS = 200
+
+
+def _gpus() -> list[str]:
+    """GPU names from `nvidia-smi`, or `[]`. Runs only when the binary is on PATH
+    and never raises: a missing, hanging, failing or garbled probe is an empty
+    list, not a failed record."""
+    exe = shutil.which("nvidia-smi")
+    if exe is None:
+        return []
+    try:
+        out = subprocess.run(
+            [exe, "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def capture_environment(root: Path) -> dict:
+    """What the process building the record ran on: Python, the command line,
+    the hash of `<root>/uv.lock` when there is one, and any GPU names. The
+    signer's account like the rest of a record -- and the BUILDING process's, which
+    for a spec handed in by another tool is not necessarily the one that did the work."""
+    lock = Path(root) / "uv.lock"
+    return {
+        "python": f"{sys.implementation.name} {sys.version.split()[0]}",
+        "argv": [str(a)[:MAX_ARG_CHARS] for a in sys.argv[:MAX_ARGV]],
+        "uv_lock_sha256": sha256_file(lock) if lock.is_file() else None,
+        "gpus": _gpus(),
+    }
+
+
 def tool_identity(name: str) -> dict:
     """The `predicate.tool` block: name, Attestation version, checkout sha/dirtiness."""
     from attestation import __version__
@@ -140,6 +180,7 @@ class RunRecorder:
         self.outputs: list[dict] = []
         self.subjects: list[dict] = []
         self.checks: list[dict] = []
+        self.environment = capture_environment(self.root)
 
     def _descriptor(self, path, role: str | None = None) -> dict:
         p = Path(path).expanduser()
@@ -213,6 +254,7 @@ class RunRecorder:
                     "finished_at": self.finished_at or now(),
                 },
                 "tool": tool_identity(self.tool),
+                "environment": self.environment,
                 "models": self.models,
                 "queries": self.queries,
                 "papers": self.papers,
