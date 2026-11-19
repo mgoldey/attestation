@@ -136,6 +136,39 @@ This confirms the scaling trend reported by Vaswani et al.
 <!-- claim: speech-distill/kdsweep_t4 metric=wer value=0.053 cite=vaswani2017 -->
 ```
 
+## Annotate every figure you include
+
+A figure is a claim too. Beside each image you include, name the files it
+was drawn from:
+
+```markdown
+![training loss](figs/loss.png)
+<!-- figure: figs/loss.png from=results/kd_t4.json,plot_loss.py -->
+```
+
+In LaTeX, the same body in a `%` comment beside the `\includegraphics`:
+
+```latex
+\includegraphics[width=\linewidth]{figs/loss}
+% figure: figs/loss.png from=results/kd_t4.json,plot_loss.py
+```
+
+The first token is the figure's path (the annotation attaches by path, so
+it can sit anywhere in the document). `from=` is comma-separated, no
+spaces; paths are relative to the document. List only files you actually
+plotted from -- the same rule as `cite=`: an invented source is worse than
+none. Optionally pin the figure's own bytes with `sha256=<64 hex>`, which
+survives a `git clone` that resets every mtime. **Compute it, never type
+one**: run `sha256sum figs/loss.png` after the FINAL render and paste the
+result; a re-render changes it.
+
+`runs.claims_check` judges figures beside claims: `fresh` (no source is
+newer and the hash matches -- not proof the plot is right), `stale` (a
+source changed after the figure, or the hash no longer matches: re-render,
+then re-pin), `missing` (the figure or a source is gone), `orphan` (no
+annotation; a lint). Report stale and missing figures by path; don't
+re-pin a hash to make one pass.
+
 ## Before handing a draft back, run the linter
 
 Always run coverage before calling the draft done -- it's the one people
@@ -144,10 +177,11 @@ full of unverifiable numbers:
 
 ```
 runs.claims_coverage(path="paper.md")   # decimals with no claim beside them
-runs.claims_check(path="paper.md")      # do the claims that exist check out
+runs.claims_check(path="paper.md")      # do the claims and figures check out
 ```
 
-(or `path="main.tex"` for a LaTeX paper.)
+(or `path="main.tex"` for a LaTeX paper; at a shell, `attest claims --figures
+paper.md` lists the figures alone and exits 1 on stale or missing.)
 
 These dotted names are for you to read, not a literal call string: some MCP
 clients rewrite `runs.claims_coverage` to something like

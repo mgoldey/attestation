@@ -11,6 +11,16 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **Write-side skills teach the new checks.** `attestation-record` now
+  teaches `<arm>_seed<N>` naming (so seeds pool) and registering a
+  prediction with `attest prereg add` before the runs, then relaying
+  `prereg check`'s verdict and limits; `attestation-annotate` teaches the
+  `<!-- figure: ... -->` / `% figure:` annotation, a `sha256=` computed
+  rather than typed, and what each figure verdict asks of the writer. Every
+  example is executed by `tests/test_skill_files.py` (the figure examples
+  must judge `fresh`, the prereg line must parse, the seed names must pool).
+  The live write-side evals (`evals/run_record_eval.py`,
+  `evals/run_annotate_eval.py`) were not re-run.
 - **Compute tracking (compute.py).** `runs.compare` arms gain `wall_time_s` (summed over every pooled run) when the tracker recorded a duration -- sacred start/stop, MLflow start/end, W&B `_runtime`, or an explicit `wall_time_s` key -- and a caveat when the top two arms differ 2x or more per run: wall time is not compute, so it prompts a check and ranks nothing. Nothing is inferred and untimed families print exactly what they did. Run records gain `predicate.environment` (Python, argv, uv.lock hash, GPU names). No new tool, no migration.
 - **Seed replicates pool into one arm (replicates.py).** `runs.compare` /
   `attest runs compare` used to rank `<config>_seed<N>` runs against each
