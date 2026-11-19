@@ -238,6 +238,11 @@ def register(mcp) -> None:
         Filter with `verdict` to answer "what in my documentation is unsupported".
         Read-only: it reports, it never edits a document.
 
+        The `figures` block judges each included figure: `<!-- figure: figs/a.png
+        from=results/a.json sha256=<hex> -->` (`% figure:` in .tex) links it to its
+        sources. `stale`: a source is newer or the bytes changed. `missing`: a file is
+        absent. `orphan`: no annotation. `fresh` never proves the figure was drawn from them.
+
         """
         return _check(path, verdict)
 

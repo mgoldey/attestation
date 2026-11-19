@@ -11,6 +11,16 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **Figure provenance (figures.py).** A claim ties a number to a run; a
+  figure had no such tie. `<!-- figure: figs/loss.png from=results/a.json
+  sha256=<hex> -->` (`% figure:` in a .tex) beside an included figure links it
+  to the files that drew it, and `attest claims --figures` reports each
+  figure `fresh`, `stale` (a source is newer, or the bytes changed),
+  `missing` or `orphan` (not annotated; exit 0). `runs.claims_check` gains a
+  capped `figures` block; a draft with no figures is unchanged. mtime and a
+  hash are evidence the figure is out of date, never that it is right.
+  Spec: `docs/superpowers/specs/2026-11-19-figure-provenance-design.md`.
+
 - **A first list from the reader's own field (seed.py).** From research
   customer feedback: the first paper was off-topic and nothing said how to
   steer. `feed.ask("I like <DOI | arXiv id | title>")` resolves the paper
