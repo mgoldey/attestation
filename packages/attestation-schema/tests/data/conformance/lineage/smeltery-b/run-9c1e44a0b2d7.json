@@ -1,0 +1,26 @@
+{
+ "campaign": "benzoic-rhf",
+ "ferric": {
+  "commit": "f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3",
+  "dirty": false,
+  "provenance": "VERIFIED",
+  "version": "0.1.0"
+ },
+ "input_digest": "9c1e44a0b2d72222222222222222222222222222222222222222222222222222",
+ "record_sha256": "2d53df04f013b5b338cce5054ea557cf92c8892da425f7832bcfbb51e4d87820",
+ "results": {
+  "per_pose": {
+   "3-Cl": {
+    "dE_int": [
+     -11.75
+    ]
+   },
+   "parent": {
+    "dE_int": [
+     -12.5
+    ]
+   }
+  }
+ },
+ "schema_version": 1
+}

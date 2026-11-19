@@ -13,6 +13,20 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **Dataset records and end-to-end lineage (attestation-schema
+  `attestation.dataset/1`, DRAFT, roadmap 32).** A new record kind beside the
+  frozen `attestation.run/1` (unchanged): `<dataset_dir>/attestation/
+  dataset.json` plus the frozen `attestation.digests/1` manifest, whose sha256
+  is the dataset's content digest; `files[]`, `splits[]`, `source_runs[]` by
+  core record digest, SPDX `license`, `columns`, URL credentials refused
+  anywhere. `attestation_schema.resolve_lineage` (pure, stdlib) links training
+  run -> dataset -> source runs -> their builds by digest and reports every
+  broken or unverified link; conformance and the pytest plugin check dataset
+  directories; `attest runs lineage RUN --search DIR` prints the chain and
+  exits 1 on a broken link. Draft until two producers have written it; the
+  spec walks smeltery's Parquet export through it and lists what smeltery
+  must add (`2026-11-19-dataset-records-design.md`).
+
 - **A conformance suite for core run records (attestation-schema
   `conformance` + an opt-in pytest plugin, roadmap 15).**
   `attestation_schema.conformance.check_run_dir` (stdlib) checks every rule a

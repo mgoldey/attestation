@@ -11,8 +11,12 @@ Standard library only. The pytest plugin over this module is
 `attestation_schema.pytest_plugin` (the `[conformance]` extra); a producer
 that does not use pytest calls `check_run_dir` / `assert_conformant` directly.
 
-Checks only; never writes, never changes a format. Spec:
-docs/superpowers/specs/2026-11-19-conformance-suite-design.md.
+A dataset directory (`attestation.dataset/1`) is checked by
+`check_dataset_dir` under the same rule names; `check_dir` dispatches.
+
+Checks only; never writes, never changes a format. Specs:
+docs/superpowers/specs/2026-11-19-conformance-suite-design.md,
+docs/superpowers/specs/2026-11-19-dataset-records-design.md (Decision 7).
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 from attestation_schema import layout
 from attestation_schema.canonical import canonicalize
+from attestation_schema.dataset import DatasetRecord, dataset_from_dict, dumps_dataset
 from attestation_schema.history import read_history
 from attestation_schema.jobs import TERMINAL, JobSpec
 from attestation_schema.record import (
@@ -82,6 +87,7 @@ class Report:
     violations: tuple[Violation, ...]
     record: RunRecord | None = None
     state: StateFile | None = None
+    dataset: DatasetRecord | None = None
 
     @property
     def ok(self) -> bool:
@@ -537,35 +543,163 @@ def check_run_dir(
     return Report(rd, tuple(out.items), record, st)
 
 
+# ---- dataset directories (attestation.dataset/1, draft) --------------------------
+
+
+def _check_dataset_record(dd: Path, out: _Collector) -> DatasetRecord | None:
+    file = dd / layout.DATASET_JSON
+    raw = file.read_bytes()
+    try:
+        obj = parse_strict(raw)
+    except RecordError as exc:
+        out.add("read", file, "$", str(exc))
+        return None
+    _raw_record_checks(obj, file, out)
+    try:
+        record = dataset_from_dict(obj)
+    except RecordError as exc:
+        out.add(_reader_rule(exc), file, _jsonpath(exc.path), str(exc).split(": ", 1)[-1])
+        return None
+    canonical = dumps_dataset(record)
+    if canonical != raw:
+        at = _first_difference(canonical, raw)
+        out.add(
+            "canonical",
+            file,
+            "$",
+            f"the bytes are not the canonical form (first difference at byte {at}): its sha256"
+            " is not its dataset_digest; write it with attestation_schema.write_dataset",
+        )
+    return record
+
+
+def _check_sizes(dd: Path, record: DatasetRecord, out: _Collector) -> None:
+    for i, f in enumerate(record.files):
+        p = dd / f.path
+        if p.is_file() and not p.is_symlink() and p.stat().st_size != f.bytes:
+            out.add(
+                "manifest",
+                dd / layout.DATASET_JSON,
+                f"$.files[{i}].bytes",
+                f"is {f.bytes}, {f.path} has {p.stat().st_size} bytes",
+            )
+
+
+def _check_dataset_manifest(
+    dd: Path, record: DatasetRecord | None, verify_outputs: bool, out: _Collector
+) -> None:
+    file = dd / layout.DIGESTS_JSON
+    if not file.is_file():
+        out.add(
+            "manifest",
+            file,
+            "$",
+            "missing: a dataset's content digest is the sha256 of this file (write it with"
+            " write_dataset_manifest)",
+        )
+        return
+    raw = file.read_bytes()
+    try:
+        obj = parse_strict(raw)
+    except RecordError as exc:
+        out.add("manifest", file, "$", str(exc))
+        return
+    for path, reason in credential_findings(obj):
+        out.add("credentials", file, path, reason)
+    listed = _manifest_shape(obj, file, out)
+    if canonicalize(obj) != raw:
+        out.add(
+            "manifest", file, "$", "the bytes are not the canonical form (RFC 8785, no newline)"
+        )
+    digest = hashlib.sha256(raw).hexdigest()
+    if record is not None and digest != record.content_sha256:
+        out.add(
+            "manifest",
+            dd / layout.DATASET_JSON,
+            "$.content_sha256",
+            f"is {record.content_sha256}, but {layout.DIGESTS_JSON} hashes to {digest}",
+        )
+    if listed is not None and verify_outputs:
+        _compare_outputs(dd, listed, file, out)
+        if record is not None:
+            _check_sizes(dd, record, out)
+
+
+def check_dataset_dir(
+    dataset_dir: str | os.PathLike[str], *, verify_outputs: bool = True
+) -> Report:
+    """Every rule that applies to a dataset directory (`read`, `canonical`,
+    `manifest`, `credentials`, `ext-namespace`); never raises for a
+    non-conforming directory. `verify_outputs`: re-hash every file and check
+    its size against `files[]`. Lineage is not checked here: the source runs
+    live elsewhere (`lineage.resolve_lineage`)."""
+    dd = Path(dataset_dir)
+    out = _Collector()
+    if not layout.is_dataset_dir(dd):
+        out.add("read", dd / layout.DATASET_JSON, "$", "not a dataset directory: it is missing")
+        return Report(dd, tuple(out.items))
+    for other in (layout.RUN_JSON, layout.STATE_JSON):
+        if (dd / other).exists():
+            out.add(
+                "read",
+                dd / other,
+                "$",
+                f"{layout.DATASET_JSON} is here too: a directory holds one record kind (they"
+                f" would share {layout.DIGESTS_JSON})",
+            )
+    record = _check_dataset_record(dd, out)
+    _check_dataset_manifest(dd, record, verify_outputs, out)
+    return Report(dd, tuple(out.items), dataset=record)
+
+
+def check_dir(
+    path: str | os.PathLike[str],
+    *,
+    spec: JobSpec | None = None,
+    verify_outputs: bool = True,
+) -> Report:
+    """`check_dataset_dir` for a dataset directory, else `check_run_dir`. A
+    `spec` applies to runs only."""
+    if layout.is_dataset_dir(path):
+        if spec is not None:
+            raise ValueError(f"{path} is a dataset directory; a JobSpec applies to runs")
+        return check_dataset_dir(path, verify_outputs=verify_outputs)
+    return check_run_dir(path, spec=spec, verify_outputs=verify_outputs)
+
+
 def assert_conformant(
     run_dir: str | os.PathLike[str],
     *,
     spec: JobSpec | None = None,
     verify_outputs: bool = True,
 ) -> Report:
-    """`check_run_dir`, raising `ConformanceError` (an AssertionError) listing
-    every violation; returns the report when there are none."""
-    report = check_run_dir(run_dir, spec=spec, verify_outputs=verify_outputs)
+    """`check_dir` (a run or a dataset directory), raising `ConformanceError`
+    (an AssertionError) listing every violation; returns the report when
+    there are none."""
+    report = check_dir(run_dir, spec=spec, verify_outputs=verify_outputs)
     if not report.ok:
         raise ConformanceError(report)
     return report
 
 
 def _run_dirs_for(match: Path) -> list[Path]:
-    if match.is_file() and match.name in ("run.json", "state.json"):
+    if match.is_file() and match.name in ("run.json", "state.json", "dataset.json"):
         match = match.parent.parent
-    if layout.is_run_dir(match):
+    if layout.is_run_dir(match) or layout.is_dataset_dir(match):
         return [match]
-    return layout.find_runs(match) if match.is_dir() else []
+    if not match.is_dir():
+        return []
+    return sorted(set(layout.find_runs(match)) | set(layout.find_datasets(match)))
 
 
 def find_targets(
     patterns: Iterable[str], base: str | os.PathLike[str] = "."
 ) -> tuple[list[Path], list[str]]:
-    """`(run directories, patterns that matched none)`. A pattern is a run
-    directory, a directory holding runs, a `run.json`/`state.json` path, or a
-    glob (`**` allowed), relative to `base`. A pattern matching nothing is
-    returned, never dropped: a typo must not turn a suite into a no-op."""
+    """`(run and dataset directories, patterns that matched none)`. A pattern
+    is a run or dataset directory, a directory holding them, a
+    `run.json`/`state.json`/`dataset.json` path, or a glob (`**` allowed),
+    relative to `base`. A pattern matching nothing is returned, never
+    dropped: a typo must not turn a suite into a no-op."""
     found: list[Path] = []
     empty: list[str] = []
     for pattern in patterns:

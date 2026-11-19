@@ -12,7 +12,8 @@ or in the producer's pytest configuration::
     addopts = "-p attestation_schema.pytest_plugin"
     attestation_runs = ["runs"]
 
-Each run directory becomes one test item (marker `attestation_conformance`);
+Each run directory -- and each dataset directory (`attestation/dataset.json`)
+-- becomes one test item (marker `attestation_conformance`);
 a pattern that matches no run directory is a failing item, never zero items.
 The `attestation_conformance` fixture checks a run directory a test made
 itself, optionally against the `JobSpec` it was submitted with.
@@ -29,7 +30,7 @@ from typing import Any
 
 import pytest
 
-from attestation_schema.conformance import Report, check_run_dir, find_targets
+from attestation_schema.conformance import Report, check_dir, find_targets
 from attestation_schema.jobs import JobSpec
 
 MARKER = "attestation_conformance"
@@ -44,7 +45,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="append",
         default=[],
         metavar="PATTERN",
-        help="a run directory, a directory of runs, or a glob; one conformance test per run"
+        help="a run or dataset directory, a directory of them, or a glob; one conformance"
+        " test per directory"
         " (repeatable; replaces the attestation_runs ini list)",
     )
     parser.addini(
@@ -102,7 +104,7 @@ class RunDirItem(pytest.Item):
                 f"no run directory matched {self.pattern!r}: a pattern that matches nothing"
                 " checks nothing (fix the path, or drop it)"
             )
-        report = check_run_dir(self.run_dir)
+        report = check_dir(self.run_dir)
         if not report.ok:
             raise ConformanceFailure(report.format())
 
@@ -170,7 +172,7 @@ class Checker:
         verify_outputs: bool = True,
     ) -> Report:
         """Fail the test with every violation; return the report when there are none."""
-        report = check_run_dir(run_dir, spec=spec, verify_outputs=verify_outputs)
+        report = check_dir(run_dir, spec=spec, verify_outputs=verify_outputs)
         if not report.ok:
             pytest.fail(report.format(), pytrace=False)
         return report
@@ -183,7 +185,7 @@ class Checker:
         verify_outputs: bool = True,
     ) -> Report:
         """The report, without failing (for asserting on a broken directory)."""
-        return check_run_dir(run_dir, spec=spec, verify_outputs=verify_outputs)
+        return check_dir(run_dir, spec=spec, verify_outputs=verify_outputs)
 
 
 @pytest.fixture

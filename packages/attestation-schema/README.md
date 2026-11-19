@@ -64,7 +64,7 @@ curves = read_history(run_dir)          # verifies the sha256, then parses
   `history-1.schema.json` (one sidecar line) and `state-1.schema.json`
   (`state.json`) are JSON Schemas for other languages: necessary, not
   sufficient — the Python reader is the reference. They are frozen and
-  pinned by digest.
+  pinned by digest. `dataset-1.schema.json` is a draft (below).
 - Package version 0.1.0: the formats are frozen; the Python API may still
   change in a 0.x minor release until the job-state API has a consumer.
  
@@ -122,6 +122,55 @@ extra's: the package itself still depends on nothing. attestation's ledger
 runs the same checks on every scan and quarantines any record that fails.
 Golden fixtures (a conforming record for each shape, and one record broken
 per rule) are in `tests/data/conformance/`.
+
+## Datasets and lineage (`attestation.dataset/1`, DRAFT)
+
+A dataset has its own record kind, so `attestation.run/1` stays frozen. It is
+a **draft**: not frozen until two producers have written it, and a draft
+change may stop older draft records from reading (pin this package by commit
+meanwhile). The directory:
+
+```
+datasets/<dataset_id>/<version>/      immutable once dataset.json exists
+├── runs.parquet, split-scaffold.json, ...
+└── attestation/
+    ├── digests.json                  attestation.digests/1 over every file outside attestation/
+    └── dataset.json                  the record, written last
+```
+
+The **content digest** is the sha256 of `attestation/digests.json`'s bytes
+(`sha256sum` checks it), so a training run names the dataset in `data[]`
+with run/1's own meaning of `sha256`:
+
+```python
+import attestation_schema as s
+
+content = s.write_dataset_manifest(ds_dir)               # files first, then this
+record = s.DatasetRecord(
+    dataset_id="smeltery-benzoic-ddE", name=None, version="1",
+    created_at=s.format_timestamp(now), producer=s.Producer("smeltery export", "0.4.0"),
+    code=code, content_sha256=content, files=s.dataset_files(ds_dir),
+    rows=4, columns=None,                                   # None = not described
+    splits=[s.Split("scaffold", "split-scaffold.json", split_sha, "scaffold", 0)],
+    source_runs=[s.SourceRun(r.run_id, r.family, s.record_digest(r)) for r in runs],
+    license="CC-BY-4.0",                                    # SPDX; None = not stated
+    ext={},
+)
+s.write_dataset(record, ds_dir)                          # refuses without the manifest
+data = s.dataset_lineage_entries(record, split="scaffold")  # the training run's data[]
+
+lineage = s.resolve_lineage(training_run, datasets, runs)   # pure, stdlib
+lineage.verified, lineage.issues, lineage.dependencies("ferric")
+```
+
+`resolve_lineage` links only by digest (a `data[]` sha256 equal to a content
+digest, a split file or a file; a `source_runs[].record_sha256` equal to a
+run's `record_digest`) and reports every broken or unverified link
+(`missing-source-run`, `dataset-digest-mismatch`, `undigested-source-run`,
+`ambiguous`, ...). The conformance checker and the plugin accept dataset
+directories wherever they accept run directories (`check_dir`,
+`check_dataset_dir`). `attest runs lineage RUN --search DIR` prints the
+chain. Design: `docs/superpowers/specs/2026-11-19-dataset-records-design.md`.
 
 ## Releasing
 

@@ -1,6 +1,8 @@
 import json
+import shutil
 import sqlite3
 from argparse import Namespace
+from pathlib import Path
 
 import pytest
 from conftest import seeded_db
@@ -176,10 +178,49 @@ def test_parser_runs_subcommands():
         (["runs", "compare", "fam", "--metric", "wer"], "compare"),
         (["runs", "show", "p", "n"], "show"),
         (["runs", "record", "fam", "--arm", "a", "m=1"], "record"),
+        (["runs", "lineage", "r", "--search", "x", "--json"], "lineage"),
     ):
         args = parser.parse_args(argv)
         assert args.command == "runs"
         assert args.runs_command == expected
+
+
+LINEAGE = (
+    Path(__file__).resolve().parents[1]
+    / "packages/attestation-schema/tests/data/conformance/lineage"
+)
+
+
+def test_runs_lineage_traces_a_training_run_to_its_ferric_build(capsys, tmp_path):
+    """Files only, no database: training run -> dataset (by content digest) ->
+    smeltery runs (by record digest) -> the ferric build they ran on."""
+    rc = main(["runs", "lineage", str(LINEAGE / "training"), "--search", str(LINEAGE)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "dataset smeltery-benzoic-ddE@1" in out
+    assert out.count("run benzoic-rhf/") == 2
+    assert "built on ferric 0.1.0 @ " + "f3" * 20 + " (verified)" in out
+    assert out.rstrip().endswith("lineage: verified")
+
+    rc = main(["runs", "lineage", str(LINEAGE / "training" / "attestation" / "run.json"),
+               "--search", str(LINEAGE), "--json"])  # fmt: skip
+    got = json.loads(capsys.readouterr().out)
+    assert rc == 0 and got["verified"] and got["skipped"] == []
+    assert [n["kind"] for n in got["nodes"]] == ["run", "dataset", "run", "run"]
+
+
+def test_runs_lineage_exits_1_on_a_broken_link(capsys, tmp_path):
+    for name in ("training", "dataset", "smeltery-a"):  # smeltery-b is missing
+        shutil.copytree(LINEAGE / name, tmp_path / name)
+    (tmp_path / "junk" / "attestation").mkdir(parents=True)
+    (tmp_path / "junk" / "attestation" / "run.json").write_text("{}")
+    rc = main(["runs", "lineage", str(tmp_path / "training"), "--search", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 1, out
+    assert "BROKEN [missing-source-run]" in out and "source_runs[1]" in out
+    assert "lineage: BROKEN" in out
+    assert "skipped (unreadable): " + str(tmp_path / "junk") in out
+    assert main(["runs", "lineage", str(tmp_path / "nowhere")]) == 2
 
 
 def test_runs_scan_without_a_root_explains_rather_than_crashing(tmp_path, monkeypatch, capsys):

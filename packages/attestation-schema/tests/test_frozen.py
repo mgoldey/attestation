@@ -16,6 +16,7 @@ import hashlib
 import pathlib
 
 from attestation_schema import (
+    DATASET_SCHEMA_STATUS,
     HISTORY_PATH,
     SCHEMA_STATUS,
     CodeIdentity,
@@ -46,6 +47,26 @@ FROZEN_SCHEMA_FILES = {
     "history-1.schema.json": "79b96deed3777e929f0ce2e5b898b595144bf950c8a8aa3e37e7319eef4332f3",
     "state-1.schema.json": "ba654d8c6df01452a6cf611fc4ee42631c67d110c5493b2df64ff4444d45fbd5",
 }
+
+
+# Schema files whose format is still a DRAFT: not pinned, may change until
+# frozen (attestation.dataset/1: two producers first -- spec 2026-11-19-dataset-
+# records-design.md, Decision 5). Freezing one moves it to FROZEN_SCHEMA_FILES
+# with its digest and a reference record's bytes, never the other way.
+DRAFT_SCHEMA_FILES = {"dataset-1.schema.json": DATASET_SCHEMA_STATUS}
+
+
+def test_every_schema_file_is_frozen_and_pinned_or_a_listed_draft():
+    present = {p.name for p in SCHEMAS.glob("*.schema.json")}
+    assert present == set(FROZEN_SCHEMA_FILES) | set(DRAFT_SCHEMA_FILES), (
+        "a schema file must be pinned frozen or listed as a draft -- decide which"
+    )
+    assert not set(FROZEN_SCHEMA_FILES) & set(DRAFT_SCHEMA_FILES)
+    for name, status in DRAFT_SCHEMA_FILES.items():
+        assert status == "draft", (
+            f"{name} is marked {status!r}: a frozen format is pinned in FROZEN_SCHEMA_FILES"
+            " with a reference record's bytes, not listed as a draft"
+        )
 
 
 def test_frozen_json_schema_files_are_byte_identical():

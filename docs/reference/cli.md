@@ -330,6 +330,21 @@ options:
   -h, --help  show this help message and exit
 ```
 
+## attest runs lineage
+
+```
+usage: attest runs lineage [-h] [--search PATH] [--json] run
+
+positional arguments:
+  run            the run directory (or its attestation/run.json)
+
+options:
+  -h, --help     show this help message and exit
+  --search PATH  where to find dataset and run records (repeatable; default:
+                 the current directory)
+  --json         print the lineage as JSON
+```
+
 ## attest runs record
 
 ```
