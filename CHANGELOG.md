@@ -11,6 +11,7 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **Compute tracking (compute.py).** `runs.compare` arms gain `wall_time_s` (summed over every pooled run) when the tracker recorded a duration -- sacred start/stop, MLflow start/end, W&B `_runtime`, or an explicit `wall_time_s` key -- and a caveat when the top two arms differ 2x or more per run: wall time is not compute, so it prompts a check and ranks nothing. Nothing is inferred and untimed families print exactly what they did. Run records gain `predicate.environment` (Python, argv, uv.lock hash, GPU names). No new tool, no migration.
 - **Seed replicates pool into one arm (replicates.py).** `runs.compare` /
   `attest runs compare` used to rank `<config>_seed<N>` runs against each
   other as rival arms -- and the seed token split a sweep into one family per

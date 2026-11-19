@@ -27,7 +27,7 @@ import re
 import statistics
 from pathlib import Path
 
-from attestation import corpus, replicates
+from attestation import compute, corpus, replicates
 from attestation.ledger import Metric, RunRecord
 
 # Where ML/science projects conventionally put results and configuration.
@@ -687,6 +687,14 @@ def _coerce(text: str):
     return value if math.isfinite(value) else text
 
 
+def _add_wall(metrics: list[Metric], wall: float | None) -> None:
+    """Append the run's wall time as `wall_time_s` when the tracker recorded one
+    -- and only then: nothing is inferred, and a metric the tracker itself named
+    `wall_time_s` is never shadowed. See compute.py: wall time is not compute."""
+    if wall is not None and all(m.metric != compute.WALL_METRIC for m in metrics):
+        metrics.append(Metric(compute.WALL_METRIC, wall))
+
+
 def _wandb_runs(root: Path, seen: set[str]) -> list[RunRecord]:
     """Runs under `wandb/<any-dir>/files/`.
 
@@ -737,10 +745,12 @@ def _wandb_runs(root: Path, seen: set[str]) -> list[RunRecord]:
         # noise rather than a wrong verdict -- but a ledger listing
         # `_timestamp: 170000001.0` beside a real metric invites the misreading
         # the direction rule exists to prevent.
+        runtime = payload.get("_runtime")
         payload = {k: v for k, v in payload.items() if not k.startswith("_")}
         metrics = metrics_from_payload(payload, None, None)
         if not metrics:
             continue
+        _add_wall(metrics, compute.seconds(runtime))
 
         meta_path = files / "wandb-metadata.json"
         meta = _load(meta_path) if meta_path.is_file() else None
@@ -849,6 +859,9 @@ def _mlflow_runs(root: Path, seen: set[str]) -> list[RunRecord]:
                     metrics.append(Metric(metric_file.name, final[0], step=final[1]))
             if not metrics:
                 continue
+            _add_wall(
+                metrics, compute.epoch_ms_duration(meta.get("start_time"), meta.get("end_time"))
+            )
 
             label = meta.get("run_name") or run_dir.name
             name = f"{label}/{run_dir.name[:8]}" if meta.get("run_name") else run_dir.name
@@ -966,6 +979,9 @@ def _sacred_runs(root: Path, seen: set[str]) -> list[RunRecord]:
             metrics.append(result_metric)
         if not metrics:
             continue  # a spec with no measurement attached -- same as MLflow
+        _add_wall(
+            metrics, compute.iso_duration(run_json.get("start_time"), run_json.get("stop_time"))
+        )
 
         name = f"{family}/{run_dir.name}"
         if name in seen:

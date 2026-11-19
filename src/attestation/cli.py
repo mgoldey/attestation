@@ -1318,21 +1318,27 @@ def _print_compare(result: dict) -> None:
     if result.get("corpus"):
         header += f", all arms on {result['corpus']}"
     print(header + "\n")
-    print(f"  {'arm':44s} {result['metric']:>10s} {'n':>6s}  {'step':>8s}  source")
-    print(f"  {'-' * 44} {'-' * 10} {'-' * 6}  {'-' * 8}  {'-' * 6}")
+    # A wall-time column appears only when some arm has one, so a family with
+    # no recorded durations prints exactly what it always has.
+    timed = any(a.get("wall_time_s") is not None for a in result["arms"])
+    wall_h, wall_r = (f"{'wall_s':>8s}  ", f"{'-' * 8}  ") if timed else ("", "")
+    print(f"  {'arm':44s} {result['metric']:>10s} {'n':>6s}  {'step':>8s}  {wall_h}source")
+    print(f"  {'-' * 44} {'-' * 10} {'-' * 6}  {'-' * 8}  {wall_r}{'-' * 6}")
     for arm in result["arms"]:
         # every row carries where the number came from: an auditor's
         # first question is "from which file?"
         src = arm.get("source_path") or ""
         if arm["value"] is None:
-            print(f"  {arm['name']:44s} {'(none)':>10s} {'':>6s}  {'':>8s}  {src}")
+            wall = _wall_cell(arm, timed)
+            print(f"  {arm['name']:44s} {'(none)':>10s} {'':>6s}  {'':>8s}  {wall}{src}")
             continue
         n = str(arm["n"]) if arm.get("n") is not None else "?"
         step = str(arm["step"]) if arm["step"] is not None else ""
         if arm.get("n_runs"):
             # a pooled arm's value is a mean; say over how many runs
             src = f"mean of {arm['n_runs']} runs, first {src}"
-        print(f"  {arm['name']:44s} {arm['value']:>10.4f} {n:>6s}  {step:>8s}  {src}")
+        wall = _wall_cell(arm, timed)
+        print(f"  {arm['name']:44s} {arm['value']:>10.4f} {n:>6s}  {step:>8s}  {wall}{src}")
 
     _print_replicates(result)
     print(f"\nwinner: {result['winner']}")
@@ -1343,6 +1349,15 @@ def _print_compare(result: dict) -> None:
             f"  {len(result['without_metric'])} arm(s) have no {result['metric']}:"
             f" {', '.join(result['without_metric'])}"
         )
+
+
+def _wall_cell(arm: dict, timed: bool) -> str:
+    """The wall-time cell of one compare row: total seconds over the arm's runs,
+    or blank when it has none; empty text when no arm in the table is timed."""
+    if not timed:
+        return ""
+    wall = arm.get("wall_time_s")
+    return f"{(f'{wall:.4g}' if wall is not None else ''):>8s}  "
 
 
 def _print_replicates(result: dict) -> None:
