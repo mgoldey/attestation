@@ -172,6 +172,9 @@ def register(mcp) -> None:
         `ci_low`/`ci_high` (a bootstrap interval, none under 3 runs) and `runs`; the
         result then adds `separable` for the top two. Not a significance test.
 
+        An arm whose runs recorded a duration carries `wall_time_s` (summed over its runs);
+        the top two taking 2x or more time per run adds a caveat. Wall time is not compute.
+
         A family name is unique per project, not globally. If the same name exists
         in two projects this refuses and names them: arms from different projects
         are not comparable, and picking one silently would be a guess.

@@ -188,6 +188,33 @@ when their configs differ only in seed, a caveat says so. A family of single
 runs prints exactly what it always did, ending with the single-run caveat.
 Design record: `docs/superpowers/specs/2026-11-19-replicate-statistics-design.md`.
 
+## Wall time per arm
+
+**Wall time is not compute.** It is the seconds between a run's own start and
+stop on whatever machine ran it: it includes queueing and data loading, differs
+between a laptop and a GPU node, and says nothing about FLOPs, energy or cost.
+Read it only as "these arms may not have had the same budget".
+
+When a tracker recorded a duration (Sacred `start_time`/`stop_time`, MLflow
+`start_time`/`end_time`, W&B `_runtime`) or a result file carries an explicit
+`wall_time_s` / `runtime_s` key, `runs compare` shows a `wall_s` column and
+`runs.compare` arms carry `wall_time_s`. A pooled replicate arm sums every run it
+pooled and also reports `wall_time_mean_s`; if any of its runs has no duration it
+reports none rather than a partial sum. Nothing is inferred: Hydra and DVC record
+no duration, so those runs have none.
+
+```
+  caveat: the top two arms did not take the same wall time per run: m_big 32s vs m_small 12s (2.7x); ...
+  caveat: compute not recorded for m_tiny while other arms have a wall time, ...
+```
+
+The first caveat fires when the top two arms differ 2x or more per run and the
+longer took at least a second; the second only when some arm is timed and another
+is not. A family with no durations prints exactly what it always did. Run records
+(`attest record`, `attest claims --record`) also carry `predicate.environment`:
+Python version, command line, the `uv.lock` hash and any GPU names. Design record:
+`docs/superpowers/specs/2026-11-19-compute-tracking-design.md`.
+
 ## Browsing the ledger
 
 ```bash

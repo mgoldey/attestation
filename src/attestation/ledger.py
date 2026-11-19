@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from attestation import paths, replicates
+from attestation import compute, paths, replicates
 
 
 def workspace_root(explicit: str | None = None) -> Path | None:
@@ -1017,6 +1017,8 @@ def _compare(
     metric: str,
     directions: dict[str, str],
     family: str,
+    *,
+    walls: dict[int, float] | None = None,
 ) -> dict:
     """Rank every arm of an ablation family by `metric` -- the pure decision
     half of `compare()`. Takes rows and already-fetched values so it can be
@@ -1033,7 +1035,10 @@ def _compare(
             configs[arm["name"]] = r.get("config_json")
     # Seed replicates of one configuration pool into ONE arm (mean, interval,
     # member names) rather than competing as rivals. See replicates.py.
+    raw_arms = arms
     arms, replicate_notes = replicates.group(arms, configs)
+    # Wall time per arm (compute.py), summed over every pooled run.
+    compute.attach(arms, raw_arms, compute.run_walls(runs, walls))
 
     scored = [a for a in arms if a["value"] is not None]
 
@@ -1174,7 +1179,8 @@ def compare(
     metric = metric or _pick_metric(counts, directions, family)
     run_ids_all = [r["id"] for r in runs]
     values_by_run, n_by_run = _compare_values(conn, run_ids_all, metric)
-    return _compare(runs, values_by_run, n_by_run, metric, directions, family)
+    walls = compute.walls_by_run(conn, run_ids_all)
+    return _compare(runs, values_by_run, n_by_run, metric, directions, family, walls=walls)
 
 
 # Below this many samples, a difference between arms is not worth reading as a
@@ -1270,7 +1276,8 @@ def _all_caveats(
 ) -> list[str]:
     """Every reason to qualify a comparison, in order of how directly it bears
     on the ranking: the ranking's own caveats, then what the seed replicates
-    do and do not support (replicates.py), then the corpus ones, then the
+    do and do not support (replicates.py), then whether the arms had similar
+    wall time (compute.py), then the corpus ones, then the
     limitations of the readers that produced the numbers.
 
     Reader caveats come last because they qualify how EVERY number here was
@@ -1280,6 +1287,7 @@ def _all_caveats(
     return (
         _caveats(scored, metric)
         + replicate_caveats
+        + compute.caveats(scored)
         + corpus_caveats
         + _dvc_hash_caveats(runs)
         + adapter_caveats([r.get("adapter") for r in runs])
