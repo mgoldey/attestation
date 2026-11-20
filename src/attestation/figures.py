@@ -21,7 +21,6 @@ Design: docs/superpowers/specs/2026-11-19-figure-provenance-design.md.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 from collections import Counter
@@ -29,6 +28,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from urllib.parse import unquote
+
+from attestation_schema import sha256_file
 
 from attestation import latex
 
@@ -256,14 +257,6 @@ def _field_problem(fields: dict[str, str]) -> str | None:
     return None
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 # --------------------------------------------------------------------------- judging
 
 
@@ -296,7 +289,7 @@ def _stale_reasons(figure: Path, note: _Note, sources: list[Path]) -> list[str]:
     newer = [p.name for p in sources if p.stat().st_mtime_ns > made]
     if newer:
         reasons.append(f"{', '.join(newer)} changed after the figure was written")
-    if note.sha256 is not None and _sha256(figure) != note.sha256:
+    if note.sha256 is not None and sha256_file(figure) != note.sha256:
         reasons.append("figure bytes no longer match sha256=")
     return reasons
 

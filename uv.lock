@@ -341,7 +341,7 @@ optimize = [{ name = "dspy", specifier = ">=3.3" }]
 
 [[package]]
 name = "attestation-schema"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/attestation-schema" }
 
 [package.optional-dependencies]

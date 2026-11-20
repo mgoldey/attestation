@@ -173,6 +173,13 @@ observed, not exhaustive, core spec 5.B) plus Python itself:
   agreement rule called that a disagreement and marked every PyPI torch
   `inferred`. A PEP 440 local label only the module reports now agrees (the
   recorded version keeps the label); two different local labels do not.
+- **Superseded in 0.2.0** for the two bullets below: the rule moved to the
+  public `attestation_schema.identity.package_identity`, shared with
+  smeltery, and changed where the two copies disagreed (no `INSTALLER`,
+  mamba/micromamba, archives and `vcs_info` without a commit are no longer
+  `verified`; a directory install takes a git probe; a `__build__` stamp is
+  read). `2026-11-19-dependency-identity-design.md` decides each; the bullets
+  below are the 0.1.0 text.
 - `source`, from the distribution's PEP 610 `direct_url.json`: `vcs_info` ->
   `<vcs>+<url>` with `build_sha` = `commit_id`; `archive_info` -> `url:<url>`
   (query string dropped; a `file:` URL is `file`); `dir_info` -> `file`. No

@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from attestation_schema.canonical import canonicalize
+from attestation_schema.files import _commit, _temporary
 from attestation_schema.layout import RUN_JSON, LayoutError
 from attestation_schema.record import (
     HISTORY_PATH,
@@ -131,7 +132,7 @@ class HistoryWriter:
             raise FileExistsError(f"{self.target} exists; pass overwrite=True to replace it")
         self._overwrite = overwrite
         self.target.parent.mkdir(parents=True, exist_ok=True)
-        self._tmp = self.target.with_name(f".{self.target.name}.{os.getpid()}.{id(self)}.tmp")
+        self._tmp = _temporary(self.target)
         self._fh: IO[bytes] | None = open(self._tmp, "xb")
         self._hash = hashlib.sha256()
         self._declared: list[tuple[str, str | None, dict[str, str]]] = []
@@ -205,10 +206,8 @@ class HistoryWriter:
         try:
             if not self._points:
                 return None
-            if self._overwrite:
-                os.replace(self._tmp, self.target)
-            else:
-                os.link(self._tmp, self.target)  # atomic no-clobber
+            # the shared commit step (`files`): replace, or an atomic no-clobber link
+            _commit(self._tmp, self.target, exclusive=not self._overwrite)
             self.ref = HistoryRef(
                 path=HISTORY_PATH,
                 sha256=self._hash.hexdigest(),

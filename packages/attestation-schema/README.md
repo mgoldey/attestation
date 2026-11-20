@@ -65,8 +65,47 @@ curves = read_history(run_dir)          # verifies the sha256, then parses
   (`state.json`) are JSON Schemas for other languages: necessary, not
   sufficient — the Python reader is the reference. They are frozen and
   pinned by digest. `dataset-1.schema.json` is a draft (below).
-- Package version 0.1.0: the formats are frozen; the Python API may still
-  change in a 0.x minor release until the job-state API has a consumer.
+- Package version 0.2.0 (`attestation_schema.__version__`): the formats are
+  frozen; the Python API may still change in a 0.x minor release until the
+  job-state API has a consumer. 0.2.0 is the first release with datasets,
+  lineage, conformance, the pytest plugin, the training callbacks and the
+  shared helpers below.
+
+## Shared helpers (0.2.0)
+
+One rule for every producer, so the same install gets the same record
+whoever writes it:
+
+```python
+import sys
+import attestation_schema as s
+
+s.package_identity("ferric", "ferric")      # -> Dependency: provenance, source, build_sha
+s.package_identity("torch", sys.modules["torch"], name="torch")
+s.strip_credentials("git+https://tok@host/r.git")   # -> "git+https://host/r.git"
+s.git_state("path/to/checkout")             # -> GitState(sha, dirty, remote); never raises
+s.sha256_file("weights.bin")                # chunked
+```
+
+- `package_identity(dist, module=None, *, name=None, probe_git=True)`: a
+  `__build__ == {"git_sha", "dirty"}` stamp on the module is `verified`; so
+  is a VCS install with a commit, and an index install (`INSTALLER` pip/uv)
+  whose imported `__version__` agrees with the metadata. Everything else
+  that names a version or commit is `inferred` (conda/mamba/micromamba,
+  archives, directory installs -- probed with git --, a missing `INSTALLER`,
+  any other installer), else `unknown`. `source` is in the record's
+  vocabulary and credential-free. A module NAME not yet imported is
+  imported; pass the module object to avoid that. `dependency_identity(...)`
+  is the same rule, pure.
+- `strip_credentials(url)` strips exactly what the reader refuses: a
+  password for any scheme (`ssh://u:p@`), any user name for a web scheme
+  (`https://tok@`, `git+https://tok@`); `ssh://git@host` is kept. On a
+  `url:` source it also drops the query string and keeps a `#sha256=`
+  fragment.
+- Every writer in the package (record, state, history, both manifests,
+  dataset) fsyncs and renames atomically through one private path.
+
+Design: `docs/superpowers/specs/2026-11-19-dependency-identity-design.md`.
  
 ## Conformance
 
@@ -220,9 +259,7 @@ At the end of training, on global rank 0 only, each writes a conforming
   conformance credential rule would flag is replaced by `<redacted>`;
 - **code** -- the training script's git HEAD and dirtiness (`inferred`), or
   `unknown`; **dependencies** -- python, torch, transformers/accelerate or
-  lightning: the imported `__version__`, `source` from PEP 610
-  `direct_url.json` (`index`, `git+<url>`, `url:<url>`, `file`, `conda`), and
-  `verified` only when the module and the installed metadata agree;
+  lightning, each by `package_identity` (above);
 - **ext** -- world size, global step, removed checkpoints, the error.
 
 `run_dir=` overrides the default `<output_dir>/attestation/run-<run_id>/`
@@ -236,7 +273,7 @@ Tag `schema-v<version>` (the version in this package's `pyproject.toml`, which
 the workflow checks), independent of attestation's `v<version>` tags:
 
 ```
-git tag schema-v0.1.0 && git push origin schema-v0.1.0
+git tag schema-v0.2.0 && git push origin schema-v0.2.0
 ```
 
 `.github/workflows/release.yml` builds the sdist and wheel, runs this

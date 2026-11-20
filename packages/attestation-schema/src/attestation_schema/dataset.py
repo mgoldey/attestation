@@ -36,6 +36,7 @@ from typing import Any
 
 from attestation_schema import layout
 from attestation_schema.canonical import _utf16_key, canonicalize
+from attestation_schema.files import _atomic_write
 from attestation_schema.record import (
     _SCHEMA_ID,
     _SHA256,
@@ -555,13 +556,7 @@ def write_dataset_manifest(dataset_dir: str | os.PathLike[str]) -> str:
         raise layout.LayoutError(
             f"{root / DATASET_JSON} exists; the manifest is written before the record"
         )
-    payload = canonicalize(layout.build_manifest(root))
-    target = root / layout.DIGESTS_JSON
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    tmp.write_bytes(payload)
-    os.replace(tmp, target)
-    return hashlib.sha256(payload).hexdigest()
+    return layout._write_manifest_file(root)
 
 
 def write_dataset(
@@ -588,21 +583,7 @@ def write_dataset(
         )
     if (root / layout.RUN_JSON).exists() or (root / layout.STATE_JSON).exists():
         raise layout.LayoutError(f"{root} is a run directory; a dataset needs its own")
-    target = root / DATASET_JSON
-    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(payload)
-            fh.flush()
-            os.fsync(fh.fileno())
-        if overwrite:
-            os.replace(tmp, target)
-        else:
-            os.link(tmp, target)  # atomic no-clobber: fails if a record exists
-    finally:
-        tmp.unlink(missing_ok=True)
-    return target
+    return _atomic_write(root / DATASET_JSON, payload, exclusive=not overwrite)
 
 
 def dataset_lineage_entries(

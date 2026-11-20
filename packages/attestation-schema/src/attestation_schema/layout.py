@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from attestation_schema.canonical import canonicalize
+from attestation_schema.files import _atomic_write, sha256_file
 from attestation_schema.record import HISTORY_PATH, DataDigest
 
 ATTESTATION_DIR = "attestation"
@@ -118,14 +119,6 @@ def find_datasets(root: str | os.PathLike[str]) -> list[Path]:
     return sorted(found)
 
 
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def build_manifest(run_dir: str | os.PathLike[str]) -> dict[str, Any]:
     """sha256 of every regular file under `run_dir` except `attestation/`.
 
@@ -143,8 +136,17 @@ def build_manifest(run_dir: str | os.PathLike[str]) -> dict[str, Any]:
                 raise LayoutError(f"{(here / name).relative_to(root)} is a symlink")
         for name in filenames:
             path = here / name
-            files[path.relative_to(root).as_posix()] = _sha256_file(path)
+            files[path.relative_to(root).as_posix()] = sha256_file(path)
     return {"schema": DIGESTS_SCHEMA, "files": files}
+
+
+def _write_manifest_file(root: Path) -> str:
+    """Write `<root>/attestation/digests.json` (durably: `_atomic_write`, fsynced
+    like the record it precedes); the hex sha256 of its bytes. The one body
+    behind `write_manifest` (runs) and `dataset.write_dataset_manifest`."""
+    payload = canonicalize(build_manifest(root))
+    _atomic_write(root / DIGESTS_JSON, payload, exclusive=False)
+    return hashlib.sha256(payload).hexdigest()
 
 
 def write_manifest(run_dir: str | os.PathLike[str]) -> DataDigest:
@@ -155,12 +157,4 @@ def write_manifest(run_dir: str | os.PathLike[str]) -> DataDigest:
     root = Path(run_dir)
     if (root / RUN_JSON).exists():
         raise LayoutError(f"{root / RUN_JSON} exists; the manifest is written before the record")
-    payload = canonicalize(build_manifest(root))
-    target = root / DIGESTS_JSON
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    tmp.write_bytes(payload)
-    os.replace(tmp, target)
-    return DataDigest(
-        name=DIGESTS_JSON, sha256=hashlib.sha256(payload).hexdigest(), role=MANIFEST_ROLE
-    )
+    return DataDigest(name=DIGESTS_JSON, sha256=_write_manifest_file(root), role=MANIFEST_ROLE)

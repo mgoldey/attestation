@@ -27,6 +27,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from attestation_schema.files import sha256_file  # the one chunked file digest (0.2.0)
+
 from attestation.run_record.canonical import canonicalize
 
 PAYLOAD_TYPE = "application/vnd.in-toto+json"
@@ -54,15 +56,6 @@ def pae(payload_type: str, payload: bytes) -> bytes:
 def keyid_for(public_raw: bytes) -> str:
     """A key's id: the hex sha256 of its raw 32-byte public key."""
     return hashlib.sha256(public_raw).hexdigest()
-
-
-def sha256_file(path: Path) -> str:
-    """A file's hex sha256, read in chunks."""
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 16), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 @dataclass

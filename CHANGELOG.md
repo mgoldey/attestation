@@ -9,6 +9,14 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ## [Unreleased]
 
+### Changed
+
+- **attestation reads its file digests and git state from attestation-schema
+  0.2.0** (`sha256_file`, `git_state`): `run_record/verify.py`, `figures.py`,
+  `run_record/build.py` and `prereg.py` drop their copies, and the floor is
+  now `attestation-schema>=0.2.0` -- release `schema-v0.2.0` first
+  (`2026-11-19-dependency-identity-design.md`, Decision 5).
+
 ### Added
 
 - **Training callbacks that write core records (attestation-schema
@@ -30,6 +38,50 @@ commit that carries the reasoning rather than repeating it; `git log
   skip is a failure. The lock gains the extras' resolution and bumps
   `huggingface-hub` 1.28.0 -> 1.31.0 (transformers' floor). No format changed
   (`2026-11-19-training-callbacks-design.md`).
+
+## attestation-schema [0.2.0] - 2026-11-20
+
+The schema package's own release line (tag `schema-v0.2.0`); attestation's
+sections are the others. The first release with everything since 0.1.0's
+freeze; no format changed (`test_frozen.py` untouched, every byte the same).
+
+### Added
+
+- `attestation_schema.__version__` (installed metadata, a source-tree
+  fallback pinned to `pyproject.toml`), so a producer can test for a feature
+  by version rather than by trying an import (smeltery's dataset finding 8).
+- **One dependency-identity rule:** `package_identity(dist, module=None)`
+  (and its pure core `dependency_identity`, plus `build_stamp`) replaces
+  smeltery's and the callbacks' divergent copies. Decided per input: an
+  index install is `verified` only when the loaded module's `__version__`
+  agrees; a missing `INSTALLER` is no source and never verified; conda,
+  mamba and micromamba are `conda`, `inferred`; other installers are `null`
+  (rpm/debian: `system`); a directory install takes a git probe and stays
+  `inferred`; `vcs_info` without a commit keeps its source and is
+  `inferred`; any module exposing `__build__ == {"git_sha", "dirty"}` is a
+  verified build stamp (`2026-11-19-dependency-identity-design.md`).
+- `strip_credentials(url)`, exactly the reader's credential rule inverted
+  (any scheme's password, a web scheme's user name; a `url:` source's query;
+  `ssh://git@` kept), tested against the reader; `git_state(dir)` and
+  `sha256_file(path)`.
+- From earlier in this cycle, first released here: `attestation.dataset/1`
+  (DRAFT) and `resolve_lineage`; the conformance suite and its opt-in pytest
+  plugin (`[conformance]`); the Hugging Face and Lightning training
+  callbacks (`[hf]`, `[lightning]`); attestation's Unreleased section above
+  and its 0.5.1 section below carry their entries.
+
+### Changed
+
+- Every writer (record, state, history, both manifest writers, the dataset
+  record) goes through one `_atomic_write`: unique temporary name, fsync,
+  atomic rename or no-clobber link, directory fsync. The manifest writers
+  did not fsync before, while `run.json` did, so a crash could keep a record
+  and lose the manifest it binds; `layout.write_manifest` and
+  `dataset.write_dataset_manifest` now share one body.
+- The training callbacks' dependencies follow the shared rule above:
+  archive installs and VCS installs without a commit are no longer
+  `verified`, and an unknown VCS no longer writes a source the reader
+  refuses.
 
 ## [0.5.1] - 2026-11-19
 

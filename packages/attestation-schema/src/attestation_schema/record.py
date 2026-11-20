@@ -33,6 +33,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from attestation_schema.canonical import MAX_SAFE_INTEGER, canonicalize
+from attestation_schema.files import _atomic_write, sha256_file
 
 KIND = "attestation.run"
 VERSION = 1
@@ -393,10 +394,18 @@ def _producer(value: Any, path: str) -> Producer:
     )
 
 
-def _no_credentials(location: str, path: str) -> None:
+def _carries_credentials(location: str) -> bool:
+    """The reader's credential rule, in one place: a password for any scheme
+    (`ssh://u:p@`), or any user name for a web scheme (`https://token@`,
+    `git+https://token@`). `ssh://git@host` is an address, not a secret.
+    `identity.strip_credentials` strips exactly this (tests prove they agree)."""
     parts = urlsplit(location)
     web = parts.scheme.rsplit("+", 1)[-1] in ("http", "https")  # git+https too
-    if parts.password is not None or (web and parts.username):
+    return parts.password is not None or bool(web and parts.username)
+
+
+def _no_credentials(location: str, path: str) -> None:
+    if _carries_credentials(location):
         raise InvalidFieldError(path, "URL carries credentials; strip them")
 
 
@@ -793,30 +802,7 @@ def write(record: RunRecord, run_dir: str | os.PathLike[str], *, overwrite: bool
     payload = dumps(record)
     if record.history is not None:
         check_history_digest(run_dir, record.history)
-    target = record_path(run_dir)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(payload)
-            fh.flush()
-            os.fsync(fh.fileno())
-        if overwrite:
-            os.replace(tmp, target)
-        else:
-            os.link(tmp, target)  # atomic no-clobber: fails if a record exists
-    finally:
-        tmp.unlink(missing_ok=True)
-    return target
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    return _atomic_write(record_path(run_dir), payload, exclusive=not overwrite)
 
 
 def check_history_digest(run_dir: str | os.PathLike[str], ref: HistoryRef) -> Path:
@@ -824,7 +810,7 @@ def check_history_digest(run_dir: str | os.PathLike[str], ref: HistoryRef) -> Pa
     path = Path(run_dir) / ref.path
     if not path.is_file():
         raise HistoryMissingError(ref.path, "the record references a history file that is missing")
-    actual = _sha256_file(path)
+    actual = sha256_file(path)
     if actual != ref.sha256:
         raise HistoryDigestError(
             ref.path, f"sha256 is {actual}, the record binds {ref.sha256}: the file changed"

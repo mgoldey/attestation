@@ -378,7 +378,8 @@ def test_verifier_imports_nothing_heavy():
     """verify.py and canonical.py must run from a bare install: stdlib,
     cryptography, and each other -- no sqlite3, no attestation.db, no model.
     canonical.py re-exports `attestation_schema.canonical` (stdlib only,
-    tests/test_boundaries.py) since attestation depends on that package."""
+    tests/test_boundaries.py) since attestation depends on that package, and
+    verify.py takes its file digest from `attestation_schema.files` (0.2.0)."""
     pkg = Path(verify.__file__).parent
     for name in ("verify.py", "canonical.py"):
         tree = ast.parse((pkg / name).read_text())
@@ -392,6 +393,7 @@ def test_verifier_imports_nothing_heavy():
         assert attest <= {
             "attestation.run_record.canonical",
             "attestation_schema.canonical",
+            "attestation_schema.files",
         }, (name, attest)
         assert "sqlite3" not in imported
 

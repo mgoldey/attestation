@@ -43,6 +43,7 @@ from typing import Any
 
 from attestation_schema import layout
 from attestation_schema.canonical import canonicalize
+from attestation_schema.files import _atomic_write
 from attestation_schema.jobs import (
     TERMINAL,
     JobError,
@@ -272,14 +273,7 @@ def read_state(run_dir: str | os.PathLike[str]) -> StateFile | None:
 
 
 def _write_state(run_dir: Path, st: StateFile) -> None:
-    target = state_path(run_dir)
-    payload = dumps_state(st)
-    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    with open(tmp, "wb") as fh:
-        fh.write(payload)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, target)
+    _atomic_write(state_path(run_dir), dumps_state(st), exclusive=False)
 
 
 # ---- the lock ---------------------------------------------------------------
