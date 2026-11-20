@@ -193,6 +193,11 @@ CREATE TABLE IF NOT EXISTS run_metrics(
   value REAL NOT NULL,
   step INTEGER,
   split TEXT,
+  -- The record's own `metrics[].direction`, verbatim: 'min', 'max', or NULL
+  -- (the producer did not say, or scanned before migration 017). compare
+  -- ranks by it only when no declaration names the metric and every run
+  -- reporting it agrees (2026-11-20-record-declared-direction-design.md).
+  direction TEXT,
   PRIMARY KEY (run_id, metric, step, split)
 );
 CREATE INDEX IF NOT EXISTS idx_runs_family ON runs(project, family);
@@ -711,6 +716,17 @@ def _migration_016_add_runs_arm_seeds(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE runs ADD COLUMN seeds_json TEXT")
 
 
+def _migration_017_add_run_metrics_direction(conn: sqlite3.Connection) -> None:
+    """Add run_metrics.direction: the core record's own metric direction,
+    which compare uses when no declaration names the metric
+    (docs/superpowers/specs/2026-11-20-record-declared-direction-design.md).
+    Existing rows get NULL and rank exactly as before until re-scanned, the
+    rule migrations 015 and 016 follow."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(run_metrics)")}
+    if "direction" not in cols:
+        conn.execute("ALTER TABLE run_metrics ADD COLUMN direction TEXT")
+
+
 # Ordered ladder of (version, migration_fn). Each entry is applied, in order,
 # exactly once per database: on open, every entry whose version is greater
 # than the file's current `PRAGMA user_version` runs inside one transaction,
@@ -735,6 +751,7 @@ _MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = [
     (14, _migration_014_add_citation_manager),
     (15, _migration_015_add_runs_caveats),
     (16, _migration_016_add_runs_arm_seeds),
+    (17, _migration_017_add_run_metrics_direction),
 ]
 
 SCHEMA_VERSION = _MIGRATIONS[-1][0]

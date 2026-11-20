@@ -40,8 +40,9 @@ def ws(tmp_path) -> Path:
 
 @pytest.fixture
 def scanned(ws, tmp_path, monkeypatch):
-    # The records declare paired_ddE's direction, but the ledger ranks by
-    # metric_direction.toml only (a record's own direction is its own spec).
+    # The records declare paired_ddE's direction "min"; a TOML that AGREES
+    # keeps these tests on the declared path (no direction_source, no caveat).
+    # test_the_records_own_direction_ranks_without_a_toml drops it.
     directions = tmp_path / "metric_direction.toml"
     directions.write_text('[metric_direction]\n"paired_ddE.mean" = "lower_is_better"\n')
     monkeypatch.setenv("LEDGER_METRIC_DIRECTION_FILE", str(directions))
@@ -89,6 +90,19 @@ def test_detail_lists_what_the_record_leaves_unverified(scanned, tmp_path, monke
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
     out = mcp_server._runs_detail_impl(PROJECT, RHF)
     assert out["run"]["provenance"] == FINDINGS
+
+
+def test_the_records_own_direction_ranks_without_a_toml(ws, tmp_path):
+    """smeltery declares paired_ddE.mean direction min in both records, so
+    the family ranks with no metric_direction.toml at all (record-declared-
+    direction spec) -- and compare with no metric named picks it."""
+    conn = get_db(tmp_path / "bare.db")
+    ledger.scan(conn, ws)
+    out = ledger.compare(conn, FAMILY)
+    assert out["metric"] == "paired_ddE.mean"
+    assert (out["direction"], out["direction_source"]) == ("lower_is_better", "records")
+    assert out["winner"] == PBE
+    conn.close()
 
 
 def test_compare_carries_one_grouped_provenance_caveat(scanned):

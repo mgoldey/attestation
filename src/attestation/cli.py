@@ -1416,7 +1416,7 @@ def _print_compare(result: dict) -> None:
     has -- factored out so `runs record --scan` can print the identical
     table for the family it just wrote, rather than a second rendering that
     could drift from this one."""
-    header = f"{result['family']} — ranked by {result['metric']} ({result['direction']})"
+    header = f"{result['family']} — ranked by {result['metric']} ({_direction_cell(result)})"
     # Naming the shared corpus says the comparison was *checked*, not
     # assumed -- the reader cannot tell those apart otherwise.
     if result.get("corpus"):
@@ -1453,6 +1453,15 @@ def _print_compare(result: dict) -> None:
             f"  {len(result['without_metric'])} arm(s) have no {result['metric']}:"
             f" {', '.join(result['without_metric'])}"
         )
+
+
+def _direction_cell(result: dict) -> str:
+    """The compare header's direction, naming its source only when the
+    records supplied it -- a declared family prints exactly what it always
+    has (record-declared-direction spec)."""
+    if result.get("direction_source") == "records":
+        return f"{result['direction']}, declared by its records"
+    return result["direction"]
 
 
 def _wall_cell(arm: dict, timed: bool) -> str:

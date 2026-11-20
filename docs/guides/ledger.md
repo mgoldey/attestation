@@ -159,6 +159,20 @@ Two rules keep it honest:
   total energies, because "lower is better" is false across different systems.
   Guessing would order a sweep backwards with total confidence.
 
+  A direction is declared in one of two places. The built-in table plus
+  `metric_direction.toml` (`LEDGER_METRIC_DIRECTION_FILE`) is the
+  declaration, and it always wins. Absent it, a core record's own
+  `metrics[].direction` (`min`/`max`, written by the producer that computed
+  the value — smeltery, the training callbacks, the MLflow exporter's
+  `--direction`) ranks the family, but only when **every** run reporting the
+  metric declares the same one; the result then carries
+  `direction_source: "records"` and the CLI header says `declared by its
+  records`. Records that disagree with each other, or only some of which
+  declare, refuse with the run names; records that disagree with the
+  declaration are ranked by the declaration and named in a caveat. Legacy
+  readers write no direction, so their families need the declaration as
+  before. Spec: `2026-11-20-record-declared-direction-design.md`.
+
 Comparisons carry provenance and caveats. Every arm shows its `source_path` and
 sample size, and the result warns when all arms are small-n, when arms differ in
 sample size, when the top two are within 5%, or when arms sit at different
@@ -257,8 +271,9 @@ attest prereg list             # the registrations, no database needed
 
 `--expect` orders arms by the metric's raw values (`a < b`: a's value is
 lower), chains allowed (`a < b < c`); `--by` is the minimum gap per pair, in
-the metric's units. The metric needs a declared direction or `add` refuses
-with the sentence `runs compare` prints. Files go to `--root`, else
+the metric's units. The metric needs a declared direction (the table or
+`metric_direction.toml`, not a record: a registration precedes its runs) or
+`add` refuses with the sentence `runs compare` prints. Files go to `--root`, else
 `RESEARCH_ROOT`, else the current directory: `hypotheses.toml` (the index you
 commit and diff) and `prereg/` (the canonical text, whose sha256 is the id,
 and its signed record — `attest record verify prereg/<id>.json` checks it).
