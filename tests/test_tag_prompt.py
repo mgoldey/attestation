@@ -177,8 +177,8 @@ def test_dspy_never_enters_the_library():
     generate.py, examples/sacred/generate.py, examples/dvc/generate.sh,
     examples/hydra/generate.sh): the ledger READS mlruns/, wandb/,
     sacred_runs/, dvc.yaml/dvc.lock and multirun/ (ledger_adapters/
-    generic.py's `_mlflow_runs`, `_wandb_runs`, `_sacred_runs`, `_dvc_runs`
-    and `_hydra_runs`, named as such in comments and the
+    generic.py's `_wandb_runs`, `_sacred_runs`, `_dvc_runs` and
+    `_hydra_runs`, and mlflow_store.py's `mlflow_runs`, named as such in comments and the
     `adapter="mlflow"`/`adapter="wandb"`/`adapter="sacred"`/`adapter="dvc"`/
     `adapter="hydra"` labels) without ever importing the libraries that
     write them -- dvc.yaml/dvc.lock and .hydra/config.yaml/hydra.yaml are

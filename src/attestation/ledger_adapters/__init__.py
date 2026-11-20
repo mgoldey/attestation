@@ -8,7 +8,8 @@ tracker's layout lives in this package, behind one protocol (`Adapter`):
 - `generic` reads the conventions ML/science repos already share
   (`results/`, `logs/`, `configs/`, ... holding JSON/JSONL/CSV/YAML/TOML);
 - one adapter per tracker layout (`trackers.py`), each wrapping its reader in
-  `generic` and converting what it found with `trackers.found_to_core`.
+  `generic` and converting what it found with `trackers.found_to_core` --
+  except MLflow's, which reads and maps the whole run in `mlflow_store`.
 
 No project is named here and none needs to be: `ledger.scan` walks a
 workspace root, treats every subdirectory as a project, and imports it with

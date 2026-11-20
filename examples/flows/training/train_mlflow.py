@@ -5,8 +5,10 @@ LogisticRegression on scikit-learn's bundled breast-cancer set (569 rows,
 no download), C in {0.01, 0.1, 1, 10}, one fixed stratified split. Each
 arm logs its params and its held-out accuracy, precision, recall and AUC
 to a local MLflow file store, plus a ten-step train_loss curve so the
-ledger's "last line of each metric file" rule meets a real multi-line
-file. run_name is the family name: that is how the ledger groups arms.
+ledger's "MLflow's latest point" rule meets a real multi-line
+file. The experiment (`flows`) is the family the ledger groups arms by;
+run_name (`c_sweep`) names each run (`c_sweep/<run id[:8]>`), which is what
+FINDINGS.md's claims cite.
 The curve comes from a surrogate SGDClassifier fit incrementally alongside
 the LogisticRegression -- mlflow has no incremental API for the latter, and
 the reported accuracy/precision/recall/auc are always the LogisticRegression's,
@@ -26,14 +28,15 @@ different resolved version the way those generators do).
 
 mlflow also writes personal attribution and machine-specific absolute paths
 (tags/mlflow.user, the git remote URL, this machine's home directory in
-every artifact_uri) that this repo does not commit -- the reader
-(_mlflow_runs) reads only lifecycle_stage, run_name, metrics/*, params/*, so
-scrubbing them costs the reader nothing. `scrub()` below removes them after
-training.
+every artifact_uri) that this repo does not commit. The reader
+(ledger_adapters/mlflow_store.py) would map the git tags to each run's code
+identity, so the scrubbed runs say `unknown` -- the honest answer for a
+fixture whose provenance was deliberately removed. `scrub()` below removes
+them after training.
 
     uv run --group examples python examples/flows/training/train_mlflow.py
     uv run attest runs scan --root examples/flows --project training
-    uv run attest runs compare c_sweep --metric auc
+    uv run attest runs compare flows --metric auc
     uv run attest claims examples/flows/training/FINDINGS.md      # exit 1: one is wrong
 """
 
@@ -48,6 +51,8 @@ import sys
 import time
 from pathlib import Path
 
+# The run name every arm shares (the ledger names runs `c_sweep/<id8>`); the
+# ledger's FAMILY is the experiment, `flows` (roadmap 12).
 FAMILY = "c_sweep"
 ARMS = (0.01, 0.1, 1.0, 10.0)
 HERE = Path(__file__).resolve().parent
@@ -63,9 +68,9 @@ CLAIM_TOL = 0.00005
 # needs no extra environment variable.
 os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
 
-# Tag files that carry who ran this and from where, not anything the reader
-# uses. mlflow.runName (the family) and mlflow.source.type (LOCAL vs. a
-# tracked job) are the only ones _mlflow_runs-adjacent tooling could ever
+# Tag files that carry who ran this and from where. mlflow.runName (the run
+# name) and mlflow.source.type (LOCAL vs. a
+# tracked job) are the only ones the ledger's MLflow reader could ever
 # want; the rest -- user, and every git.* identifying this machine's clone
 # and its remote -- are deleted outright rather than genericised, since a
 # placeholder invites someone to "restore" them from their own machine.
@@ -84,10 +89,10 @@ _URI_FIELD_RE = re.compile(
 def scrub(tracking_dir: Path) -> None:
     """Strip attribution and machine-specific paths mlflow writes by default.
 
-    The reader (_mlflow_runs in ledger_adapters/generic.py) reads only
-    lifecycle_stage, run_name, metrics/*, params/* from meta.yaml and the run
-    directory -- never artifact_uri, never a tag other than run_name. Nothing
-    here is load-bearing for the ledger; committing it anyway would put a
+    The reader (ledger_adapters/mlflow_store.py) maps the git tags to the
+    run's code identity and reads artifacts from the store's own
+    `<exp>/<run>/artifacts`, whatever artifact_uri's absolute path says, so
+    nothing here is load-bearing for the ledger; committing it would put a
     real person's name, this machine's home directory, and this repo's git
     remote into version control, which is exactly the class of content this
     repo has previously rewritten history to remove.
