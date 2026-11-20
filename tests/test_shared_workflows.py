@@ -43,7 +43,9 @@ def _step_uses(path: Path):
     for job in _load(path)["jobs"].values():
         for step in job.get("steps", []):
             if "uses" in step:
-                raw = next(ln for ln in lines if re.search(rf"uses:\s*{re.escape(step['uses'])}", ln))
+                raw = next(
+                    ln for ln in lines if re.search(rf"uses:\s*{re.escape(step['uses'])}", ln)
+                )
                 yield step["uses"], raw
 
 
@@ -142,7 +144,11 @@ def test_gates_keep_every_gate_the_old_job_ran():
     assert w["sync-args"] == "--all-extras --dev"
     assert w["ty-command"] == "uv run --no-sync ty check src/ packages/attestation-schema/src/"
     assert w["lock-check"] is True
-    for gate in ("scripts/check_complexity.py", "bandit -q -c pyproject.toml", "xenon --max-modules B"):
+    for gate in (
+        "scripts/check_complexity.py",
+        "bandit -q -c pyproject.toml",
+        "xenon --max-modules B",
+    ):
         assert gate in w["checks"], gate
     assert w["test-command"] == "uv run --no-sync pytest -q"
     gates = _load(WORKFLOWS / "reusable-python-gates.yml")["jobs"]["gates"]["steps"]
