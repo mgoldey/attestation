@@ -236,7 +236,7 @@ def test_a_bad_tag_is_a_note_not_a_failure(project):
 # ---- a fresh real store, with the provider on (needs mlflow) -----------------------
 
 
-def test_sync_and_the_exporter_agree_on_a_tagged_real_run(tmp_path, monkeypatch):
+def test_sync_and_the_exporter_agree_on_a_tagged_real_run(tmp_path):
     """One mapping: a run MLflow wrote with the provider's tags reads the same
     through the exporter (MlflowClient) and through sync (the files)."""
     pytest.importorskip("mlflow")
@@ -262,8 +262,7 @@ def test_sync_and_the_exporter_agree_on_a_tagged_real_run(tmp_path, monkeypatch)
     env.pop(mapping.OPT_OUT_ENV, None)
     subprocess.run([sys.executable, "train.py"], cwd=work, env=env, check=True)
 
-    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
-    producer = _producer()
+    producer = _producer()  # loading it allows mlflow's file store, for every later test too
     written, _ = producer.export(producer._uri(str(work / "mlruns")), tmp_path / "exported")
     (theirs,) = [schema.read(d) for d in written]
     result = mlflow_sync.sync(work / "mlruns", tmp_path / "synced")
