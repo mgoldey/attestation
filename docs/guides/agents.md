@@ -68,9 +68,9 @@ The server (`attest-mcp`, from `src/attestation/mcp_server.py`) exposes 55 tools
 These counts move: re-measure rather than quoting this paragraph.
 
 ```bash
-uv run python -c "from mcp.server.fastmcp import FastMCP; \
+uv run python -c "from mcp.server.mcpserver import MCPServer; \
 from attestation.mcp import register_all; import asyncio; \
-m=FastMCP('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
+m=MCPServer('x'); register_all(m); print(len(asyncio.run(m.list_tools())))"
 ```
 
 

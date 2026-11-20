@@ -502,14 +502,14 @@ def _served(monkeypatch, surface):
     import asyncio
     import importlib
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     import attestation.mcp as mcp_pkg
 
     monkeypatch.setenv("ATTEST_TOOLS", surface)
     monkeypatch.delenv("ATTEST_EXPAND", raising=False)
     importlib.reload(mcp_pkg)
-    server = FastMCP("deployed")
+    server = MCPServer("deployed")
     mcp_pkg.register_all(server)
     names = {t.name for t in asyncio.run(server.list_tools())}
     return server, names
@@ -519,10 +519,9 @@ def _call(server, tool, args) -> dict:
     import asyncio
 
     result = asyncio.run(server.call_tool(tool, args))
-    first = result[1] if isinstance(result, tuple) else result
-    if isinstance(first, dict):
-        return first.get("result", first)
-    return json.loads(first[0].text)
+    if result.structured_content is not None:
+        return result.structured_content
+    return json.loads(result.content[0].text)
 
 
 @pytest.mark.parametrize(

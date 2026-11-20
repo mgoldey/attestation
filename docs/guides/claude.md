@@ -26,9 +26,10 @@ for `attestation` and `smeltery[mcp,attestation] @ git+https://github.com/mgolde
 for `smeltery[mcp,attestation]`. Check with `uvx pip index versions attestation`
 (or `pip index versions`) before relying on either.
 
-Each server runs in its **own** environment, which is the point of one `uvx`
-per server: attestation pins `mcp==1.28.x` and smeltery needs `mcp>=2.3`, so
-they cannot share one.
+Each server runs in its **own** environment here, one `uvx` per server, so
+neither can break the other. They no longer have to: attestation now pins
+`mcp==2.3.0`, the line `smeltery[mcp]` needs (`mcp>=2.3`), so both also install
+into one environment if you prefer that.
 
 ## One-line install, per server
 

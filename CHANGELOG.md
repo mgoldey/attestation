@@ -11,6 +11,20 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Changed
 
+- **MCP SDK upgraded to mcp 2.3.0 (was 1.28.1).** smeltery's `[mcp]` extra
+  needs `mcp>=2.3`, so the two servers could not share one environment; they
+  now resolve together. The server is `mcp.server.mcpserver.MCPServer` (2.x's
+  name for FastMCP). No agent-visible change: every tool listing (55 tools;
+  feed 22 / provenance 14 / knowledge 17 / symbolic 9 expanded, 2 each
+  without) and every sampled call result is byte-identical to 1.28.1 apart
+  from the protocol's own `resultType`, and a 1.28.1 client (Hermes pins
+  one) still gets identical results. A 2.x client's opening `server/discover`
+  probe, which the 1.x server rejected with pydantic errors in its stderr
+  before falling back to `initialize`, now negotiates protocol 2026-07-28.
+  `examples/flows/mcp_e2e.py` drives `mcp.client.Client` and reports a
+  `<handshake>` row that fails on a legacy fallback (so
+  `examples/agents` now prints `21 calls`).
+
 - **attestation reads its file digests and git state from attestation-schema
   0.2.0** (`sha256_file`, `git_state`): `run_record/verify.py`, `figures.py`,
   `run_record/build.py` and `prereg.py` drop their copies, and the floor is

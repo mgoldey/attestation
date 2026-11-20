@@ -71,7 +71,7 @@ def register_disclosure(mcp, restricted: str, expanded: bool) -> None:
             def _list_tools() -> Answer:
                 return Answer(**_tools_listing(surface, expanded))
 
-            # Set BEFORE @mcp.tool sees it: FastMCP reads __doc__ at decoration
+            # Set BEFORE @mcp.tool sees it: MCPServer reads __doc__ at decoration
             # time, so assigning afterwards left the description empty.
             _list_tools.__doc__ = _tools_doc(surface, expanded)
             return mcp.tool(name=f"{surface}.tools")(_list_tools)

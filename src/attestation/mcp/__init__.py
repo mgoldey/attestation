@@ -171,7 +171,7 @@ def _allowed(name: str, surface: frozenset[str]) -> bool:
 class _FilteringServer:
     """Passes `mcp.tool()` through, dropping registrations outside the surface.
 
-    A wrapper rather than a post-registration filter: FastMCP has no public
+    A wrapper rather than a post-registration filter: MCPServer has no public
     deregister, and dropping at the decorator keeps the tool from ever being
     constructed.
 
@@ -190,7 +190,7 @@ class _FilteringServer:
         self._expand = expand
 
     def tool(self, *args, name: str | None = None, **kwargs):
-        """`FastMCP.tool`, but a no-op decorator (never registering the
+        """`MCPServer.tool`, but a no-op decorator (never registering the
         function) for anything outside `self._surface`, or -- unless
         `expand` -- for anything that is not an entry point. See the class
         docstring for why filtering happens here, at the decorator, rather

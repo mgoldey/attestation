@@ -426,13 +426,13 @@ def test_closed_vocabularies_are_schema_constraints_not_silent_defaults():
     """
     import asyncio
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
-    mcp = FastMCP("audit")
+    mcp = MCPServer("audit")
     register_all(mcp)
-    schemas = {t.name: t.inputSchema for t in asyncio.run(mcp.list_tools())}
+    schemas = {t.name: t.input_schema for t in asyncio.run(mcp.list_tools())}
 
     def allowed(tool: str, param: str) -> set[str]:
         spec = schemas[tool]["properties"][param]

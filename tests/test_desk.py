@@ -407,11 +407,11 @@ console.log(judgedHere(items, verdicts));
 
 
 def test_feed_ask_imports_page_verdicts_before_ranking(tmp_path, fake_embedder, monkeypatch):
-    """Drives feed.ask on a real FastMCP server: the 0.2.0 regression shipped
+    """Drives feed.ask on a real MCPServer server: the 0.2.0 regression shipped
     because a test checked the dict before the tool, not the tool."""
     import asyncio
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.db import get_db
     from attestation.mcp import _shared, register_all
@@ -441,14 +441,14 @@ def test_feed_ask_imports_page_verdicts_before_ranking(tmp_path, fake_embedder, 
     monkeypatch.setenv("ATTEST_DESK_USER", "researcher")
     monkeypatch.setattr(_shared, "get_embedder", lambda: fake_embedder)
 
-    server = FastMCP("t")
+    server = MCPServer("t")
     register_all(server)
 
     async def call():
         result = await server.call_tool(
             "feed.ask", {"user": "researcher", "question": "What should I read today?"}
         )
-        return result[1] if isinstance(result, tuple) else result
+        return result.structured_content
 
     structured = asyncio.run(call())
 

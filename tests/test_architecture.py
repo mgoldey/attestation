@@ -642,7 +642,7 @@ def test_tool_schemas_constrain_their_arguments():
     os.environ.setdefault("RSS_DB", tempfile.mkdtemp() + "/t.db")
     from attestation import mcp_server
 
-    tools = {t.name: t.inputSchema for t in asyncio.run(mcp_server.mcp.list_tools())}
+    tools = {t.name: t.input_schema for t in asyncio.run(mcp_server.mcp.list_tools())}
 
     problems = []
     for name, schema in tools.items():
@@ -682,11 +682,11 @@ def test_claude_md_tool_counts_match_the_live_surface():
     import re
     from collections import Counter
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
-    server = FastMCP("count-check")
+    server = MCPServer("count-check")
     register_all(server)
     names = [t.name for t in asyncio.run(server.list_tools())]
     live = Counter(n.split(".", 1)[0] for n in names)
@@ -733,11 +733,11 @@ def test_readme_tool_count_and_table_match_the_live_surface():
     import asyncio
     import re
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
-    server = FastMCP("readme-check")
+    server = MCPServer("readme-check")
     register_all(server)
     names = {t.name for t in asyncio.run(server.list_tools())}
 
@@ -780,7 +780,7 @@ def test_a_schema_bound_is_never_looser_than_the_code_enforces():
 
     looser = []
     for tool in asyncio.run(mcp_server.mcp.list_tools()):
-        for arg, spec in (tool.inputSchema.get("properties") or {}).items():
+        for arg, spec in (tool.input_schema.get("properties") or {}).items():
             ceiling = ceilings.get(arg)
             declared = spec.get("maximum")
             if (tool.name, arg) in exempt:
@@ -924,15 +924,15 @@ def test_no_tool_declares_a_default_its_own_schema_rejects():
     """
     import asyncio
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
-    mcp = FastMCP("audit")
+    mcp = MCPServer("audit")
     register_all(mcp)
     bad: list[str] = []
     for tool in asyncio.run(mcp.list_tools()):
-        for name, spec in (tool.inputSchema.get("properties") or {}).items():
+        for name, spec in (tool.input_schema.get("properties") or {}).items():
             default = spec.get("default")
             if not isinstance(default, int | float) or isinstance(default, bool):
                 continue
@@ -986,11 +986,11 @@ def test_the_feed_entry_points_say_what_the_corpus_holds():
     """
     import asyncio
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
-    mcp = FastMCP("audit")
+    mcp = MCPServer("audit")
     register_all(mcp)
     described = {t.name: (t.description or "") for t in asyncio.run(mcp.list_tools())}
 
@@ -1016,11 +1016,11 @@ def test_every_tool_summary_line_is_a_complete_sentence():
     """
     import asyncio
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
-    mcp = FastMCP("audit")
+    mcp = MCPServer("audit")
     register_all(mcp)
     truncated = [
         f"{t.name}: {t.description.splitlines()[0][-40:]!r}"
@@ -1040,11 +1040,11 @@ def test_no_description_names_a_tool_that_does_not_exist():
     import asyncio
     import re
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
-    mcp = FastMCP("audit")
+    mcp = MCPServer("audit")
     register_all(mcp)
     tools = asyncio.run(mcp.list_tools())
     registered = {t.name for t in tools}
@@ -1127,7 +1127,7 @@ def test_every_tool_that_returns_a_url_tells_the_agent_to_show_it():
                     found.extend(_descriptions(value))
             return found
 
-        prose = [tool.description or "", *_descriptions(tool.outputSchema or {})]
+        prose = [tool.description or "", *_descriptions(tool.output_schema or {})]
         sentences = [part for chunk in prose for part in re.split(r"(?<=[.!?])\s+|\n", chunk)]
         instructs = any(
             "url" in part.lower()
@@ -1185,11 +1185,11 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
     import asyncio
     import re
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
-    server = FastMCP("doc-count-check")
+    server = MCPServer("doc-count-check")
     register_all(server)
     live_total = len(asyncio.run(server.list_tools()))
 
@@ -1283,7 +1283,7 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
             previous = os.environ.get("ATTEST_TOOLS"), os.environ.get("ATTEST_EXPAND")
             os.environ["ATTEST_TOOLS"], os.environ["ATTEST_EXPAND"] = surface, "1"
             try:
-                scoped = FastMCP(f"surface-{surface}")
+                scoped = MCPServer(f"surface-{surface}")
                 register_all(scoped)
                 actual = len(asyncio.run(scoped.list_tools()))
             finally:
@@ -1301,7 +1301,7 @@ def test_no_doc_quotes_a_stale_attestation_tool_count():
         previous = os.environ.get("ATTEST_TOOLS"), os.environ.get("ATTEST_EXPAND")
         os.environ["ATTEST_TOOLS"], os.environ["ATTEST_EXPAND"] = surface, "1"
         try:
-            scoped = FastMCP(f"surface-{surface}")
+            scoped = MCPServer(f"surface-{surface}")
             register_all(scoped)
             return len(asyncio.run(scoped.list_tools()))
         finally:

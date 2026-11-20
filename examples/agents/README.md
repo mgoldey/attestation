@@ -32,7 +32,7 @@ Relative to the repo root (`run.sh` does `cd "$(dirname "$0")/../.."` first).
 ## What it prints
 
 ```
-20 calls, 0 failed
+21 calls, 0 failed
 ```
 
 Abridged — `attest install --check` prints one aligned `[ok]`/`[BROKEN]`/
@@ -42,9 +42,11 @@ of them); `attest emit` reports `N config problem(s)` or `mcp surfaces: all
 4 present and current` depending on whether a `hermes` binary is on `PATH`,
 then always reports the four `.claude/agents/attestation-*.md` files as
 present and current (this checkout already has them — `attest emit` never
-overwrites, so re-running never changes that line); `mcp_e2e.py` prints one
-row per tool call on the `provenance` surface — `provenance runs.claims_coverage
-ok` and eleven more like it — ending in the pinned line above.
+overwrites, so re-running never changes that line); `mcp_e2e.py` prints a
+`<handshake>` row (ok only when the client's `server/discover` probe got a
+modern protocol, not the legacy `initialize` fallback), then one row per tool
+call on the `provenance` surface — `provenance runs.claims_coverage ok` and
+eleven more like it — ending in the pinned line above.
 
 ## What it demonstrates
 

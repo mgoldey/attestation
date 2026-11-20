@@ -569,7 +569,7 @@ def test_runs_list_does_not_bury_the_runs_under_a_family_dump(tmp_path, monkeypa
     assert "60" in out["message"], "the caller must be told how many exist"
     assert "project=" in out["message"], "and how to narrow them"
 
-    # indent=2, which is what FastMCP emits. Measured compact this read 2500
+    # indent=2, which is what MCPServer emits. Measured compact this read 2500
     # while the model received 1.238x that; round 9 measured this tool at 5926
     # chars emitted against the live database.
     payload = len(json.dumps(out, indent=2))
