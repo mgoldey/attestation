@@ -57,7 +57,7 @@ _ROW_KEYS = (
     "message",
 )
 
-StaleHours = Annotated[float, Field(gt=0, le=24 * 30)]
+StaleHours = Annotated[float, Field(ge=0.01, le=24 * 30)]
 
 
 def register(mcp) -> None:

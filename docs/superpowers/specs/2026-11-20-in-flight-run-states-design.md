@@ -185,6 +185,12 @@ producers write:
 - No ETA, no progress. `history.jsonl`'s points could say how far a run got,
   but reading them is `read_history`'s job on a finished record, and an
   in-flight sidecar has no digest to check yet.
+- No SKILL.md mention. The provenance session serves its router plus one
+  companion until disclosure, and `test_skill_files` ratchets how many
+  hidden tools a surface skill may name (baseline 7); naming `runs.status`
+  there would raise that ratchet, which is a decision for whoever measures
+  the skill, not a side effect of adding a tool. The tool's own description
+  carries the "stale is evidence" instruction instead.
 - No `runs.ask` route. "What is running" is one tool call; teaching the
   router a new destination is a measured change (routing is pinned at 13/15)
   and was not measured here.
