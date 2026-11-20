@@ -31,6 +31,9 @@ v0.20.0) through two lanes that complement each other:
   skill descriptions naming the same topic collide in Hermes' index
   (`docs/bundled-skills-research.md`).
 
+Using Claude Code or Claude Desktop instead of Hermes? See
+[Wire attestation and smeltery into Claude](claude.md).
+
 See `docs/hermes-agent-plugin-research.md` for why MCP was chosen over
 hermes-agent's plugin system.
 

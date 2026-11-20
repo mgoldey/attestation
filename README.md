@@ -12,6 +12,21 @@ directories) and ranks the arms of a sweep with caveats. The feed,
 provenance and symbolic tools assume nothing about your field; only the
 ledger assumes you run experiments.
 
+## One-line install
+
+Nothing cloned; `uvx` or `pipx` fetches each tool into its own environment.
+
+```bash
+uvx attestation install                                  # setup and doctor (pipx run attestation install)
+uvx --from git+https://github.com/mgoldey/attestation attest-mcp   # the MCP server, for Claude Code or Desktop
+```
+
+PyPI has 0.5.0, which lacks `runs.status` and cannot read smeltery's records;
+use the git form above until 0.5.1 is out, then `uvx --from attestation attest-mcp`.
+Wiring both attestation and [smeltery](https://github.com/mgoldey/smeltery)
+into Claude Code and Claude Desktop, with a complete config:
+[docs/guides/claude.md](docs/guides/claude.md).
+
 ## Try it in 60 seconds
 
 No model server, no ingest, no config — the run ledger and claim checker are
@@ -109,31 +124,13 @@ prerequisites, and the manual steps `attest install` automates.
 
 ## Chat with it from Discord
 
-Once `attest install` has run and [hermes-agent](https://github.com/NousResearch/hermes-agent)
-is installed, the feed answers from a phone. Four steps, all outside this repo:
-
-1. In the Discord Developer Portal create an application and a Bot, enable
-   the **Server Members** and **Message Content** intents on the Bot page,
-   and copy the token. Then `hermes gateway setup`, pick Discord, and paste
-   the token plus your own Discord user ID (not the bot's).
-2. Allowlist the feed surface for chat in `~/.hermes/config.yaml`, so each
-   turn carries 2 tool schemas instead of 131:
-
-   ```yaml
-   mcp_servers:
-     attestation-feed: {enabled: true}   # attest install wrote the entry, disabled
-   platform_toolsets:
-     discord: [attestation-feed]         # an MCP server here is an allowlist
-   ```
-
-3. `systemctl --user restart hermes-gateway`, then invite the bot with
-   `https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot&permissions=274878286912`
-   and DM it *"What are your recommendations today?"*
-
-Measured on gemma4:e2b over a GTX 1080: a turn dropped from 54-249s at
-15-29k prompt tokens to 23-28s at ~5k. The other half of that saving is
-keeping the model resident, since a cold load alone was 30s. Full recipe,
-Telegram variant, and the keep-alive timer in
+With `attest install` run and [hermes-agent](https://github.com/NousResearch/hermes-agent)
+installed, the feed answers from a phone: create a Discord bot, allowlist the
+`attestation-feed` surface for the `discord` platform in `~/.hermes/config.yaml`
+(2 tool schemas per turn instead of 131), restart the gateway and DM it
+*"What are your recommendations today?"*. Measured on gemma4:e2b over a GTX
+1080, a turn dropped from 54-249s to 23-28s. Full recipe, Telegram variant
+and the keep-alive timer:
 [docs/guides/agents.md](docs/guides/agents.md#8-chat-from-discord-or-telegram).
 
 ## Golden paths
@@ -183,6 +180,7 @@ below. The guides, one per question:
 
 - [docs/guides/install.md](docs/guides/install.md) — set up with or without a model server
 - [docs/guides/agents.md](docs/guides/agents.md) — MCP tools, surfaces, the skill
+- [docs/guides/claude.md](docs/guides/claude.md) — attestation and smeltery in Claude Code and Desktop
 - [docs/guides/ledger.md](docs/guides/ledger.md) — reading and ranking runs
 - [docs/guides/claims-and-citations.md](docs/guides/claims-and-citations.md) — checking a draft
 - [docs/guides/feed.md](docs/guides/feed.md) — how ranking works
