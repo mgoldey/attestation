@@ -42,11 +42,12 @@ import re
 import sqlite3
 from collections import Counter
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
 from attestation import latex
+from attestation.ledger import caveats_for_run
 
 # <!-- claim: project/run metric=wer value=0.053 tol=0.001 as_of=2026-05-28 -->
 CLAIM_RE = re.compile(r"<!--\s*claim:\s*(?P<body>.*?)\s*-->", re.DOTALL)
@@ -126,6 +127,11 @@ class Verdict:
     source_path: str | None = None
     matched_split: str | None = None
     matched_step: int | None = None
+    # What qualifies the matched run's values without changing the verdict:
+    # the run did not complete, or its record leaves the code/environment
+    # unverified (ledger.caveats_for_run). A claim agreeing with a dirty run
+    # is `supported` WITH this beside it -- never `contradicted` for it.
+    caveats: list[str] = field(default_factory=list)
 
 
 def _annotations(path: Path, text: str) -> Iterator[tuple[int, str]]:
@@ -220,11 +226,12 @@ def _matching_runs(conn: sqlite3.Connection, claim: Claim) -> list[sqlite3.Row]:
     if claim.run.endswith("*"):
         pattern = claim.run[:-1] + "%"
         sql = (
-            "SELECT id, name, source_path FROM runs WHERE project = ? AND name LIKE ? ORDER BY name"
+            "SELECT id, name, source_path, caveats_json FROM runs"
+            " WHERE project = ? AND name LIKE ? ORDER BY name"
         )
         params = (claim.project, pattern)
     else:
-        sql = "SELECT id, name, source_path FROM runs WHERE project = ? AND name = ?"
+        sql = "SELECT id, name, source_path, caveats_json FROM runs WHERE project = ? AND name = ?"
         params = (claim.project, claim.run)
     return conn.execute(sql, params).fetchall()
 
@@ -276,7 +283,10 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
         )
 
     run = runs[0]
-    sql = "SELECT value, step, split FROM run_metrics WHERE run_id = ? AND metric = ?"
+    # lower(): the claim's metric is lowercased at parse (the legacy readers
+    # store keys lowercased), while a core record keeps `paired_ddE.mean` as
+    # written. Two metrics differing only in case are two rows: ambiguous.
+    sql = "SELECT value, step, split FROM run_metrics WHERE run_id = ? AND lower(metric) = ?"
     params: list = [run["id"], claim.metric]
     if claim.split is not None:
         sql += " AND split = ?"
@@ -314,6 +324,7 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
 
     row = rows[0]
     actual = row["value"]
+    caveats = caveats_for_run(run["name"], run["caveats_json"])
     where = f" [split={row['split']}]" if row["split"] else ""
     where += f" [step={row['step']}]" if row["step"] is not None else ""
 
@@ -327,6 +338,7 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
             source_path=run["source_path"],
             matched_split=row["split"],
             matched_step=row["step"],
+            caveats=caveats,
         )
 
     if not Path(run["source_path"]).exists():
@@ -338,6 +350,7 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
             source_path=run["source_path"],
             matched_split=row["split"],
             matched_step=row["step"],
+            caveats=caveats,
         )
 
     if _is_stale(claim, run["source_path"]):
@@ -350,6 +363,7 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
             source_path=run["source_path"],
             matched_split=row["split"],
             matched_step=row["step"],
+            caveats=caveats,
         )
 
     return Verdict(
@@ -360,6 +374,7 @@ def check_claim(conn: sqlite3.Connection, claim: Claim) -> Verdict:
         source_path=run["source_path"],
         matched_split=row["split"],
         matched_step=row["step"],
+        caveats=caveats,
     )
 
 

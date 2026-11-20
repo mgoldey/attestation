@@ -1,0 +1,10 @@
+{
+  "funnel": {
+    "candidates_in": 2,
+    "candidates_out": 1,
+    "kind": "rank",
+    "stage": "cut",
+    "unranked": false
+  },
+  "log": []
+}

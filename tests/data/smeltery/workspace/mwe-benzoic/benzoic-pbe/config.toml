@@ -1,0 +1,31 @@
+# Measured 2026-11-04 on this box, 2 cores: 88 s wall for PBE on examples/mwe_benzoic.toml (RHF took 219 s there).
+# The MWE (examples/mwe_benzoic.py) as a config: benzoic acid and two para analogues in a
+# clamp of two +1 charges, each 3 Å beyond a carboxyl oxygen. Atom indices are the parent
+# SMILES with explicit H: `uv run smeltery run pipeline.toml --plan` lists them.
+campaign = "mwe-benzoic-cli"
+parent = "benzoic"
+
+[candidates]
+benzoic = "OC(=O)c1ccccc1"
+4-F = "OC(=O)c1ccc(F)cc1"
+4-Cl = "OC(=O)c1ccc(Cl)cc1"
+
+[[pocket.site]]
+q = 1.0
+atom = 0
+from_atom = 1
+distance = 3.0
+
+[[pocket.site]]
+q = 1.0
+atom = 2
+from_atom = 1
+distance = 3.0
+
+[cut]
+keep = 1
+z = 2.0
+floor = 0.0
+
+[field_dft_interaction]
+functional = "PBE"
