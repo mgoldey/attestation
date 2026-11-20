@@ -17,7 +17,6 @@ Spec: docs/superpowers/specs/2026-11-20-mlflow-adapter-design.md.
 
 from __future__ import annotations
 
-import hashlib
 import math
 import os
 import tempfile
@@ -25,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit
 
 import attestation_schema as schema
 import yaml
@@ -303,19 +302,6 @@ def timestamp_ms(ms: int | None) -> str | None:
     )
 
 
-def strip_credentials(url: str | None) -> str | None:
-    """A repo URL without `user:token@`: MLflow keeps a hand-set tag's token
-    verbatim, and the schema refuses one."""
-    if not url:
-        return None
-    parts = urlsplit(url)
-    if parts.scheme in ("http", "https") and (parts.username or parts.password):
-        host = parts.hostname or ""
-        netloc = f"{host}:{parts.port}" if parts.port else host
-        return urlunsplit(parts._replace(netloc=netloc))
-    return url
-
-
 def _grouped(found: MlflowFound) -> dict[tuple[str, str | None], list[LoggedPoint]]:
     """Points per (metric, linked dataset) in logging order: sorted by
     timestamp, stably, so points logged in one millisecond keep file order --
@@ -362,7 +348,7 @@ def _code(tags: dict[str, str]) -> dict:
     return {
         "git_sha": sha,
         "dirty": None,
-        "repo": strip_credentials(tags.get(GIT_REPO)),
+        "repo": schema.strip_credentials(repo) if (repo := tags.get(GIT_REPO)) else None,
         "version": None,
         "provenance": "inferred" if sha else "unknown",
         "evidence": f"MLflow tag {GIT_COMMIT}: HEAD of the source's checkout at run start; "
@@ -370,14 +356,6 @@ def _code(tags: dict[str, str]) -> dict:
         if sha
         else None,
     }
-
-
-def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _data(found: MlflowFound) -> list[dict]:
@@ -390,7 +368,9 @@ def _data(found: MlflowFound) -> list[dict]:
         entries.append({"name": name, "sha256": None, "role": role})
     entries.sort(key=lambda d: d["name"])
     for rel, path in sorted(found.artifacts):
-        entries.append({"name": f"artifacts/{rel}", "sha256": _sha256(path), "role": "output"})
+        entries.append(
+            {"name": f"artifacts/{rel}", "sha256": schema.sha256_file(path), "role": "output"}
+        )
     return entries
 
 
@@ -467,7 +447,6 @@ __all__ = [
     "MlflowFound",
     "LoggedPoint",
     "mlflow_runs",
-    "strip_credentials",
     "timestamp_ms",
     "to_core_record",
 ]
