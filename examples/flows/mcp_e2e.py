@@ -107,6 +107,8 @@ CALLS: list[tuple[str, dict, str]] = [
     ("runs.list", {"project": "speech-distill", "family": "kdsweep"}, "ok"),
     ("runs.compare", {"family": "kdsweep", "metric": "wer"}, "ok"),
     ("runs.detail", {"project": "speech-distill", "name": "kdsweep_t4"}, "ok"),
+    # Read-only: the committed workspace holds no state.json, so "0 in flight".
+    ("runs.status", {"root": "$WORKSPACE"}, "ok"),
     ("runs.claims_coverage", {"path": "$FINDINGS"}, "ok"),
     ("runs.claims_check", {"path": "$FINDINGS"}, "ok"),
     ("runs.ask", {"question": "which arm of kdsweep won?", "family": "kdsweep"}, "ok"),

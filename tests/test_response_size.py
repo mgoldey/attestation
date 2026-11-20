@@ -635,6 +635,9 @@ def test_every_tool_is_either_budgeted_or_declared_a_composition_tool():
         # Bounded in tests/test_support.py: MAX_SUPPORT_ROWS rows at every
         # field cap SupportResult.to_row applies.
         "cite.support",
+        # Bounded in tests/test_inflight.py: MAX_STATUS_ROWS rows at every
+        # field cap mcp/run_status.py applies, as emitted.
+        "runs.status",
     }
     # Routers bound their own answers via _summarise's label cap.
     routers = {n for n in names if n.endswith(".ask") or n.endswith(".tools")}

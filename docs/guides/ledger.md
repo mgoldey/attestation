@@ -16,6 +16,7 @@ derivable.
 export RESEARCH_ROOT=~/projects
 uv run attest runs scan                    # read runs from artifacts on disk
 uv run attest runs list                    # what exists, and what groups into families
+uv run attest runs status                  # what is in flight now (read from state.json)
 uv run attest runs compare <family>        # rank the arms of a sweep
 uv run attest runs show <project> <name>   # one run, with its source path
 ```
@@ -179,6 +180,26 @@ Links are made by digest only; a name match only diagnoses (`BROKEN
 [dataset-digest-mismatch]`: the run trained on a version that is not here).
 It reads files, not the ledger database, and exits 1 on a broken link.
 Design: `docs/superpowers/specs/2026-11-19-dataset-records-design.md`.
+
+### What is running now
+
+The ledger holds runs that ended. A job between submission and its record
+has only `attestation/state.json` (written by whatever ran it, through
+`attestation_schema.state`), and `attest runs status` reads those:
+
+```bash
+attest runs status                        # every project under $RESEARCH_ROOT
+attest runs status --project p --json     # one project, machine-readable
+```
+
+It lists runs in flight (`submitted`, `running`), a terminal state whose
+record is missing (`unrecorded`), a record whose state was never settled
+(`lagging`: `run.json` wins), and an unreadable `state.json`. A running job
+with no transition and no write to `history.jsonl`, `logs/` or `steps/` for
+`--stale-hours` (default 2) is flagged `STALE` -- evidence to look at, never
+a verdict that it died. Nothing is stored and nothing is written, so in-flight
+runs never reach `runs compare`. The MCP form is `runs.status`.
+Design: `docs/superpowers/specs/2026-11-20-in-flight-run-states-design.md`.
 
 ## Seed replicates
 
