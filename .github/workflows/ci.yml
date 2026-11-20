@@ -243,8 +243,10 @@ jobs:
   schema-integrations:
     # The training-loop callbacks (attestation_schema.integrations) on real,
     # tiny CPU training runs, against the installed wheel with its [hf] and
-    # [lightning] extras, on the package's 3.11 floor. A job of its own, not
-    # part of the bare 3.11 job, whose evidence is that the package works with
+    # [lightning] extras, on the package's 3.11 floor -- and the [mlflow]
+    # run-context provider on a real local MLflow file store, discovered
+    # through the wheel's entry point (2026-11-20-mlflow-plugin-design.md).
+    # A job of its own, not part of the bare 3.11 job, whose evidence is that the package works with
     # NOTHING installed (the framework tests skip there, which is itself the check
     # that the core never imports a framework). Not in gates either: torch
     # from PyPI pulls ~2.5 GB of CUDA wheels into each of four matrix cells.
@@ -270,7 +272,7 @@ jobs:
           uv pip install --python /tmp/schema-int/bin/python torch \
             --index-url https://download.pytorch.org/whl/cpu
           uv pip install --python /tmp/schema-int/bin/python \
-            "$(ls dist-schema/*.whl)[hf,lightning,conformance]"
+            "$(ls dist-schema/*.whl)[hf,lightning,mlflow,conformance]"
 
       - name: Callback tests on real training runs (a skip is a failure here)
         env:
@@ -280,4 +282,5 @@ jobs:
           /tmp/schema-int/bin/python -c "import sys; assert sys.version_info[:2] == (3, 11), sys.version"
           /tmp/schema-int/bin/python -m pytest -q -rs -p no:cacheprovider -c /dev/null --rootdir . \
             tests/test_integrations_core.py tests/test_integrations_hf.py \
-            tests/test_integrations_lightning.py
+            tests/test_integrations_lightning.py tests/test_mlflow_mapping.py \
+            tests/test_integrations_mlflow.py

@@ -74,6 +74,7 @@ nav:
   - Guides:
       - Use it from an agent: guides/agents.md
       - The experiment ledger: guides/ledger.md
+      - MLflow runs with provenance: guides/mlflow.md
       - Claims and citations: guides/claims-and-citations.md
       - The library dashboard: guides/library-dashboard.md
       - The citation manager: guides/citation-manager.md

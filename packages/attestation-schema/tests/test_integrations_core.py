@@ -27,8 +27,9 @@ INTEGRATIONS = Path(core.__file__).parent
 def test_importing_the_package_imports_no_framework():
     code = (
         "import sys, attestation_schema, attestation_schema.integrations,"
-        " attestation_schema.integrations._core\n"
-        "bad = sorted(m for m in ('torch', 'transformers', 'lightning', 'accelerate')"
+        " attestation_schema.integrations._core,"
+        " attestation_schema.integrations.mlflow_mapping\n"
+        "bad = sorted(m for m in ('torch', 'transformers', 'lightning', 'accelerate', 'mlflow')"
         " if m in sys.modules)\n"
         "assert not bad, bad\n"
     )
@@ -44,8 +45,12 @@ def test_a_missing_framework_names_the_extra():
 
 
 def test_only_the_framework_modules_import_a_framework():
-    frameworks = {"torch", "transformers", "lightning", "accelerate", "pytorch_lightning"}
-    allowed = {"huggingface.py": {"transformers"}, "lightning.py": {"lightning"}}
+    frameworks = {"torch", "transformers", "lightning", "accelerate", "pytorch_lightning", "mlflow"}
+    allowed = {
+        "huggingface.py": {"transformers"},
+        "lightning.py": {"lightning"},
+        "mlflow.py": {"mlflow"},
+    }
     seen = set()
     for path in sorted(INTEGRATIONS.glob("*.py")):
         roots = set()
@@ -56,7 +61,7 @@ def test_only_the_framework_modules_import_a_framework():
                 roots.add(node.module.split(".")[0])
         assert roots & frameworks <= allowed.get(path.name, set()), path.name
         seen |= roots & frameworks
-    assert seen == {"transformers", "lightning"}  # the scan is not vacuous
+    assert seen == {"transformers", "lightning", "mlflow"}  # the scan is not vacuous
 
 
 # ---- dependency identity -----------------------------------------------------------

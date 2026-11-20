@@ -20,6 +20,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCANNED = (ROOT / "src" / "attestation", ROOT / "packages" / "attestation-schema" / "src")
 ADAPTERS_PKG = ROOT / "src" / "attestation" / "ledger_adapters"
+# The producer side's framework integrations: each module plugs into the
+# framework it is named for (a run-context provider must import mlflow and
+# name its entry point group), so it names it. Nothing here is read by the
+# ledger or the claim checker; the boundary this file guards is theirs.
+# Spec: docs/superpowers/specs/2026-11-20-mlflow-plugin-design.md.
+INTEGRATIONS_PKG = (
+    ROOT / "packages" / "attestation-schema" / "src" / "attestation_schema" / "integrations"
+)
+EXEMPT = (ADAPTERS_PKG, INTEGRATIONS_PKG)
 
 TRACKERS = (
     "wandb",
@@ -62,7 +71,7 @@ def _files() -> list[Path]:
         for path in sorted(base.rglob("*")):
             if not path.is_file() or "__pycache__" in path.parts:
                 continue
-            if path.suffix not in _TEXT_SUFFIXES or ADAPTERS_PKG in path.parents:
+            if path.suffix not in _TEXT_SUFFIXES or any(d in path.parents for d in EXEMPT):
                 continue
             rel = path.relative_to(ROOT)
             if any(rel.match(pattern) for pattern in ALLOWLIST):
@@ -78,6 +87,9 @@ def test_scan_is_not_vacuous():
     )
     assert "packages/attestation-schema/src/attestation_schema/record.py" in files
     assert not any(f.startswith("src/attestation/ledger_adapters/") for f in files)
+    assert not any("/attestation_schema/integrations/" in f for f in files)
+    # ...but the rest of the schema package is still scanned.
+    assert "packages/attestation-schema/src/attestation_schema/identity.py" in files
 
 
 def test_no_code_outside_the_adapters_names_a_tracker():

@@ -114,12 +114,16 @@ def test_without_p_the_plugin_is_absent(pytester):
 
 def test_no_pytest11_entry_point_and_pytest_only_as_an_extra():
     project = tomllib.loads((PKG / "pyproject.toml").read_text())["project"]
-    assert "entry-points" not in project and "entry_points" not in project
+    # The one entry point is MLflow's run-context provider (the [mlflow]
+    # extra); the conformance plugin stays opt-in, with no pytest11 group.
+    groups = project.get("entry-points", {})
+    assert "pytest11" not in groups and "entry_points" not in project
+    assert set(groups) <= {"mlflow.run_context_provider"}
     assert project["dependencies"] == []
     assert project["optional-dependencies"]["conformance"] == ["pytest>=7.2"]
     # the other extras are the training callbacks' frameworks, never pytest
     others = {k: v for k, v in project["optional-dependencies"].items() if k != "conformance"}
-    assert set(others) == {"hf", "lightning"}
+    assert set(others) == {"hf", "lightning", "mlflow"}
     assert not any(r.startswith("pytest") for reqs in others.values() for r in reqs)
     installed = [
         ep for ep in metadata.entry_points(group="pytest11") if "attestation_schema" in ep.value

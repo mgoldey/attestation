@@ -267,6 +267,30 @@ At the end of training, on global rank 0 only, each writes a conforming
 refused before training starts. Design:
 `docs/superpowers/specs/2026-11-19-training-callbacks-design.md`.
 
+## MLflow: a run-context provider
+
+```
+pip install "attestation-schema[mlflow]"   # mlflow-skinny (the full mlflow satisfies it)
+```
+
+Nothing to import: MLflow finds `integrations.mlflow:AttestationRunContext`
+through the `mlflow.run_context_provider` entry point and asks it for tags at
+every `mlflow.start_run`. The tags -- `attestation.format`, `.producer`,
+`.code` (the script's checkout at run start, with its dirty bit), and
+`.dependencies` (python and every already-imported key package, by
+`package_identity`) -- are what the run's own process observed, which MLflow
+itself never records. On by default; `ATTESTATION_MLFLOW_TAGS=0` turns it
+off, `ATTESTATION_MLFLOW_PACKAGES=dist[:module],...` names more packages. It
+imports nothing, makes no network call, never raises (a failed probe becomes
+an `attestation.error` tag) and writes only `attestation.*` tags.
+
+`integrations.mlflow_mapping` (stdlib) is the one MLflow -> core record
+mapping: `read_tags(tags)` turns those tags back into `code` and
+`dependencies` (the provenance the identity rule gave at run start, kept),
+and attestation's `attest mlflow sync` and ledger adapter and the example
+exporter all call it. Design:
+`docs/superpowers/specs/2026-11-20-mlflow-plugin-design.md`.
+
 ## Releasing
 
 Tag `schema-v<version>` (the version in this package's `pyproject.toml`, which

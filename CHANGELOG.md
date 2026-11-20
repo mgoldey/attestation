@@ -19,6 +19,22 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Added
 
+- **MLflow runs carry their provenance, and `attest mlflow sync` writes it
+  down (roadmap 35).** attestation-schema's new `[mlflow]` extra adds a
+  run-context provider (`integrations.mlflow`, the one module importing
+  mlflow; entry point `mlflow.run_context_provider`) that tags every
+  `mlflow.start_run` with the script's git state *including the dirty bit*
+  and the identity of every already-imported key package, observed in the
+  run's process (on by default, `ATTESTATION_MLFLOW_TAGS=0` turns it off;
+  never raises, `attestation.error` says what failed). `attest mlflow sync
+  [--tracking-dir mlruns] [--out mlflow-records] [--force]` writes one
+  conforming core record per ended run from the file store (no mlflow
+  needed), with those tags in `code`/`dependencies` at the provenance the
+  identity rule gave at run time; re-sync is byte-identical, a changed run is
+  refused unless `--force`, and the ledger reads a synced run once, as a
+  native record. The exporter's and the ledger adapter's shared mapping moved
+  into `attestation_schema.integrations.mlflow_mapping`
+  (`2026-11-20-mlflow-plugin-design.md`).
 - **Training callbacks that write core records (attestation-schema
   `attestation_schema.integrations`, roadmap 34).** A Hugging Face `Trainer`
   callback (`[hf]` extra) and a PyTorch Lightning callback (`[lightning]`
