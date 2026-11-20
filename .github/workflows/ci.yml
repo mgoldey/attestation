@@ -1,153 +1,82 @@
 name: CI
 
+# The gates, the pre-commit hooks and the wheel smoke test run through the
+# shared reusable workflows in this directory (reusable-*.yml, roadmap 39:
+# smeltery and ferric call the same files by a pinned commit SHA). A job that
+# calls one shows its check as "<this job's name> / <the called job's name>".
+# Spec: docs/superpowers/specs/2026-11-20-shared-ci-templates-design.md.
+
 on:
   push:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   gates:
     name: gates (${{ matrix.os }}, py${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
-    env:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12", "3.13"]
+    uses: ./.github/workflows/reusable-python-gates.yml
+    with:
+      runs-on: ${{ matrix.os }}
+      python-version: ${{ matrix.python-version }}
       # macos-latest ships a python.org framework build at
       # /Library/Frameworks/Python.framework, and uv picks it over its own
       # managed CPython when the version matches. That build has no
       # sqlite3 loadable-extension support, so sqlite-vec cannot load and
       # db.get_db() dies at conn.enable_load_extension (254 failures on the
       # first CI run, 2026-08-28). uv's managed builds enable it on every OS.
-      UV_PYTHON_PREFERENCE: only-managed
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
+      python-preference: only-managed
+      sync-args: --all-extras --dev
+      # ruff-version empty: the locked ruff (`uv run --no-sync ruff`), the one
+      # the pre-commit hooks run.
+      ty-command: uv run --no-sync ty check src/ packages/attestation-schema/src/
+      lock-check: true
+      checks: |
+        echo "complexity ratchet (radon)"
+        uv run --no-sync python scripts/check_complexity.py
+        echo "bandit (security)"
+        uv run --no-sync bandit -q -c pyproject.toml -r src/attestation --severity-level medium
+        echo "xenon (maintainability)"
+        uv run --no-sync xenon --max-modules B --max-average A src/attestation
+      test-command: uv run --no-sync pytest -q
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Sync dependencies
-        run: uv sync --all-extras --dev
-
-      - name: ruff format --check
-        run: uv run ruff format --check .
-
-      - name: ruff check
-        run: uv run ruff check .
-
-      - name: ty check
-        run: uv run ty check src/ packages/attestation-schema/src/
-
-      - name: uv.lock is in sync with pyproject.toml
-        run: uv lock --check
-
-      - name: complexity ratchet (radon)
-        run: uv run python scripts/check_complexity.py
-
-      - name: bandit (security)
-        run: uv run bandit -q -c pyproject.toml -r src/attestation --severity-level medium
-
-      - name: xenon (maintainability)
-        run: uv run xenon --max-modules B --max-average A src/attestation
-
-      - name: pytest
-        run: uv run pytest -q
+  pre-commit:
+    # The local hooks (.pre-commit-config.yaml) run as-is, so what a
+    # contributor's hooks check and what CI checks cannot drift (gates runs
+    # the same tools as separate steps across the matrix). pytest is skipped:
+    # gates runs the suite in all four cells.
+    name: pre-commit
+    uses: ./.github/workflows/reusable-pre-commit.yml
+    with:
+      python-version: "3.12"
+      python-preference: only-managed
+      sync-args: --all-extras --dev
+      skip: pytest
 
   wheel-smoke:
+    # Both distributions this repo builds, installed with plain pip into fresh
+    # venvs: scripts/wheel_smoke.sh. attestation-schema is not on an index at
+    # the version attestation needs, so the attestation wheel installs with
+    # the schema wheel beside it -- see docs/superpowers/specs/
+    # 2026-11-19-ledger-reads-core-records-design.md, "Dependency".
     name: wheel smoke test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.12"
-
-      - name: Build wheel
-        run: uv build --out-dir dist
-
-      - name: Build the attestation-schema wheel
-        # The second distribution built from this repo (packages/attestation-
-        # schema). attestation depends on it at runtime (the ledger reads core
-        # records) and it is not on an index yet, so the attestation wheel
-        # installs with it beside it -- see docs/superpowers/specs/
-        # 2026-11-19-ledger-reads-core-records-design.md, "Dependency".
-        run: uv build --package attestation-schema --out-dir dist-schema
-
-      - name: Install wheel into a clean venv
-        run: |
-          python3 -m venv /tmp/wheel-venv
-          /tmp/wheel-venv/bin/pip install --quiet dist-schema/*.whl dist/*.whl
-
-      - name: the ledger imports a core record from the installed wheels
-        run: |
-          /tmp/wheel-venv/bin/python -c "
-          import attestation.ledger, attestation.ledger_adapters as a
-          assert [x.name for x in a.ADAPTERS][0] == 'core'
-          print('ledger adapters:', [x.name for x in a.ADAPTERS])
-          "
-
-      - name: attest --help exits 0
-        run: /tmp/wheel-venv/bin/attest --help
-
-      - name: attestation.server imports cleanly
-        run: /tmp/wheel-venv/bin/python -c "import attestation.server"
-
-      - name: feeds.toml is packaged
-        # Regression insurance: the advertised `uvx --from git+... attest ingest`
-        # on-ramp reads attestation/feeds.toml out of the installed package, so
-        # a repackaging that drops it breaks first-run ingest silently.
-        run: |
-          /tmp/wheel-venv/bin/python -c "
-          import importlib.resources as r
-          p = r.files('attestation').joinpath('feeds.toml')
-          assert p.is_file(), 'attestation/feeds.toml missing from installed wheel'
-          print('feeds.toml present in wheel:', p)
-          "
-
-      - name: py.typed is packaged
-        # Same regression insurance as feeds.toml above: a downstream type
-        # checker treats a package with no py.typed as untyped and ignores
-        # its annotations, silently, even though this repo checks them with
-        # `ty` on every commit.
-        run: |
-          /tmp/wheel-venv/bin/python -c "
-          import importlib.resources as r
-          p = r.files('attestation').joinpath('py.typed')
-          assert p.is_file(), 'attestation/py.typed missing from installed wheel'
-          print('py.typed present in wheel:', p)
-          "
-
-      - name: attestation-schema installs alone and round-trips a record
-        run: |
-          python3 -m venv /tmp/schema-venv
-          /tmp/schema-venv/bin/pip install --quiet --no-deps dist-schema/*.whl
-          /tmp/schema-venv/bin/python -c "
-          import dataclasses, importlib.metadata as m, importlib.resources as r, json, tempfile
-          import attestation_schema as s
-          reqs = m.requires('attestation-schema') or []
-          assert all('extra ==' in r for r in reqs), f'attestation-schema must declare no unconditional dependency: {reqs}'
-          assert r.files('attestation_schema').joinpath('py.typed').is_file()
-          schema = json.loads(r.files('attestation_schema').joinpath('schemas/run-1.schema.json').read_text())
-          assert schema['properties']['schema']['const'] == s.SCHEMA
-          rec = s.RunRecord(run_id='smoke', family=None, arm=None, status='complete',
-              started_at=None, finished_at=None, producer=s.Producer('ci', None),
-              code=s.CodeIdentity(None, None, None, None, 'unknown', None), config={}, data=[], metrics=[], history=None,
-              seeds=None, dependencies=None, ext={'x': {'y': 1}})
-          d = tempfile.mkdtemp()
-          curve = [s.Series('loss', None, {}, [s.Point(0, float('nan'), None), s.Point(1, 0.5, None)])]
-          rec = dataclasses.replace(rec, history=s.write_history(d, curve))
-          s.write(rec, d)
-          assert s.read(d) == rec
-          assert s.read_history(d)[0].points[1] == s.Point(1, 0.5, None)
-          assert r.files('attestation_schema').joinpath('schemas/history-1.schema.json').is_file()
-          print('attestation-schema wheel OK:', s.SCHEMA, s.SCHEMA_STATUS)
-          "
+    uses: ./.github/workflows/reusable-wheel-smoke.yml
+    with:
+      build-python-version: "3.12"
+      build-command: |
+        uv build --out-dir dist
+        uv build --package attestation-schema --out-dir dist
+      dist-dir: dist
+      artifact-name: wheels
+      smoke-python-versions: '["3.12"]'
+      smoke-command: bash scripts/wheel_smoke.sh dist
 
   schema-py311:
     # attestation-schema supports Python >= 3.11 (smeltery, a producer, is
@@ -158,10 +87,10 @@ jobs:
     name: attestation-schema on py3.11
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.11"
 
@@ -194,10 +123,10 @@ jobs:
     env:
       UV_PYTHON_PREFERENCE: only-managed
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
 
@@ -217,10 +146,10 @@ jobs:
     env:
       UV_PYTHON_PREFERENCE: only-managed
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
 
@@ -235,7 +164,7 @@ jobs:
         run: uv run --group docs mkdocs build --strict
 
       - name: Upload built site
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: docs-site
           path: site/
@@ -254,10 +183,10 @@ jobs:
     name: attestation-schema training callbacks (py3.11)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.11"
 

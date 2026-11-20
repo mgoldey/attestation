@@ -1,0 +1,168 @@
+# Reusable: the Python gates a uv project runs on every push -- uv sync, ruff
+# format --check, ruff check, an optional type check, uv.lock in sync, then the
+# caller's own checks and tests. One cell of a matrix: the CALLER owns the
+# matrix (os x python), because the cells differ per repository.
+#
+# Shared by attestation, smeltery and ferric (roadmap 39). Called from another
+# repository by a pinned commit SHA:
+#
+#   uses: mgoldey/attestation/.github/workflows/reusable-python-gates.yml@<40-hex sha>
+#
+# Every input is a value or a shell snippet the CALLER supplies; checkout here
+# checks out the CALLER's repository (a called workflow runs in the caller's
+# github context), so `scripts/...` paths in a snippet are the caller's.
+# Spec: docs/superpowers/specs/2026-11-20-shared-ci-templates-design.md.
+name: reusable python gates
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        description: "Job name (the check run is '<caller job name> / <this>')."
+        type: string
+        default: gates
+      runs-on:
+        description: "Runner label, e.g. ubuntu-latest or macos-latest."
+        type: string
+        default: ubuntu-latest
+      python-version:
+        description: "Python version uv resolves (setup-uv's UV_PYTHON)."
+        type: string
+        required: true
+      python-preference:
+        description: "UV_PYTHON_PREFERENCE when non-empty (e.g. only-managed: macOS runners ship a python.org build without sqlite loadable extensions)."
+        type: string
+        default: ""
+      fetch-depth:
+        description: "actions/checkout fetch-depth (0 when a VCS-derived version needs tags)."
+        type: number
+        default: 1
+      timeout-minutes:
+        type: number
+        default: 60
+      enable-cache:
+        description: "setup-uv enable-cache: auto, true or false."
+        type: string
+        default: auto
+      pre-sync:
+        description: "Shell run BEFORE uv sync (e.g. a scanner that must not see .venv)."
+        type: string
+        default: ""
+      sync-args:
+        description: "Arguments to `uv sync` (e.g. '--all-extras --dev')."
+        type: string
+        default: ""
+      setup:
+        description: "Shell run after uv sync, before the gates (extra installs)."
+        type: string
+        default: ""
+      ruff-version:
+        description: "Exact ruff to run through uvx (e.g. 0.16.10); empty = the project's locked ruff via `uv run --no-sync ruff`."
+        type: string
+        default: ""
+      ruff-check-blocking:
+        description: "false = ruff check is report-only (output to the step summary, never fails)."
+        type: boolean
+        default: true
+      ty-command:
+        description: "Type-check command; empty skips the step."
+        type: string
+        default: ""
+      ty-blocking:
+        description: "false = the type check is report-only."
+        type: boolean
+        default: true
+      lock-check:
+        description: "Run `uv lock --check`."
+        type: boolean
+        default: true
+      checks:
+        description: "Shell run after the lint gates (repository-specific checks); empty skips."
+        type: string
+        default: ""
+      test-command:
+        description: "Test command, run last; empty skips."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: ${{ inputs.name }}
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      RUFF_VERSION: ${{ inputs.ruff-version }}
+    steps:
+      - name: Python preference
+        if: ${{ inputs.python-preference != '' }}
+        env:
+          PREF: ${{ inputs.python-preference }}
+        run: echo "UV_PYTHON_PREFERENCE=$PREF" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ inputs.python-version }}
+          enable-cache: ${{ inputs.enable-cache }}
+
+      - name: Before sync
+        if: ${{ inputs.pre-sync != '' }}
+        run: ${{ inputs.pre-sync }}
+
+      - name: Sync dependencies
+        env:
+          SYNC_ARGS: ${{ inputs.sync-args }}
+        run: |
+          read -r -a args <<< "$SYNC_ARGS"
+          uv sync "${args[@]}"
+
+      - name: Setup
+        if: ${{ inputs.setup != '' }}
+        run: ${{ inputs.setup }}
+
+      - name: ruff format --check
+        run: |
+          if [ -n "$RUFF_VERSION" ]; then uvx "ruff@$RUFF_VERSION" --version; uvx "ruff@$RUFF_VERSION" format --check .
+          else uv run --no-sync ruff --version; uv run --no-sync ruff format --check .; fi
+
+      - name: ruff check
+        env:
+          BLOCKING: ${{ inputs.ruff-check-blocking }}
+        run: |
+          if [ -n "$RUFF_VERSION" ]; then ruff=(uvx "ruff@$RUFF_VERSION"); else ruff=(uv run --no-sync ruff); fi
+          if [ "$BLOCKING" = true ]; then "${ruff[@]}" check .
+          else
+            echo "## ruff check -- report only" >> "$GITHUB_STEP_SUMMARY"
+            "${ruff[@]}" check . 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || true
+          fi
+
+      - name: type check
+        if: ${{ inputs.ty-command != '' }}
+        env:
+          BLOCKING: ${{ inputs.ty-blocking }}
+          TY: ${{ inputs.ty-command }}
+        run: |
+          if [ "$BLOCKING" = true ]; then bash -ec "$TY"
+          else
+            echo "## type check -- report only" >> "$GITHUB_STEP_SUMMARY"
+            bash -c "$TY" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || true
+          fi
+
+      - name: uv.lock is in sync with pyproject.toml
+        if: ${{ inputs.lock-check }}
+        run: uv lock --check
+
+      - name: Repository checks
+        if: ${{ inputs.checks != '' }}
+        run: ${{ inputs.checks }}
+
+      - name: Tests
+        if: ${{ inputs.test-command != '' }}
+        run: ${{ inputs.test-command }}

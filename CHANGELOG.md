@@ -11,6 +11,17 @@ commit that carries the reasoning rather than repeating it; `git log
 
 ### Changed
 
+- **CI runs through shared reusable workflows** (roadmap 39, stage 1):
+  `.github/workflows/reusable-{python-gates,pre-commit,wheel-smoke}.yml`,
+  `workflow_call`-only with typed inputs, called here by local path and by
+  smeltery and ferric by pinned SHA (stage 2). `gates`, `wheel smoke test` and
+  both release build jobs call them, so their checks now read `<name> /
+  <called job>`; a new `pre-commit` job runs the hooks as-is. Publishing stays
+  in release.yml's top-level jobs (PyPI trusted publishing does not work from
+  a reusable workflow), and the release guard now also checks every built
+  file's version against the tag. Every action is pinned by commit SHA. Spec:
+  docs/superpowers/specs/2026-11-20-shared-ci-templates-design.md.
+
 - **MCP SDK upgraded to mcp 2.3.0 (was 1.28.1).** smeltery's `[mcp]` extra
   needs `mcp>=2.3`, so the two servers could not share one environment; they
   now resolve together. The server is `mcp.server.mcpserver.MCPServer` (2.x's
