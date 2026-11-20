@@ -1,0 +1,268 @@
+{
+  "campaign": "mwe-benzoic-cli",
+  "ferric": {
+    "commit": "b22183b9dbed226e1d2acc5cb6e5194c973b023b",
+    "dirty": false,
+    "provenance": "VERIFIED from ferric.__build__ (stamped at build time)",
+    "source": "ferric.__build__",
+    "version": "0.1.0.dev0"
+  },
+  "host": {
+    "node": "scrubbed",
+    "python": "3.12.12"
+  },
+  "input_digest": "5f7df3db8c7b797ab6931b0b64ca8e201ec07a1792928f0be9bb856efe4f4aa6",
+  "inputs": {
+    "candidates": {
+      "4-Cl": "OC(=O)c1ccc(Cl)cc1",
+      "4-F": "OC(=O)c1ccc(F)cc1",
+      "benzoic": "OC(=O)c1ccccc1"
+    },
+    "cut": {
+      "keep": 1,
+      "z": 2.0
+    },
+    "field": [
+      [
+        1.0,
+        [
+          4.2053468248105865,
+          3.509664065947018,
+          -0.3358405690029567
+        ]
+      ],
+      [
+        1.0,
+        [
+          4.083283396347218,
+          -3.8505445564411658,
+          0.8676611760470799
+        ]
+      ]
+    ],
+    "floor": {
+      "source": "config [cut] floor (explicit; the tier's own is unmeasured)",
+      "value": 0.0
+    },
+    "gates": {
+      "forcefield": false,
+      "posebusters": false,
+      "xtb": false
+    },
+    "parent": "benzoic"
+  },
+  "results": {
+    "calcs": {
+      "file": "calcs.jsonl",
+      "n": 36
+    },
+    "candidate_order": [
+      "benzoic",
+      "4-F",
+      "4-Cl"
+    ],
+    "config": {
+      "file": "config.toml",
+      "inputs": {},
+      "sha256": "412f5bda7e352aa7fde38e36ab29e62f8ba115f7532d5542fe49468466adc3f3"
+    },
+    "cut": {
+      "groups": [
+        [
+          "4-F"
+        ],
+        [
+          "4-Cl"
+        ]
+      ],
+      "survivors": [
+        "4-F"
+      ],
+      "unranked": false
+    },
+    "field": [
+      [
+        1.0,
+        4.2053468248105865,
+        3.509664065947018,
+        -0.3358405690029567
+      ],
+      [
+        1.0,
+        4.083283396347218,
+        -3.8505445564411658,
+        0.8676611760470799
+      ]
+    ],
+    "funnel": [
+      {
+        "candidates_in": 3,
+        "candidates_out": 3,
+        "kind": "pair",
+        "stage": "poses"
+      },
+      {
+        "candidates_in": 3,
+        "candidates_out": 3,
+        "kind": "field",
+        "stage": "pocket"
+      },
+      {
+        "candidates_in": 3,
+        "candidates_out": 3,
+        "kind": "gate",
+        "stage": "parity"
+      },
+      {
+        "candidates_in": 3,
+        "candidates_out": 3,
+        "kind": "measure",
+        "seconds": 174.01283844299996,
+        "stage": "field_interaction"
+      },
+      {
+        "candidates_in": 2,
+        "candidates_out": 1,
+        "kind": "rank",
+        "stage": "cut",
+        "unranked": false
+      }
+    ],
+    "paired_ddE": {
+      "4-Cl": {
+        "mean": 5.024262713697875,
+        "n": 6,
+        "per_pose": [
+          4.758402910006593,
+          5.430192559836144,
+          4.794915943229688,
+          4.870389009105816,
+          5.381612795283875,
+          4.910063064725136
+        ],
+        "sem": 0.12281126087465738
+      },
+      "4-F": {
+        "mean": 1.809669874177705,
+        "n": 6,
+        "per_pose": [
+          1.71125853090372,
+          1.75570625436578,
+          1.8183185452450523,
+          1.576607372478577,
+          2.029779847720828,
+          1.9663486943522734
+        ],
+        "sem": 0.0683096984578648
+      }
+    },
+    "per_pose": {
+      "4-Cl": {
+        "dE_int": [
+          -10.201603346778601,
+          -8.771595759937478,
+          -6.936872285974902,
+          -13.215667636981715,
+          -9.411552561480805,
+          -10.597002316743007
+        ]
+      },
+      "4-F": {
+        "dE_int": [
+          -13.248747725881474,
+          -12.446082065407841,
+          -9.913469683959537,
+          -16.509449273608954,
+          -12.763385509043852,
+          -13.54071668711587
+        ]
+      },
+      "benzoic": {
+        "dE_int": [
+          -14.960006256785194,
+          -14.201788319773621,
+          -11.73178822920459,
+          -18.08605664608753,
+          -14.79316535676468,
+          -15.507065381468143
+        ]
+      }
+    },
+    "poses": {
+      "4-Cl": {
+        "file": "poses/4-Cl.sdf",
+        "n_poses": 6,
+        "sha256": "ac31e3fa4db6c470d11fad2994056af27d3e639184a917d183bca1db16d1b9f5"
+      },
+      "4-F": {
+        "file": "poses/4-F.sdf",
+        "n_poses": 6,
+        "sha256": "94f42be1287608ed6a535a04b11d5e50d2ce968dfcb10c9185ae9bb49ac5e682"
+      },
+      "benzoic": {
+        "file": "poses/benzoic.sdf",
+        "n_poses": 6,
+        "sha256": "4719e955732dc77c41da331042cae618f775725fbdcc658026a42c54269d0235"
+      }
+    },
+    "receptor": null,
+    "stages": [
+      {
+        "candidates_in": 3,
+        "candidates_out": 3,
+        "kind": "pair",
+        "seconds": 0.1432881640002961,
+        "stage": "poses",
+        "summary": "paired poses: 6 per candidate, 3 candidates"
+      },
+      {
+        "candidates_in": 3,
+        "candidates_out": 3,
+        "kind": "field",
+        "seconds": 8.238000009441748e-05,
+        "stage": "pocket",
+        "summary": "pocket: 2 point charge(s) placed from benzoic pose 0"
+      }
+    ],
+    "units": {
+      "dE_int": "kcal/mol"
+    },
+    "unpaired_sem": {
+      "4-Cl": 1.195935127086078,
+      "4-F": 1.2053694489813693
+    }
+  },
+  "smeltery": {
+    "commit": "331b72abf7126c0212d8951085e03a196d0d8b37",
+    "dirty": true,
+    "provenance": "INFERRED from the local source directory's current git state",
+    "source": "file:///scrubbed/qc/smeltery",
+    "version": "0.0.2.dev383+gae20ca8ef.d20261104"
+  },
+  "smeltery_version": "0.0.2.dev383+gae20ca8ef.d20261104",
+  "started_utc": "2026-11-05T00:42:37Z",
+  "tiers": [
+    {
+      "analogue_poses_given": false,
+      "jitter_ang": 0.5,
+      "jitter_deg": 15.0,
+      "mcs_timeout_s": 10,
+      "min_core_heavy": 3,
+      "n_poses": 6,
+      "name": "paired_poses",
+      "parent_poses_given": false,
+      "relax_unmapped": false,
+      "seed": 20261005
+    },
+    {
+      "basis": "sto-3g",
+      "density_conv": 1e-08,
+      "energy_conv": 1e-10,
+      "engine": "ferric",
+      "field": null,
+      "max_iter": null,
+      "method": "RHF",
+      "name": "field_interaction"
+    }
+  ]
+}

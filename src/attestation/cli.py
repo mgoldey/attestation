@@ -1079,6 +1079,9 @@ def cmd_claims(args: argparse.Namespace) -> int:
             continue
         where = f"{Path(v.claim.path).name}:{v.claim.line}"
         print(f"  {v.verdict:13s} {where:28s} {v.claim.metric}={v.claim.value:g}  {v.message}")
+        # Beside the verdict, never instead of it: the exit status ignores them.
+        for caveat in v.caveats:
+            print(f"  {'':13s} caveat: {caveat}")
 
     if not out["claims"]:
         print(f"no claims found under {target}")
@@ -1469,6 +1472,8 @@ def cmd_runs_show(args: argparse.Namespace) -> int:
             return 1
         print(f"{found['project']}/{found['name']}  [{found['status']}]")
         print(f"source: {found['source_path']}")
+        if found.get("provenance"):
+            print(f"provenance: {'; '.join(found['provenance'])}")
         if found.get("notes"):
             print(f"\n{found['notes']}\n")
         for m in found["metrics"]:

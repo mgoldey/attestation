@@ -582,3 +582,65 @@ def test_find_claims_skips_hidden_dirs_below_the_root_not_above_it(tmp_path):
 
     assert [(c.project, c.run) for c in found] == [("proj", "run")]
     assert problems == []
+
+
+def test_a_claim_metric_matches_a_core_record_name_case_insensitively(tmp_path):
+    """The parser lowercases a claim's metric (the legacy readers store keys
+    lowercased) while a core record keeps `paired_ddE.mean` as written; every
+    claim on such a metric read `unsupported`. Two metrics differing only in
+    case are two candidate rows: ambiguous, never a silent pick
+    (smeltery-adapter spec, Decision 5)."""
+    import attestation_schema as schema
+
+    def metric(name, value):
+        return {
+            "name": name,
+            "value": value,
+            "direction": None,
+            "step": None,
+            "split": None,
+            "unit": None,
+            "labels": {},
+        }
+
+    def record(run_id, metrics):
+        return schema.from_dict(
+            {
+                "schema": schema.SCHEMA,
+                "run_id": run_id,
+                "family": "f",
+                "arm": None,
+                "status": "complete",
+                "started_at": None,
+                "finished_at": None,
+                "producer": {"name": "test", "version": None},
+                "code": {
+                    "git_sha": None,
+                    "dirty": None,
+                    "repo": None,
+                    "version": None,
+                    "provenance": "unknown",
+                    "evidence": None,
+                },
+                "config": {},
+                "data": [],
+                "metrics": metrics,
+                "history": None,
+                "seeds": None,
+                "dependencies": None,
+                "ext": {},
+            }
+        )
+
+    ws = tmp_path / "ws"
+    schema.write(record("one", [metric("ddE", 1.5)]), ws / "p" / "runs" / "one")
+    schema.write(record("two", [metric("ddE", 1.5), metric("dde", 9.0)]), ws / "p" / "runs" / "two")
+    conn = get_db(tmp_path / "c.db")
+    try:
+        ledger.scan(conn, ws)
+        one = claims.check_claim(conn, claims.Claim("d.md", 1, "p", "one", "dde", 1.5, 0.01))
+        two = claims.check_claim(conn, claims.Claim("d.md", 1, "p", "two", "dde", 1.5, 0.01))
+    finally:
+        conn.close()
+    assert one.verdict == "supported"
+    assert two.verdict == "ambiguous"

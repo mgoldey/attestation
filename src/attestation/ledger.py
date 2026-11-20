@@ -36,6 +36,7 @@ from pathlib import Path
 from attestation_schema import spell_value
 
 from attestation import compute, paths, replicates
+from attestation.run_identity import provenance_caveats, provenance_findings
 
 
 def workspace_root(explicit: str | None = None) -> Path | None:
@@ -246,6 +247,10 @@ class Row:
     # wrong with this one run -- both data the record carried.
     caveats: list[str] = field(default_factory=list)
     run_caveats: list[str] = field(default_factory=list)
+    # What a NATIVE record leaves unverified about its code and environment
+    # (run_identity.provenance_findings): a caveat wherever the run is shown,
+    # never a verdict. Empty for an importer's record (see row_from_core).
+    provenance: list[str] = field(default_factory=list)
     # The record's `arm` and `seeds`: what pools seed replicates of one
     # configuration into one arm (replicates.group). None = did not say.
     arm: str | None = None
@@ -305,11 +310,16 @@ def row_from_core(project: str, imported) -> Row:
         row.adapter = ext.get("adapter") or row.adapter
         row.caveats = list(ext.get("caveats") or [])
         row.run_caveats = list(ext.get("run_caveats") or []) + row.run_caveats
-    elif record.status is None:
-        row.run_caveats.insert(
-            0,
-            f"{imported.name} has no status: its record does not say whether the run completed",
-        )
+    else:
+        # Native only: an importer's code/dependencies are its converter's
+        # "did not say", the same for every run that reader produces -- a
+        # property of the reader, not of this run (smeltery-adapter spec).
+        row.provenance = provenance_findings(record)
+        if record.status is None:
+            row.run_caveats.insert(
+                0,
+                f"{imported.name} has no status: its record does not say whether the run completed",
+            )
     if record.status in ("failed", "cancelled"):
         # Whatever ext.ledger-import says: its status word replaces the
         # column's, and it once silenced this caveat too (conformance spec,
@@ -568,16 +578,32 @@ def _replace_project(
 def _caveats_json(r: Row) -> str | None:
     """`runs.caveats_json`: the reader's caveats and the run's own, or NULL
     when there are none."""
-    if not (r.caveats or r.run_caveats):
+    if not (r.caveats or r.run_caveats or r.provenance):
         return None
-    return json.dumps({"reader": r.caveats, "run": r.run_caveats})
+    out = {"reader": r.caveats, "run": r.run_caveats}
+    if r.provenance:
+        out["provenance"] = r.provenance
+    return json.dumps(out)
 
 
 def _stored_caveats(value: str | None) -> dict:
     """`runs.caveats_json` read back; NULL (none, or scanned before
     migration 015) reads as no caveats."""
     stored = json.loads(value) if value else {}
-    return {"reader": stored.get("reader") or [], "run": stored.get("run") or []}
+    return {
+        "reader": stored.get("reader") or [],
+        "run": stored.get("run") or [],
+        "provenance": stored.get("provenance") or [],
+    }
+
+
+def caveats_for_run(name: str, caveats_json: str | None) -> list[str]:
+    """What qualifies ONE run's values wherever they are quoted (the claim
+    checker): the run's own caveats, then its provenance caveat. Reader
+    caveats are left out -- they qualify how a whole reader reads, which
+    `runs.detail` and `runs.compare` already say."""
+    stored = _stored_caveats(caveats_json)
+    return stored["run"] + provenance_caveats([(name, stored["provenance"])])
 
 
 def sample_runs(
@@ -742,7 +768,12 @@ def detail(conn: sqlite3.Connection, project: str, name: str) -> dict | None:
     # Empty for an ordinary run; the caveat is attached only when the reader
     # that produced this one has a limitation the number does not show. It
     # is data the run's record carried (ext.ledger-import.caveats).
-    out["caveats"] = _stored_caveats(out.pop("caveats_json", None))["reader"]
+    stored = _stored_caveats(out.pop("caveats_json", None))
+    out["caveats"] = stored["reader"]
+    # What the run's own record leaves unverified about the code and
+    # environment that produced it (run_identity); [] when nothing, or for an
+    # importer's record.
+    out["provenance"] = stored["provenance"]
     return out
 
 
@@ -1347,10 +1378,17 @@ def _corpus_agreement(runs: list[dict], metric: str) -> tuple[str | None, list[s
 
 def _record_caveats(runs: list[dict]) -> list[str]:
     """The caveats the runs' own records carried: each run's own (in run
-    order), then each reader's, ordered by adapter and deduplicated -- one
-    caveat per reader, not one per arm."""
+    order), then what their records leave unverified about code and
+    environment (grouped: one caveat per distinct gap), then each reader's,
+    ordered by adapter and deduplicated -- one caveat per reader, not one per
+    arm."""
     stored = [(r.get("adapter") or "", _stored_caveats(r.get("caveats_json"))) for r in runs]
     out = [c for _, s in stored for c in s["run"]]
+    out.extend(
+        provenance_caveats(
+            [(r["name"], s["provenance"]) for r, (_, s) in zip(runs, stored, strict=True)]
+        )
+    )
     for _, s in sorted(stored, key=lambda pair: pair[0]):
         out.extend(c for c in s["reader"] if c not in out)
     return out

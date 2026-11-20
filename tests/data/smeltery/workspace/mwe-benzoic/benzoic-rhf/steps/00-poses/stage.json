@@ -1,0 +1,18 @@
+{
+  "funnel": {
+    "candidates_in": 3,
+    "candidates_out": 3,
+    "kind": "pair",
+    "stage": "poses"
+  },
+  "log": [
+    {
+      "candidates_in": 3,
+      "candidates_out": 3,
+      "kind": "pair",
+      "seconds": 0.1432881640002961,
+      "stage": "poses",
+      "summary": "paired poses: 6 per candidate, 3 candidates"
+    }
+  ]
+}

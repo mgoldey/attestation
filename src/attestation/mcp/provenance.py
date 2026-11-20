@@ -196,6 +196,9 @@ def register(mcp) -> None:
         That header is often where the hypothesis and the single changed variable
         are written down. It is stored verbatim and never interpreted.
 
+        `provenance` lists what the run's own record leaves unverified about the
+        code and environment that produced it -- a caveat, never a verdict.
+
         """
         return _detail(project, name)
 

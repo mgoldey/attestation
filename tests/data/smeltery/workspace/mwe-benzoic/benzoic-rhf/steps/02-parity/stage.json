@@ -1,0 +1,9 @@
+{
+  "funnel": {
+    "candidates_in": 3,
+    "candidates_out": 3,
+    "kind": "gate",
+    "stage": "parity"
+  },
+  "log": []
+}

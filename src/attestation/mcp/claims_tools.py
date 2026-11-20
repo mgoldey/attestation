@@ -94,6 +94,10 @@ def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
             "cite": v.claim.cite,
             "message": v.message,
             "source_path": v.source_path,
+            # On every row (empty when none) so the shape does not change
+            # between verdicts. They qualify the matched run's value; they
+            # never change the verdict.
+            "caveats": v.caveats,
         }
         for v in out["verdicts"]
         if verdict is None or v.verdict == verdict

@@ -1,0 +1,10 @@
+{
+  "funnel": {
+    "candidates_in": 3,
+    "candidates_out": 3,
+    "kind": "measure",
+    "seconds": 83.34696676000021,
+    "stage": "field_dft_interaction"
+  },
+  "log": []
+}

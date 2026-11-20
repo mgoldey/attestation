@@ -1,0 +1,18 @@
+{
+  "funnel": {
+    "candidates_in": 3,
+    "candidates_out": 3,
+    "kind": "field",
+    "stage": "pocket"
+  },
+  "log": [
+    {
+      "candidates_in": 3,
+      "candidates_out": 3,
+      "kind": "field",
+      "seconds": 8.238000009441748e-05,
+      "stage": "pocket",
+      "summary": "pocket: 2 point charge(s) placed from benzoic pose 0"
+    }
+  ]
+}
