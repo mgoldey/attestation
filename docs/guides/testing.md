@@ -19,20 +19,31 @@ README under each path is asserted, not just written. CI's `flows` job runs
 
 ## CI jobs
 
-Four jobs run on every push and pull request (`.github/workflows/ci.yml`):
+These jobs run on every push and pull request (`.github/workflows/ci.yml`).
+The first three call the shared reusable workflows in the same directory
+(`reusable-python-gates.yml`, `reusable-pre-commit.yml`,
+`reusable-wheel-smoke.yml`), which smeltery and ferric call too by a pinned
+commit SHA, so their checks read `<job> / <called job>`
+([design](../superpowers/specs/2026-11-20-shared-ci-templates-design.md)):
 
 - **`gates`** — the full local gate set (`ruff format --check`, `ruff check`,
   `ty check`, `uv.lock` sync, the complexity ratchet, `bandit`, `xenon`,
   `pytest`) on Linux and macOS, across Python 3.12 and 3.13.
-- **`wheel-smoke`** — builds the wheel, installs it into a clean venv, and
-  checks `attest --help` exits 0, the package imports cleanly, and
-  `feeds.toml`/`py.typed` are actually packaged.
+- **`pre-commit`** — `.pre-commit-config.yaml`'s hooks as-is (`SKIP=pytest`:
+  gates runs the suite), so the local hooks and CI cannot drift.
+- **`wheel-smoke`** — builds both wheels the release way, installs them into
+  clean venvs, and runs `scripts/wheel_smoke.sh`: `attest --help` exits 0,
+  the package imports cleanly, `feeds.toml`/`py.typed` are packaged, and the
+  attestation-schema wheel installs alone and round-trips a record.
 - **`flows`** — every example flow in `examples/flows/` against the stub
   model server (`--offline`), so the golden paths that need no live LLM are
   checked end to end on every push.
 - **`docs`** — `mkdocs build --strict` with the `docs` dependency group
   installed (the `gates` job does not install it), and uploads the built
   site as an artifact.
+- **`schema-py311`** and **`schema-integrations`** — the attestation-schema
+  wheel's own tests on its 3.11 floor, bare and with the training-callback
+  extras.
 
 A fifth workflow, `docs` (`.github/workflows/docs.yml`), runs only on a
 push to `main`: the same strict build, then a deploy to GitHub Pages at

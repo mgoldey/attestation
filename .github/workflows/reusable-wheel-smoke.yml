@@ -1,0 +1,238 @@
+# Reusable: build the distributions the release way, upload them as ONE
+# artifact, then install them into a fresh environment and run the caller's
+# smoke command -- per Python version and, optionally, per cell of a matrix the
+# BUILT ARTIFACT computes (smeltery: one cell per extra its wheel declares).
+#
+# The same workflow is the build half of a release: give it `tag-prefix` and
+# every file in dist-dir must carry the version the tag names (and, with
+# `version-file`, the static version in that pyproject.toml too). It NEVER
+# publishes: PyPI trusted publishing does not work from a reusable workflow
+# (docs.pypi.org/trusted-publishers/troubleshooting/, "Reusable workflows on
+# GitHub"; pypa/gh-action-pypi-publish README), so the caller keeps a
+# top-level publish job that downloads `artifact-name` and calls
+# pypa/gh-action-pypi-publish itself.
+#
+# Called from another repository by a pinned commit SHA:
+#
+#   uses: mgoldey/attestation/.github/workflows/reusable-wheel-smoke.yml@<40-hex sha>
+#
+# Spec: docs/superpowers/specs/2026-11-20-shared-ci-templates-design.md.
+name: reusable wheel smoke
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        type: string
+        default: ubuntu-latest
+      build-python-version:
+        description: "Python the build job uses (setup-python, and setup-uv's UV_PYTHON)."
+        type: string
+        default: "3.12"
+      fetch-depth:
+        description: "0 when the version is derived from tags (hatch-vcs, setuptools-scm)."
+        type: number
+        default: 1
+      node-version:
+        description: "Set up Node.js for the build when non-empty (a UI shipped inside the wheel)."
+        type: string
+        default: ""
+      node-cache-dependency-path:
+        description: "package-lock.json path for the npm cache (with node-version)."
+        type: string
+        default: ""
+      tag-prefix:
+        description: "Release guard: non-empty = every file in dist-dir must be version <tag minus this prefix>, no local segment."
+        type: string
+        default: ""
+      version-file:
+        description: "Release guard: a pyproject.toml whose static [project].version must equal the tag (empty = dynamic version, skipped)."
+        type: string
+        default: ""
+      require-clean-tree:
+        description: "Refuse to build from a working tree with tracked changes."
+        type: boolean
+        default: false
+      pre-build:
+        description: "Shell run before the build (e.g. a dependency-floor check)."
+        type: string
+        default: ""
+      build-command:
+        description: "Builds into dist-dir. `uv build` builds the sdist, then the wheel FROM the sdist."
+        type: string
+        default: uv build --out-dir dist
+      dist-dir:
+        description: "Directory the build writes; uploaded as the artifact and restored at the same path."
+        type: string
+        default: dist
+      twine-check:
+        description: "Run `twine check --strict` on dist-dir."
+        type: boolean
+        default: false
+      artifact-name:
+        type: string
+        default: dist
+      matrix-command:
+        description: "Shell printing a JSON list of smoke cells, run after the build (sees dist-dir); empty = one cell, \"default\"."
+        type: string
+        default: ""
+      smoke-python-versions:
+        description: "JSON list of Python versions to smoke-test on."
+        type: string
+        default: '["3.12"]'
+      smoke-command:
+        description: "Shell run per cell, from a checkout with dist-dir restored. $SMOKE_CELL is the cell."
+        type: string
+        required: true
+      smoke-timeout-minutes:
+        type: number
+        default: 30
+    outputs:
+      artifact-name:
+        description: "The uploaded artifact holding dist-dir."
+        value: ${{ inputs.artifact-name }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 30
+    outputs:
+      cells: ${{ steps.cells.outputs.cells }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ inputs.build-python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ inputs.build-python-version }}
+
+      - name: Tree must be clean
+        if: ${{ inputs.require-clean-tree }}
+        run: |
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            git status --porcelain --untracked-files=no
+            echo "::error::working tree is dirty at build time; refusing to build"
+            exit 1
+          fi
+
+      - name: Tag matches the static version
+        if: ${{ inputs.tag-prefix != '' && inputs.version-file != '' }}
+        env:
+          PREFIX: ${{ inputs.tag-prefix }}
+          VERSION_FILE: ${{ inputs.version-file }}
+        run: |
+          tag="${GITHUB_REF_NAME#"$PREFIX"}"
+          test "$PREFIX$tag" = "$GITHUB_REF_NAME" || { echo "::error::ref $GITHUB_REF_NAME does not start with $PREFIX"; exit 1; }
+          version="$(python3 -c "import sys, tomllib; print(tomllib.load(open(sys.argv[1],'rb'))['project']['version'])" "$VERSION_FILE")"
+          test "$tag" = "$version" || { echo "::error::tag $GITHUB_REF_NAME != $VERSION_FILE version $version" >&2; exit 1; }
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: ${{ inputs.node-version != '' }}
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.node-cache-dependency-path }}
+
+      - name: Before build
+        if: ${{ inputs.pre-build != '' }}
+        run: ${{ inputs.pre-build }}
+
+      - name: Build
+        run: ${{ inputs.build-command }}
+
+      - name: twine check --strict
+        if: ${{ inputs.twine-check }}
+        env:
+          DIST: ${{ inputs.dist-dir }}
+        run: uvx twine check --strict "$DIST"/*
+
+      - name: Every built file carries the tag's version (no local segment)
+        if: ${{ inputs.tag-prefix != '' }}
+        env:
+          PREFIX: ${{ inputs.tag-prefix }}
+          DIST: ${{ inputs.dist-dir }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, sys
+
+          ref, prefix = os.environ["GITHUB_REF_NAME"], os.environ["PREFIX"]
+          if not ref.startswith(prefix):
+              sys.exit(f"ref {ref} does not start with {prefix}")
+          tag = ref[len(prefix):]
+          files = sorted(p for p in pathlib.Path(os.environ["DIST"]).iterdir() if p.is_file())
+          if not files:
+              sys.exit("nothing was built")
+          bad = []
+          for p in files:
+              if p.name.endswith(".whl"):
+                  version = p.name.split("-")[1]
+              elif p.name.endswith(".tar.gz"):
+                  version = p.name[: -len(".tar.gz")].rsplit("-", 1)[1]
+              else:
+                  bad.append(f"{p.name}: neither a wheel nor an sdist")
+                  continue
+              print(f"{p.name} -> {version} (tag {tag})")
+              if "+" in version:
+                  bad.append(f"{p.name}: local version segment {version}")
+              elif version != tag:
+                  bad.append(f"{p.name}: version {version} != tag {tag}")
+          if bad:
+              sys.exit("\n".join(bad))
+          PY
+
+      - id: cells
+        name: Smoke cells
+        env:
+          MATRIX_COMMAND: ${{ inputs.matrix-command }}
+        run: |
+          if [ -n "$MATRIX_COMMAND" ]; then cells="$(bash -ec "$MATRIX_COMMAND")"; else cells='["default"]'; fi
+          python3 -c "import json, sys; v = json.loads(sys.argv[1]); assert isinstance(v, list) and v, v" "$cells"
+          echo "cells=$cells" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.dist-dir }}/
+          if-no-files-found: error
+
+  smoke:
+    name: smoke (py${{ matrix.python-version }}, ${{ matrix.cell }})
+    needs: build
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.smoke-timeout-minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(inputs.smoke-python-versions) }}
+        cell: ${{ fromJSON(needs.build.outputs.cells) }}
+    env:
+      SMOKE_CELL: ${{ matrix.cell }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.dist-dir }}/
+
+      - name: Smoke
+        run: ${{ inputs.smoke-command }}

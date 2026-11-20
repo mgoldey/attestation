@@ -1,0 +1,100 @@
+# Reusable: `pre-commit run --all-files` as CI, so the hooks a contributor runs
+# and the hooks CI runs cannot drift. Two ways to get pre-commit, matching the
+# two shapes the repositories use:
+#
+#   pre-commit-version: ""      -> `uv sync <sync-args>` then the project's own
+#                                  pre-commit (`uv run --no-sync pre-commit`):
+#                                  for `repo: local` hooks that call `uv run`
+#                                  (attestation, smeltery)
+#   pre-commit-version: "4.6.2" -> `uvx pre-commit@4.6.2`, no project install:
+#                                  for hooks from remote repos (ferric)
+#
+# Called from another repository by a pinned commit SHA:
+#
+#   uses: mgoldey/attestation/.github/workflows/reusable-pre-commit.yml@<40-hex sha>
+#
+# Spec: docs/superpowers/specs/2026-11-20-shared-ci-templates-design.md.
+name: reusable pre-commit
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        description: "Job name (the check run is '<caller job name> / <this>')."
+        type: string
+        default: pre-commit
+      runs-on:
+        type: string
+        default: ubuntu-latest
+      python-version:
+        type: string
+        required: true
+      python-preference:
+        description: "UV_PYTHON_PREFERENCE when non-empty."
+        type: string
+        default: ""
+      fetch-depth:
+        type: number
+        default: 1
+      timeout-minutes:
+        type: number
+        default: 30
+      sync-args:
+        description: "Arguments to `uv sync`; used only when pre-commit-version is empty."
+        type: string
+        default: ""
+      pre-commit-version:
+        description: "Exact pre-commit to run through uvx; empty = the project's own after uv sync."
+        type: string
+        default: ""
+      skip:
+        description: "Comma-separated hook ids for pre-commit's SKIP (e.g. a hook another job already runs)."
+        type: string
+        default: ""
+      args:
+        description: "Arguments to pre-commit."
+        type: string
+        default: run --all-files --show-diff-on-failure
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    name: ${{ inputs.name }}
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      SKIP: ${{ inputs.skip }}
+      PRE_COMMIT_VERSION: ${{ inputs.pre-commit-version }}
+    steps:
+      - name: Python preference
+        if: ${{ inputs.python-preference != '' }}
+        env:
+          PREF: ${{ inputs.python-preference }}
+        run: echo "UV_PYTHON_PREFERENCE=$PREF" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Sync dependencies (the project's own pre-commit and hook tools)
+        if: ${{ inputs.pre-commit-version == '' }}
+        env:
+          SYNC_ARGS: ${{ inputs.sync-args }}
+        run: |
+          read -r -a args <<< "$SYNC_ARGS"
+          uv sync "${args[@]}"
+
+      - name: pre-commit
+        env:
+          ARGS: ${{ inputs.args }}
+        run: |
+          read -r -a args <<< "$ARGS"
+          if [ -n "$PRE_COMMIT_VERSION" ]; then uvx "pre-commit@$PRE_COMMIT_VERSION" "${args[@]}"
+          else uv run --no-sync pre-commit "${args[@]}"; fi
