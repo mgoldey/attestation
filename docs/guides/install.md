@@ -66,6 +66,22 @@ found — wires up the MCP server, the skill copy, the reasoning override,
 and the refresh cron job. Re-running it repairs whatever's missing; nothing
 it does is destructive.
 
+With pipx instead of uv, the same commands are `pipx run attestation install`
+and, to keep the tools on your `PATH`, `pipx install attestation` (it installs
+`attest`, `attestation` and `attest-mcp`).
+
+The MCP server alone, the form Claude Code and Claude Desktop spawn, needs no
+`install` step and no model server for the provenance tools:
+
+```bash
+uvx --from git+https://github.com/mgoldey/attestation attest-mcp
+```
+
+PyPI's 0.5.0 lacks `runs.status` and cannot read smeltery's run records, so
+use the git form until 0.5.1 is published, then `uvx --from attestation
+attest-mcp`. Registering it, and smeltery beside it, in Claude Code and Claude
+Desktop is [its own guide](claude.md).
+
 From a local clone:
 
 ```bash

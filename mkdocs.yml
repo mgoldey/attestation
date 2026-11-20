@@ -73,6 +73,7 @@ nav:
   - Install: guides/install.md
   - Guides:
       - Use it from an agent: guides/agents.md
+      - Claude Code and Desktop with smeltery: guides/claude.md
       - The experiment ledger: guides/ledger.md
       - MLflow runs with provenance: guides/mlflow.md
       - Claims and citations: guides/claims-and-citations.md
