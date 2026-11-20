@@ -70,6 +70,7 @@ markdown_extensions:
 nav:
   - Start here: index.md
   - Concepts: concepts.md
+  - The stack (ferric, smeltery, attestation): stack.md
   - Install: guides/install.md
   - Guides:
       - Use it from an agent: guides/agents.md
