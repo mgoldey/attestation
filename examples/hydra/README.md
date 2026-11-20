@@ -11,15 +11,17 @@ breast-cancer set at four learning rates via `@hydra.main`, and Hydra's own
 sweep runner writes each arm's resolved config, overrides, and Hydra's own
 job metadata into `.hydra/` beside the `metrics.json` `train.py` itself
 writes. `attest runs scan` then reads that directory through
-`ledger_adapters/generic.py`'s new `_hydra_runs`, the first convention
-this ledger has for Hydra.
+`ledger_adapters/hydra_store.py` (`_hydra_runs` in `generic.py` until
+2026-11-20), which maps each arm to a core run record: the job name as its
+family, its overrides (`lr=0.01`) as its arm, its whole config, its metrics
+and its output files by sha256.
 
 ## Prerequisites
 
 `none — pure local computation`
 
 `multirun/` is already committed here, so `run.sh` below needs nothing
-installed to read it -- `_hydra_runs` parses `.hydra/config.yaml` and
+installed to read it -- the reader parses `.hydra/config.yaml` and
 `.hydra/hydra.yaml` directly and never imports or shells out to `hydra`.
 Regenerating the fixture is a separate, explicit step -- see *Next*.
 
@@ -57,7 +59,7 @@ winner: train/0
   caveat: some arms report no sample size, so their weight is unknown
   caveat: the top two arms differ by 0.0009921 (0.1%) -- too close to call from these numbers alone
   caveat: each arm is a single run; no seed replication, so this ranking cannot separate configuration from run-to-run variance
-  caveat: read by the hydra adapter: metrics come from whatever JSON/CSV file an arm's directory holds, read as a final value the same way as every other tracker here, not a curve or a best step
+  caveat: read by the hydra adapter: metrics come from whatever JSON/CSV file an arm's directory holds, read as a final value the same way as every other tracker here, not a curve or a best step; Hydra records no outcome and no timing, so status and wall time are not recorded
 ```
 
 `attest runs scan --root .` also prints one diagnostic line worth expecting
@@ -90,7 +92,7 @@ runs under a timestamped directory precisely so two sweeps never collide
 on disk, but a ledger listing `train/2026-08-28/23-45-43/0` beside three
 siblings is the same unreadable-name problem `_wandb_runs` solved by
 dropping W&B's timestamp-and-hash run directory in favour of the program
-name plus a short id. `_hydra_runs` makes the same trade: `<job.name>/<n>`
+name plus a short id. The reader makes the same trade: `<job.name>/<n>`
 is what a human reads, and a second sweep of the same job is not silently
 dropped -- if `<job.name>/<n>` is already taken, the run is re-qualified
 with its time directory (`<job.name>/<time>/<n>`) rather than lost, the
@@ -108,7 +110,7 @@ into `os.getcwd()`") writes into the directory `generate.sh` was run from,
 and all four arms of the sweep overwrote the exact same file -- a real run
 of `--multirun lr=0.01,0.1,1,10` with no override produced one
 `metrics.json`, not four. `generate.sh` passes the override explicitly;
-`_hydra_runs` reads only the layout that override produces, since that is
+The reader reads only the layout that override produces, since that is
 the only layout `--multirun` reliably writes today.
 
 **A nested YAML key needed a small generalisation of `_yaml_scalars`, not
@@ -157,7 +159,7 @@ which does the same thing, checks that version, then scrubs this
 machine's absolute path out of every arm's `.hydra/hydra.yaml`
 (`hydra.runtime.cwd`, `hydra.runtime.output_dir`, and the `conf/` entry in
 `hydra.runtime.config_sources`) and deletes each arm's `train.log` and the
-sweep-level `multirun.yaml`, none of which `_hydra_runs` reads.
+sweep-level `multirun.yaml`, none of which the reader reads.
 
 The catalogue at `examples/README.md` lists the other golden paths, and
 `examples/sacred/` and `examples/dvc/` are the closest siblings to this

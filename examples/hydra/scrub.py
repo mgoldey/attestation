@@ -5,21 +5,21 @@ Run by generate.sh immediately after train.py, never on its own. Hydra
 writes this machine's absolute path into every arm's `.hydra/hydra.yaml` in
 three places: `hydra.runtime.cwd`, `hydra.runtime.output_dir`, and one
 entry of `hydra.runtime.config_sources` (the `conf/` directory, found by
-its `provider: main`) -- none of which `_hydra_runs` in
-ledger_adapters/generic.py reads. `train.log` is deleted outright (empty in
+its `provider: main`) -- none of which the reader in
+ledger_adapters/hydra_store.py reads. `train.log` is deleted outright (empty in
 this fixture, since train.py's own prints go to stdout, not the Hydra job
 logger, but a real project's would carry local timestamps and stack traces
 with no reason to commit them).
 
 Kept verbatim, per the golden-paths brief: `hydra.job.name` (the family
-`_hydra_runs` reads), `hydra.overrides.task` (the sweep override, e.g.
+the reader reads), `hydra.overrides.task` (the sweep override, e.g.
 `lr=0.01` -- also read), and `hydra.sweep.dir` (a template string,
 `multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}`, which never contains a real
 path in the first place).
 
 `multirun.yaml`, written once per sweep (not once per arm) beside the
 numbered arm directories, duplicates the same `hydra.runtime.cwd`/
-`config_sources` paths and is never read by `_hydra_runs` -- deleted
+`config_sources` paths and is never read by the reader -- deleted
 outright rather than scrubbed, the same call generate.py made for
 Sacred's `cout.txt` and `_sources/`.
 """

@@ -243,12 +243,14 @@ def test_an_importer_claims_completion_only_when_it_observed_it():
     artifact rarely shows how its run ended, and a spec shows no run at all,
     so the importer writes status null -- never a claimed `complete` -- and
     keeps the ledger's own word in ext. Sacred's reader keeps only runs Sacred
-    marked COMPLETED, so it alone says `complete`."""
+    marked COMPLETED, and W&B's reads the exit record the run's own log holds
+    (roadmap 16): those two alone say `complete`."""
     statuses = {}
     for example in ("wandb", "sacred", "dvc", "hydra", "workspace/speech-distill"):
         for imp in import_project(ROOT / "examples" / example).imported:
             statuses.setdefault(imp.adapter, set()).add(imp.record.status)
     assert statuses.pop("sacred") == {"complete"}
+    assert statuses.pop("wandb") == {"complete"}
     assert statuses and all(s == {None} for s in statuses.values()), statuses
     words = {
         imp.record.ext[IMPORT_NAMESPACE]["status"]

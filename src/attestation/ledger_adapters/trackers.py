@@ -9,7 +9,6 @@ what is new is `found_to_core`, the one place a `Found` becomes an
 `ledger.py` and now travel inside each record as data.
 """
 
-import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,23 +18,24 @@ from typing import Any
 import attestation_schema as schema
 
 from attestation import replicates
-from attestation.ledger_adapters import generic, mlflow_store
+from attestation.ledger_adapters import generic, hydra_store, mlflow_store, wandb_store
 from attestation.ledger_adapters.found import IMPORT_NAMESPACE, Found
+from attestation.ledger_adapters.found import core_metrics as _metrics
+from attestation.ledger_adapters.found import json_safe as _json_safe
 
 # What each reader cannot do, stated where a reader of the run will see it.
-# Moved verbatim from `ledger.ADAPTER_CAVEATS`: a wandb-derived run looked
-# identical in `runs.list` and `runs.detail` to a hand-written JSON one, so
-# the reader had no way to know that the number in front of them is the
-# FINAL logged value rather than the best step, or that an offline W&B run
-# carries no metrics at all in files/ until it is synced (see
-# generic._wandb_runs). The generic reader has none: a caveat on every run
-# is boilerplate, and boilerplate trains a reader to skip the ones that matter.
+# Each says what its reader cannot do, where a reader of the run will see
+# it: a tracker-derived run looked identical in `runs.list` and `runs.detail`
+# to a hand-written JSON one, so the reader had no way to know the number in
+# front of them is a FINAL value rather than the best step. The generic
+# reader has none: a caveat on every run is boilerplate, and boilerplate
+# trains a reader to skip the ones that matter.
 WANDB_CAVEAT = (
-    "read by the wandb adapter: values come from wandb-summary.json, which"
-    " holds each metric's final logged value rather than its curve or its"
-    " best step. Offline W&B does not write that file until a run is"
-    " synced -- see examples/wandb/generate.py for how the committed"
-    " fixture's was materialised without a network call"
+    "read by the wandb adapter: each metric is the run's final summary value (by"
+    " default the last value logged), not the best step; the curve is in the"
+    " run's core record (history), not in the ledger. Read from the run's"
+    " .wandb log; a run without one is read from files/ and has no status or"
+    " curve"
 )
 MLFLOW_CAVEAT = (
     "read by the mlflow adapter: each metric is MLflow's own latest value"
@@ -54,7 +54,8 @@ DVC_CAVEAT = (
 HYDRA_CAVEAT = (
     "read by the hydra adapter: metrics come from whatever JSON/CSV file"
     " an arm's directory holds, read as a final value the same way as"
-    " every other tracker here, not a curve or a best step"
+    " every other tracker here, not a curve or a best step; Hydra records"
+    " no outcome and no timing, so status and wall time are not recorded"
 )
 
 _UNKNOWN_CODE = {
@@ -92,25 +93,6 @@ def _started_at(text: str | None, assume_utc: bool) -> str | None:
     return schema.format_timestamp(when)
 
 
-def _json_safe(value: Any, path: str = "", lossy: list[str] | None = None) -> Any:
-    """`value` as JSON the record accepts: a non-finite float becomes its
-    string (the rule `generic._coerce` already applies to YAML config -- a
-    CSV cell `nan` is otherwise the one way a NaN reaches a config). Each
-    such path is appended to `lossy`, so the change is a caveat, not silent."""
-    if isinstance(value, float) and not math.isfinite(value):
-        if lossy is not None:
-            lossy.append(path or "(value)")
-        return str(value)
-    if isinstance(value, dict):
-        return {
-            str(k): _json_safe(v, f"{path}.{k}" if path else str(k), lossy)
-            for k, v in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(v, f"{path}[{i}]", lossy) for i, v in enumerate(value)]
-    return value
-
-
 def _lossy_caveats(
     found: Found, lossy: list[str], dropped: list[str], started: str | None
 ) -> list[str]:
@@ -128,35 +110,6 @@ def _lossy_caveats(
         )
     if found.started and started is None:
         out.append(f"{found.name}: start time {found.started!r} not recorded (no UTC instant)")
-    return out
-
-
-def _metrics(found: Found, dropped: list[str] | None = None) -> list[dict]:
-    """The core metric list. Duplicates on (name, step, split) keep the first,
-    which is what the ledger's insert loop always did (each dropped one is
-    appended to `dropped`); direction is never inferred, a legacy reader knows
-    no label, and a unit only where the reader set one (wall time,
-    `timing.add_wall`)."""
-    out: list[dict] = []
-    seen: set[tuple] = set()
-    for m in found.metrics:
-        key = (m.metric, m.step, m.split or None)
-        if key in seen:
-            if dropped is not None:
-                dropped.append(f"{m.metric}={m.value!r}")
-            continue
-        seen.add(key)
-        out.append(
-            {
-                "name": m.metric,
-                "value": m.value,
-                "direction": None,
-                "step": m.step,
-                "split": m.split or None,
-                "unit": m.unit,
-                "labels": {},
-            }
-        )
     return out
 
 
@@ -300,41 +253,52 @@ def _has_dir(name: str) -> Callable[[Path], bool]:
 
 
 GENERIC = TrackerAdapter(generic.ADAPTER_NAME, generic.plain_runs, generic.has_plain_layout)
-WANDB = TrackerAdapter(
-    "wandb",
-    generic._wandb_runs,
-    _has_dir("wandb"),
-    WANDB_CAVEAT,
-    started_is_utc=True,
-    run_id_suffix=True,
-)
 
 
 @dataclass(frozen=True)
-class MlflowAdapter(TrackerAdapter):
-    """The MLflow reader maps the whole run itself (`mlflow_store`: curves,
-    status, code, artifacts, datasets), so its record is not built by
-    `found_to_core`; name, marker, registry order and the run-id suffix are a
-    `TrackerAdapter`'s. Spec: 2026-11-20-mlflow-adapter-design.md."""
+class StoreAdapter(TrackerAdapter):
+    """A tracker whose reader maps the whole run itself (`*_store`: status,
+    curves, code, outputs), so its record is not built by `found_to_core`;
+    name, marker, registry order and the run-id suffix are a
+    `TrackerAdapter`'s. `store` is the module with `to_core_record`, `kind`
+    the `Found` subclass its reader returns. Specs:
+    2026-11-20-mlflow-adapter-design.md, 2026-11-20-wandb-hydra-adapters-design.md."""
+
+    store: Any = None
+    kind: type = Found
 
     def to_core_record(self, found: Found) -> schema.RunRecord:
-        """`mlflow_store.to_core_record`, with this adapter's caveat and the
+        """The store's `to_core_record`, with this adapter's caveat and the
         ledger-wide `<config>_seed<N>` arm (`replicate_of`)."""
-        if not isinstance(found, mlflow_store.MlflowFound):
-            raise TypeError(f"the mlflow adapter maps its own runs, not {type(found).__name__}")
-        return mlflow_store.to_core_record(
+        if not isinstance(found, self.kind):
+            kind = type(found).__name__
+            raise TypeError(f"the {self.name} adapter maps its own runs, not {kind}")
+        return self.store.to_core_record(
             found,
             caveats=[self.caveat] if self.caveat else [],
             replicate=replicate_of(found.name, run_id_suffix=self.run_id_suffix),
         )
 
 
-MLFLOW = MlflowAdapter(
+WANDB = StoreAdapter(
+    "wandb",
+    wandb_store.wandb_runs,
+    _has_dir(wandb_store.BASE_DIR),
+    WANDB_CAVEAT,
+    run_id_suffix=True,
+    store=wandb_store,
+    kind=wandb_store.WandbFound,
+)
+
+
+MLFLOW = StoreAdapter(
     "mlflow",
     mlflow_store.mlflow_runs,
     _has_dir(mlflow_store.STORE_DIR),
     MLFLOW_CAVEAT,
     run_id_suffix=True,
+    store=mlflow_store,
+    kind=mlflow_store.MlflowFound,
 )
 SACRED = TrackerAdapter(
     "sacred",
@@ -351,7 +315,14 @@ DVC = TrackerAdapter(
     DVC_CAVEAT,
     notes_are_caveats=True,
 )
-HYDRA = TrackerAdapter("hydra", generic._hydra_runs, _has_dir("multirun"), HYDRA_CAVEAT)
+HYDRA = StoreAdapter(
+    "hydra",
+    hydra_store.hydra_runs,
+    _has_dir(hydra_store.BASE_DIR),
+    HYDRA_CAVEAT,
+    store=hydra_store,
+    kind=hydra_store.HydraFound,
+)
 
 # The old `generic.discover` order: plain results and configs first (a
 # measurement outranks a spec of the same name), then each tracker.

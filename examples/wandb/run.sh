@@ -6,4 +6,4 @@ cd "$(dirname "$0")"
 export ATTEST_DB="$(mktemp -d)/attest.db"
 uv run attest runs scan --root .
 uv run attest runs list
-uv run attest runs compare generate --metric auc
+uv run attest runs compare flows --metric auc

@@ -6,7 +6,13 @@ shape -- they were the readers' -- and since the ledger now reads only
 `trackers.found_to_core` is the one place a `Found` becomes a core record.
 """
 
+import math
+import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
+
+import attestation_schema as schema
 
 
 @dataclass
@@ -53,3 +59,63 @@ class Found:
 # tracker: `ext.mlflow` already belongs to the MLflow exporter in another
 # shape. Not under `attestation.*`, which the schema reserves.
 IMPORT_NAMESPACE = "ledger-import"
+
+
+def json_safe(value: Any, path: str = "", lossy: list[str] | None = None) -> Any:
+    """`value` as JSON the record accepts: a non-finite float becomes its
+    string (the rule `generic._coerce` already applies to YAML config -- a
+    CSV cell `nan` is otherwise the one way a NaN reaches a config). Each
+    such path is appended to `lossy`, so the change is a caveat, not silent."""
+    if isinstance(value, float) and not math.isfinite(value):
+        if lossy is not None:
+            lossy.append(path or "(value)")
+        return str(value)
+    if isinstance(value, dict):
+        return {
+            str(k): json_safe(v, f"{path}.{k}" if path else str(k), lossy) for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v, f"{path}[{i}]", lossy) for i, v in enumerate(value)]
+    return value
+
+
+def core_metrics(found: Found, dropped: list[str] | None = None) -> list[dict]:
+    """The core metric list. Duplicates on (name, step, split) keep the first,
+    which is what the ledger's insert loop always did (each dropped one is
+    appended to `dropped`); direction is never inferred, a legacy reader knows
+    no label, and a unit only where the reader set one (wall time,
+    `timing.add_wall`)."""
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    for m in found.metrics:
+        key = (m.metric, m.step, m.split or None)
+        if key in seen:
+            if dropped is not None:
+                dropped.append(f"{m.metric}={m.value!r}")
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "name": m.metric,
+                "value": m.value,
+                "direction": None,
+                "step": m.step,
+                "split": m.split or None,
+                "unit": m.unit,
+                "labels": {},
+            }
+        )
+    return out
+
+
+def history_ref(series: Iterable[schema.Series]) -> dict | None:
+    """The reference the record carries for these curves, computed by the
+    schema's own writer (in a directory thrown away after): the sidecar's
+    bytes are a pure function of what the tracker logged, so the digest names
+    bytes anyone can regenerate. The ledger stores no curve (MLflow adapter
+    spec, "Curves"); every adapter that reads a curve shares this."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ref = schema.write_history(tmp, series)
+    if ref is None:
+        return None
+    return {"path": ref.path, "sha256": ref.sha256, "series": ref.series, "points": ref.points}

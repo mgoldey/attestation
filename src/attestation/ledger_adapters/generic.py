@@ -545,29 +545,25 @@ def diagnose_empty(root: Path) -> str:
 # so no fallback to tags/mlflow.runName was needed. Since roadmap 12 (2026-11-20)
 # that reader is `mlflow_store.mlflow_runs`, which maps the whole run (experiment,
 # status, curves, code, artifacts, datasets) rather than the last line of each
-# metric file. The W&B reader was run
-# against a real offline directory on 2026-08-28 (examples/wandb/wandb,
-# written by wandb 0.17.6 via generate.py): the run directory is named
-# `offline-run-<timestamp>-<id>`, not `run-<timestamp>-<id>` as the prior
-# docstring assumed, but `_wandb_runs` never filtered on that prefix, so both
-# already worked -- see its docstring for the naming detail and for the
-# larger surprise, that offline W&B does not write wandb-summary.json or
-# config.yaml to files/ at all until a run is synced.
-#
-# Hydra's reader was added 2026-08-28, verified against a real `--multirun`
-# sweep (hydra-core 1.3.5, examples/hydra/generate.sh): the one surprise was
-# that hydra-core 1.3.5 no longer changes into each arm's own output
-# directory by default (`hydra.job.chdir` defaults to null, not True, as of
-# Hydra 1.2 -- a backward-compatibility change from Hydra 1.1 and earlier's
-# unconditional chdir), so `--multirun lr=...` alone wrote one shared
-# metrics.json instead of four -- see examples/hydra/train.py's docstring.
+# metric file. The W&B reader was run against a real offline directory on
+# 2026-08-28 (examples/wandb/wandb, written by wandb 0.17.6 via generate.py);
+# Hydra's was added the same day, verified against a real `--multirun` sweep
+# (hydra-core 1.3.5, examples/hydra/generate.sh), whose one surprise was that
+# hydra-core no longer changes into each arm's own output directory by
+# default (`hydra.job.chdir` defaults to null as of Hydra 1.2), so
+# `--multirun lr=...` alone wrote one shared metrics.json instead of four --
+# see examples/hydra/train.py's docstring. Since roadmap 16 (2026-11-20) both
+# readers map the whole run too: `wandb_store.wandb_runs` (the run's `.wandb`
+# log, decoded by `wandb_log` -- offline W&B writes almost nothing else) and
+# `hydra_store.hydra_runs` (overrides -> arm, the whole config, outputs).
+# `_hydra_arm_metrics` below stays here: it is this module's convention.
 TRACKER_DIRS = ("wandb", "mlruns", "sacred_runs", "multirun")
 
 # Recorded on every Found this module's convention-based reader produces,
 # so `runs.detail` can tell a hand-written results/ tree apart from a tracker
-# directory. The tracker readers below label themselves "wandb" and "mlflow"
-# instead, which is what lets ledger.ADAPTER_CAVEATS attach their limitations
-# to exactly the runs they apply to.
+# directory. The tracker readers label themselves ("wandb", "mlflow", ...)
+# instead, which is what lets each adapter attach its own caveats to exactly
+# the runs it produced.
 ADAPTER_NAME = "generic"
 
 
@@ -684,34 +680,6 @@ def _yaml_path_list(lines: list[tuple[int, str, str | None]], path: tuple[str, .
     return out
 
 
-def _wandb_config(path: Path) -> dict | None:
-    """Unwrap W&B's `{desc, value}` wrapper around every config entry.
-
-    The file looks like:
-
-        lr:
-          desc: null
-          value: 0.0003
-
-    Storing it raw would make every config value a two-key dict. Keys starting
-    with `_` are W&B's own bookkeeping (`_wandb`) and are dropped.
-    """
-    out: dict = {}
-    key = None
-    for raw in path.read_text(errors="replace").splitlines():
-        if not raw.strip() or raw.lstrip().startswith("#"):
-            continue
-        if not raw.startswith((" ", "\t")):
-            key = raw.partition(":")[0].strip()
-            continue
-        stripped = raw.strip()
-        if key and not key.startswith("_") and stripped.startswith("value:"):
-            raw_value = stripped.partition(":")[2].strip().strip("'\"")
-            if raw_value:
-                out[key] = _coerce(raw_value)
-    return out or None
-
-
 def _coerce(text: str):
     """A YAML scalar as int, float or str -- in that order.
 
@@ -729,95 +697,6 @@ def _coerce(text: str):
     except ValueError:
         return text
     return value if math.isfinite(value) else text
-
-
-def _wandb_runs(root: Path, seen: set[str]) -> list[Found]:
-    """Runs under `wandb/<any-dir>/files/`.
-
-    Verified 2026-08-28 against a real offline directory (wandb 0.17.6,
-    examples/wandb/generate.py): the run directory is named
-    `offline-run-<timestamp>-<id>`, not `run-<timestamp>-<id>` as an earlier
-    version of this docstring claimed -- but this function never filtered by
-    that prefix. It walks every child of `wandb/` looking for `files/
-    wandb-summary.json`, so both names, and any future one, already worked;
-    only the docstring's claim was too narrow.
-
-    `wandb-summary.json` is a flat object of scalars, which
-    `metrics_from_payload` already handles -- the mapping is nearly free. The
-    work here is naming: `run-20260814_101133-a1b2c3d4` is a timestamp and a
-    hash, and a ledger listing forty of those is unreadable.
-
-    The real surprise was upstream of naming: **offline W&B does not write
-    wandb-summary.json or config.yaml to files/ at all.** Every logged value
-    reaches disk, but only inside the run's binary `.wandb` transaction log;
-    the plain files this function reads exist only after `wandb sync`
-    uploads to a real server (confirmed against wandb 0.17.6 through 0.29.0;
-    also github.com/wandb/wandb issues #7227, #9646, and a maintainer's own
-    answer on #1768 that no local API exists for this). examples/wandb/
-    generate.py materialises them locally by decoding the `.wandb` log with
-    `wandb.sdk.internal.datastore` -- the community's own workaround for
-    this exact gap -- so the committed fixture is what a real synced run's
-    files/ looks like, built from values wandb itself logged. A directory
-    from `wandb.init(mode="offline")` alone, never synced and never run
-    through that decode step, will scan to zero runs: not a bug in this
-    reader, but the documented behaviour of the tool it reads.
-    """
-    base = root / "wandb"
-    if not base.is_dir():
-        return []
-    records: list[Found] = []
-    for run_dir in sorted(base.iterdir()):
-        files = run_dir / "files"
-        summary = files / "wandb-summary.json"
-        if not summary.is_file():
-            continue
-        payload = _load(summary)
-        if not isinstance(payload, dict):
-            continue
-        # W&B writes its own bookkeeping into the summary: _step, _runtime,
-        # _timestamp, _wandb. `_wandb_config` already drops underscore keys on
-        # the config side; without the same filter here a wall-clock timestamp
-        # is recorded as a measurement. compare() refuses to rank it, so it was
-        # noise rather than a wrong verdict -- but a ledger listing
-        # `_timestamp: 170000001.0` beside a real metric invites the misreading
-        # the direction rule exists to prevent.
-        runtime = payload.get("_runtime")
-        payload = {k: v for k, v in payload.items() if not k.startswith("_")}
-        metrics = metrics_from_payload(payload, None, None)
-        if not metrics:
-            continue
-        timing.add_wall(metrics, timing.seconds(runtime))
-
-        meta_path = files / "wandb-metadata.json"
-        meta = _load(meta_path) if meta_path.is_file() else None
-        meta = meta if isinstance(meta, dict) else {}
-
-        # offline-run-20260814_101133-a1b2c3d4 -> a1b2c3d4 (also works for
-        # the older run-20260814_101133-a1b2c3d4 form -- both just split on "-")
-        short_id = run_dir.name.rsplit("-", 1)[-1]
-        program = str(meta.get("program") or "").rsplit("/", 1)[-1]
-        stem = program[:-3] if program.endswith(".py") else program
-        name = f"{stem}/{short_id}" if stem else run_dir.name
-
-        if name in seen:
-            continue
-        seen.add(name)
-
-        config_path = files / "config.yaml"
-        records.append(
-            Found(
-                project=root.name,
-                name=name,
-                source_path=str(run_dir),
-                family=stem or None,
-                status="recorded",
-                started=meta.get("startedAt"),
-                config=_wandb_config(config_path) if config_path.is_file() else None,
-                metrics=metrics,
-                adapter="wandb",
-            )
-        )
-    return records
 
 
 def _sacred_metrics(metrics_path: Path) -> list[FoundMetric]:
@@ -1329,29 +1208,6 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[Found]:
     return records
 
 
-def _hydra_job_name(hydra_yaml: Path) -> str | None:
-    """`hydra.job.name` from an arm's `.hydra/hydra.yaml`, or None.
-
-    Hydra sets this to the driver script's stem (`train.py` -> `train`)
-    unless a config overrides it, and writes it to every arm of a sweep --
-    unlike W&B's `run.name`, never written locally in offline mode, this
-    one is on disk from the start, the same as Sacred's `experiment.name`.
-    """
-    text = hydra_yaml.read_text(errors="replace")
-    return _yaml_path_scalar(_indented_lines(text), ("hydra", "job", "name"))
-
-
-def _hydra_config(config_yaml: Path) -> dict | None:
-    """An arm's resolved config, from `.hydra/config.yaml`.
-
-    Flat top-level `key: value` pairs -- `_yaml_scalars` already reads
-    exactly this shape, coerced the same way `_wandb_config` coerces its
-    unwrapped values, since Hydra's own dumper leaves ints/floats unquoted.
-    """
-    scalars = _yaml_scalars(config_yaml)
-    return {k: _coerce(v) for k, v in scalars.items()} or None
-
-
 def _hydra_arm_metrics(arm_dir: Path) -> list[FoundMetric]:
     """Metrics from any JSON/JSONL/CSV file directly in an arm's directory.
 
@@ -1375,84 +1231,6 @@ def _hydra_arm_metrics(arm_dir: Path) -> list[FoundMetric]:
             if rows:
                 metrics.extend(metrics_from_payload(rows, None, None))
     return metrics
-
-
-def _hydra_runs(root: Path, seen: set[str]) -> list[Found]:
-    """Runs under `multirun/<date>/<time>/<n>/`, one numbered directory per
-    arm of a sweep -- Hydra's own `--multirun` layout.
-
-    Verified 2026-08-28 against a real sweep (hydra-core 1.3.5,
-    examples/hydra/generate.sh): `python train.py --multirun
-    lr=0.01,0.1,1,10 hydra.job.chdir=True` writes `multirun/<date>/<time>/
-    <n>/{.hydra/{config.yaml,hydra.yaml,overrides.yaml}, metrics.json,
-    train.log}` for each of the four arms, plus one `multirun.yaml`
-    summarising the sweep -- see examples/hydra/train.py's own docstring
-    for why `hydra.job.chdir=True` is required: hydra-core 1.3.5 no longer
-    changes the working directory into each arm's own output directory by
-    default, so without it every arm overwrites the same top-level
-    metrics.json instead of writing its own.
-
-    Naming: `<job.name>/<date>/<time>/<n>` is unreadable, so a run is named
-    `<job.name>/<n>` with family `job.name` (read from `.hydra/
-    hydra.yaml`, falling back to the sweep directory's own name when that
-    file is missing or unreadable -- an older Hydra version, or a directory
-    edited by hand). Two sweeps of the same job name collide on `<n>`
-    alone, so a second sweep's arms are qualified with their time
-    directory (`<job.name>/<time>/<n>`) rather than silently dropped --
-    `seen` is shared with every other reader in this module, the same
-    dedup `_wandb_runs`/`mlflow_store.mlflow_runs`/`_sacred_runs`/`_dvc_runs` already
-    participate in.
-
-    Tolerant of a missing `.hydra/hydra.yaml` (family falls back) and of no
-    metrics file in an arm's directory (the arm is skipped, same as an
-    MLflow run with no metric files) -- `_hydra_arm_metrics` degrades to
-    fewer metrics rather than raising on a shape it does not recognise.
-    """
-    sweeps = sorted(p for p in root.glob("multirun/*/*") if p.is_dir())
-    records: list[Found] = []
-    for sweep_dir in sweeps:
-        arm_dirs = sorted(
-            (
-                p
-                for p in sweep_dir.iterdir()
-                if p.is_dir() and (p / ".hydra" / "config.yaml").is_file()
-            ),
-            key=lambda p: p.name,
-        )
-        if not arm_dirs:
-            continue
-
-        hydra_yaml = arm_dirs[0] / ".hydra" / "hydra.yaml"
-        family = _hydra_job_name(hydra_yaml) if hydra_yaml.is_file() else None
-        family = family or sweep_dir.name
-
-        for arm_dir in arm_dirs:
-            metrics = _hydra_arm_metrics(arm_dir)
-            if not metrics:
-                continue  # a spec with no measurement attached -- same as MLflow/DVC
-
-            name = f"{family}/{arm_dir.name}"
-            if name in seen:
-                # a second sweep of the same job name -- qualify with the
-                # time directory rather than silently dropping this arm
-                name = f"{family}/{sweep_dir.name}/{arm_dir.name}"
-            if name in seen:
-                continue
-            seen.add(name)
-
-            records.append(
-                Found(
-                    project=root.name,
-                    name=name,
-                    source_path=str(arm_dir),
-                    family=family,
-                    status="recorded",
-                    config=_hydra_config(arm_dir / ".hydra" / "config.yaml"),
-                    metrics=metrics,
-                    adapter="hydra",
-                )
-            )
-    return records
 
 
 def _result_name(stem: str, result: Path, base: Path, dirname: str, seen: set[str]) -> str:
