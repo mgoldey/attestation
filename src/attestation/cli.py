@@ -544,6 +544,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     cli_prereg.register(sub, add_db)
 
+    # Commands that name a tracker live with the adapters (tracker names stay
+    # in ledger_adapters/, tests/test_tracker_names.py); their HELP joins this one.
+    from attestation import ledger_adapters
+
+    for command in ledger_adapters.COMMANDS:
+        HELP.update(command.HELP)
+        command.register(sub)
+
     sp = sub.add_parser("install", help=HELP["install"])
     sp.add_argument("--check", action="store_true", help="detect only, change nothing")
     sp.add_argument("--yes", action="store_true", help="non-interactive consent")

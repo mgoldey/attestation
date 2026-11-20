@@ -763,6 +763,22 @@ options:
                $RESEARCH_ROOT, else cwd)
 ```
 
+## attest mlflow sync
+
+```
+usage: attest mlflow sync [-h] [--tracking-dir TRACKING_DIR] [--out OUT]
+                          [--force]
+
+options:
+  -h, --help            show this help message and exit
+  --tracking-dir TRACKING_DIR
+                        the MLflow file store (default: ./mlruns); no mlflow
+                        is needed to read it
+  --out OUT             where run-<run_id>/ directories go (default: ./mlflow-
+                        records)
+  --force               replace a record whose run changed since it was synced
+```
+
 ## attest install
 
 ```

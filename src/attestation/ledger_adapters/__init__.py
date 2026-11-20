@@ -26,13 +26,14 @@ from typing import Any, Protocol
 
 import attestation_schema as schema
 
-from attestation.ledger_adapters import generic
+from attestation.ledger_adapters import generic, mlflow_sync
 from attestation.ledger_adapters.core import CORE
 from attestation.ledger_adapters.found import IMPORT_NAMESPACE
 from attestation.ledger_adapters.trackers import LEGACY_ADAPTERS
 
 __all__ = [
     "ADAPTERS",
+    "COMMANDS",
     "IMPORT_NAMESPACE",
     "LEGACY_ADAPTERS",
     "Adapter",
@@ -76,6 +77,11 @@ class Adapter(Protocol):
 
 # Native records first, then the legacy readers in their historical order.
 ADAPTERS: tuple[Adapter, ...] = (CORE, *LEGACY_ADAPTERS)
+
+# `attest` subcommands that name a tracker, so they live here and cli.py
+# registers them without naming one: each module has `HELP` (its entries in
+# cli.HELP's dotted-key shape) and `register(subparsers)`.
+COMMANDS = (mlflow_sync,)
 
 
 @dataclass(frozen=True)
