@@ -53,13 +53,15 @@ keeps working after you forget it exists.
 
 That argument cuts the other way for trackers you already run, so a scan also
 reads five tracker layouts as conventions of their own, since the tool picks
-the directory name, not you — all read as **final values, not curves**,
-because a ledger that compares finished arms has no use for the whole series:
+the directory name, not you — all stored as **final values, not curves**,
+because a ledger that compares finished arms has no use for the whole series
+(the MLflow adapter reads the curves into each run's core record, which the
+ledger does not store; see `docs/superpowers/specs/2026-11-20-mlflow-adapter-design.md`):
 
 | tracker | layout | one-line caveat |
 |---|---|---|
 | W&B | `wandb/<run>/files/wandb-summary.json` | offline mode writes no summary/config files until synced |
-| MLflow | `mlruns/<exp>/<run>/{metrics,params,tags}` | each metric is the final line of its per-step log file |
+| MLflow | `mlruns/<exp>/<run>/{metrics,params,tags}` | the experiment is the family; each metric is MLflow's own latest point, and the curve stays in the run's core record |
 | Sacred | `FileStorageObserver` dirs, `run.json` + `metrics.json` | `run.json`'s own `result` field is read as a metric too |
 | DVC | `dvc.yaml`'s declared `metrics:` files + `params.yaml` | each metric file is a snapshot overwritten on every `dvc repro` |
 | Hydra | `--multirun` sweep dirs | needs `hydra.job.chdir=true` or all arms overwrite one `metrics.json` |

@@ -201,7 +201,8 @@ def test_the_committed_mlflow_directory_is_read_as_four_arms_of_one_family(tmp_p
     rows = conn.execute(
         "SELECT name, family, adapter FROM runs WHERE project = 'training' ORDER BY name"
     ).fetchall()
-    assert {r["family"] for r in rows} == {"c_sweep"}
+    # The experiment is the family (roadmap 12); `c_sweep` is the run name.
+    assert {r["family"] for r in rows} == {"flows"}
     assert {r["adapter"] for r in rows} == {"mlflow"}
     metrics = conn.execute(
         "SELECT DISTINCT metric FROM run_metrics rm JOIN runs r ON r.id = rm.run_id"
@@ -224,7 +225,7 @@ def test_the_committed_mlflow_directory_is_read_as_four_arms_of_one_family(tmp_p
 def test_the_mlflow_family_compares_and_its_findings_carry_one_contradiction(tmp_path):
     conn = get_db(tmp_path / "t.db")
     ledger.scan(conn, TRAINING.parent, project="training")
-    result = ledger.compare(conn, "c_sweep", metric="auc", project="training")
+    result = ledger.compare(conn, "flows", metric="auc", project="training")
     assert result["winner"], result
     parsed, errors = claims.parse_file(TRAINING / "FINDINGS.md")
     assert not errors
@@ -236,7 +237,7 @@ def test_the_mlflow_family_compares_and_its_findings_carry_one_contradiction(tmp
 
 def test_the_committed_mlruns_carries_no_personal_or_machine_attribution():
     """train_mlflow.py's scrub() strips what mlflow writes by default -- the
-    reader (_mlflow_runs) never touches any of it. This is the guard that
+    reader (mlflow_store) needs none of it. This is the guard that
     keeps a future regeneration honest: forget to call scrub() and this
     fails before the fixture is committed with a real name and a real
     machine path in it, which is exactly the class of content this repo has
@@ -259,7 +260,7 @@ MLFLOW_README = pathlib.Path(__file__).resolve().parent.parent / "examples" / "m
 def test_the_committed_mlflow_table_matches_a_live_compare(tmp_path):
     """examples/mlflow/README.md hand-types a Markdown table of (C, auc) pairs
     read off a real `runs compare` run. Nothing else in this file (or in CI)
-    reads that table -- if `_mlflow_runs`' final-value-not-curve convention
+    reads that table -- if the MLflow adapter's final-value convention
     ever changed a decimal, the committed table would go stale silently. This
     diffs the table against the same live `ledger.compare()` call the other
     mlflow tests above use, row for row."""
@@ -268,7 +269,7 @@ def test_the_committed_mlflow_table_matches_a_live_compare(tmp_path):
 
     conn = get_db(tmp_path / "t.db")
     ledger.scan(conn, TRAINING.parent, project="training")
-    arms = ledger.compare(conn, "c_sweep", metric="auc", project="training")["arms"]
+    arms = ledger.compare(conn, "flows", metric="auc", project="training")["arms"]
     configs = {
         r["name"]: json.loads(r["config_json"])
         for r in conn.execute(

@@ -10,7 +10,7 @@ what is new is `found_to_core`, the one place a `Found` becomes an
 """
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,7 +19,7 @@ from typing import Any
 import attestation_schema as schema
 
 from attestation import replicates
-from attestation.ledger_adapters import generic
+from attestation.ledger_adapters import generic, mlflow_store
 from attestation.ledger_adapters.found import IMPORT_NAMESPACE, Found
 
 # What each reader cannot do, stated where a reader of the run will see it.
@@ -38,8 +38,9 @@ WANDB_CAVEAT = (
     " fixture's was materialised without a network call"
 )
 MLFLOW_CAVEAT = (
-    "read by the mlflow adapter: each metric is the FINAL line of its"
-    " metrics file, not the curve and not the best step"
+    "read by the mlflow adapter: each metric is MLflow's own latest value"
+    " (greatest step, then latest timestamp), not the best step; the full"
+    " curve is in the run's core record (history), not in the ledger"
 )
 SACRED_CAVEAT = (
     "read by the sacred adapter: each metric is the LAST value in"
@@ -260,7 +261,7 @@ class TrackerAdapter:
     which become the run's own caveats."""
 
     name: str
-    reader: Callable[[Path, set[str]], list[Found]]
+    reader: Callable[[Path, set[str]], Sequence[Found]]
     marker: Callable[[Path], bool]
     caveat: str | None = None
     started_is_utc: bool = False
@@ -278,7 +279,7 @@ class TrackerAdapter:
 
     def scan(self, path: Path, taken: set[str] | None = None) -> list[Found]:
         """The unchanged legacy reader, sharing `taken` as its `seen`."""
-        return self.reader(Path(path), set() if taken is None else taken)
+        return list(self.reader(Path(path), set() if taken is None else taken))
 
     def to_core_record(self, found: Found) -> schema.RunRecord:
         """`found_to_core` with this adapter's caveats and start-time rule."""
@@ -307,8 +308,33 @@ WANDB = TrackerAdapter(
     started_is_utc=True,
     run_id_suffix=True,
 )
-MLFLOW = TrackerAdapter(
-    "mlflow", generic._mlflow_runs, _has_dir("mlruns"), MLFLOW_CAVEAT, run_id_suffix=True
+
+
+@dataclass(frozen=True)
+class MlflowAdapter(TrackerAdapter):
+    """The MLflow reader maps the whole run itself (`mlflow_store`: curves,
+    status, code, artifacts, datasets), so its record is not built by
+    `found_to_core`; name, marker, registry order and the run-id suffix are a
+    `TrackerAdapter`'s. Spec: 2026-11-20-mlflow-adapter-design.md."""
+
+    def to_core_record(self, found: Found) -> schema.RunRecord:
+        """`mlflow_store.to_core_record`, with this adapter's caveat and the
+        ledger-wide `<config>_seed<N>` arm (`replicate_of`)."""
+        if not isinstance(found, mlflow_store.MlflowFound):
+            raise TypeError(f"the mlflow adapter maps its own runs, not {type(found).__name__}")
+        return mlflow_store.to_core_record(
+            found,
+            caveats=[self.caveat] if self.caveat else [],
+            replicate=replicate_of(found.name, run_id_suffix=self.run_id_suffix),
+        )
+
+
+MLFLOW = MlflowAdapter(
+    "mlflow",
+    mlflow_store.mlflow_runs,
+    _has_dir(mlflow_store.STORE_DIR),
+    MLFLOW_CAVEAT,
+    run_id_suffix=True,
 )
 SACRED = TrackerAdapter(
     "sacred",

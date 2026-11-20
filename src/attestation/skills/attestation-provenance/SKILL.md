@@ -76,7 +76,8 @@ in `empty` rather than omitted: "found nothing" must never look like
 
 **The scan also reads five tracker layouts** -- W&B (`wandb/*/files/
 wandb-summary.json`; offline mode writes no summary until synced), MLflow
-(`mlruns/<exp>/<run>/metrics/`, final line per metric), Sacred
+(`mlruns/<exp>/<run>/metrics/`, MLflow's latest point; the experiment is
+the family), Sacred
 (`FileStorageObserver` dirs, `run.json`'s own `result` read as a metric),
 DVC (`dvc.yaml`'s declared `metrics:` files) and Hydra (`--multirun` sweep
 dirs, which need `hydra.job.chdir=true` or every arm overwrites one file).

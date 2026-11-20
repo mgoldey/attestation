@@ -84,8 +84,8 @@ auc)` call and its `return auc` both fire, so `auc` and `result` carry the
 identical value here, but a driver script that only returns a result and
 never calls `log_scalar` would previously have scanned to zero metrics and
 been skipped as a spec with nothing measured. `_sacred_runs` reads both:
-`metrics.json`'s series (final value, last step -- the same rule
-`_mlflow_runs` already applies to MLflow's metric-per-file log) and, when
+`metrics.json`'s series (final value, last step -- the rule the MLflow
+reader applied to its metric-per-file log until roadmap 12) and, when
 `result` is numeric, one more metric named `result`. A non-numeric `result`
 (Sacred permits a dict, a list, a string) is silently not recorded as a
 metric, the same refusal `metrics_from_payload` makes for every other shape

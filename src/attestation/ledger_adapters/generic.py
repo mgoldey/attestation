@@ -542,7 +542,10 @@ def diagnose_empty(root: Path) -> str:
 # only surprise: mlflow-skinny 3.x refuses a `file:` tracking URI unless
 # MLFLOW_ALLOW_FILE_STORE=true is set (the local filesystem backend is in
 # maintenance mode upstream); run_name did land in meta.yaml as documented,
-# so no fallback to tags/mlflow.runName was needed. The W&B reader was run
+# so no fallback to tags/mlflow.runName was needed. Since roadmap 12 (2026-11-20)
+# that reader is `mlflow_store.mlflow_runs`, which maps the whole run (experiment,
+# status, curves, code, artifacts, datasets) rather than the last line of each
+# metric file. The W&B reader was run
 # against a real offline directory on 2026-08-28 (examples/wandb/wandb,
 # written by wandb 0.17.6 via generate.py): the run directory is named
 # `offline-run-<timestamp>-<id>`, not `run-<timestamp>-<id>` as the prior
@@ -714,8 +717,8 @@ def _coerce(text: str):
 
     A non-finite float stays a string. `float("nan")` and `float("inf")` both
     parse, so a config value literally spelled `nan` would otherwise become a
-    NaN silently. Config is not ranked, so the stakes are lower than in
-    `_mlflow_metric`, but it is the same mistake.
+    NaN silently. Config is not ranked, so the stakes are lower than for a
+    metric, but it is the same mistake.
     """
     try:
         return int(text)
@@ -814,112 +817,6 @@ def _wandb_runs(root: Path, seen: set[str]) -> list[Found]:
                 adapter="wandb",
             )
         )
-    return records
-
-
-def _mlflow_metric(path: Path) -> tuple[float, int | None] | None:
-    """The final value of one MLflow metric file, and the step it was logged at.
-
-    Each line is `<timestamp_ms> <value> <step>`. We read the last parseable
-    one: this adapter records final values, not curves. Recording the whole
-    history would make MLflow runs structurally unlike every other run in the
-    ledger and would put one row per logged step into run_metrics -- a
-    200-epoch run becomes 200 rows per metric.
-
-    The consequence is worth stating plainly: **a user who wants training
-    curves is not served by this ledger.**
-    """
-    for line in reversed(path.read_text(errors="replace").splitlines()):
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        try:
-            value = float(parts[1])
-        except ValueError:
-            continue
-        # A diverged run's last logged loss is `nan` or `inf`, and float()
-        # accepts both. `_numeric_items` filters these on the JSON path and its
-        # docstring calls itself "the one place every numeric metric passes
-        # through" -- this reader made that untrue by building FoundMetric directly.
-        # A NaN compares false to everything, so it loses every ranking it
-        # appears in and is reported as a legitimate last place.
-        #
-        # Return None rather than falling through to an earlier finite line:
-        # reporting a diverged run's mid-training loss as its result would be
-        # worse than reporting nothing. The run diverged; "not measured" is
-        # what happened.
-        if not math.isfinite(value):
-            _skip(path.name)
-            return None
-        step = None
-        if len(parts) > 2:
-            try:
-                step = int(parts[2])
-            except ValueError:
-                step = None
-        return value, step
-    return None
-
-
-def _mlflow_runs(root: Path, seen: set[str]) -> list[Found]:
-    """Runs under `mlruns/<experiment_id>/<run_id>/`.
-
-    The metric-per-file layout is genuinely unlike anything else this adapter
-    reads: not JSON, not CSV, one file per metric with one line per logged
-    step. See `_mlflow_metric` for what is taken from it and why.
-    """
-    base = root / "mlruns"
-    if not base.is_dir():
-        return []
-    records: list[Found] = []
-    for exp_dir in sorted(p for p in base.iterdir() if p.is_dir()):
-        for run_dir in sorted(p for p in exp_dir.iterdir() if p.is_dir()):
-            meta_path = run_dir / "meta.yaml"
-            if not meta_path.is_file():
-                continue
-            meta = _yaml_scalars(meta_path)
-            # A run deleted in the MLflow UI is still on disk. Resurrecting it
-            # in a ledger the user reads for provenance is worse than missing
-            # it -- they decided it was not part of the record.
-            if meta.get("lifecycle_stage", "active") != "active":
-                continue
-
-            metrics = []
-            for metric_file in sorted((run_dir / "metrics").glob("*")):
-                if not metric_file.is_file():
-                    continue
-                final = _mlflow_metric(metric_file)
-                if final is not None:
-                    metrics.append(FoundMetric(metric_file.name, final[0], step=final[1]))
-            if not metrics:
-                continue
-            timing.add_wall(
-                metrics, timing.epoch_ms_duration(meta.get("start_time"), meta.get("end_time"))
-            )
-
-            label = meta.get("run_name") or run_dir.name
-            name = f"{label}/{run_dir.name[:8]}" if meta.get("run_name") else run_dir.name
-            if name in seen:
-                continue
-            seen.add(name)
-
-            config = {}
-            for param_file in sorted((run_dir / "params").glob("*")):
-                if param_file.is_file():
-                    config[param_file.name] = param_file.read_text(errors="replace").strip()
-
-            records.append(
-                Found(
-                    project=root.name,
-                    name=name,
-                    source_path=str(run_dir),
-                    family=label if meta.get("run_name") else None,
-                    status="recorded",
-                    config=config or None,
-                    metrics=metrics,
-                    adapter="mlflow",
-                )
-            )
     return records
 
 
@@ -1329,8 +1226,7 @@ def _dvc_runs(root: Path, seen: set[str]) -> list[Found]:
     `@item` suffix names the run, and the part before `@` is the family, the
     same split `_sacred_runs` makes on `/` for `experiment.name`. A plain
     (non-`foreach`) stage is a single run named for the stage itself with no
-    family -- there is no sibling to group it with, the same reason
-    `_mlflow_runs` leaves `family` unset for a run with no `run_name`. Only a
+    family -- there is no sibling to group it with. Only a
     stage declaring `metrics:` (directly, or under `do:`) is read; a
     data-prep stage with no metrics is not a run, the same refusal the
     generic reader makes for a config file with no measurement attached.
@@ -1504,7 +1400,7 @@ def _hydra_runs(root: Path, seen: set[str]) -> list[Found]:
     alone, so a second sweep's arms are qualified with their time
     directory (`<job.name>/<time>/<n>`) rather than silently dropped --
     `seen` is shared with every other reader in this module, the same
-    dedup `_wandb_runs`/`_mlflow_runs`/`_sacred_runs`/`_dvc_runs` already
+    dedup `_wandb_runs`/`mlflow_store.mlflow_runs`/`_sacred_runs`/`_dvc_runs` already
     participate in.
 
     Tolerant of a missing `.hydra/hydra.yaml` (family falls back) and of no

@@ -24,7 +24,7 @@ in it — `uv sync --group examples` if `uv run --group examples` fails with
 
 ```bash
 uv run attest runs scan --root ../flows --project training
-uv run attest runs compare c_sweep --metric auc
+uv run attest runs compare flows --metric auc
 uv run attest claims ../flows/training/FINDINGS.md || true
 uv run --group examples python ../flows/training/train_mlflow.py --out "$(mktemp -d)"
 ```
@@ -35,7 +35,7 @@ inputs live one level up, in `examples/flows/training/`.
 ## What it prints
 
 ```
-c_sweep — ranked by auc (higher_is_better)
+flows — ranked by auc (higher_is_better)
 ```
 
 Abridged — `runs scan` reports `training  4 run(s)`; `runs compare` prints
@@ -46,7 +46,7 @@ winner: c_sweep/06f405c1
   caveat: some arms report no sample size, so their weight is unknown
   caveat: the top two arms differ by 0.0003307 (0.0%) -- too close to call from these numbers alone
   caveat: each arm is a single run; no seed replication, so this ranking cannot separate configuration from run-to-run variance
-  caveat: read by the mlflow adapter: each metric is the FINAL line of its metrics file, not the curve and not the best step
+  caveat: read by the mlflow adapter: each metric is MLflow's own latest value (greatest step, then latest timestamp), not the best step; the full curve is in the run's core record (history), not in the ledger
 ```
 
 The `06f405c1` run id is stable only for the *committed* fixture — it
@@ -59,29 +59,37 @@ four arms and finishes with `4 runs logged to <tmpdir>/mlruns in 2.0s`.
 ## What it demonstrates
 
 **The MLflow layout**: `mlruns/<experiment_id>/<run_id>/{meta.yaml,params/,
-metrics/}`. `run_name` in `meta.yaml` names the family every arm shares
-(`c_sweep`, here); a run with `lifecycle_stage: deleted` is skipped, because
+metrics/,tags/}`, plus the experiment's own `meta.yaml`. The experiment
+(`flows`, here) is the family every arm shares — MLflow's own comparison
+group — so `runs compare` takes `flows`; the run name (`c_sweep`) only
+names each run (`c_sweep/06f405c1`, which is what `FINDINGS.md`'s claims
+cite). A run with `lifecycle_stage: deleted` is skipped, because
 resurrecting a run someone deleted in the MLflow UI into a ledger meant for
-provenance is worse than missing it. Each file under `metrics/` is one
-metric with one line per logged step (`<timestamp_ms> <value> <step>`); the
-ledger reads the **last** line — the final value and the step it was logged
-at — never the curve. `training/mlruns/.../metrics/train_loss` has ten
-lines from a ten-step curve; `runs.detail` reports its final value at
-`step=9`, not an average and not the minimum.
+provenance is worse than missing it; a run still `RUNNING` is skipped too
+(it has no outcome yet), and a `FAILED` or `KILLED` one is kept with a
+caveat saying it did not complete. Each file under `metrics/` is one metric
+with one line per logged step (`<timestamp_ms> <value> <step>`); the
+ledger's value is MLflow's own latest point — greatest step, then latest
+timestamp — not an average and not the minimum.
+`training/mlruns/.../metrics/train_loss` has ten lines from a ten-step
+curve; `runs.detail` reports its final value at `step=9`.
 
-**Why final values, not curves**: recording every logged step would put one
-row per step into `run_metrics` — a 200-epoch run becomes 200 rows per
-metric — and make MLflow runs structurally unlike every other run in the
-ledger. The reader (`_mlflow_runs` in
-`src/attestation/ledger_adapters/generic.py`) says this in its own
-docstring: a user who wants training curves is not served by this ledger.
+**Curves are kept, but not in the ledger**: every run is read into a core
+run record (`src/attestation/ledger_adapters/mlflow_store.py`, no mlflow
+needed) with the mapping `examples/mlflow-records/` uses — curves in its
+`history`, git identity, artifacts by sha256, dataset inputs by name — and
+`tests/test_mlflow_adapter.py` checks it field for field against that
+exporter's committed records. The ledger's tables still hold one final value
+per metric: recording every logged step would put one row per step into
+`run_metrics` — a 200-epoch run becomes 200 rows per metric — for a ranking
+that only reads final values.
 
 **The scrub**: MLflow writes personal attribution and machine-specific
 paths by default — a tag naming who ran it, the git remote URL, this
 machine's home directory inside every `artifact_uri`. `train_mlflow.py`'s
-`scrub()` (see its `_SCRUB_TAGS`) strips all of it after training, because
-the reader never touches any of it — it reads only `lifecycle_stage`,
-`run_name`, `metrics/*`, `params/*`.
+`scrub()` (see its `_SCRUB_TAGS`) strips all of it after training. The
+reader would have mapped the git commit tag to each run's code identity;
+with it scrubbed, the runs' code is `unknown`, which is the honest answer.
 Regenerating the committed directory is deliberate, not accidental: it
 changes every run id, which is exactly why the pinned line above is the
 table header rather than the `winner:` line.
@@ -105,7 +113,7 @@ table header rather than the `winner:` line.
   mlflow` runs, so the documented command needs no extra environment
   variable; if a future mlflow release changes the refusal's shape, the
   fix is in `train_mlflow.py`, not here.
-- `attest runs compare c_sweep --metric train_loss` refuses to rank rather
+- `attest runs compare flows --metric train_loss` refuses to rank rather
   than guessing whether lower or higher is better — `--metric` needs a
   declared direction, and `train_loss` has none.
 - `attest claims ../flows/training/FINDINGS.md` exits 1 because one claim

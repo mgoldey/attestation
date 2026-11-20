@@ -152,10 +152,12 @@ def test_committed_record_preserves_mlflow_history_and_says_only_what_mlflow_sai
     assert record.dependencies is None
 
 
-def test_history_is_what_the_ledger_reader_discards():
-    """The ledger's MLflow adapter keeps only the last line of each metric
-    file; the core record keeps all of them. Pin the difference on the one
-    multi-line file so a future importer cannot quietly drop the curve."""
+def test_history_is_what_the_ledger_tables_discard():
+    """The ledger's tables keep one final value per metric; the core record
+    keeps every point (and since roadmap 12 the ledger's MLflow adapter
+    builds the same history reference, tests/test_mlflow_adapter.py). Pin
+    the difference on the one multi-line file so a future importer cannot
+    quietly drop the curve."""
     for run_dir in layout.find_runs(RECORDS):
         record = read(run_dir)
         loss = next(s for s in read_history(run_dir, record) if s.name == "train_loss")
@@ -377,6 +379,29 @@ def test_latest_point_matches_mlflows_own_latest_value(tmp_path, fresh_store):
         assert set(ours) == set(theirs)
         for name, value in theirs.items():
             assert (math.isnan(value) and math.isnan(ours[name])) or ours[name] == value
+
+
+def test_the_ledger_adapter_agrees_with_the_exporter_on_a_fresh_real_store(tmp_path, fresh_store):
+    """Roadmap 12: two producers of one mapping. The ledger's adapter reads
+    the same store from its files, with no mlflow; on every field the
+    exporter sets (no declarations here) the two records are equal -- the
+    datasets, the artifact digest, git identity, a stripped token, a killed
+    run, inf/NaN and two values at one step included. The comparison and its
+    documented exclusions are tests/test_mlflow_adapter.py's `agree`."""
+    from test_mlflow_adapter import agree
+
+    from attestation.ledger_adapters import import_project
+
+    work, _sha, diverged, pending = fresh_store
+    records, _ = _export_fresh(tmp_path, fresh_store)
+    result = import_project(work)
+    assert result.refused == []
+    ours = {i.record.run_id: i.record for i in result.imported if i.adapter == "mlflow"}
+    assert set(ours) == {r.run_id for r in records.values()}
+    assert pending not in ours  # running: no record from either producer
+    for theirs in records.values():
+        agree(ours[theirs.run_id], theirs)
+    assert any(d.name.startswith("artifacts/") for d in ours[diverged].data)
 
 
 # ---- pure helpers -----------------------------------------------------------
