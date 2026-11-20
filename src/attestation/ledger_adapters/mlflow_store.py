@@ -247,6 +247,11 @@ def _legacy_metrics(found: MlflowFound) -> None:
     timing.add_wall(found.metrics, found.wall)
 
 
+def _unmeasured(metric_files: dict, measured_only: bool) -> bool:
+    """Nothing measured, under the ledger's rule (every reader's)."""
+    return measured_only and not metric_files
+
+
 def read_run(
     root: Path, exp_dir: Path, run_dir: Path, family: str | None, *, measured_only: bool = True
 ) -> MlflowFound | None:
@@ -255,8 +260,8 @@ def read_run(
     metric is None too; `attest mlflow sync` records it anyway."""
     meta = _ended_meta(run_dir)
     metric_files = _files(run_dir / "metrics") if meta is not None else {}
-    if meta is None or (measured_only and not metric_files):
-        return None  # not ended, or nothing measured
+    if meta is None or _unmeasured(metric_files, measured_only):
+        return None
     tags = {k: _read_text(p) for k, p in _files(run_dir / "tags").items()}
     run_name = meta.get("run_name") or tags.get(RUN_NAME_TAG) or None
     found = MlflowFound(
@@ -378,17 +383,8 @@ def _data(found: MlflowFound) -> list[dict]:
     return entries
 
 
-def to_core_record(
-    found: MlflowFound, *, caveats: list[str], replicate: tuple[str, int] | None
-) -> schema.RunRecord:
-    """The core record for one MLflow run, validated by `from_dict`.
-
-    `replicate` is the ledger-wide `<config>_seed<N>` naming convention
-    (`trackers.replicate_of`), the only arm the ledger knows without a
-    declaration. Raises `RecordError` for a run MLflow itself cannot read."""
-    if found.error:
-        raise schema.RecordError("", f"{found.name}: {found.error}")
-    curves = _curves(found)
+def _metrics(found: MlflowFound, curves: list[tuple[LoggedPoint, schema.Series]]) -> list[dict]:
+    """Each series' final point (MLflow's latest), then wall time."""
     metrics = [
         {
             "name": s.name,
@@ -413,6 +409,21 @@ def to_core_record(
                 "labels": {},
             }
         )
+    return metrics
+
+
+def to_core_record(
+    found: MlflowFound, *, caveats: list[str], replicate: tuple[str, int] | None
+) -> schema.RunRecord:
+    """The core record for one MLflow run, validated by `from_dict`.
+
+    `replicate` is the ledger-wide `<config>_seed<N>` naming convention
+    (`trackers.replicate_of`), the only arm the ledger knows without a
+    declaration. Raises `RecordError` for a run MLflow itself cannot read."""
+    if found.error:
+        raise schema.RecordError("", f"{found.name}: {found.error}")
+    curves = _curves(found)
+    metrics = _metrics(found, curves)
     from attestation import __version__
 
     identity = mapping.read_tags(found.tags)
