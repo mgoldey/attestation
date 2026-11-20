@@ -55,6 +55,28 @@ def _citation_resolver(target: Path):
         return None
 
 
+MAX_MODEL_TRACES = 4
+MAX_MODEL_ISSUES = 3
+MAX_MODEL_CHARS = 200
+
+
+def _models(traces: list[dict]) -> list[dict]:
+    """The `models` block: one bounded summary per model reference a claim
+    names (`[]` for a draft that names none). A cap is a size decision, not a
+    verdict: a broken chain is also an `untraced` row, which is never capped."""
+    return [
+        {
+            "ref": t["ref"][:MAX_MODEL_CHARS],
+            "ok": t["ok"],
+            "verified": t["verified"],
+            "chain": t["chain"][:MAX_MODEL_CHARS],
+            "issues": [i[:MAX_MODEL_CHARS] for i in t["issues"][:MAX_MODEL_ISSUES]],
+            "n_issues": len(t["issues"]),
+        }
+        for t in traces[:MAX_MODEL_TRACES]
+    ]
+
+
 @tool(
     empty={
         "claims": [],
@@ -62,6 +84,7 @@ def _citation_resolver(target: Path):
         "malformed": [],
         "checked": [],
         "figures": figures.empty_block(),
+        "models": [],
     },
     label="claims_check",
 )
@@ -72,7 +95,11 @@ def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
     # is the tool whose name says it checks claims. Claims with no `cite=` are
     # untouched -- see claims.check_citations.
     resolver = _citation_resolver(target)
-    out = claims.check(conn, target, resolver=resolver)
+    from attestation import model_trace
+
+    # Lazy: the index of runs and registries is built only if a claim names
+    # a model, so a draft without `model=` reads exactly what it did.
+    out = claims.check(conn, target, resolver=resolver, tracer=model_trace.tracer_for(target))
     # States the pairing with cite.check as data, not only in prose: a caller
     # comparing the two tools' payloads sees the scope difference directly.
     # "citation" only appears when a resolver could be built -- an unbuildable
@@ -92,6 +119,8 @@ def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
             # Present on every row so the shape does not change between
             # verdicts; it is the whole subject of an `uncited` one.
             "cite": v.claim.cite,
+            # Likewise on every row: the subject of an `untraced` one.
+            "model": v.claim.model,
             "message": v.message,
             "source_path": v.source_path,
             # On every row (empty when none) so the shape does not change
@@ -119,6 +148,7 @@ def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
             "malformed": out["malformed"],
             "checked": checked,
             "figures": figure_block,
+            "models": _models(out["models"]),
         }
     return {
         "message": message + figures.message_suffix(found),
@@ -127,6 +157,7 @@ def _check(conn, path: str | None = None, verdict: str | None = None) -> dict:
         "malformed": out["malformed"],
         "checked": checked,
         "figures": figures.block(found),
+        "models": _models(out["models"]),
     }
 
 

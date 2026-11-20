@@ -763,6 +763,23 @@ options:
                $RESEARCH_ROOT, else cwd)
 ```
 
+## attest model trace
+
+```
+usage: attest model trace [-h] [--search PATH] [--json] ref
+
+positional arguments:
+  ref            models:/<name>/<version>, models:/<name>@<alias>,
+                 hf:<org>/<name>[@<revision>], or a directory of saved model
+                 files
+
+options:
+  -h, --help     show this help message and exit
+  --search PATH  where the registry stores, run and dataset records are
+                 (repeatable; default: cwd)
+  --json         print the trace as JSON
+```
+
 ## attest mlflow sync
 
 ```

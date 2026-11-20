@@ -1,0 +1,9 @@
+artifact_location: file:./mlruns/653414338702670087
+creation_time: 1795146814865
+effective_trace_archival_retention: null
+experiment_id: '653414338702670087'
+last_update_time: 1795146814865
+lifecycle_stage: active
+name: iris
+trace_location: null
+workspace: default

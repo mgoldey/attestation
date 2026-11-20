@@ -50,6 +50,7 @@ RUN_NAME_TAG = mapping.RUN_NAME_TAG
 CONTEXT_TAG = mapping.CONTEXT_TAG
 # Not experiments: the trash holds deleted ones, `models` is the registry.
 _NOT_EXPERIMENTS = {".trash", "models"}
+_NOT_RUNS = {"datasets", "models"}
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ class MlflowFound(Found):
     points: list[LoggedPoint] = field(default_factory=list)
     datasets: list[dict[str, Any]] = field(default_factory=list)
     artifacts: list[tuple[str, Path]] = field(default_factory=list)
+    models: list[tuple[str, Path]] = field(default_factory=list)
     artifact_note: str | None = None
     wall: float | None = None
     error: str | None = None
@@ -293,8 +295,33 @@ def _read_inputs_and_outputs(found: MlflowFound, meta: dict, run_dir: Path, exp_
     art_root, found.artifact_note = _artifact_root(meta, run_dir)
     if art_root is not None:
         found.artifacts = list(_files(art_root).items())
+    found.models = _logged_models(run_dir, exp_dir)
     found.wall = timing.epoch_ms_duration(found.start_ms, found.end_ms)
     _legacy_metrics(found)
+
+
+def _logged_models(run_dir: Path, exp_dir: Path) -> list[tuple[str, Path]]:
+    """`(<model_id>/<path>, file)` for every model MLflow says this run output.
+
+    MLflow 3 keeps a logged model outside the run: its files under
+    `<exp>/models/<model_id>/artifacts/`, and the run's own statement that it
+    produced it in `<run>/outputs/<model_id>/meta.yaml` (`destination_type:
+    MODEL_OUTPUT`). That statement is what makes the files the run's outputs;
+    a model the run did not declare is not read. They are what a registered
+    model version points at, so a version traces to the run by digest
+    (spec 2026-11-20-model-registry-linkage-design.md)."""
+    out: list[tuple[str, Path]] = []
+    outputs = run_dir / "outputs"
+    if not outputs.is_dir():
+        return out
+    for declared in sorted(p for p in outputs.iterdir() if p.is_dir()):
+        meta = _yaml(declared / "meta.yaml") or {}
+        if meta.get("destination_type") != "MODEL_OUTPUT":
+            continue
+        model_id = str(meta.get("destination_id") or declared.name)
+        art = exp_dir / "models" / model_id / "artifacts"
+        out += [(f"{model_id}/{rel}", path) for rel, path in _files(art).items()]
+    return out
 
 
 def experiments(base: Path) -> list[tuple[Path, str | None]]:
@@ -312,8 +339,9 @@ def experiments(base: Path) -> list[tuple[Path, str | None]]:
 
 
 def run_dirs(exp_dir: Path) -> list[Path]:
-    """An experiment's run directories (its `datasets/` is not a run)."""
-    return sorted(p for p in exp_dir.iterdir() if p.is_dir() and p.name != "datasets")
+    """An experiment's run directories (its `datasets/` and MLflow 3's logged
+    `models/` are not runs)."""
+    return sorted(p for p in exp_dir.iterdir() if p.is_dir() and p.name not in _NOT_RUNS)
 
 
 def mlflow_runs(root: Path, seen: set[str]) -> list[MlflowFound]:
@@ -369,7 +397,9 @@ def _curves(found: MlflowFound) -> list[tuple[LoggedPoint, schema.Series]]:
 
 def _data(found: MlflowFound) -> list[dict]:
     """Dataset inputs (named, undigested, sorted by name), then artifacts
-    (sha256 of the bytes, sorted by path) -- the exporter's order."""
+    (sha256 of the bytes, sorted by path) -- the exporter's order -- then the
+    files of the models the run declared as outputs (`models/<id>/<path>`;
+    the exporter does not read logged models yet)."""
     entries: list[dict[str, Any]] = []
     for ds in found.datasets:
         role = ds["tags"].get(CONTEXT_TAG) or "input"
@@ -379,6 +409,10 @@ def _data(found: MlflowFound) -> list[dict]:
     for rel, path in sorted(found.artifacts):
         entries.append(
             {"name": f"artifacts/{rel}", "sha256": schema.sha256_file(path), "role": "output"}
+        )
+    for rel, path in sorted(found.models):
+        entries.append(
+            {"name": f"models/{rel}", "sha256": schema.sha256_file(path), "role": "output"}
         )
     return entries
 

@@ -1,0 +1,9 @@
+aliases:
+  champion: '1'
+creation_timestamp: 1795146818045
+deployment_job_id: null
+deployment_job_state: null
+description: null
+last_updated_timestamp: 1795146818050
+name: iris-clf
+workspace: default

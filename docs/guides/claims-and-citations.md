@@ -38,6 +38,14 @@ claims`) as well as the `cite.check` / `runs.claims_check` MCP tools. It is a
 lint ("no source has this key"), never "the paper does not support this
 claim". See `examples/citations/` for a worked run of both linters together.
 
+A claim about a model can name it with `model=` (`models:/<name>/<version>`,
+`models:/<name>@<alias>`, `hf:<org>/<name>@<rev>`, or a saved-model
+directory). The checker traces the version's files by sha256 to the run that
+output them and on to that run's data, read from local stores only; a broken
+chain, or a claim whose run neither made nor read the model, is `untraced` --
+a lint like `uncited`. `attest model trace REF` prints the chain alone; see
+`examples/model-registry/`.
+
 ## Does the cited paper say it?
 
 `attest support draft.md` (MCP: `cite.support`) is the check the lint is not.

@@ -31,7 +31,7 @@ BASELINE = {
     # policy into the pure _apply_relevance_floor.
     "src/attestation/corpus.py": 17,  # detect_in_source
     "src/attestation/claims.py": 15,  # check_claim
-    "src/attestation/cli.py": 14,  # cmd_claims
+    "src/attestation/cli.py": 12,  # cmd_claims
     "src/attestation/rank.py": 12,  # _ranking_quality -- lowered 2026-08-29:
     # the onion-seams split moved rank_items's blend into the pure rank_rows,
     # so rank_items is no longer the worst function here.

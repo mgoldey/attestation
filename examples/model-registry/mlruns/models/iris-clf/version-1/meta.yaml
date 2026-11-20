@@ -1,0 +1,16 @@
+creation_timestamp: 1795146818045
+current_stage: None
+deployment_job_state: null
+description: null
+last_updated_timestamp: 1795146818045
+model_id: m-b61a0cf80fe446e18fa9ba60f211a0d3
+name: iris-clf
+run_id: 82891d65b22e4e838d8a0cf49f773f2f
+run_link: null
+source: models:/m-b61a0cf80fe446e18fa9ba60f211a0d3
+status: READY
+status_message: null
+storage_location: file:./mlruns/653414338702670087/models/m-b61a0cf80fe446e18fa9ba60f211a0d3/artifacts
+user_id: null
+version: 1
+workspace: default
