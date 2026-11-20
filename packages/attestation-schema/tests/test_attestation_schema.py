@@ -1111,6 +1111,9 @@ def test_wheel_builds_and_carries_the_schema_file(tmp_path):
     with zipfile.ZipFile(wheel) as zf:
         names = set(zf.namelist())
         metadata = next(zf.read(n) for n in names if n.endswith(".dist-info/METADATA"))
+        entry_points = next(
+            zf.read(n) for n in names if n.endswith(".dist-info/entry_points.txt")
+        ).decode()
     assert "attestation_schema/schemas/run-1.schema.json" in names
     assert "attestation_schema/schemas/history-1.schema.json" in names
     assert "attestation_schema/schemas/state-1.schema.json" in names
@@ -1119,15 +1122,23 @@ def test_wheel_builds_and_carries_the_schema_file(tmp_path):
     # No unconditional requirement: pytest is the `[conformance]` extra's
     # (the plugin), never the core's (conformance spec, Decision 1); the
     # frameworks are the training callbacks' `[hf]`/`[lightning]` extras'
-    # (training-callbacks spec, "Where the callbacks live").
+    # (training-callbacks spec, "Where the callbacks live") and the MLflow
+    # provider's `[mlflow]`.
     requires = [ln for ln in metadata.decode().splitlines() if ln.startswith("Requires-Dist:")]
     assert sorted(requires) == [
         "Requires-Dist: accelerate>=0.26; extra == 'hf'",
         "Requires-Dist: lightning>=2.1; extra == 'lightning'",
+        "Requires-Dist: mlflow-skinny>=2.20; extra == 'mlflow'",
         "Requires-Dist: pytest>=7.2; extra == 'conformance'",
         "Requires-Dist: torch>=2.1; extra == 'hf'",
         "Requires-Dist: transformers>=4.41; extra == 'hf'",
     ], requires
+    # MLflow discovers the run-context provider through the wheel's metadata
+    # (mlflow-plugin spec, Decision 1).
+    assert "[mlflow.run_context_provider]" in entry_points
+    assert (
+        "attestation = attestation_schema.integrations.mlflow:AttestationRunContext" in entry_points
+    )
     assert "attestation_schema/integrations/_core.py" in names
-    assert not any(n.endswith("entry_points.txt") for n in names), "the plugin is opt-in (-p)"
+    assert "[pytest11]" not in entry_points, "the conformance plugin is opt-in (-p)"
     assert "attestation_schema/pytest_plugin.py" in names

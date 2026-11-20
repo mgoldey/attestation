@@ -43,10 +43,24 @@ dependencies = []
 # (`integrations/huggingface.py`, `integrations/lightning.py`), never by
 # `import attestation_schema`. See
 # docs/superpowers/specs/2026-11-19-training-callbacks-design.md.
+#
+# `[mlflow]` is the run-context provider's (`integrations/mlflow.py`, the one
+# module importing mlflow). mlflow-skinny, not mlflow: the full package
+# depends on it, so either satisfies the extra. Spec:
+# docs/superpowers/specs/2026-11-20-mlflow-plugin-design.md.
 [project.optional-dependencies]
 conformance = ["pytest>=7.2"]
 hf = ["transformers>=4.41", "torch>=2.1", "accelerate>=0.26"]
 lightning = ["lightning>=2.1"]
+mlflow = ["mlflow-skinny>=2.20"]
+
+# MLflow asks every `mlflow.run_context_provider` for tags at each
+# `mlflow.start_run`. Declared whatever extras were chosen (entry points have
+# no extras), so the provider is active wherever this package and mlflow are
+# both installed: on by default, `ATTESTATION_MLFLOW_TAGS=0` turns it off
+# (spec, "in_context()").
+[project.entry-points."mlflow.run_context_provider"]
+attestation = "attestation_schema.integrations.mlflow:AttestationRunContext"
 
 [project.urls]
 Repository = "https://github.com/mgoldey/attestation"

@@ -105,15 +105,26 @@ PYTEST_PLUGIN = SCHEMA_SRC / "pytest_plugin.py"
 # The training-loop callbacks, each behind its own extra and imported only by
 # whoever uses it (docs/superpowers/specs/2026-11-19-training-callbacks-design.md):
 # each may import its framework and nothing else outside the stdlib. Their
-# shared core (`integrations/_core.py`) stays stdlib.
+# shared core (`integrations/_core.py`) stays stdlib. The MLflow run-context
+# provider follows the same rule: `integrations/mlflow.py` is the ONE module
+# importing mlflow, and the mapping it and the readers share
+# (`integrations/mlflow_mapping.py`) is stdlib, so attestation imports it with
+# no mlflow (docs/superpowers/specs/2026-11-20-mlflow-plugin-design.md).
 FRAMEWORK_MODULES = {
     SCHEMA_SRC / "integrations" / "huggingface.py": ("transformers",),
     SCHEMA_SRC / "integrations" / "lightning.py": ("lightning",),
+    SCHEMA_SRC / "integrations" / "mlflow.py": ("mlflow",),
 }
 EXTRAS = {
     "conformance": ["pytest>=7.2"],
     "hf": ["transformers>=4.41", "torch>=2.1", "accelerate>=0.26"],
     "lightning": ["lightning>=2.1"],
+    "mlflow": ["mlflow-skinny>=2.20"],
+}
+ENTRY_POINTS = {
+    "mlflow.run_context_provider": {
+        "attestation": "attestation_schema.integrations.mlflow:AttestationRunContext"
+    }
 }
 
 
@@ -122,6 +133,7 @@ def test_schema_package_is_standard_library_only():
     stdlib_only = [p for p in _modules(SCHEMA_SRC) if p not in optional]
     assert SCHEMA_SRC / "conformance.py" in stdlib_only
     assert SCHEMA_SRC / "integrations" / "_core.py" in stdlib_only
+    assert SCHEMA_SRC / "integrations" / "mlflow_mapping.py" in stdlib_only
     offenders = _offenders(stdlib_only, lambda s: non_stdlib_imports(s, ("attestation_schema",)))
     assert not offenders, "attestation_schema is stdlib-only:\n  " + "\n  ".join(offenders)
     plugin = _offenders(
@@ -137,7 +149,25 @@ def test_schema_package_is_standard_library_only():
     project = tomllib.loads((SCHEMA_PKG / "pyproject.toml").read_text())["project"]
     assert project["dependencies"] == [], "attestation-schema declares no dependencies"
     assert project.get("optional-dependencies") == EXTRAS, (
-        "the extras are the conformance plugin's pytest and the callbacks' frameworks"
+        "the extras are the conformance plugin's pytest and the integrations' frameworks"
+    )
+    assert project.get("entry-points") == ENTRY_POINTS, (
+        "the only entry point is MLflow's run-context provider"
+    )
+
+
+def test_only_the_provider_module_imports_mlflow():
+    """attestation reads MLflow stores as files and never imports mlflow
+    (it is not a runtime dependency); in the schema package only the
+    provider does."""
+    importers = [
+        f"{p.relative_to(ROOT)}:{ln}"
+        for p in _modules(ATTESTATION_SRC) + _modules(SCHEMA_SRC)
+        for ln, _ in forbidden_imports(p.read_text(), ("mlflow",))
+    ]
+    provider = SCHEMA_SRC / "integrations" / "mlflow.py"
+    assert importers and all(i.startswith(str(provider.relative_to(ROOT))) for i in importers), (
+        importers
     )
 
 

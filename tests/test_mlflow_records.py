@@ -279,6 +279,11 @@ def fresh_store(tmp_path_factory):
         ["git", "rev-parse", "HEAD"], cwd=work, check=True, capture_output=True, text=True
     ).stdout.strip()
     env = {k: v for k, v in os.environ.items() if not k.startswith("MLFLOW_")}
+    # MLflow's own record of a run, as an MLflow user without attestation-schema
+    # has it: attestation-schema's run-context provider (registered in this venv
+    # by its entry point) is turned off. Its tags are tested with it on, in
+    # packages/attestation-schema/tests/test_integrations_mlflow.py.
+    env["ATTESTATION_MLFLOW_TAGS"] = "0"
     proc = subprocess.run(
         [sys.executable, "train.py"], cwd=work, env=env, capture_output=True, text=True, check=True
     )

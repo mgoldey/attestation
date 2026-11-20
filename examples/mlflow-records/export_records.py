@@ -8,7 +8,10 @@ writes ONLY through `attestation_schema` -- `layout.write_manifest` and
 way smeltery does not: a producer depends on the schema, not on the observer.
 
 The mapping, and why each line is what it is, is the "Producer findings"
-section of docs/superpowers/specs/2026-11-19-core-run-record-design.md:
+section of docs/superpowers/specs/2026-11-19-core-run-record-design.md. Its
+pure pieces live in `attestation_schema.integrations.mlflow_mapping`, which
+the ledger's file-store adapter calls too -- one mapping, two readers
+(docs/superpowers/specs/2026-11-20-mlflow-plugin-design.md):
 
     experiment name          -> family
     (no MLflow concept)      -> arm: null, unless --arm-param names the params
@@ -28,14 +31,19 @@ section of docs/superpowers/specs/2026-11-19-core-run-record-design.md:
     linked dataset name      -> split (MLflow 3 log_metric(dataset=...))
     mlflow.source.git.commit -> code.git_sha, provenance "inferred" (HEAD at run start);
                                 dirty null (MLflow never records it); version null
+    attestation.code         -> code, when attestation-schema's run-context provider
+                                tagged the run (it observed dirty); a commit that
+                                disagrees with MLflow's makes code "unknown"
     mlflow.source.git.repoURL-> code.repo, credentials stripped
     artifacts                -> data, role "output", sha256 of the stored file
     dataset inputs           -> data, role = mlflow.data.context, sha256 null
                                 (MLflow's digest is not a sha256 of any bytes
                                 a reader can fetch; it stays in ext.mlflow)
     --seed-param NAME        -> seeds {NAME: int}; null when none is declared
-    (no environment recorded)-> dependencies: null -- the exporter cannot observe
-                                the run's environment, and MLflow recorded none
+    attestation.dependencies -> dependencies, provenance as the identity rule gave it
+                                in the run's process at run start (the provider's
+                                tag); without that tag: null -- the exporter cannot
+                                observe the run's environment, and MLflow records none
     everything else          -> ext.mlflow (experiment id, run name, every tag --
                                 the repo URL tag with its credentials stripped
                                 too -- and every dataset input verbatim)
@@ -54,10 +62,8 @@ import sys
 import tempfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 from attestation_schema import (
     CodeIdentity,
@@ -67,12 +73,13 @@ from attestation_schema import (
     Producer,
     RunRecord,
     Series,
-    format_timestamp,
     layout,
     read,
     write,
     write_history,
 )
+from attestation_schema import strip_credentials as _strip
+from attestation_schema.integrations import mlflow_mapping as mapping
 
 # mlflow-skinny 3.x refuses a `file:` tracking URI unless this is set (the
 # file store is deprecated upstream, not removed). Set before mlflow reads it.
@@ -81,10 +88,10 @@ os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
 os.environ.setdefault("MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR", "false")
 
 PRODUCER = Producer(name="attestation-examples/mlflow-records", version="0.1.0")
-STATUS = {"FINISHED": "complete", "FAILED": "failed", "KILLED": "cancelled"}
-GIT_COMMIT = "mlflow.source.git.commit"
-GIT_REPO = "mlflow.source.git.repoURL"
-CONTEXT_TAG = "mlflow.data.context"
+STATUS = mapping.STATUS
+GIT_COMMIT = mapping.GIT_COMMIT
+GIT_REPO = mapping.GIT_REPO
+CONTEXT_TAG = mapping.CONTEXT_TAG
 
 
 @dataclass(frozen=True)
@@ -96,44 +103,25 @@ class Declared:
     directions: dict[str, str] = field(default_factory=dict)
 
 
-def timestamp_ms(ms: int | None) -> str | None:
-    """MLflow's epoch milliseconds as the record's one spelling of that instant."""
-    if ms is None:
-        return None
-    whole, frac = divmod(int(ms), 1000)
-    return format_timestamp(datetime.fromtimestamp(whole, UTC).replace(microsecond=frac * 1000))
+timestamp_ms = mapping.timestamp_ms
 
 
 def strip_credentials(url: str | None) -> str | None:
-    """A repo URL without `user:token@` -- the schema refuses one that has it."""
-    if not url:
-        return None
-    parts = urlsplit(url)
-    if parts.scheme in ("http", "https") and (parts.username or parts.password):
-        host = parts.hostname or ""
-        netloc = f"{host}:{parts.port}" if parts.port else host
-        return urlunsplit(parts._replace(netloc=netloc))
-    return url
+    """A repo URL without the credentials the schema's reader refuses (the
+    schema's own rule: `user:token@` on a web URL, any password)."""
+    return _strip(url) if url else None
 
 
 def history(points: Iterable[Any]) -> dict[tuple[str, str | None], list[Any]]:
-    """Every logged point, grouped by (metric, linked dataset) in logging order.
-
-    Logging order is timestamp order; the sort is stable, so points MLflow
-    logged in the same millisecond keep the order the store returned them.
-    """
-    series: dict[tuple[str, str | None], list[Any]] = {}
-    for p in sorted(points, key=lambda p: p.timestamp):
-        series.setdefault((p.key, p.dataset_name or None), []).append(p)
-    return series
+    """Every logged point, grouped by (metric, linked dataset) in logging
+    order -- the shared rule over MlflowClient's `dataset_name`."""
+    return mapping.group_points(points, lambda p: p.dataset_name)
 
 
 def latest(points: Sequence[Any]) -> Any:
-    """MLflow's own 'latest' point, by MLflow's own key: greatest step, then
-    latest timestamp, then largest value (file_store._get_metric_from_file).
-    The value tiebreak is MLflow's, kept so `metrics` agrees with what MLflow
-    reports for the run when two values share a step and a millisecond."""
-    return max(points, key=lambda p: (p.step, p.timestamp, p.value))
+    """MLflow's own 'latest' point (the shared rule: step, timestamp, value),
+    so `metrics` agrees with what MLflow reports for the run."""
+    return mapping.latest(points)
 
 
 def _arm(params: dict[str, str], names: Sequence[str], run_id: str) -> str | None:
@@ -160,20 +148,9 @@ def _seeds(params: dict[str, str], names: Sequence[str], run_id: str) -> dict[st
 
 
 def _code(tags: dict[str, str]) -> CodeIdentity:
-    """MLflow's git tags: the HEAD of the script's checkout when the run
-    started -- inferred, since MLflow never records uncommitted changes."""
-    sha = tags.get(GIT_COMMIT) or None
-    return CodeIdentity(
-        git_sha=sha,
-        dirty=None,
-        repo=tags.get(GIT_REPO) or None,
-        version=None,
-        provenance="inferred" if sha else "unknown",
-        evidence=f"MLflow tag {GIT_COMMIT}: HEAD of the source's checkout at run start; "
-        "uncommitted changes are not recorded"
-        if sha
-        else None,
-    )
+    """MLflow's git tags, and the provider's `attestation.code` when the run
+    carries it (the shared rule, `mlflow_mapping.code_from_tags`)."""
+    return mapping.code_from_tags(tags)
 
 
 def _artifacts(client: Any, run_id: str, path: str | None = None) -> list[str]:
@@ -245,7 +222,7 @@ def record_for(
     ]
     curves = history(points)
     metrics, series = [], []
-    for name, split in sorted(curves, key=lambda k: (k[0], k[1] or "")):
+    for name, split in mapping.series_order(curves):
         logged = curves[(name, split)]
         final = latest(logged)
         metrics.append(
@@ -283,10 +260,11 @@ def record_for(
         metrics=metrics,
         history=None,
         seeds=_seeds(params, declared.seed_params, info.run_id),
-        # null, not [mlflow as unknown]: a list claims the environment was
-        # observed, and a run's store records no versions of anything it ran
-        # on -- mlflow included (spec, Producer findings 3).
-        dependencies=None,
+        # null, not [mlflow as unknown], unless the run-context provider
+        # observed the environment at run start: a list claims it was
+        # observed, and MLflow itself records no versions of anything the
+        # run ran on -- mlflow included (spec, Producer findings 3).
+        dependencies=mapping.dependencies_from_tags(tags),
         ext={
             "mlflow": {
                 "experiment_id": experiment.experiment_id,

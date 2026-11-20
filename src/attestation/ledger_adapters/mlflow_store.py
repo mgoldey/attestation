@@ -12,21 +12,27 @@ plain files the store is. Where MLflow's semantics matter they are mirrored
 and the source is named; the one deliberate divergence is the dataset-step
 bug (see `_point`).
 
-Spec: docs/superpowers/specs/2026-11-20-mlflow-adapter-design.md.
+The pure pieces both producers share -- status, tag names, timestamps,
+MLflow's latest point, the grouping, the git-tag and `attestation.*`-tag
+rules for `code` and `dependencies` -- are `attestation_schema.integrations.
+mlflow_mapping`, called by the exporter too, so there is one mapping.
+
+Specs: docs/superpowers/specs/2026-11-20-mlflow-adapter-design.md,
+docs/superpowers/specs/2026-11-20-mlflow-plugin-design.md.
 """
 
 from __future__ import annotations
 
 import math
 import os
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
 import attestation_schema as schema
 import yaml
+from attestation_schema.integrations import mlflow_mapping as mapping
 
 from attestation.compute import WALL_METRIC
 from attestation.ledger_adapters import timing
@@ -37,11 +43,11 @@ ADAPTER = "mlflow"
 # meta.yaml stores the status as RunStatus's protobuf integer; older or
 # hand-written stores spell the name. MLflow's default when absent is RUNNING.
 _STATUS_NAMES = {1: "RUNNING", 2: "SCHEDULED", 3: "FINISHED", 4: "FAILED", 5: "KILLED"}
-TERMINAL = {"FINISHED": "complete", "FAILED": "failed", "KILLED": "cancelled"}
-GIT_COMMIT = "mlflow.source.git.commit"
-GIT_REPO = "mlflow.source.git.repoURL"
-RUN_NAME_TAG = "mlflow.runName"
-CONTEXT_TAG = "mlflow.data.context"
+TERMINAL = mapping.STATUS
+GIT_COMMIT = mapping.GIT_COMMIT
+GIT_REPO = mapping.GIT_REPO
+RUN_NAME_TAG = mapping.RUN_NAME_TAG
+CONTEXT_TAG = mapping.CONTEXT_TAG
 # Not experiments: the trash holds deleted ones, `models` is the registry.
 _NOT_EXPERIMENTS = {".trash", "models"}
 
@@ -241,11 +247,16 @@ def _legacy_metrics(found: MlflowFound) -> None:
     timing.add_wall(found.metrics, found.wall)
 
 
-def _read_run(root: Path, exp_dir: Path, run_dir: Path, family: str | None) -> MlflowFound | None:
+def read_run(
+    root: Path, exp_dir: Path, run_dir: Path, family: str | None, *, measured_only: bool = True
+) -> MlflowFound | None:
+    """One run directory, or None for a run not ended (or deleted). With
+    `measured_only` (the ledger's rule: every reader's), a run that logged no
+    metric is None too; `attest mlflow sync` records it anyway."""
     meta = _ended_meta(run_dir)
     metric_files = _files(run_dir / "metrics") if meta is not None else {}
-    if meta is None or not metric_files:
-        return None  # not ended, or nothing measured (every reader's rule)
+    if meta is None or (measured_only and not metric_files):
+        return None  # not ended, or nothing measured
     tags = {k: _read_text(p) for k, p in _files(run_dir / "tags").items()}
     run_name = meta.get("run_name") or tags.get(RUN_NAME_TAG) or None
     found = MlflowFound(
@@ -281,7 +292,7 @@ def _read_inputs_and_outputs(found: MlflowFound, meta: dict, run_dir: Path, exp_
     _legacy_metrics(found)
 
 
-def _experiments(base: Path) -> list[tuple[Path, str | None]]:
+def experiments(base: Path) -> list[tuple[Path, str | None]]:
     """(directory, name) of every active experiment in the store. The trash
     and the model registry are not experiments; a missing name is None."""
     out = []
@@ -295,19 +306,29 @@ def _experiments(base: Path) -> list[tuple[Path, str | None]]:
     return out
 
 
+def run_dirs(exp_dir: Path) -> list[Path]:
+    """An experiment's run directories (its `datasets/` is not a run)."""
+    return sorted(p for p in exp_dir.iterdir() if p.is_dir() and p.name != "datasets")
+
+
 def mlflow_runs(root: Path, seen: set[str]) -> list[MlflowFound]:
     """Every ended, active run under `<root>/mlruns/<experiment_id>/<run_id>/`.
 
     Named `<run_name>/<run id[:8]>` (the id alone when the run has no name),
     the ledger's name for MLflow runs since the first reader; a name already
-    in `seen` is skipped, as every legacy reader does."""
+    in `seen` is skipped, as every legacy reader does. So is a run whose id
+    is in `seen`: the core adapter, which runs first, claimed it for the
+    run's own core record (`attest mlflow sync`'s), which outranks a
+    conversion of the store -- one run, read once (plugin spec, Decision 3)."""
     base = Path(root) / STORE_DIR
     if not base.is_dir():
         return []
     out: list[MlflowFound] = []
-    for exp_dir, family in _experiments(base):
-        for run_dir in sorted(p for p in exp_dir.iterdir() if p.is_dir() and p.name != "datasets"):
-            found = _read_run(Path(root), exp_dir, run_dir, family)
+    for exp_dir, family in experiments(base):
+        for run_dir in run_dirs(exp_dir):
+            if run_dir.name in seen:
+                continue
+            found = read_run(Path(root), exp_dir, run_dir, family)
             if found is not None and found.name not in seen:
                 seen.add(found.name)
                 out.append(found)
@@ -317,59 +338,28 @@ def mlflow_runs(root: Path, seen: set[str]) -> list[MlflowFound]:
 # ---- the mapping ---------------------------------------------------------------
 
 
-def timestamp_ms(ms: int | None) -> str | None:
-    """Epoch milliseconds as the record's one spelling of that instant (the
-    exporter's arithmetic, so two producers write the same bytes)."""
-    if ms is None:
-        return None
-    whole, frac = divmod(int(ms), 1000)
-    return schema.format_timestamp(
-        datetime.fromtimestamp(whole, UTC).replace(microsecond=frac * 1000)
-    )
+timestamp_ms = mapping.timestamp_ms
 
 
 def _grouped(found: MlflowFound) -> dict[tuple[str, str | None], list[LoggedPoint]]:
-    """Points per (metric, linked dataset) in logging order: sorted by
-    timestamp, stably, so points logged in one millisecond keep file order --
-    the exporter's `history()` over keys in sorted order."""
-    series: dict[tuple[str, str | None], list[LoggedPoint]] = {}
-    for p in sorted(found.points, key=lambda p: p.timestamp):
-        series.setdefault((p.key, p.dataset or None), []).append(p)
-    return series
+    """Points per (metric, linked dataset) in logging order (the shared rule)."""
+    return mapping.group_points(found.points, lambda p: p.dataset)
 
 
 def _latest(points: list[LoggedPoint]) -> LoggedPoint:
-    """MLflow's own final value: greatest step, then latest timestamp, then
-    largest value (`FileStore._get_metric_from_file`)."""
-    return max(points, key=lambda p: (p.step, p.timestamp, p.value))
+    """MLflow's own final value (the shared rule)."""
+    return mapping.latest(points)
 
 
 def _curves(found: MlflowFound) -> list[tuple[LoggedPoint, schema.Series]]:
     """(final point, curve) per series, sorted by (metric, split)."""
     grouped = _grouped(found)
     out = []
-    for key, split in sorted(grouped, key=lambda k: (k[0], k[1] or "")):
+    for key, split in mapping.series_order(grouped):
         logged = grouped[(key, split)]
         points = [schema.Point(p.step, p.value, timestamp_ms(p.timestamp)) for p in logged]
         out.append((_latest(logged), schema.Series(key, split, {}, points)))
     return out
-
-
-def _code(tags: dict[str, str]) -> dict:
-    """MLflow's git tags: HEAD of the source's checkout at run start --
-    inferred, since MLflow never records uncommitted changes."""
-    sha = tags.get(GIT_COMMIT) or None
-    return {
-        "git_sha": sha,
-        "dirty": None,
-        "repo": schema.strip_credentials(repo) if (repo := tags.get(GIT_REPO)) else None,
-        "version": None,
-        "provenance": "inferred" if sha else "unknown",
-        "evidence": f"MLflow tag {GIT_COMMIT}: HEAD of the source's checkout at run start; "
-        "uncommitted changes are not recorded"
-        if sha
-        else None,
-    }
 
 
 def _data(found: MlflowFound) -> list[dict]:
@@ -425,7 +415,10 @@ def to_core_record(
         )
     from attestation import __version__
 
+    identity = mapping.read_tags(found.tags)
     run_caveats = [f"{found.name}: {found.artifact_note}"] if found.artifact_note else []
+    run_caveats += [f"{found.name}: {p}" for p in identity.problems]
+    deps = identity.dependencies
     return schema.from_dict(
         {
             "schema": schema.SCHEMA,
@@ -436,13 +429,13 @@ def to_core_record(
             "started_at": timestamp_ms(found.start_ms),
             "finished_at": timestamp_ms(found.end_ms),
             "producer": {"name": f"attestation {ADAPTER}-import", "version": __version__},
-            "code": _code(found.tags),
+            "code": asdict(identity.code),
             "config": dict(found.params),
             "data": _data(found),
             "metrics": metrics,
             "history": history_ref([s for _, s in curves]),
             "seeds": {"seed": replicate[1]} if replicate else None,
-            "dependencies": None,
+            "dependencies": [asdict(d) for d in deps] if deps is not None else None,
             "ext": {
                 IMPORT_NAMESPACE: {
                     "adapter": ADAPTER,
@@ -460,7 +453,10 @@ def to_core_record(
 __all__ = [
     "MlflowFound",
     "LoggedPoint",
+    "experiments",
     "mlflow_runs",
+    "read_run",
+    "run_dirs",
     "timestamp_ms",
     "to_core_record",
 ]
