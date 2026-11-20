@@ -7,7 +7,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from attestation.mcp import register_all
 
@@ -27,7 +27,7 @@ def _served(monkeypatch, surface=None):
         monkeypatch.setenv("ATTEST_TOOLS", surface)
     else:
         monkeypatch.delenv("ATTEST_TOOLS", raising=False)
-    m = FastMCP("plan")
+    m = MCPServer("plan")
     register_all(m)
     return {t.name for t in asyncio.run(m.list_tools())}
 

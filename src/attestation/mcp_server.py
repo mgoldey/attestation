@@ -11,13 +11,18 @@ it is just an httpx client.
 
 import logging
 
-from mcp.server.fastmcp import FastMCP
+# mcp 2.x renamed FastMCP to MCPServer; registration, schemas and the
+# indent=2 JSON text of a dict result are unchanged (measured: every tool
+# listing and call result byte-identical to mcp 1.28.1 apart from the
+# protocol's own `resultType`). The 2.x server also answers the
+# `server/discover` probe a 2.x client opens with, which 1.x rejected.
+from mcp.server.mcpserver import MCPServer
 
 from attestation.mcp import register_all
 
 log = logging.getLogger(__name__)
 
-mcp = FastMCP("attestation")
+mcp = MCPServer("attestation")
 register_all(mcp)
 
 

@@ -23,7 +23,7 @@ def _served(monkeypatch, tmp_path, surface=None, *, expand=True):
     """Tools this agent serves. `expand` defaults to True because most tests
     here are about the BOUNDARY -- which tools an agent may touch -- and the
     default surface hides the specifics behind disclosure."""
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
     if surface is None:
@@ -31,7 +31,7 @@ def _served(monkeypatch, tmp_path, surface=None, *, expand=True):
     else:
         monkeypatch.setenv("ATTEST_TOOLS", surface)
     monkeypatch.setenv("ATTEST_EXPAND", "1" if expand else "0")
-    mcp = FastMCP("test")
+    mcp = MCPServer("test")
     register_all(mcp)
     return {t.name for t in asyncio.run(mcp.list_tools())}
 
@@ -86,12 +86,12 @@ def test_claims_live_with_runs_not_with_the_graph(monkeypatch, tmp_path):
 def test_an_unknown_surface_is_refused_loudly(monkeypatch, tmp_path):
     """A typo in ATTEST_TOOLS must not silently serve everything -- that is
     the failure mode where a restriction quietly stops restricting."""
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
     monkeypatch.setenv("ATTEST_TOOLS", "feeed")
     with pytest.raises(ValueError, match="feeed"):
-        register_all(FastMCP("test"))
+        register_all(MCPServer("test"))
 
 
 def test_the_surfaces_cover_every_tool(monkeypatch, tmp_path):
@@ -127,9 +127,9 @@ def test_the_full_surface_is_reachable_on_request(monkeypatch, tmp_path):
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
     monkeypatch.setenv("ATTEST_TOOLS", "feed")
     monkeypatch.setenv("ATTEST_EXPAND", "1")
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
-    mcp = FastMCP("test")
+    mcp = MCPServer("test")
     register_all(mcp)
     names = {t.name for t in asyncio.run(mcp.list_tools())}
     assert "feed.list" in names
@@ -142,9 +142,9 @@ def test_expanding_never_crosses_the_agent_boundary(monkeypatch, tmp_path):
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
     monkeypatch.setenv("ATTEST_TOOLS", "provenance")
     monkeypatch.setenv("ATTEST_EXPAND", "1")
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
-    mcp = FastMCP("test")
+    mcp = MCPServer("test")
     register_all(mcp)
     names = {t.name for t in asyncio.run(mcp.list_tools())}
     assert "runs.compare" in names
@@ -165,12 +165,12 @@ def test_expansion_widens_visibility_and_never_the_boundary(surface, monkeypatch
     """
     import asyncio
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     def registered(expand: bool) -> set[str]:
         monkeypatch.setenv("ATTEST_TOOLS", surface)
         monkeypatch.setenv("ATTEST_EXPAND", "1" if expand else "0")
-        server = FastMCP("expand-check")
+        server = MCPServer("expand-check")
         register_all(server)
         return {t.name for t in asyncio.run(server.list_tools())}
 

@@ -32,7 +32,7 @@ def emitted(payload) -> int:
     """Characters the MODEL receives, not the characters we happened to measure.
 
     Every budget in this file measured `json.dumps(out)` -- compact, no spaces.
-    FastMCP serialises tool results with `indent=2`, a measured 1.238x
+    MCPServer serialises tool results with `indent=2`, a measured 1.238x
     inflation on a real response: 1562 compact became 1934 emitted. So the
     guards were green while 27 of 30 default calls against the live database
     exceeded 2000 as actually sent, which is precisely the payload the module
@@ -87,7 +87,7 @@ MAX_SEARCH_ITEM_CHARS = _row_budget(60)
 # cost, plus the envelope. A fixed 2000 disagreed with the caps -- 4 rows at
 # the permitted 496 is already 1984, leaving 16 chars for ok/message/
 # ranking_quality, which alone measures 245-393. That contradiction was
-# invisible because the guard measured COMPACT json while FastMCP emits
+# invisible because the guard measured COMPACT json while MCPServer emits
 # indent=2 (1.238x), so all five live personas exceeded 2000 as actually sent.
 def _response_budget() -> int:
     from attestation.mcp.feed import DEFAULT_LIST_LIMIT
@@ -489,9 +489,9 @@ def test_the_item_budget_is_at_least_what_the_field_caps_permit(stocked):
 
 
 def test_emitted_size_is_what_is_measured(stocked):
-    """The guard must measure what FastMCP sends, not what we serialise here.
+    """The guard must measure what MCPServer sends, not what we serialise here.
 
-    Every budget in this file measured compact `json.dumps`. FastMCP emits
+    Every budget in this file measured compact `json.dumps`. MCPServer emits
     `indent=2` -- a measured 1.238x on a real response (1562 -> 1934) -- so all
     five live personas exceeded 2000 on feed.search as actually sent while
     every test here was green.
@@ -501,7 +501,7 @@ def test_emitted_size_is_what_is_measured(stocked):
     """
     out = feed_mod._list_feed("ana")
     assert emitted(out) > len(json.dumps(out)), (
-        "emitted() is not measuring the indented form FastMCP actually sends"
+        "emitted() is not measuring the indented form MCPServer actually sends"
     )
     assert emitted(out) / len(json.dumps(out)) > 1.1
 
@@ -509,7 +509,7 @@ def test_emitted_size_is_what_is_measured(stocked):
 def test_the_digest_has_a_stated_budget_too(stocked):
     """feed.digest had no size guard at all, and it is the largest response.
 
-    Measured on the live database as FastMCP emits it: feed.list 1835,
+    Measured on the live database as MCPServer emits it: feed.list 1835,
     feed.search 2083, feed.digest 4296. The digest groups by topic and defaults
     to limit=30 against list's 4, so it legitimately costs more -- but "more"
     was unbounded and untested, which is how the one tool a reader is most
@@ -609,11 +609,11 @@ def test_every_tool_is_either_budgeted_or_declared_a_composition_tool():
     """
     import asyncio
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
-    server = FastMCP("budget-census")
+    server = MCPServer("budget-census")
     register_all(server)
     names = {t.name for t in asyncio.run(server.list_tools())}
 
@@ -753,7 +753,7 @@ def test_no_tool_exceeds_the_hard_ceiling_when_actually_driven(stocked):
     """
     import asyncio
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
@@ -792,7 +792,7 @@ def test_no_tool_exceeds_the_hard_ceiling_when_actually_driven(stocked):
     conn.commit()
     conn.close()
 
-    server = FastMCP("ceiling-census")
+    server = MCPServer("ceiling-census")
     register_all(server)
 
     # Read-only tools with arguments that work against the fixture. Mutators,
@@ -838,17 +838,10 @@ def test_no_tool_exceeds_the_hard_ceiling_when_actually_driven(stocked):
         for name, args in calls.items():
             # "tool@max" drives the same tool with maximal arguments.
             result = await server.call_tool(name.split("@", 1)[0], args)
-            first = result[0]
-            if isinstance(first, tuple):
-                first = first[0]
-            text = (
-                json.dumps(first, indent=2, default=str)
-                if isinstance(first, list)
-                else getattr(first, "text", "")
-            )
+            text = result.content[0].text if result.content else ""
             # An empty or error payload must not read as "small and fine" --
             # that is how a census passes by measuring nothing. The .ask tools
-            # return structured output (a list), so they carry `answer` rather
+            # return structured output (an Answer), so they carry `answer` rather
             # than the `ok` envelope.
             assert text, f"{name} returned no text; the census measured nothing"
             marker = "answer" if name.endswith(".ask") else '"ok": true'

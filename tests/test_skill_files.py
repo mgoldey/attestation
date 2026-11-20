@@ -108,11 +108,11 @@ def _live_tool_names() -> set[str]:
     """
     import asyncio
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
-    server = FastMCP("skill-surface-check")
+    server = MCPServer("skill-surface-check")
     register_all(server)
     return {t.name for t in asyncio.run(server.list_tools())}
 
@@ -578,7 +578,7 @@ def _deployed_tools(surface: str) -> set[str]:
     import importlib
     import os
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     saved = {k: os.environ.get(k) for k in ("ATTEST_TOOLS", "ATTEST_EXPAND")}
     os.environ["ATTEST_TOOLS"] = surface
@@ -587,7 +587,7 @@ def _deployed_tools(surface: str) -> set[str]:
         import attestation.mcp as mcp_pkg
 
         importlib.reload(mcp_pkg)
-        server = FastMCP("deployed-surface-check")
+        server = MCPServer("deployed-surface-check")
         mcp_pkg.register_all(server)
         return {t.name for t in asyncio.run(server.list_tools())}
     finally:

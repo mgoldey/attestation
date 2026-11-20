@@ -1,11 +1,13 @@
 """Every MCP tool, called over stdio, on every agent surface.
 
 Spawns `attest-mcp` five times -- once per ATTEST_TOOLS surface with
-ATTEST_EXPAND=1, once unrestricted -- with the `mcp` package's stdio client,
+ATTEST_EXPAND=1, once unrestricted -- with the `mcp` package's own client
+(`mcp.client.Client`, which opens with the `server/discover` probe and falls
+back to `initialize` only for a legacy server: a fallback is a FAILED row),
 lists the tools, and calls each one with a scripted argument set in the
 order a person would. This is the path every agent takes and the one
 nothing in tests/ exercises: the entry point, the env the server reads at
-import, the stdio framing, the schema FastMCP emits, the stale-process
+import, the stdio framing, the schema MCPServer emits, the stale-process
 problem.
 
 Prints a matrix of surface x tool x ok/refused/FAILED. Exit 1 if any call
@@ -237,8 +239,9 @@ def _resolve(arguments: dict, ctx: dict) -> dict:
 
 
 async def run_surface(surface: str | None, env: dict, ctx: dict) -> list[dict]:
-    from mcp import ClientSession
-    from mcp.client.stdio import StdioServerParameters, stdio_client
+    from mcp.client import Client
+    from mcp.client.stdio import StdioServerParameters
+    from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
     spawn_env = {**os.environ, **env, "ATTEST_EXPAND": "1"}
     if surface:
@@ -251,8 +254,15 @@ async def run_surface(surface: str | None, env: dict, ctx: dict) -> list[dict]:
     label = surface or "full"
     rows: list[dict] = []
     try:
-        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
-            await session.initialize()
+        async with Client(params) as session:
+            # mcp 2.x clients probe `server/discover` first. A server on the
+            # 1.x SDK rejected it (a pydantic error in its stderr) and only
+            # then answered `initialize`: a working session that hides a
+            # stale SDK, so a legacy handshake is a row, not a shrug.
+            version = session.protocol_version
+            modern = version in MODERN_PROTOCOL_VERSIONS
+            problem = None if modern else f"legacy handshake: protocol {version}"
+            rows.append(_row(label, "<handshake>", modern, "ok", problem, 0.0, version))
             listed = {t.name for t in (await session.list_tools()).tools}
             rows += await _call_all(session, label, listed, ctx)
     except Exception as exc:  # noqa: BLE001 -- a surface that will not start is one row saying so
@@ -289,7 +299,7 @@ async def _call_all(session, label: str, listed: set[str], ctx: dict) -> list[di
         try:
             result = await session.call_tool(tool, _resolve(arguments, ctx))
             payload = json.loads(result.content[0].text) if result.content else {}
-            if result.isError and "ok" not in payload:
+            if result.is_error and "ok" not in payload:
                 payload = {
                     "ok": False,
                     "message": result.content[0].text if result.content else "error",

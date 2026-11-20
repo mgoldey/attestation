@@ -189,19 +189,19 @@ def test_ask_tools_declare_an_output_schema(tmp_path, monkeypatch):
     """
     import asyncio
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
     monkeypatch.setenv("RSS_DB", str(tmp_path / "t.db"))
     monkeypatch.delenv("ATTEST_TOOLS", raising=False)
-    mcp = FastMCP("test")
+    mcp = MCPServer("test")
     register_all(mcp)
     tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
 
     for name in ("feed.ask", "runs.ask", "kg.ask", "sym.ask"):
         assert name in tools, f"{name} is not served"
-        schema = tools[name].outputSchema
+        schema = tools[name].output_schema
         assert schema, f"{name} declares no outputSchema"
         props = schema.get("properties", {})
         assert {"ok", "answer", "caveat"} <= set(props), f"{name}: {sorted(props)}"
@@ -562,13 +562,13 @@ def test_feed_ask_research_survives_the_answer_model_through_the_real_server(tmp
     error. That shipped in 0.2.0. Worse, the papers were stored before the
     failure, so the library changed while the caller was told nothing worked.
 
-    This drives the registered tool on a real FastMCP server, so the Answer
+    This drives the registered tool on a real MCPServer server, so the Answer
     model and MCP's own output validation both run. Only the network client is
     stubbed.
     """
     import asyncio
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation import research
     from attestation.db import get_db
@@ -596,7 +596,7 @@ def test_feed_ask_research_survives_the_answer_model_through_the_real_server(tmp
         def search(self, query, *, journal=None, since=None, limit=50):
             return [paper]
 
-    server = FastMCP("t")
+    server = MCPServer("t")
     register_all(server)
     # AFTER register_all: research.register() rebuilds CLIENTS from the
     # environment, so patching first silently restored the real arXiv client
@@ -615,7 +615,7 @@ def test_feed_ask_research_survives_the_answer_model_through_the_real_server(tmp
         result = await server.call_tool(
             "feed.ask", {"user": "matt", "question": "research mixture of experts on arxiv"}
         )
-        return result[1] if isinstance(result, tuple) else result
+        return result.structured_content
 
     structured = asyncio.run(call())
 
@@ -940,13 +940,13 @@ def test_the_registered_feed_ask_exposes_item_id_and_url():
     """Checked on the real registration, the surface an agent sees."""
     import asyncio
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from attestation.mcp import register_all
 
-    server = FastMCP("t")
+    server = MCPServer("t")
     register_all(server)
-    schema = {t.name: t for t in asyncio.run(server.list_tools())}["feed.ask"].inputSchema
+    schema = {t.name: t for t in asyncio.run(server.list_tools())}["feed.ask"].input_schema
     assert {"item_id", "url"} <= set(schema["properties"]), schema["properties"]
     assert set(schema.get("required", [])) == {"user", "question"}
 
