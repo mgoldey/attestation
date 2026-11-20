@@ -53,8 +53,10 @@ dependencies = [
     # ledger reads only core records (docs/superpowers/specs/2026-11-19-ledger-
     # reads-core-records-design.md). Not yet on an index: a bare `pip install`
     # of this wheel needs the schema wheel beside it, and publishing it is an
-    # open decision for the next release.
-    "attestation-schema>=0.1.0",
+    # open decision for the next release. >=0.2.0: run_record, figures and
+    # prereg call the schema's sha256_file/git_state, so release schema-v0.2.0
+    # before the attestation release that carries this floor.
+    "attestation-schema>=0.2.0",
 ]
 
 [project.urls]

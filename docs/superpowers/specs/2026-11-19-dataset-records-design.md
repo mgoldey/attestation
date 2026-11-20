@@ -200,6 +200,24 @@ Rejected: shipping frozen because "the fields are obvious". The smeltery walk
 below already found two things the export cannot supply today; the draft
 exists to absorb exactly that.
 
+### smeltery's producer findings: pending (2026-11-19)
+
+smeltery has now written dataset records (`smeltery export dataset`,
+smeltery `docs/dataset-export.md`, "Producer findings against the draft
+schema") and filed eight findings. **Seven are pending, undecided, and the
+draft is unchanged by them:** (1) a split file carried into a new version
+resolves `ambiguous` although the content entry pins the version; (2) no
+link from a version to the version it was derived from; (3) a split's
+partition (`train`) is not expressible in `data[]`; (4) split parameters
+(algorithm version, fractions) have no slot; (5) `columns[].unit` cannot
+describe a per-row or per-element unit; (6) the exporter's environment
+(pyarrow) has no slot; (7) `created_at` makes two exports of the same bytes
+two records, `ambiguous` together. Deciding them is the freeze's work, as the
+run/1 findings were. (8), no version to detect the feature by, is resolved:
+attestation-schema 0.2.0 is the first release with `dataset.py` and carries
+`attestation_schema.__version__` (`2026-11-19-dependency-identity-design.md`,
+Decision 6).
+
 ## Decision 6: resolving lineage, pure and stdlib
 
 `attestation_schema.lineage.resolve_lineage(run, datasets, runs) -> Lineage`

@@ -16,12 +16,9 @@ Spec: docs/superpowers/specs/2026-11-19-training-callbacks-design.md.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 import os
 import platform
-import subprocess  # nosec B404 -- git, with a fixed argv, no shell
 import sys
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
@@ -31,13 +28,14 @@ from enum import Enum
 from importlib import metadata
 from pathlib import Path
 from typing import Any, TypeAlias, cast
-from urllib.parse import urlsplit, urlunsplit
 
 from attestation_schema import layout
 from attestation_schema.canonical import MAX_SAFE_INTEGER
 from attestation_schema.conformance import _REDACTED, _secret_key, credential_in
 from attestation_schema.dataset import DatasetRecord, dataset_lineage_entries, read_dataset
+from attestation_schema.files import sha256_file
 from attestation_schema.history import HistoryWriter
+from attestation_schema.identity import git_state, package_identity
 from attestation_schema.record import (
     STATUSES,
     CodeIdentity,
@@ -107,14 +105,6 @@ def undigested_data(evaluated: bool) -> list[DataDigest]:
 
 
 # ---- outputs -----------------------------------------------------------------
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def output_name(path: Path, root: Path) -> str:
@@ -201,120 +191,18 @@ def redact(value: Any, key: str | None = None, path: str = "$") -> tuple[Any, li
 
 
 # ---- identities --------------------------------------------------------------
-
-
-def strip_credentials(url: str) -> str:
-    """`url` with any `user[:password]@` removed (scp-style `git@host:path`
-    has no scheme and no credential, and is returned unchanged)."""
-    parts = urlsplit(url)
-    if not parts.scheme or "@" not in parts.netloc:
-        return url
-    return urlunsplit(parts._replace(netloc=parts.netloc.rpartition("@")[2]))
-
-
-def _source_url(url: str) -> str:
-    """A URL for `dependencies[].source`: credential-free, no query string
-    (a signed archive URL carries its credential there)."""
-    return urlunsplit(urlsplit(strip_credentials(url))._replace(query=""))
-
-
-def _is_sha(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) in (40, 64)
-        and all(c in "0123456789abcdef" for c in value)
-    )
-
-
-def _same_release(module_version: str | None, dist_version: str | None) -> bool:
-    """The imported module and the installed metadata name one release. A
-    PEP 440 local label only the module reports agrees: PyPI's torch wheel
-    says `2.15.0` in its metadata and `2.15.0+cu132` in `__version__`
-    (measured, torch 2.15.0); the label is build detail the module adds."""
-    if module_version is None or dist_version is None:
-        return False
-    if module_version == dist_version:
-        return True
-    public, _, local = module_version.partition("+")
-    return bool(local) and "+" not in dist_version and public == dist_version
-
-
-def dependency_identity(
-    name: str,
-    module_version: str | None,
-    dist_version: str | None,
-    direct_url: Mapping[str, Any] | None,
-    installer: str | None,
-) -> Dependency:
-    """The identity of one dependency from what the process can observe: the
-    imported module's `__version__`, the installed distribution's metadata
-    version, its PEP 610 `direct_url.json` and its `INSTALLER`. Pure."""
-    version = module_version or dist_version
-    build_sha: str | None = None
-    local_dir = False
-    evidence: list[str] = []
-    if direct_url and isinstance(direct_url.get("vcs_info"), Mapping):
-        vcs = direct_url["vcs_info"]
-        source: str | None = f"{vcs.get('vcs', 'git')}+{_source_url(str(direct_url['url']))}"
-        commit = vcs.get("commit_id")
-        build_sha = commit if _is_sha(commit) else None
-        evidence.append(f"direct_url.json vcs_info ({vcs.get('vcs', 'git')})")
-    elif direct_url and "archive_info" in direct_url:
-        url = str(direct_url.get("url", ""))
-        source = "file" if url.startswith("file:") else f"url:{_source_url(url)}"
-        evidence.append("direct_url.json archive_info")
-    elif direct_url and "dir_info" in direct_url:
-        source, local_dir = "file", True
-        editable = bool(direct_url["dir_info"].get("editable"))
-        evidence.append("direct_url.json dir_info" + (" (editable)" if editable else ""))
-    else:
-        tool = (installer or "").strip().lower()
-        source = {"pip": "index", "uv": "index", "conda": "conda"}.get(tool)
-        evidence.append(f"no direct_url.json; INSTALLER={tool or 'absent'}")
-    agree = _same_release(module_version, dist_version)
-    if module_version and dist_version and not agree:
-        evidence.append(f"__version__ {module_version} != metadata {dist_version}")
-    elif agree and module_version != dist_version:
-        evidence.append(f"__version__ {module_version} is metadata {dist_version} + local label")
-    elif agree:
-        evidence.append(f"__version__ == metadata {dist_version}")
-    if version is None and build_sha is None:
-        provenance = "unknown"
-    elif build_sha is not None or (agree and not local_dir):
-        provenance = "verified"
-    else:
-        provenance = "inferred"
-    return Dependency(
-        name=name,
-        version=version,
-        build_sha=build_sha,
-        dirty=None,
-        provenance=provenance,
-        evidence="; ".join(evidence),
-        source=source,
-    )
+# One rule for every producer: `attestation_schema.identity` (0.2.0). These
+# wrappers only decide WHICH packages a callback names.
 
 
 def installed_dependency(name: str, module: str, dist: str) -> Dependency | None:
-    """`dependency_identity` for an imported module; None when this process
-    never imported it (a list is observed: what the run did not load is not
-    named)."""
+    """`identity.package_identity` for an imported module; None when this
+    process never imported it (a list is observed: what the run did not load
+    is not named). The module object is passed, so nothing is imported here."""
     mod = sys.modules.get(module)
     if mod is None:
         return None
-    module_version = getattr(mod, "__version__", None)
-    try:
-        d = metadata.distribution(dist)
-    except metadata.PackageNotFoundError:
-        return dependency_identity(name, module_version, None, None, None)
-    raw = d.read_text("direct_url.json")
-    try:
-        direct_url = json.loads(raw) if raw else None
-    except ValueError:
-        direct_url = None
-    return dependency_identity(
-        name, module_version, d.version, direct_url, d.read_text("INSTALLER")
-    )
+    return package_identity(dist, mod, name=name)
 
 
 def python_dependency() -> Dependency:
@@ -340,20 +228,6 @@ def dependencies(modules: Sequence[tuple[str, str, str]]) -> list[Dependency]:
     return out
 
 
-def _git(directory: Path, *args: str) -> str | None:
-    try:
-        done = subprocess.run(  # nosec B603 B607 -- fixed argv, no shell
-            ["git", "-C", str(directory), *args],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return done.stdout.strip() if done.returncode == 0 else None
-
-
 def script_directory() -> Path:
     """The running script's directory (`sys.argv[0]`), or the working
     directory when there is no script file (a notebook, `python -c`)."""
@@ -368,8 +242,8 @@ def code_identity(directory: Path | None = None) -> CodeIdentity:
     files differ from it, and the origin URL without credentials.
     `inferred` -- HEAD names the checkout, not the bytes Python loaded."""
     where = directory if directory is not None else script_directory()
-    sha = _git(where, "rev-parse", "HEAD")
-    if sha is None or not _is_sha(sha):
+    git = git_state(where)
+    if git.sha is None:
         return CodeIdentity(
             git_sha=None,
             dirty=None,
@@ -378,12 +252,10 @@ def code_identity(directory: Path | None = None) -> CodeIdentity:
             provenance="unknown",
             evidence="no git checkout found at the training script (or git is not installed)",
         )
-    status = _git(where, "status", "--porcelain", "--untracked-files=no")
-    remote = _git(where, "config", "--get", "remote.origin.url")
     return CodeIdentity(
-        git_sha=sha,
-        dirty=None if status is None else bool(status),
-        repo=strip_credentials(remote) if remote else None,
+        git_sha=git.sha,
+        dirty=git.dirty,
+        repo=git.remote,
         version=None,
         provenance="inferred",
         evidence="git HEAD of the training script's checkout at train start;"

@@ -10,7 +10,7 @@ name: Release
 #   schema-v<X.Y.Z>   releases attestation-schema (packages/attestation-schema)
 #
 #   git tag v0.5.0 && git push origin v0.5.0
-#   git tag schema-v0.1.0 && git push origin schema-v0.1.0
+#   git tag schema-v0.2.0 && git push origin schema-v0.2.0
 #
 # The two filters cannot both match one tag: GitHub's `*` does not cross `/`
 # and a filter is anchored at both ends, so `v*` needs a leading "v" and

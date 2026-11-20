@@ -1,10 +1,13 @@
 [project]
 name = "attestation-schema"
-# 0.1.0, not 1.0.0: the record formats are frozen (their identity is the
+# 0.x, not 1.0.0: the record formats are frozen (their identity is the
 # `schema` string, pinned by tests/test_frozen.py, not this number), but the
 # Python state API (`state.py`) has no consumer yet. 1.0.0 once smeltery runs
-# its job backends on it (spec, "v1 freeze": package version).
-version = "0.1.0"
+# its job backends on it (spec, "v1 freeze": package version). 0.2.0 adds
+# datasets, lineage, conformance, the callbacks and `identity` (CHANGELOG);
+# `attestation_schema.__version__` reads this, and _FALLBACK_VERSION in
+# __init__.py must equal it (tests/test_identity.py).
+version = "0.2.0"
 description = "The attestation core run record (attestation.run/1, frozen): schema, canonical writer, strict reader, run-directory layout, job state file and job-backend interface. Standard library only."
 readme = "README.md"
 requires-python = ">=3.11"

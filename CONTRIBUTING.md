@@ -361,7 +361,7 @@ tag that differs from that package's version.
 ```
 # attestation-schema (tag schema-v<version>)
 # 1. bump version in packages/attestation-schema/pyproject.toml, merge to main
-git tag schema-v0.1.0 && git push origin schema-v0.1.0
+git tag schema-v0.2.0 && git push origin schema-v0.2.0
 
 # attestation (tag v<version>) -- AFTER the schema when its floor is new
 # 1. bump version in pyproject.toml (and `attestation-schema>=X` if needed)

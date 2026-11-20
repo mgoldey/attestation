@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from attestation_schema import git_state
+
 from attestation.run_record.canonical import canonicalize
 from attestation.run_record.verify import (
     PAYLOAD_TYPE,
@@ -96,24 +98,8 @@ def _git_state() -> tuple[str | None, bool | None]:
     checkout = here.parents[3]
     if here.parents[2].name != "src" or not (checkout / ".git").exists():
         return None, None
-    try:
-        head = subprocess.run(
-            ["git", "-C", str(checkout), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=True,
-        ).stdout.strip()
-        status = subprocess.run(
-            ["git", "-C", str(checkout), "status", "--porcelain", "--untracked-files=no"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=True,
-        ).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None, None
-    return head or None, bool(status.strip())
+    state = git_state(checkout, timeout=5)  # the schema's one git probe (0.2.0)
+    return state.sha, state.dirty
 
 
 MAX_ARGV = 20

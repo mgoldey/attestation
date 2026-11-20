@@ -23,12 +23,13 @@ import json
 import math
 import os
 import re
-import subprocess
 import tomllib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+
+from attestation_schema import git_state
 
 from attestation.run_record.canonical import canonicalize
 
@@ -445,24 +446,10 @@ def paths_for(root: Path, hyp_id: str) -> tuple[Path, Path]:
 def _workspace_git(root: Path) -> dict | None:
     """HEAD and dirtiness of the workspace, if it is a git checkout. Evidence
     of what the repository held, not of when."""
-    try:
-        head = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=True,
-        ).stdout.strip()
-        status = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=True,
-        ).stdout
-    except (OSError, subprocess.SubprocessError):
+    state = git_state(root, timeout=5)  # the schema's one git probe (0.2.0)
+    if state.sha is None or state.dirty is None:
         return None
-    return {"sha": head, "dirty": bool(status.strip())} if head else None
+    return {"sha": state.sha, "dirty": state.dirty}
 
 
 def resolve_supersedes(prefix: str | None, entries: list[IndexEntry]) -> str | None:

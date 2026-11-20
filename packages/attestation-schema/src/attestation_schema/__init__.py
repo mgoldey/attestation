@@ -6,9 +6,15 @@ Curves live in a sidecar (`history.py`), bound to the record by sha256; a
 job's state lives in `state.json` (`state.py`). Datasets have their own record
 kind, `attestation.dataset/1` (DRAFT, `dataset.py`), and `lineage.py` resolves
 run -> dataset -> source run by digest.
+`identity.package_identity` is the one rule for which build of a package
+ran, and `strip_credentials`, `git_state` and `sha256_file` are the helpers
+every producer shares (0.2.0).
 Specs: docs/superpowers/specs/2026-11-19-core-run-record-design.md,
-docs/superpowers/specs/2026-11-19-dataset-records-design.md.
+docs/superpowers/specs/2026-11-19-dataset-records-design.md,
+docs/superpowers/specs/2026-11-19-dependency-identity-design.md.
 """
+
+from importlib import metadata as _metadata
 
 from attestation_schema.dataset import (
     DATASET_READERS,
@@ -32,6 +38,7 @@ from attestation_schema.dataset import (
     write_dataset,
     write_dataset_manifest,
 )
+from attestation_schema.files import sha256_file
 from attestation_schema.history import (
     HISTORY_SCHEMA,
     HistoryWriter,
@@ -39,6 +46,14 @@ from attestation_schema.history import (
     Series,
     read_history,
     write_history,
+)
+from attestation_schema.identity import (
+    GitState,
+    build_stamp,
+    dependency_identity,
+    git_state,
+    package_identity,
+    strip_credentials,
 )
 from attestation_schema.jobs import (
     TERMINAL,
@@ -117,7 +132,23 @@ from attestation_schema.state import (
     transition,
 )
 
+# Kept equal to pyproject.toml's version by tests/test_identity.py; used only
+# when the package runs from a source tree that was never installed.
+_FALLBACK_VERSION = "0.2.0"
+try:
+    __version__ = _metadata.version("attestation-schema")
+except _metadata.PackageNotFoundError:
+    __version__ = _FALLBACK_VERSION
+
 __all__ = [
+    "__version__",
+    "GitState",
+    "build_stamp",
+    "dependency_identity",
+    "git_state",
+    "package_identity",
+    "sha256_file",
+    "strip_credentials",
     "DATASET_READERS",
     "DATASET_SCHEMA",
     "DATASET_SCHEMA_STATUS",

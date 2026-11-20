@@ -876,6 +876,19 @@ word (`recorded`/`spec`) stays in `ext.ledger-import.status` and its rows are
 unchanged. A native record with `status: null` is stored as `unknown` with a
 run caveat. The widening refuses no record written before.
 
+## Shared helpers (0.2.0)
+
+Python API, no format change (`test_frozen` untouched):
+`attestation_schema.files._atomic_write` is every writer's one durable path
+(fsync, then `os.replace` or an exclusive `os.link`, then the directory
+fsynced) -- the two manifest writers did not fsync before, so a crash could
+keep `run.json` and lose the `digests.json` it binds -- and the two manifest
+writers share one body. `identity.package_identity` is the one dependency
+rule for every producer, `strip_credentials` strips exactly what this reader
+refuses (`record._carries_credentials`), and `sha256_file`/`git_state` are
+the shared probes. Each decision:
+`2026-11-19-dependency-identity-design.md`.
+
 ## v1 freeze (roadmap 6, 2026-11-19)
 
 The criteria (Open decision 1) were met: MLflow (`examples/mlflow-records`),
@@ -947,7 +960,8 @@ All on 2026-11-19; the commit is the one that carried the change.
    registered the pending publisher (repo mgoldey/attestation, workflow
    `release.yml`, environment `pypi`). Since roadmap 11 (2026-11-19)
    `attestation-schema` is a runtime dependency of attestation and its wheel
-   says `Requires-Dist: attestation-schema>=0.1.0`, so the schema is released
+   says `Requires-Dist: attestation-schema>=0.1.0` (`>=0.2.0` since the
+   shared helpers), so the schema is released
    first and an attestation release fails fast while its floor is not on PyPI
    (`2026-11-19-ledger-reads-core-records-design.md`, "Dependency"). Nothing
    has been published yet.

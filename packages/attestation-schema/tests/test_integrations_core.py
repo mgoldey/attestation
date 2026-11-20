@@ -59,90 +59,18 @@ def test_only_the_framework_modules_import_a_framework():
     assert seen == {"transformers", "lightning"}  # the scan is not vacuous
 
 
-# ---- dependency identity ---------------------------------------------------------
-
-
-def _dep(module="1.2.0", dist="1.2.0", direct_url=None, installer="pip"):
-    return core.dependency_identity("pkg", module, dist, direct_url, installer)
-
-
-def test_an_index_install_whose_versions_agree_is_verified():
-    d = _dep()
-    assert (d.version, d.provenance, d.source, d.build_sha) == ("1.2.0", "verified", "index", None)
-    assert _dep(installer="uv\n").source == "index"
-    assert _dep(installer="conda").source == "conda"
-    assert _dep(installer=None).source is None
-    assert _dep(installer="poetry").source is None
-
-
-def test_a_local_version_label_the_module_adds_still_agrees():
-    # measured: PyPI's torch 2.15.0 wheel says 2.15.0 in METADATA, 2.15.0+cu132 at runtime
-    d = _dep(module="2.15.0+cu132", dist="2.15.0")
-    assert (d.version, d.provenance) == ("2.15.0+cu132", "verified")
-    assert "local label" in d.evidence
-
-
-def test_versions_that_disagree_are_inferred_with_both_in_evidence():
-    d = _dep(module="1.3.0", dist="1.2.0")
-    assert (d.version, d.provenance) == ("1.3.0", "inferred")
-    assert "1.3.0" in d.evidence and "1.2.0" in d.evidence
-    assert _dep(module="1.2.0+a", dist="1.2.0+b").provenance == "inferred"
-    assert _dep(module=None, dist=None).provenance == "unknown"
-
-
-def test_a_vcs_install_is_verified_by_its_commit():
-    sha = "a" * 40
-    d = _dep(
-        direct_url={
-            "url": "https://user:tok@example.org/pkg.git",
-            "vcs_info": {"vcs": "git", "commit_id": sha},
-        }
-    )
-    assert (d.source, d.build_sha, d.provenance) == (
-        "git+https://example.org/pkg.git",
-        sha,
-        "verified",
-    )
-    hg = _dep(direct_url={"url": "https://h/p", "vcs_info": {"vcs": "hg", "commit_id": "xyz"}})
-    assert hg.source == "hg+https://h/p" and hg.build_sha is None
-
-
-def test_an_archive_install_drops_credentials_and_query():
-    d = _dep(
-        direct_url={
-            "url": "https://u:p@host/pkg-1.2.0.whl?X-Amz-Signature=abc#sha256=00",
-            "archive_info": {},
-        }
-    )
-    assert d.source == "url:https://host/pkg-1.2.0.whl#sha256=00"
-    assert _dep(direct_url={"url": "file:///w/pkg.whl", "archive_info": {}}).source == "file"
-
-
-def test_a_directory_install_is_inferred_editable_or_not():
-    for editable in (True, False):
-        d = _dep(direct_url={"url": "file:///src/pkg", "dir_info": {"editable": editable}})
-        assert (d.source, d.provenance) == ("file", "inferred")
-
-
-def test_every_dependency_shape_is_one_the_reader_accepts(tmp_path):
-    shapes = [
-        _dep(),
-        _dep(module="1.3.0"),
-        _dep(module=None, dist=None),
-        _dep(direct_url={"url": "https://e/p.git", "vcs_info": {"commit_id": "b" * 40}}),
-        _dep(direct_url={"url": "https://e/p.whl?q=1", "archive_info": {}}),
-        _dep(direct_url={"url": "file:///p", "dir_info": {}}),
-        core.python_dependency(),
-    ]
-    named = [s.Dependency(**{**d.__dict__, "name": f"d{i}"}) for i, d in enumerate(shapes)]
-    rec = _record(dependencies=named)
-    assert s.loads(s.dumps(rec)) == rec
+# ---- dependency identity -----------------------------------------------------------
+# The rule itself is `attestation_schema.identity` (tests/test_identity.py);
+# here only what the callbacks add: which modules, and only imported ones.
 
 
 def test_installed_dependency_reads_this_process(monkeypatch):
     assert core.installed_dependency("nope", "no_such_module_here", "nope") is None
     d = core.installed_dependency("attestation-schema", "attestation_schema", "attestation-schema")
-    assert d is not None and d.version == "0.1.0"
+    assert d is not None and d.version == s.__version__
+    assert "__version__ == metadata" in d.evidence  # the module was checked, not imported anew
+    rec = _record(dependencies=[core.python_dependency(), d])
+    assert s.loads(s.dumps(rec)) == rec
 
 
 # ---- code identity -----------------------------------------------------------------
@@ -187,13 +115,6 @@ def test_no_checkout_is_unknown_with_every_field_null(tmp_path):
         "unknown",
     )
     assert c.evidence
-
-
-def test_strip_credentials():
-    assert core.strip_credentials("https://u:p@h/x") == "https://h/x"
-    assert core.strip_credentials("https://tok@h/x") == "https://h/x"
-    assert core.strip_credentials("git@github.com:o/r.git") == "git@github.com:o/r.git"
-    assert core.strip_credentials("https://h/x") == "https://h/x"
 
 
 # ---- config, values, outputs ------------------------------------------------------
