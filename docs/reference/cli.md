@@ -348,6 +348,23 @@ options:
   --json         print the lineage as JSON
 ```
 
+## attest runs status
+
+```
+usage: attest runs status [-h] [--root ROOT] [--project PROJECT]
+                          [--stale-hours STALE_HOURS] [--json]
+
+options:
+  -h, --help            show this help message and exit
+  --root ROOT           workspace dir (default: $RESEARCH_ROOT)
+  --project PROJECT     only this project
+  --stale-hours STALE_HOURS
+                        flag a running job stale after this long with no
+                        transition and no write to history.jsonl/logs/steps
+                        (default: 2; evidence, never a verdict)
+  --json                print the rows as JSON
+```
+
 ## attest runs record
 
 ```

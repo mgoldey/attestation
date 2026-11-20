@@ -125,6 +125,12 @@ anything, and presenting the winner without the caveat misrepresents it.
 source path, and any prose header from its config, which is often where the
 hypothesis and the single changed variable are written down.
 
+`runs.status()` answers "what is running now": runs whose `state.json`
+says submitted or running and that have no record yet, which the ledger
+cannot show. `stale: true` is evidence (no transition or write for a while),
+never proof the job died -- relay it as "has not written anything in N
+hours", not as "failed".
+
 ## "Is this number in my draft right?"
 
 A claim is a comment beside the prose it describes, so the document

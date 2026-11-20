@@ -8,7 +8,7 @@ canonical bytes, the manifest's binding, the history sidecar, `state.json`,
 credentials, ext namespaces) and ANY violation quarantines it: it is never
 imported and the pipeline reports it loudly, never coerced. A directory with
 only `state.json` is a run in flight and is skipped (the ledger records runs
-that ended).
+that ended; `attestation.inflight` reports those, read at query time).
 
 Specs: docs/superpowers/specs/2026-11-19-ledger-reads-core-records-design.md,
 docs/superpowers/specs/2026-11-19-conformance-suite-design.md (Decision 3).
@@ -58,24 +58,30 @@ class NativeRun:
     error: schema.RecordError | None
 
 
-def run_dirs(root: Path) -> list[Path]:
-    """Run directories under `root` (itself included) that hold a terminal
-    record, at most `MAX_DEPTH` levels down, sorted. Runs do not nest, hidden
-    directories are skipped, and symlinks are not followed -- the rules of
-    `attestation_schema.layout.find_runs`, with a depth bound."""
+def all_run_dirs(root: Path) -> list[Path]:
+    """Every run directory under `root` (itself included) -- a record, a
+    `state.json`, or both -- at most `MAX_DEPTH` levels down, sorted. Runs do
+    not nest, hidden directories are skipped, and symlinks are not followed --
+    the rules of `attestation_schema.layout.find_runs`, with a depth bound.
+    `attestation.inflight` reads the ones without a record from here, so the
+    ledger and the status view walk one layout by one rule."""
     root = Path(root)
     found: list[Path] = []
     base = len(root.parts)
     for dirpath, dirnames, _ in os.walk(root):
         if layout.is_run_dir(dirpath):
             dirnames[:] = []
-            if schema.record_path(dirpath).is_file():
-                found.append(Path(dirpath))
+            found.append(Path(dirpath))
             continue
         if len(Path(dirpath).parts) - base >= MAX_DEPTH:
             dirnames[:] = []
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
     return sorted(found)
+
+
+def run_dirs(root: Path) -> list[Path]:
+    """The run directories under `root` that hold a terminal record."""
+    return [d for d in all_run_dirs(root) if schema.record_path(d).is_file()]
 
 
 def _read(run_dir: Path) -> tuple[schema.RunRecord | None, schema.RecordError | None]:

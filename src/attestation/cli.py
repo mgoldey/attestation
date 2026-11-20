@@ -126,6 +126,7 @@ HELP: dict[str, str] = {
     "runs.show": "one run in full",
     "runs.record": "write per-arm result/config files the ledger can scan",
     "runs.lineage": "trace a run back through its datasets to the runs and builds that made them",
+    "runs.status": "runs in flight now (submitted, running, stale), read from state.json files",
     "bootstrap-persona": "write pseudo-clicks for a persona",
     "persona-merge": "fold duplicate personas into one; their names become aliases of it",
     "install": "idempotent setup + --check doctor mode",
@@ -394,6 +395,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rp.add_argument("--json", action="store_true", help="print the lineage as JSON")
     rp.set_defaults(func=cmd_runs_lineage)
+
+    rp = runs_sub.add_parser("status", help=HELP["runs.status"])
+    rp.add_argument("--root", help="workspace dir (default: $RESEARCH_ROOT)")
+    rp.add_argument("--project", help="only this project")
+    rp.add_argument(
+        "--stale-hours",
+        type=float,
+        default=None,
+        help="flag a running job stale after this long with no transition and no write to"
+        " history.jsonl/logs/steps (default: 2; evidence, never a verdict)",
+    )
+    rp.add_argument("--json", action="store_true", help="print the rows as JSON")
+    rp.set_defaults(func=cmd_runs_status)
 
     rp = runs_sub.add_parser("record", help=HELP["runs.record"])
     rp.add_argument("family")
@@ -1526,6 +1540,70 @@ def cmd_runs_lineage(args: argparse.Namespace) -> int:
         for line in skipped:
             print(f"skipped (unreadable): {line}")
     return 0 if lineage.ok else 1
+
+
+def _age(seconds: float | None) -> str:
+    """`3h12m`, `4m`, `12s`: an age a reader scans, not a timestamp."""
+    if seconds is None:
+        return "-"
+    s = int(max(seconds, 0))
+    if s >= 3600:
+        return f"{s // 3600}h{s % 3600 // 60:02d}m"
+    return f"{s // 60}m" if s >= 60 else f"{s}s"
+
+
+def _status_line(row) -> str:
+    """One `attest runs status` row: state, ages, where, and what the file says."""
+    state = row.state or "?"
+    if row.stale:
+        state += " STALE"
+    if row.kind == "lagging":
+        state += f" (record: {row.record_status})"
+    ident = f"{row.run_id}  {row.backend}:{row.job_id}" if row.run_id else ""
+    line = f"  {state:24s} {_age(row.age_s):>7s} {_age(row.idle_s):>7s}  {row.run_dir}  {ident}"
+    return line + (f"\n      {row.message}" if row.message else "")
+
+
+_STATUS_HEADINGS = {
+    "in_flight": "IN FLIGHT (state.json, no run.json yet)",
+    "unrecorded": "ENDED WITHOUT A RECORD (terminal state.json, no run.json)",
+    "lagging": "RECORD WRITTEN, STATE NOT SETTLED (run.json is authoritative)",
+    "unreadable": "UNREADABLE state.json (no run.json)",
+}
+
+
+@_documented("runs.status")
+def cmd_runs_status(args: argparse.Namespace) -> int:
+    """Reads files only (no ledger database, nothing written): every run
+    directory under --root whose attestation/state.json is not simply a
+    finished run beside its record. `stale` is evidence -- no transition and
+    no write to history.jsonl, logs/ or steps/ for --stale-hours -- never a
+    verdict that the job died. Exits 0 whatever it finds: a status is a
+    report, not a check. Spec: 2026-11-20-in-flight-run-states-design.md."""
+    from attestation import inflight, ledger
+
+    root = ledger.workspace_root(args.root)
+    if root is None:
+        return fail("set RESEARCH_ROOT (or pass --root) to the directory holding your projects")
+    stale_after = inflight.STALE_AFTER_S if args.stale_hours is None else args.stale_hours * 3600
+    out = inflight.status(root, args.project, stale_after=stale_after)
+    if out.get("message"):
+        return fail(out["message"])
+    rows = out["rows"]
+    if args.json:
+        print(json.dumps({"counts": out["counts"], "rows": [r.to_dict() for r in rows]}, indent=2))
+        return 0
+    for kind in inflight.KIND_ORDER:
+        group = [r for r in rows if r.kind == kind]
+        if not group:
+            continue
+        print(_STATUS_HEADINGS[kind])
+        print(f"  {'state':24s} {'age':>7s} {'idle':>7s}  run dir  run_id  backend:job_id")
+        for row in group:
+            print(_status_line(row))
+        print()
+    print(inflight.summary(out["counts"]))
+    return 0
 
 
 def _parse_kv_pairs(pairs: list[str], *, label: str) -> dict[str, str]:

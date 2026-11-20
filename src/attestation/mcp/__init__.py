@@ -29,6 +29,7 @@ from attestation.mcp import (
     provenance,
     research,
     run_record,
+    run_status,
     subscriptions,
     symbolic,
 )
@@ -43,6 +44,7 @@ DOMAINS = (
     provenance,
     research,
     run_record,
+    run_status,
     subscriptions,
     symbolic,
 )
