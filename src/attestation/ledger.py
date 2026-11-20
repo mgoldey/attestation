@@ -217,6 +217,88 @@ def _metric_direction(metric: str, directions: dict[str, str]) -> str | None:
     return directions.get(_metric_stem(metric))
 
 
+# A core record's `metrics[].direction` in the ledger's words. The record's
+# word is a DECLARATION by the program that computed the value; nothing here
+# reads a metric's name, unit or values to find one (record-declared-
+# direction spec).
+_RECORD_DIRECTION = {"min": "lower_is_better", "max": "higher_is_better"}
+# Run names one direction note lists before `(+N more)`, as other caveats do.
+_MAX_NAMED_RUNS = 5
+
+
+def _named(names: list[str]) -> str:
+    """`a, b, c (+2 more)`: sorted, at most _MAX_NAMED_RUNS names."""
+    names = sorted(names)
+    more = len(names) - _MAX_NAMED_RUNS
+    return ", ".join(names[:_MAX_NAMED_RUNS]) + (f" (+{more} more)" if more > 0 else "")
+
+
+def _by_word(declared: dict[str, str | None]) -> str:
+    """`a, b declare min; c declares none` -- which run said what."""
+    groups: dict[str, list[str]] = {}
+    for name, word in declared.items():
+        groups.setdefault(word or "none", []).append(name)
+    return "; ".join(
+        f"{_named(names)} {'declares' if len(names) == 1 else 'declare'} {word}"
+        for word, names in sorted(groups.items())
+    )
+
+
+def resolve_direction(
+    metric: str, directions: dict[str, str], declared: dict[str, str | None]
+) -> tuple[str | None, str | None, str | None]:
+    """`(direction, source, note)` for ranking `metric`.
+
+    `declared` maps each run that reports a stored value of `metric` to its
+    record's word (`"min"`/`"max"`/None). Precedence (spec Decision 1):
+
+    1. the declaration (built-in table + metric_direction.toml, stems
+       matched): source `"declared"`; `note` is a caveat when some record
+       declares the other direction, None otherwise;
+    2. else the records, only when EVERY reporting run declares and all
+       agree: source `"records"`;
+    3. else None; `note` says why the records could not decide (they
+       disagree, or only some declare), None when no record declared at all.
+
+    Unanimity, not a vote: silence is not consent (the core schema's
+    "null = did not say, never inferred"), and a family whose runs disagree
+    has a producer bug or two metrics under one name -- not a majority.
+    """
+    table = _metric_direction(metric, directions)
+    if table is not None:
+        against: dict[str, str | None] = {
+            n: w for n, w in declared.items() if w and _RECORD_DIRECTION.get(w) != table
+        }
+        if not against:
+            return table, "declared", None
+        return (
+            table,
+            "declared",
+            f"{metric} is declared {table} (built-in table or {_metric_direction_path()}),"
+            f" but its records disagree: {_by_word(against)} -- ranked by the declaration",
+        )
+    words = set(declared.values())
+    if len(words) == 1 and (word := next(iter(words))) in _RECORD_DIRECTION:
+        return _RECORD_DIRECTION[word], "records", None
+    if not any(declared.values()):
+        return None, None, None
+    why = "disagree" if None not in words else "do not all declare one"
+    return None, None, f"its records {why} ({_by_word(declared)})"
+
+
+def _undecided_message(metric: str, note: str | None) -> str:
+    """The refusal for a metric no source can direct: the shared sentence,
+    or -- when records declared but could not decide -- the same remedy with
+    the runs to look at."""
+    if note is None:
+        return unknown_direction_message(metric)
+    return (
+        f"unknown direction for metric {metric!r} -- refusing to rank: {note}."
+        f" Declare it under [metric_direction] in {_metric_direction_path()};"
+        " guessing would rank ablation arms backwards."
+    )
+
+
 @dataclass
 class Row:
     """One run as the ledger stores it, derived from a core record.
@@ -255,6 +337,10 @@ class Row:
     # configuration into one arm (replicates.group). None = did not say.
     arm: str | None = None
     seeds: dict | None = None
+    # The record's own `metrics[].direction` per metric name ("min"/"max"),
+    # stored verbatim in run_metrics.direction. A name absent here = the
+    # producer did not say (record-declared-direction spec).
+    directions: dict[str, str] = field(default_factory=dict)
 
 
 def _metric_split(m) -> str | None:
@@ -296,6 +382,8 @@ def row_from_core(project: str, imported) -> Row:
         seeds=record.seeds,
     )
     for m in record.metrics:
+        if m.direction is not None:
+            row.directions[m.name] = m.direction
         if math.isfinite(m.value):
             row.metrics.append((m.name, float(m.value), m.step, _metric_split(m)))
         else:
@@ -569,9 +657,9 @@ def _replace_project(
                 continue
             seen.add(key)
             conn.execute(
-                "INSERT INTO run_metrics(run_id, metric, value, step, split)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (run_id, metric, value, step, split),
+                "INSERT INTO run_metrics(run_id, metric, value, step, split, direction)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (run_id, metric, value, step, split, r.directions.get(metric)),
             )
 
 
@@ -1034,7 +1122,7 @@ def _arms_for_run(run, values: list[dict], n_value, direction: str) -> list[dict
 
 def _compare_rows(
     conn: sqlite3.Connection, family: str, project: str | None, *, need_counts: bool
-) -> tuple[list[dict], dict[str, int]]:
+) -> tuple[list[dict], dict[str, int], dict[str, dict[str, str | None]]]:
     """The runs of one family plus, when `need_counts` is true, a count of how
     many arms report each metric name.
 
@@ -1049,17 +1137,23 @@ def _compare_rows(
     rows = _family_rows(conn, family, project)
     _refuse_cross_project(family, rows)
     if not rows or not need_counts:
-        return rows, {}
+        return rows, {}, {}
     run_ids = [r["id"] for r in rows]
+    names = {r["id"]: r["name"] for r in rows}
     placeholders = ",".join("?" * len(run_ids))
     counts: dict[str, int] = {}
+    # What each run's record declared for each metric (one direction per name
+    # per record, so MAX is that one value): metric discovery counts a metric
+    # as directed when the records alone can direct it.
+    declared: dict[str, dict[str, str | None]] = {}
     for m in conn.execute(
-        f"SELECT run_id, metric FROM run_metrics WHERE run_id IN ({placeholders})"
-        " GROUP BY run_id, metric",
+        f"SELECT run_id, metric, MAX(direction) AS direction FROM run_metrics"
+        f" WHERE run_id IN ({placeholders}) GROUP BY run_id, metric",
         run_ids,
     ):
         counts[m["metric"]] = counts.get(m["metric"], 0) + 1
-    return rows, counts
+        declared.setdefault(m["metric"], {})[names[m["run_id"]]] = m["direction"]
+    return rows, counts, declared
 
 
 def _compare_values(
@@ -1075,7 +1169,7 @@ def _compare_values(
     placeholders = ",".join("?" * len(run_ids))
     values_by_run: dict[int, list[dict]] = {rid: [] for rid in run_ids}
     for v in conn.execute(
-        f"SELECT run_id, value, step, split FROM run_metrics"
+        f"SELECT run_id, value, step, split, direction FROM run_metrics"
         f" WHERE run_id IN ({placeholders}) AND metric = ?",
         (*run_ids, metric),
     ):
@@ -1090,14 +1184,26 @@ def _compare_values(
     return values_by_run, n_by_run
 
 
-def _pick_metric(counts: dict[str, int], directions: dict[str, str], family: str) -> str:
+def _pick_metric(
+    counts: dict[str, int],
+    directions: dict[str, str],
+    family: str,
+    declared: dict[str, dict[str, str | None]] | None = None,
+) -> str:
     """The metric to rank by when the caller did not name one: whichever
     directed metric the most arms share, so the comparison covers the family.
+    Directed = the declaration names it, or every run reporting it declares
+    the same direction in its record (`resolve_direction`).
 
     Raises rather than guessing when no recorded metric has a known
     direction -- ranking one would risk ordering an ablation backwards.
     """
-    known = {k: v for k, v in counts.items() if _metric_direction(k, directions)}
+    declared = declared or {}
+    known = {
+        k: v
+        for k, v in counts.items()
+        if resolve_direction(k, directions, declared.get(k, {}))[0] is not None
+    }
     if not known:
         # Names the fix, not just the problem. Its sibling refusal below
         # (single named metric) already pointed at the file to edit; this
@@ -1138,9 +1244,16 @@ def _compare(
     half of `compare()`. Takes rows and already-fetched values so it can be
     exercised with literal dicts and no database.
     """
-    direction = _metric_direction(metric, directions)
+    # Each reporting run's own declaration (run_metrics.direction): used only
+    # when the declaration table is silent, and a caveat when it disagrees.
+    declared = {
+        r["name"]: next((v["direction"] for v in vals if v.get("direction")), None)
+        for r in runs
+        if (vals := values_by_run[r["id"]])
+    }
+    direction, source, note = resolve_direction(metric, directions, declared)
     if direction is None:
-        raise ValueError(unknown_direction_message(metric))
+        raise ValueError(_undecided_message(metric, note))
 
     arms, configs, identities = [], {}, {}
     for r in runs:
@@ -1181,6 +1294,9 @@ def _compare(
         "family": family,
         "metric": metric,
         "direction": direction,
+        # Only when the records supplied it, so a family the declaration
+        # directs keeps exactly the keys it always had (kdsweep pinned).
+        **({"direction_source": source} if source == "records" else {}),
         "arms": scored + missing,
         "winner": scored[0]["name"] if scored else None,
         "without_metric": [a["name"] for a in missing],
@@ -1191,7 +1307,8 @@ def _compare(
         # Reader caveats last: they qualify how every number here was
         # obtained, which is context for the ranking rather than a reason to
         # distrust one arm over another.
-        "caveats": _all_caveats(
+        "caveats": ([note] if note else [])
+        + _all_caveats(
             scored,
             metric,
             corpus_caveats,
@@ -1222,7 +1339,7 @@ def compare(
     name, so the collision ERASED the disagreement and the tool reported "all
     arms on aishell-1" for arms half of which ran on librispeech.
     """
-    runs, counts = _compare_rows(conn, family, project, need_counts=metric is None)
+    runs, counts, declared = _compare_rows(conn, family, project, need_counts=metric is None)
     if not runs:
         # A dead end here is the same failure as an unexplained empty scan.
         # `compare <project>` is the intuitive first guess and finds nothing,
@@ -1296,7 +1413,7 @@ def compare(
         }
 
     directions = metric_directions()
-    metric = metric or _pick_metric(counts, directions, family)
+    metric = metric or _pick_metric(counts, directions, family, declared)
     run_ids_all = [r["id"] for r in runs]
     values_by_run, n_by_run = _compare_values(conn, run_ids_all, metric)
     walls = compute.walls_by_run(conn, run_ids_all)

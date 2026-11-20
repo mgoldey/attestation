@@ -107,7 +107,9 @@ is_run_dir`) is read with `attestation_schema.read`, no conversion. Rules:
   and a run caveat names it, so the omission is visible rather than looking
   like a metric the run never reported. `direction` is not yet used: compare
   reads directions from `metric_direction.toml`, and making a record's own
-  direction outrank that table is a ranking change for its own spec.
+  direction outrank that table is a ranking change for its own spec. (Since
+  2026-11-20 a record's direction ranks when no declaration names the metric:
+  `2026-11-20-record-declared-direction-design.md`.)
 - `data`, `code`, `seeds`, `dependencies` and `history` are not stored: the
   ledger's tables have no place for them, and adding one is a feature.
 - Files inside a run directory are not also read by `generic` (a run
