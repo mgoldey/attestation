@@ -126,6 +126,8 @@ HELP: dict[str, str] = {
     "runs.show": "one run in full",
     "runs.record": "write per-arm result/config files the ledger can scan",
     "runs.lineage": "trace a run back through its datasets to the runs and builds that made them",
+    "model": "registered model versions, traced to the runs and data that made them",
+    "model.trace": "trace a model version to the run that output its files and that run's data",
     "runs.status": "runs in flight now (submitted, running, stale), read from state.json files",
     "bootstrap-persona": "write pseudo-clicks for a persona",
     "persona-merge": "fold duplicate personas into one; their names become aliases of it",
@@ -543,6 +545,10 @@ def build_parser() -> argparse.ArgumentParser:
     from attestation import cli_prereg  # lazy, like cli_bib
 
     cli_prereg.register(sub, add_db)
+
+    from attestation import cli_model
+
+    cli_model.register(sub)
 
     # Commands that name a tracker live with the adapters (tracker names stay
     # in ledger_adapters/, tests/test_tracker_names.py); their HELP joins this one.
@@ -1073,6 +1079,31 @@ def _print_citations(target: Path, db: str | None) -> int:
     return 1 if bad else 0
 
 
+def _print_verdicts(out: dict, verdict: str | None) -> None:
+    """Malformed annotations, each verdict with its caveats, then each model chain."""
+    for problem in out["malformed"]:
+        print(f"  malformed  {problem}")
+    for v in out["verdicts"]:
+        if verdict and v.verdict != verdict:
+            continue
+        where = f"{Path(v.claim.path).name}:{v.claim.line}"
+        print(f"  {v.verdict:13s} {where:28s} {v.claim.metric}={v.claim.value:g}  {v.message}")
+        # Beside the verdict, never instead of it: the exit status ignores them.
+        for caveat in v.caveats:
+            print(f"  {'':13s} caveat: {caveat}")
+    # Only drafts with `model=` have any: the rest print exactly what they did.
+    for traced in out["models"]:
+        print(f"  {'model':13s} {traced['chain']}")
+
+
+def _model_tracer(target: Path):
+    """The lazy `model=` tracer (attestation.model_trace), injected into
+    claims.check like the citation resolver."""
+    from attestation import model_trace
+
+    return model_trace.tracer_for(target)
+
+
 @_documented("claims")
 def cmd_claims(args: argparse.Namespace) -> int:
     from attestation import claims as claims_mod
@@ -1091,19 +1122,12 @@ def cmd_claims(args: argparse.Namespace) -> int:
 
     started = _record_clock()
     with open_db(args.db) as conn:
-        out = claims_mod.check(conn, target, resolver=_citation_resolver(target))
+        out = claims_mod.check(
+            conn, target, resolver=_citation_resolver(target), tracer=_model_tracer(target)
+        )
     record_failed = _record_claims(args, target, out, started)
 
-    for problem in out["malformed"]:
-        print(f"  malformed  {problem}")
-    for v in out["verdicts"]:
-        if args.verdict and v.verdict != args.verdict:
-            continue
-        where = f"{Path(v.claim.path).name}:{v.claim.line}"
-        print(f"  {v.verdict:13s} {where:28s} {v.claim.metric}={v.claim.value:g}  {v.message}")
-        # Beside the verdict, never instead of it: the exit status ignores them.
-        for caveat in v.caveats:
-            print(f"  {'':13s} caveat: {caveat}")
+    _print_verdicts(out, args.verdict)
 
     if not out["claims"]:
         print(f"no claims found under {target}")

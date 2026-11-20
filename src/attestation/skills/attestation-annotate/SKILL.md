@@ -136,6 +136,22 @@ This confirms the scaling trend reported by Vaswani et al.
 <!-- claim: speech-distill/kdsweep_t4 metric=wer value=0.053 cite=vaswani2017 -->
 ```
 
+## Name the model a claim is about
+
+When the sentence is about a model version, add `model=` with the version's
+reference: `models:/<name>/<version>` (or `@<alias>`) for an MLflow
+registered model, `hf:<org>/<name>@<revision>` for a Hub repo in the local
+cache, or the directory the model was saved to:
+
+```markdown
+The registered classifier reaches 0.973 accuracy on the held-out split.
+<!-- claim: iris/82891d65 metric=accuracy value=0.973 model=models:/iris-clf/1 -->
+```
+
+`runs.claims_check` traces it by sha256: the version's files, the run that
+output them, that run's data. Name only a version you saw; the `project/run`
+must be the run that trained or evaluated that model.
+
 ## Annotate every figure you include
 
 A figure is a claim too. Beside each image you include, name the files it
@@ -194,7 +210,7 @@ run, and don't drop them from the report because they're minor. Only
 decimals count as measurements; versions, ISO dates, URLs and package pins
 are excluded on purpose, so don't add claims to those.
 
-## Six verdicts from `runs.claims_check`, and what to do for each
+## Seven verdicts from `runs.claims_check`, and what to do for each
 
 `supported` -- done, nothing to change. `unsupported` -- no run matches;
 the claim may be true but nothing backs it yet, so say that rather than
@@ -204,7 +220,9 @@ claim didn't say which (see `split=`/`step=` above) -- disambiguate rather
 than guessing. `stale` -- the value matches but the artifact changed after
 `as_of` (see above); re-verify, and only re-add `as_of` if you're sure of
 the new date. `uncited` -- the `cite=` key doesn't resolve; fix or drop it
-per the section above.
+per the section above. `untraced` -- the `model=` version is not on disk,
+no run output its files, or the claim's run neither made nor read it;
+report it, don't swap in another model to pass.
 
 **`contradicted` is the one that needs action, not just a report**: a
 recorded run disagrees with the value in the prose. Treat it as "fix the

@@ -380,7 +380,10 @@ def test_a_draft_with_no_figures_keeps_its_envelope(mcp_env):
     doc = mcp_env / "d.md"
     doc.write_text("Plain.\n<!-- claim: proj/missing metric=wer value=0.1 -->\n")
     out = _check(path=str(doc))
-    assert set(out) == {"ok", "message", "claims", "counts", "malformed", "checked", "figures"}
+    assert set(out) == {
+        "ok", "message", "claims", "counts", "malformed", "checked", "figures", "models"
+    }  # fmt: skip
+    assert out["models"] == []  # no claim names a model (model-registry linkage spec)
     assert out["figures"] == figures.empty_block()
     assert out["message"] == "1 claim(s): 1 unsupported"
     assert out["counts"] == {"unsupported": 1}

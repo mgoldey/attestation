@@ -1,0 +1,9 @@
+digest: f36b202b
+name: iris
+profile: '{"num_rows": 150, "num_elements": 750}'
+schema: '{"mlflow_colspec": [{"type": "double", "name": 0, "required": true}, {"type":
+  "double", "name": 1, "required": true}, {"type": "double", "name": 2, "required":
+  true}, {"type": "double", "name": 3, "required": true}, {"type": "long", "name":
+  4, "required": true}]}'
+source: '{"uri": "data/iris/1/iris.csv"}'
+source_type: local

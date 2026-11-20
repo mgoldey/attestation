@@ -82,6 +82,11 @@ class Claim:
     # on a run. Optional: most claims are about the author's own run and have
     # nothing to cite, so requiring one would make the field noise.
     cite: str | None = None
+    # A model reference (`models:/name/3`, `hf:org/name@rev`, or a directory
+    # of saved model files) when the claim is about a model: the checker then
+    # traces that version to the run that output its files, by digest
+    # (attestation.model_trace). Optional, like `cite`.
+    model: str | None = None
     raw: str = ""
 
 
@@ -104,6 +109,12 @@ class VerdictKind(StrEnum):
     # NOT "this claim contradicts the cited paper", which needs a model, and
     # every verdict here is deterministic.
     UNCITED = "uncited"
+    # A claim naming a model whose chain is broken: the reference resolves to
+    # no version on disk, no run output its files, a link upstream of that run
+    # does not hold, or the claim's own run neither produced nor read it. A
+    # lint like `uncited` -- it says the provenance does not trace, never that
+    # the number is wrong.
+    UNTRACED = "untraced"
 
 
 @dataclass
@@ -179,6 +190,7 @@ def _parse_body(path: Path, line_no: int, body: str) -> Claim | str:
         split=fields.get("split"),
         step=step,
         cite=fields.get("cite"),
+        model=fields.get("model"),
         raw=body,
     )
 
@@ -544,7 +556,56 @@ def check_citations(claims_: list[Claim], resolver) -> list[Verdict]:
     return out
 
 
-def check(conn: sqlite3.Connection, root: Path, *, resolver=None) -> dict:
+def _model_lint(conn: sqlite3.Connection, claim: Claim, found) -> str | None:
+    """Why `claim`'s model does not trace, or None when it does."""
+    if isinstance(found, str):
+        return found
+    if not found.ok:
+        broken = next(i for i in found.issues if i.severity == "broken")
+        return f"model {claim.model}: [{broken.kind}] {broken.message}"
+    runs = _matching_runs(conn, claim)
+    if len(runs) == 1 and runs[0]["source_path"] and not found.connected(runs[0]["source_path"]):
+        made = ", ".join(p.run.label for p in found.producers)
+        return (
+            f"model {claim.model} was output by {made}; run {runs[0]['name']}"
+            " neither output nor read any of its files"
+        )
+    return None
+
+
+def check_models(conn: sqlite3.Connection, claims_: list[Claim], tracer) -> tuple[list, list]:
+    """(`untraced` verdicts, one summary per distinct reference) for the claims
+    that carry `model=`. Claims without it are skipped, so a draft that names
+    no model costs nothing and reads nothing -- `tracer` is lazy.
+
+    `tracer(ref, base)` returns an `attestation.model_trace.ModelTrace`, or a
+    string saying why a reference does not parse. Injected, as `resolver` is:
+    this module checks numbers and must not import the registry readers."""
+    verdicts: list[Verdict] = []
+    traces: dict[str, dict] = {}
+    for claim in claims_:
+        if not claim.model:
+            continue
+        found = tracer(claim.model, Path(claim.path).parent)
+        if claim.model not in traces:
+            traces[claim.model] = (
+                {"ref": claim.model, "ok": False, "verified": False, "chain": found, "issues": []}
+                if isinstance(found, str)
+                else {
+                    "ref": claim.model,
+                    "ok": found.ok,
+                    "verified": found.verified,
+                    "chain": found.chain(),
+                    "issues": [f"{i.severity} [{i.kind}] {i.message}" for i in found.issues],
+                }
+            )
+        why = _model_lint(conn, claim, found)
+        if why is not None:
+            verdicts.append(Verdict(claim=claim, verdict=VerdictKind.UNTRACED, message=why))
+    return verdicts, list(traces.values())
+
+
+def check(conn: sqlite3.Connection, root: Path, *, resolver=None, tracer=None) -> dict:
     """Verify every claim under `root`. Read-only; never edits a document.
 
     `resolver` is optional and INJECTED. When one is passed, the citation lint
@@ -561,6 +622,11 @@ def check(conn: sqlite3.Connection, root: Path, *, resolver=None) -> dict:
     The two concerns stay separate verdicts. A claim can be `contradicted` on
     its number AND `uncited` on its key, and folding one into the other would
     hide something the author has to fix.
+
+    `tracer` is the same kind of injection for `model=`: with one, a claim
+    naming a model is traced to the run that output the model's files and an
+    unbroken chain is summarised under `models`; a broken one is also an
+    `untraced` verdict (check_models).
     """
     claims, problems = find_claims(root)
     verdicts = [check_claim(conn, c) for c in claims]
@@ -569,12 +635,17 @@ def check(conn: sqlite3.Connection, root: Path, *, resolver=None) -> dict:
         # every claim written before the field existed, and linting them all
         # would be a document-wide false alarm.
         verdicts.extend(check_citations(claims, resolver))
+    models: list[dict] = []
+    if tracer is not None:
+        untraced, models = check_models(conn, claims, tracer)
+        verdicts.extend(untraced)
     counts = Counter(v.verdict for v in verdicts)
     return {
         "claims": len(claims),
         "counts": counts,
         "verdicts": verdicts,
         "malformed": problems,
+        "models": models,
     }
 
 
