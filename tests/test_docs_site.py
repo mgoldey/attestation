@@ -224,3 +224,23 @@ def test_the_concepts_page_defines_the_first_ten_minutes():
         if not (bold or heading):
             missing.append(term)
     assert not missing, f"docs/concepts.md does not define: {missing}"
+
+
+STACK_HEADER = "<!-- stack-overview v1 2026-11-20 -->"
+
+
+def test_the_stack_overview_is_the_mirrored_page():
+    """`docs/stack.md` is one page kept byte for byte in ferric, smeltery and
+    attestation (roadmap 45, cross-linked docs). CI sees one checkout, so it
+    cannot compare the copies; it pins the version line instead. Change the
+    page in all three repositories together and bump the line in all three
+    tests. It must also be reachable: linked from the README and in the nav.
+    """
+    page = ROOT / "docs" / "stack.md"
+    assert page.is_file(), "docs/stack.md is missing"
+    assert page.read_text().splitlines()[0] == STACK_HEADER, (
+        "docs/stack.md's first line is not the pinned version line -- the page is mirrored "
+        "in ferric, smeltery and attestation; update all three and bump this constant"
+    )
+    assert "](docs/stack.md)" in (ROOT / "README.md").read_text()
+    assert "stack.md" in (ROOT / "mkdocs.yml").read_text()

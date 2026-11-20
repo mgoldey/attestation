@@ -181,6 +181,7 @@ below. The guides, one per question:
 - [docs/guides/install.md](docs/guides/install.md) — set up with or without a model server
 - [docs/guides/agents.md](docs/guides/agents.md) — MCP tools, surfaces, the skill
 - [docs/guides/claude.md](docs/guides/claude.md) — attestation and smeltery in Claude Code and Desktop
+- [docs/stack.md](docs/stack.md) — how ferric, smeltery and attestation fit together
 - [docs/guides/ledger.md](docs/guides/ledger.md) — reading and ranking runs
 - [docs/guides/claims-and-citations.md](docs/guides/claims-and-citations.md) — checking a draft
 - [docs/guides/feed.md](docs/guides/feed.md) — how ranking works
