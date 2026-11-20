@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import math
 import os
-import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,7 +30,7 @@ import yaml
 
 from attestation.compute import WALL_METRIC
 from attestation.ledger_adapters import timing
-from attestation.ledger_adapters.found import IMPORT_NAMESPACE, Found, FoundMetric
+from attestation.ledger_adapters.found import IMPORT_NAMESPACE, Found, FoundMetric, history_ref
 
 STORE_DIR = "mlruns"
 ADAPTER = "mlflow"
@@ -356,18 +355,6 @@ def _curves(found: MlflowFound) -> list[tuple[LoggedPoint, schema.Series]]:
     return out
 
 
-def _history_ref(series: list[schema.Series]) -> dict | None:
-    """The reference the record carries for these curves, computed by the
-    schema's own writer (in a directory thrown away after): the sidecar's
-    bytes are a pure function of the store, so the digest names bytes anyone
-    can regenerate. The ledger stores no curve (spec, "Curves")."""
-    with tempfile.TemporaryDirectory() as tmp:
-        ref = schema.write_history(tmp, series)
-    if ref is None:
-        return None
-    return {"path": ref.path, "sha256": ref.sha256, "series": ref.series, "points": ref.points}
-
-
 def _code(tags: dict[str, str]) -> dict:
     """MLflow's git tags: HEAD of the source's checkout at run start --
     inferred, since MLflow never records uncommitted changes."""
@@ -453,7 +440,7 @@ def to_core_record(
             "config": dict(found.params),
             "data": _data(found),
             "metrics": metrics,
-            "history": _history_ref([s for _, s in curves]),
+            "history": history_ref([s for _, s in curves]),
             "seeds": {"seed": replicate[1]} if replicate else None,
             "dependencies": None,
             "ext": {

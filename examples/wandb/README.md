@@ -11,9 +11,10 @@ learning rates, logs a ten-step `train_loss` curve to each run, and sets
 `accuracy`/`auc` as the run's summary — the same split `examples/flows/
 training/train_mlflow.py` uses between a curve-producing surrogate and the
 metric that is actually reported. `attest runs scan` then reads that
-directory through `ledger_adapters/generic.py`'s `_wandb_runs`, the first
-time that reader has met a directory it did not have transcribed from
-documentation.
+directory through `ledger_adapters/wandb_store.py`, which decodes each run's
+binary `.wandb` log with no wandb installed and maps the whole run --
+project, exit code, config, summary, the `train_loss` curve, git commit --
+into a core run record.
 
 ## Prerequisites
 
@@ -29,7 +30,7 @@ separate, explicit step — see *What it demonstrates*.
 ```bash
 uv run attest runs scan --root .
 uv run attest runs list
-uv run attest runs compare generate --metric auc
+uv run attest runs compare flows --metric auc
 ```
 
 Relative to this directory.
@@ -37,43 +38,46 @@ Relative to this directory.
 ## What it prints
 
 ```
-generate — ranked by auc (higher_is_better)
+flows — ranked by auc (higher_is_better)
 ```
 
 Abridged — the full run also prints the scan summary, the four runs from
 `attest runs list`, and the full comparison table before that header line:
 
 ```
-generate — ranked by auc (higher_is_better)
+flows — ranked by auc (higher_is_better)
 
-  arm                                                 auc      n      step  source
-  -------------------------------------------- ---------- ------  --------  ------
-  generate/fsecp1k3                                0.9970      ?            wandb/offline-run-20260828_213303-fsecp1k3
-  generate/h2ythad2                                0.9960      ?            wandb/offline-run-20260828_213305-h2ythad2
-  generate/92ajmw2l                                0.9957      ?            wandb/offline-run-20260828_213308-92ajmw2l
-  generate/d9o76utt                                0.9937      ?            wandb/offline-run-20260828_213302-d9o76utt
+  arm                                                 auc      n      step    wall_s  source
+  -------------------------------------------- ---------- ------  --------  --------  ------
+  generate/poh8k6cb                                0.9970      ?             0.09344  wandb/offline-run-20261120_012708-poh8k6cb
+  generate/ubscahtx                                0.9960      ?             0.09693  wandb/offline-run-20261120_012711-ubscahtx
+  generate/z11zj8ir                                0.9957      ?              0.1012  wandb/offline-run-20261120_012714-z11zj8ir
+  generate/akn221eo                                0.9937      ?               0.103  wandb/offline-run-20261120_012705-akn221eo
 
-winner: generate/fsecp1k3
+winner: generate/poh8k6cb
   caveat: some arms report no sample size, so their weight is unknown
   caveat: the top two arms differ by 0.0009921 (0.1%) -- too close to call from these numbers alone
   caveat: each arm is a single run; no seed replication, so this ranking cannot separate configuration from run-to-run variance
-  caveat: read by the wandb adapter: values come from wandb-summary.json, which holds each metric's final logged value rather than its curve or its best step. Offline W&B does not write that file until a run is synced -- see examples/wandb/generate.py for how the committed fixture's was materialised without a network call
+  caveat: read by the wandb adapter: each metric is the run's final summary value (by default the last value logged), not the best step; the curve is in the run's core record (history), not in the ledger. Read from the run's .wandb log; a run without one is read from files/ and has no status or curve
 ```
 
-The `winner:` line's run id is not pinned above — regeneration reassigns W&B's
-random run ids even though the accuracy/auc values are deterministic (a
-fixed `random_state` and a fixed stratified split), so only the family header
-line is stable across a regeneration.
+The `winner:` line's run id and the `wall_s` column are not pinned above —
+regeneration reassigns W&B's random run ids and re-times each run, even
+though the accuracy/auc values are deterministic (a fixed `random_state` and
+a fixed stratified split), so only the family header line is stable across
+a regeneration.
 
-The family is `generate`, not the sweep name `lr_sweep` passed to
-`wandb.init(name=...)`. See *What it demonstrates*.
+The family is `flows`, the W&B project passed to `wandb.init(project=...)`
+and recorded in each run's log — not the sweep name `lr_sweep` (the run's
+display name, the same for all four arms) and, since 2026-11-20, no longer
+the script name `generate`. Run names keep their `<script>/<run id>` shape.
 
 ## What it demonstrates
 
 **Confirming the reader against a real directory found two things, not the
 one this task went looking for.**
 
-The expected finding — that `_wandb_runs` globs `run-<timestamp>-<id>/` while
+The expected finding — that `_wandb_runs` (the reader before 2026-11-20) globs `run-<timestamp>-<id>/` while
 real offline runs are named `offline-run-<timestamp>-<id>/` — turned out to
 be **false**. Reading the code: `_wandb_runs` walks every child of `wandb/`
 looking for `files/wandb-summary.json`, with no name filter at all. Both
@@ -97,27 +101,33 @@ for this exact gap — so the committed `wandb/` is what a real synced run's
 `files/` looks like, built entirely from values wandb itself logged. Nothing
 in it is invented.
 
-A second, smaller surprise: `_wandb_runs` groups arms by the training
-script's filename (from `wandb-metadata.json`'s `program`), because that is
-the only run-identity field committed to any of the three files it reads.
-W&B's own `run.name`/family concept (here, `"lr_sweep"`) is never written to
-`config.yaml`, `wandb-summary.json`, or `wandb-metadata.json` — it exists
-only inside the binary log or the server's database. Grouping by script name
-instead of by intended family is a real limitation of a local-files-only
-reader, not a bug introduced here; `attest runs compare` above takes
-`generate`, not `lr_sweep`, for exactly this reason.
+A second finding came later (2026-11-20, roadmap 16): W&B's own family
+concept, the **project**, is not in any of the three files either — nor is
+the run's exit code, its git commit (once the metadata is scrubbed), or its
+curve. All of them are in the binary `.wandb` log, which `generate.py` used
+to delete after materialising. The log is a LevelDB log of protobuf records,
+small enough to decode with the standard library (`ledger_adapters/
+wandb_log.py`), so `generate.py` now keeps it, scrubbed through wandb's own
+`DataStore` writer to the run/config/history/summary/exit records with the
+host, settings, telemetry and git remote cleared. The ledger reads the log
+first and `files/` only for a directory without one. Measured on the way:
+offline wandb 0.17.6 *does* write a `files/wandb-summary.json` — containing
+only `{"_wandb": {"runtime": 0}}`, which is why the log wins wherever the two
+disagree.
 
-The reader needed no code change. This example's contribution is the
-verification itself, `tests/test_tracker_adapters.py::
-test_the_reader_scans_the_real_committed_wandb_fixture` pinning the real
-fixture directly, and retiring the "never run against a real directory"
-caveat this reader carried since it was written.
+`tests/test_wandb_hydra_adapters.py` pins every field of the committed runs'
+core records; `tests/test_tracker_adapters.py::
+test_the_reader_scans_the_real_committed_wandb_fixture` pins the legacy view.
 
 ## When it goes wrong
 
-- `attest runs compare lr_sweep` (the sweep's own name) fails with "no family
-  'lr_sweep'. Available: generate" — see *What it demonstrates* for why the
-  family is the script name, not the W&B run name.
+- `attest runs compare lr_sweep` (the runs' display name) or `attest runs
+  compare generate` (the family before 2026-11-20) fails with "no family
+  ...". Available: flows" — the family is the W&B project.
+- A run directory without a `.wandb` log (one that was synced and had its
+  log removed) is read from `files/`: its family falls back to the script
+  name, its status is unknown and it has no curve, each said as a run
+  caveat.
 - `generate.py` refuses to run (exit 1, clear message) under any wandb
   version but the one it was verified against — offline materialisation is
   not stable across releases, so a version mismatch would otherwise

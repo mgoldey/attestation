@@ -90,10 +90,11 @@ push.
 
 The ledger reads only core run records (`attestation_schema.RunRecord`);
 each tracker layout is an adapter behind the `ledger_adapters.Adapter`
-protocol (`detect`, `scan`, `to_core_record`). Four tracker readers
-live in `src/attestation/ledger_adapters/generic.py` (`_wandb_runs`,
-`_sacred_runs`, `_dvc_runs`, `_hydra_runs`); the MLflow reader maps the
-whole run itself in `ledger_adapters/mlflow_store.py` (roadmap 12); all are
+protocol (`detect`, `scan`, `to_core_record`). Two tracker readers
+live in `src/attestation/ledger_adapters/generic.py` (`_sacred_runs`,
+`_dvc_runs`); the MLflow, W&B and Hydra readers map the whole run
+themselves in `ledger_adapters/{mlflow,wandb,hydra}_store.py` (roadmap 12
+and 16; W&B's binary log is decoded by `wandb_log.py`); all are
 registered as adapters in `ledger_adapters/trackers.py`. To add a sixth:
 
 1. **Start from a real directory.** Write `examples/<tracker>/generate.py`

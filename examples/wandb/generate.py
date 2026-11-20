@@ -42,26 +42,30 @@ below performs that same materialisation locally, using the community's own
 published workaround for this exact gap (issue #1768's accepted answer:
 `wandb.sdk.internal.datastore.DataStore().scan_data()` over the run's
 `.wandb` file), and writes wandb-summary.json/config.yaml in the documented
-on-disk shape before the binary log -- which nothing this repo reads -- is
-deleted. This is not invented data: every value it writes was logged by this
-run and is being read back from the file wandb itself wrote, in the same
+on-disk shape. This is not invented data: every value it writes was logged by
+this run and is being read back from the file wandb itself wrote, in the same
 records `wandb sync` uploads. wandb-metadata.json needs no such step -- it
 *is* written directly to files/ in offline mode.
 
+The binary log itself is KEPT (since 2026-11-20, roadmap 16): it is the only
+place an offline run records its project, its exit code, its git commit and
+its curve, and the ledger's W&B adapter (ledger_adapters/wandb_store.py)
+reads it with no wandb installed. `_scrub_wandb_log` rewrites it through
+wandb's own DataStore writer keeping only the run/config/history/summary/exit
+records (and the header/final/footer framing), with the run record's host,
+settings, telemetry and git remote cleared -- see that function.
+
 The wandb/ this writes is committed beside it: it is the first real W&B
-offline directory the ledger reader (_wandb_runs in
-ledger_adapters/generic.py) has read. Regenerating changes the run ids and
-timestamps and is a deliberate act -- running this file deletes and
+offline directory the ledger reader has read. Regenerating changes the run
+ids and timestamps and is a deliberate act -- running this file deletes and
 rewrites the committed wandb/ in place.
 
 wandb also writes personal attribution and machine-specific absolute paths
 (host, username, the executable path, the repo root, git remote, email,
-absolute script paths in wandb-metadata.json; full binary logs under
-`.wandb`/`logs`/`tmp`; a frozen `files/requirements.txt`) that this repo
-does not commit. `_wandb_runs` reads only wandb-summary.json, config.yaml
-and wandb-metadata.json's `program`/`startedAt` -- never `host`, `username`,
-`executable`, `root`, `git`, `email`, `codePath`, `requirements.txt`, the
-`.wandb` binary log, or anything under `logs/`/`tmp/` -- so scrubbing them
+absolute script paths in wandb-metadata.json and the log; console output,
+system stats and telemetry in the log; logs under `logs`/`tmp`; a frozen
+`files/requirements.txt`; a `diff.patch` of an uncommitted tree) that this
+repo does not commit. The adapter reads none of them, so scrubbing them
 costs the reader nothing. `scrub()` below removes them after training.
 """
 
@@ -90,7 +94,7 @@ HERE = Path(__file__).resolve().parent
 WANDB_VERSION = "0.17.6"
 
 # Keys wandb-metadata.json writes that identify this machine or this person.
-# `program`, `startedAt`, `args`, and `python` are the only ones _wandb_runs
+# `program`, `startedAt`, `args`, and `python` are the only ones the adapter
 # or a reader of this fixture could ever want; the rest -- the absolute
 # executable and repo-root paths, the git remote and commit, and this
 # machine's hostname/username/email -- are deleted outright rather than
@@ -100,14 +104,14 @@ _SCRUB_METADATA_KEYS = ("host", "username", "executable", "root", "git", "email"
 
 # `program` is kept (the reader derives a run's name from it) but W&B writes
 # it as this machine's absolute invocation path, e.g. "<repo>/examples/wandb/
-# generate.py". _wandb_runs already does `program.rsplit("/", 1)[-1]` to get
+# generate.py". The adapter (wandb_store) does `program.rsplit("/", 1)[-1]` to get
 # the basename, so relativizing to just the basename costs the reader
 # nothing while dropping the leaked path.
 
 # Bookkeeping keys W&B injects into a run's summary that are not a logged
 # metric: the running step/timestamp/runtime it stamps on every write. Kept
 # out of the materialised wandb-summary.json for the same reason
-# ledger_adapters.generic._wandb_runs strips them again on the read side
+# ledger_adapters.wandb_store strips them again on the read side
 # (belt and suspenders -- the reader's own strip is the one that matters,
 # this one just keeps the committed fixture honest about what W&B itself
 # would ship as "summary" via a real sync).
@@ -157,7 +161,7 @@ def _write_materialised_files(run_dir: Path, config: dict, summary: dict) -> Non
     """Write config.yaml and wandb-summary.json in W&B's documented shape.
 
     config.yaml wraps every entry as {desc, value} plus an injected `_wandb`
-    key -- the exact shape ledger_adapters.generic._wandb_config already
+    key -- the exact shape ledger_adapters.wandb_store.files_config
     unwraps. wandb-summary.json is the flat object metrics_from_payload
     already handles.
     """
@@ -177,21 +181,62 @@ def _write_materialised_files(run_dir: Path, config: dict, summary: dict) -> Non
     (files / "wandb-summary.json").write_text(json.dumps(clean_summary))
 
 
+# The log records the adapter reads, plus the framing records. Everything else
+# (console output, system stats, telemetry, file-upload and control records)
+# is dropped: none is read, and console output and stats name this machine.
+_KEEP_LOG_RECORDS = {"header", "run", "config", "history", "summary", "exit", "final", "footer"}
+
+
+def _scrub_wandb_log(wandb_log: Path) -> None:
+    """Rewrite a run's `.wandb` log keeping only what the adapter reads.
+
+    Read and written with wandb's own DataStore and protobuf classes, so the
+    result is a log wandb itself can scan (and `wandb sync` could upload).
+    In the run record, `host`, `settings` and `telemetry` are cleared, and
+    the git remote is cleared while the commit is kept: the commit is the
+    run's code identity, the remote names whoever checked the repo out.
+    """
+    from wandb.proto import wandb_internal_pb2 as pb
+    from wandb.sdk.internal import datastore
+
+    kept = []
+    reader = datastore.DataStore()
+    reader.open_for_scan(str(wandb_log))
+    while (data := reader.scan_data()) is not None:
+        record = pb.Record()
+        record.ParseFromString(data)
+        if record.WhichOneof("record_type") not in _KEEP_LOG_RECORDS:
+            continue
+        if record.HasField("run"):
+            for name in ("host", "settings", "telemetry"):
+                record.run.ClearField(name)
+            record.run.git.ClearField("remote_url")
+        kept.append(record)
+    reader.close()
+    scrubbed = wandb_log.with_suffix(".scrubbed")
+    writer = datastore.DataStore()
+    writer.open_for_write(str(scrubbed))
+    for record in kept:
+        writer.write(record)
+    writer.close()
+    scrubbed.replace(wandb_log)
+
+
 def scrub(wandb_dir: Path) -> None:
     """Strip attribution, machine paths, and bulk logs W&B writes by default.
 
-    The reader (_wandb_runs in ledger_adapters/generic.py) reads only
-    wandb-summary.json, config.yaml, and wandb-metadata.json's `program` and
-    `startedAt` -- never the binary `.wandb` log, `logs/`, `tmp/`,
-    `files/requirements.txt`, `files/output.log`, or any of the metadata
-    keys this removes. Nothing here is load-bearing for the ledger;
-    committing it anyway would put this machine's hostname, this person's
-    username and email, and this repo's git remote into version control.
+    The adapter (ledger_adapters/wandb_store.py) reads the scrubbed `.wandb`
+    log (see `_scrub_wandb_log`), wandb-summary.json, config.yaml, and
+    wandb-metadata.json's `program`/`startedAt`/`git` -- never `logs/`,
+    `tmp/`, `files/requirements.txt`, `files/output.log`, `diff.patch`, or
+    any of the metadata keys this removes. Committing them would put this
+    machine's hostname, this person's username and email, and this repo's
+    git remote into version control.
     """
     wandb_dir = wandb_dir.resolve()
     for run_dir in wandb_dir.glob("offline-run-*"):
         for wandb_log in run_dir.glob("*.wandb"):
-            wandb_log.unlink()
+            _scrub_wandb_log(wandb_log)
         for syncstate in run_dir.glob("*.wandb.syncstate"):
             syncstate.unlink()
         shutil.rmtree(run_dir / "logs", ignore_errors=True)
@@ -199,6 +244,8 @@ def scrub(wandb_dir: Path) -> None:
         files = run_dir / "files"
         (files / "requirements.txt").unlink(missing_ok=True)
         (files / "output.log").unlink(missing_ok=True)
+        for patch in files.glob("*.patch"):
+            patch.unlink()
 
         meta_path = files / "wandb-metadata.json"
         if meta_path.is_file():
