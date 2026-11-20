@@ -150,24 +150,27 @@ def _points(key: str, path: Path) -> list[LoggedPoint]:
     return out
 
 
+def _dataset_input(input_dir: Path, exp_dir: Path) -> dict[str, Any] | None:
+    """One input's dataset (its own `meta.yaml`) plus the input's tags, or
+    None for a model input or a dangling reference (MLflow skips it too)."""
+    link = _yaml(input_dir / "meta.yaml") or {}
+    if link.get("source_type") != "DATASET":
+        return None
+    dataset = _yaml(exp_dir / "datasets" / str(link.get("source_id")) / "meta.yaml")
+    if dataset is None or not dataset.get("name"):
+        return None
+    tags = link.get("tags") or {}
+    return {**dataset, "tags": {str(k): str(v) for k, v in tags.items()}}
+
+
 def _datasets(run_dir: Path, exp_dir: Path) -> list[dict[str, Any]]:
-    """The run's dataset inputs, each the dataset's own `meta.yaml` plus the
-    input's tags (`FileStore._get_dataset_inputs`; a dangling reference is
-    skipped, as MLflow skips it with a warning; model inputs are not mapped)."""
-    out = []
+    """The run's dataset inputs (`FileStore._get_dataset_inputs`; model
+    inputs are not mapped)."""
     inputs = run_dir / "inputs"
     if not inputs.is_dir():
-        return out
-    for input_dir in sorted(p for p in inputs.iterdir() if p.is_dir()):
-        link = _yaml(input_dir / "meta.yaml") or {}
-        if link.get("source_type") != "DATASET":
-            continue
-        dataset = _yaml(exp_dir / "datasets" / str(link.get("source_id")) / "meta.yaml")
-        if dataset is None or not dataset.get("name"):
-            continue
-        tags = link.get("tags") or {}
-        out.append({**dataset, "tags": {str(k): str(v) for k, v in tags.items()}})
-    return out
+        return []
+    found = (_dataset_input(d, exp_dir) for d in sorted(inputs.iterdir()) if d.is_dir())
+    return [d for d in found if d is not None]
 
 
 def _artifact_root(meta: dict, run_dir: Path) -> tuple[Path | None, str | None]:
@@ -207,19 +210,43 @@ def _status(value: Any) -> str:
     return str(value)
 
 
-def _read_run(root: Path, exp_dir: Path, run_dir: Path, family: str | None) -> MlflowFound | None:
+def _ended_meta(run_dir: Path) -> dict | None:
+    """The run's meta.yaml, or None for a run the ledger does not read: one
+    deleted in the MLflow UI (still on disk; resurrecting it in a ledger read
+    for provenance is worse than missing it) or one in flight (a record is
+    written once, when the run ends)."""
     meta = _yaml(run_dir / "meta.yaml")
     if meta is None or meta.get("lifecycle_stage", "active") != "active":
-        # A run deleted in the MLflow UI is still on disk; resurrecting it in
-        # a ledger read for provenance is worse than missing it.
         return None
-    run_status = _status(meta.get("status"))
-    if run_status not in TERMINAL:
-        return None  # in flight: a record is written once, when the run ends
-    metric_files = _files(run_dir / "metrics")
-    if not metric_files:
-        return None  # nothing measured: no run to compare (every reader's rule)
+    return meta if _status(meta.get("status")) in TERMINAL else None
 
+
+def _read_logged(found: MlflowFound, run_dir: Path, metric_files: dict[str, Path]) -> None:
+    """Params and every metric point, or `found.error` saying why MLflow's own
+    client could not read the run either."""
+    try:
+        found.params = {k: _read_text(p) for k, p in _files(run_dir / "params").items()}
+        for key, path in sorted(metric_files.items()):
+            found.points.extend(_points(key, path))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        found.error = f"MLflow cannot read this run either: {exc}"
+
+
+def _legacy_metrics(found: MlflowFound) -> None:
+    """The `Found` view `generic.discover` callers read: each series' final
+    value when finite (never a NaN), plus wall time."""
+    for (key, split), points in _grouped(found).items():
+        final = _latest(points)
+        if math.isfinite(final.value):
+            found.metrics.append(FoundMetric(key, final.value, step=final.step, split=split))
+    timing.add_wall(found.metrics, found.wall)
+
+
+def _read_run(root: Path, exp_dir: Path, run_dir: Path, family: str | None) -> MlflowFound | None:
+    meta = _ended_meta(run_dir)
+    metric_files = _files(run_dir / "metrics") if meta is not None else {}
+    if meta is None or not metric_files:
+        return None  # not ended, or nothing measured (every reader's rule)
     tags = {k: _read_text(p) for k, p in _files(run_dir / "tags").items()}
     run_name = meta.get("run_name") or tags.get(RUN_NAME_TAG) or None
     found = MlflowFound(
@@ -230,33 +257,43 @@ def _read_run(root: Path, exp_dir: Path, run_dir: Path, family: str | None) -> M
         status="recorded",
         adapter=ADAPTER,
         run_id=run_dir.name,
-        run_status=run_status,
+        run_status=_status(meta.get("status")),
         start_ms=_ms(meta.get("start_time")),
         end_ms=_ms(meta.get("end_time")),
         tags=tags,
     )
     if str(meta.get("run_id", run_dir.name)) != run_dir.name:
         found.error = f"meta.yaml names run {meta.get('run_id')!r}, not its directory"
-        return found
-    try:
-        found.params = {k: _read_text(p) for k, p in _files(run_dir / "params").items()}
-        for key, path in sorted(metric_files.items()):
-            found.points.extend(_points(key, path))
-    except (OSError, UnicodeDecodeError, ValueError) as exc:
-        found.error = f"MLflow cannot read this run either: {exc}"
-        return found
+    else:
+        _read_logged(found, run_dir, metric_files)
+    if not found.error:
+        _read_inputs_and_outputs(found, meta, run_dir, exp_dir)
+    return found
+
+
+def _read_inputs_and_outputs(found: MlflowFound, meta: dict, run_dir: Path, exp_dir: Path) -> None:
+    """Config, dataset inputs, artifact paths, wall time and the legacy view."""
     found.config = found.params or None
     found.datasets = _datasets(run_dir, exp_dir)
     art_root, found.artifact_note = _artifact_root(meta, run_dir)
     if art_root is not None:
-        found.artifacts = [(k, p) for k, p in _files(art_root).items()]
+        found.artifacts = list(_files(art_root).items())
     found.wall = timing.epoch_ms_duration(found.start_ms, found.end_ms)
-    for (key, split), points in _grouped(found).items():
-        final = _latest(points)
-        if math.isfinite(final.value):
-            found.metrics.append(FoundMetric(key, final.value, step=final.step, split=split))
-    timing.add_wall(found.metrics, found.wall)
-    return found
+    _legacy_metrics(found)
+
+
+def _experiments(base: Path) -> list[tuple[Path, str | None]]:
+    """(directory, name) of every active experiment in the store. The trash
+    and the model registry are not experiments; a missing name is None."""
+    out = []
+    for exp_dir in sorted(p for p in base.iterdir() if p.is_dir()):
+        if exp_dir.name in _NOT_EXPERIMENTS or exp_dir.name.startswith("."):
+            continue
+        experiment = _yaml(exp_dir / "meta.yaml") or {}
+        if experiment.get("lifecycle_stage", "active") == "active":
+            name = experiment.get("name")
+            out.append((exp_dir, str(name) if name not in (None, "") else None))
+    return out
 
 
 def mlflow_runs(root: Path, seen: set[str]) -> list[MlflowFound]:
@@ -269,22 +306,12 @@ def mlflow_runs(root: Path, seen: set[str]) -> list[MlflowFound]:
     if not base.is_dir():
         return []
     out: list[MlflowFound] = []
-    for exp_dir in sorted(p for p in base.iterdir() if p.is_dir()):
-        if exp_dir.name in _NOT_EXPERIMENTS or exp_dir.name.startswith("."):
-            continue
-        experiment = _yaml(exp_dir / "meta.yaml") or {}
-        if experiment.get("lifecycle_stage", "active") != "active":
-            continue
-        family = experiment.get("name")
-        family = str(family) if family not in (None, "") else None
-        for run_dir in sorted(p for p in exp_dir.iterdir() if p.is_dir()):
-            if run_dir.name == "datasets":
-                continue
+    for exp_dir, family in _experiments(base):
+        for run_dir in sorted(p for p in exp_dir.iterdir() if p.is_dir() and p.name != "datasets"):
             found = _read_run(Path(root), exp_dir, run_dir, family)
-            if found is None or found.name in seen:
-                continue
-            seen.add(found.name)
-            out.append(found)
+            if found is not None and found.name not in seen:
+                seen.add(found.name)
+                out.append(found)
     return out
 
 
